@@ -20,7 +20,6 @@ class User(Base):
     nickname = Column(String, nullable=True)
     profile_image_url = Column(String, nullable=True)
     role = Column(SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]), default=UserRole.KAKAO_USER)
-
-    tickets = relationship("Ticket", backref="user")
-    artist_follow = relationship("ArtistFollow", backref="user", uselist=False)
-    concert_follow = relationship("ConcertFollow", backref="user", uselist=False)
+    tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")
+    artist_follow = relationship("ArtistFollow", backref="user", uselist=False, cascade="all, delete-orphan")
+    concert_follow = relationship("ConcertFollow", backref="user", uselist=False, cascade="all, delete-orphan")
