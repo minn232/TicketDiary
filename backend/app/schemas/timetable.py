@@ -8,15 +8,9 @@ class TimeTableEntry(BaseModel):
     description: str
 
 
-class TimeTableCreate(BaseModel):
-    # 타임테이블 생성 요청
-    concert_id: UUID
-    contents: list[TimeTableEntry]
-
-
 class TimeTableUpdate(BaseModel):
-    # 타임테이블 수정 요청
-    contents: list[TimeTableEntry] | None = None
+    # 타임테이블 upsert 요청
+    contents: list[TimeTableEntry]
 
 
 class TimeTableResponse(BaseModel):

@@ -51,3 +51,16 @@ class ConcertResponse(BaseModel):
     poster_url: str | None
     description: str | None
     price: list[PriceEntry] | None
+
+
+class TicketScanExtracted(BaseModel):
+    # OCR로 추출된 티켓 정보
+    artist_name: str | None = None
+    venue: str | None = None
+    event_date: str | None = None  # YYYY-MM-DD
+
+
+class TicketScanResponse(BaseModel):
+    # 티켓 스캔 응답 (OCR 추출 결과 + KOPIS 후보 목록)
+    extracted: TicketScanExtracted
+    candidates: list[ConcertResponse]

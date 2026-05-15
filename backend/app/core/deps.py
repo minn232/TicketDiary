@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import verify_token
 from app.models.user import User
-from app.services.auth_service import get_user_by_id
+from app.services.auth import get_user_by_id
 
 # 인증 관련 의존성 함수들
 _bearer = HTTPBearer()

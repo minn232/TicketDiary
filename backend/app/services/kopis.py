@@ -1,0 +1,160 @@
+import re
+import httpx
+from datetime import datetime, date, timedelta
+from xml.etree import ElementTree as ET
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from fastapi import HTTPException
+from app.core.config import settings
+from app.models.concert import Concert
+
+_DATE_FMT = "%Y.%m.%d"
+
+
+# 공연 기간 파싱 ("YYYY.MM.DD" → datetime)
+def _parse_date(s: str) -> datetime:
+    return datetime.strptime(s.strip(), _DATE_FMT)
+
+
+# 가격 파싱 ("VIP석 150,000원, R석 110,000원" → [{"seat_type": "VIP석", "price": 150000}])
+def _parse_price(text: str) -> list[dict] | None:
+    prices = []
+    for match in re.finditer(r"([^\s,]+)\s+([\d,]+)원", text):
+        prices.append({
+            "seat_type": match.group(1),
+            "price": int(match.group(2).replace(",", "")),
+        })
+    return prices or None
+
+
+# 아티스트 파싱 ("연출: A, 출연: B, C" → ["B", "C"])
+def _parse_artists(prfcrew: str) -> list[str]:
+    match = re.search(r"출연\s*:\s*(.+)", prfcrew)
+    raw = match.group(1) if match else prfcrew
+    return [a.strip() for a in raw.split(",") if a.strip()]
+
+
+# concert 정보 DB upsert
+async def _upsert_concert(db: AsyncSession, data: dict) -> Concert:
+    result = await db.execute(
+        select(Concert).where(Concert.kopis_id == data["kopis_id"])
+    )
+    concert = result.scalar_one_or_none()
+
+    # 공연이 없으면 새로 생성
+    if concert is None:
+        concert = Concert(**data)
+        db.add(concert)
+    # 공연이 있으면 덮어쓰기
+    else:
+        for key, value in data.items():
+            existing = getattr(concert, key, None)
+            # 빈 배열로 기존 데이터 덮어쓰기 방지
+            if isinstance(value, list) and not value and existing:
+                continue
+            if value is not None:
+                setattr(concert, key, value)
+
+    return concert
+
+
+# KOPIS 공연 검색 (keyword, start_date, end_date -> Concert 목록 + DB upsert)
+async def search_concerts(
+    db: AsyncSession,
+    keyword: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[Concert]:
+    today = date.today()
+    params = {
+        "service": settings.KOPIS_API_KEY,
+        "stdate": (start_date or today - timedelta(days=365)).strftime("%Y%m%d"),
+        "eddate": (end_date or today + timedelta(days=365)).strftime("%Y%m%d"),
+        "shprfnm": keyword,
+        "rows": 50,
+        "cpage": 1,
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="KOPIS API 호출에 실패했습니다.")
+
+    root = ET.fromstring(response.content)
+    kopis_ids: list[str] = []
+
+    # KOPIS 공연 정보 파싱
+    for elem in root.findall("db"):
+        kopis_id = (elem.findtext("mt20id") or "").strip()
+        start_raw = (elem.findtext("prfpdfrom") or "").strip()
+        end_raw = (elem.findtext("prfpdto") or "").strip()
+
+        if not kopis_id or not start_raw or not end_raw:
+            continue
+
+        # 목록 API에서는 출연진·상세·가격 미제공
+        data = {
+            "kopis_id": kopis_id,
+            "name": elem.findtext("prfnm") or "",
+            "artist_name": [],
+            "venue": elem.findtext("fcltynm") or None,
+            "start_date": _parse_date(start_raw),
+            "end_date": _parse_date(end_raw),
+            "genre": [g for g in [elem.findtext("genrenm")] if g],
+            "poster_url": elem.findtext("poster") or None,
+        }
+        await _upsert_concert(db, data)
+        kopis_ids.append(kopis_id)
+
+    if not kopis_ids:
+        return []
+
+    await db.commit()
+
+    # commit 후 재조회
+    result = await db.execute(
+        select(Concert).where(Concert.kopis_id.in_(kopis_ids))
+    )
+    return list(result.scalars().all())
+
+
+# KOPIS 공연 상세 조회 (kopis_id -> Concert + DB upsert)
+async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{settings.KOPIS_BASE_URL}/pblprfr/{kopis_id}",
+            params={"service": settings.KOPIS_API_KEY},
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=502, detail="KOPIS API 호출에 실패했습니다.")
+
+    root = ET.fromstring(response.content)
+    elem = root.find("db")
+    if elem is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    # 공연 상세 정보 파싱
+    start_raw = (elem.findtext("prfpdfrom") or "").strip()
+    end_raw = (elem.findtext("prfpdto") or "").strip()
+    prfcrew = (elem.findtext("prfcrew") or "").strip()
+    pcseguidance = (elem.findtext("pcseguidance") or "").strip()
+
+    data = {
+        "kopis_id": kopis_id,
+        "name": elem.findtext("prfnm") or "",
+        "artist_name": _parse_artists(prfcrew) if prfcrew else [],
+        "venue": elem.findtext("fcltynm") or None,
+        "start_date": _parse_date(start_raw),
+        "end_date": _parse_date(end_raw),
+        "genre": [g for g in [elem.findtext("genrenm")] if g],
+        "poster_url": elem.findtext("poster") or None,
+        "description": elem.findtext("sty") or None,
+        "price": _parse_price(pcseguidance),
+    }
+
+    concert = await _upsert_concert(db, data)
+    await db.commit()
+    await db.refresh(concert)
+    return concert

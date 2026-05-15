@@ -47,8 +47,8 @@ async def test_guest_login_same_login():
 # 카카오 계정 생성 테스트
 @pytest.mark.asyncio
 async def test_kakao_login_new_user():
-    with patch("app.services.auth_service._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
-         patch("app.services.auth_service._get_kakao_user_info", new=AsyncMock(return_value=_MOCK_KAKAO_USER)):
+    with patch("app.services.auth._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
+         patch("app.services.auth._get_kakao_user_info", new=AsyncMock(return_value=_MOCK_KAKAO_USER)):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post("/api/v1/auth/kakao", json={"code": "kakao-auth-code-001"})
 
@@ -65,8 +65,8 @@ async def test_kakao_login_new_user():
 async def test_kakao_login_same_login():
     user_info = {**_MOCK_KAKAO_USER, "id": 22222222}
 
-    with patch("app.services.auth_service._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
-         patch("app.services.auth_service._get_kakao_user_info", new=AsyncMock(return_value=user_info)):
+    with patch("app.services.auth._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
+         patch("app.services.auth._get_kakao_user_info", new=AsyncMock(return_value=user_info)):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res1 = await ac.post("/api/v1/auth/kakao", json={"code": "kakao-code-a"})
             res2 = await ac.post("/api/v1/auth/kakao", json={"code": "kakao-code-b"})
@@ -78,7 +78,7 @@ async def test_kakao_login_same_login():
 @pytest.mark.asyncio
 async def test_kakao_login_invalid_code():
     with patch(
-        "app.services.auth_service._exchange_kakao_code",
+        "app.services.auth._exchange_kakao_code",
         new=AsyncMock(side_effect=HTTPException(status_code=400, detail="유효하지 않은 카카오 인증 코드입니다.")),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -100,8 +100,8 @@ async def test_kakao_login_updates_profile():
         "kakao_account": {"profile": {"nickname": "변경된닉네임", "thumbnail_image_url": "https://example.com/new.jpg"}},
     }
 
-    with patch("app.services.auth_service._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
-         patch("app.services.auth_service._get_kakao_user_info", new=AsyncMock(side_effect=[first_info, updated_info])):
+    with patch("app.services.auth._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
+         patch("app.services.auth._get_kakao_user_info", new=AsyncMock(side_effect=[first_info, updated_info])):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res1 = await ac.post("/api/v1/auth/kakao", json={"code": "code-first"})
             me1 = await ac.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {res1.json()['access_token']}"},)

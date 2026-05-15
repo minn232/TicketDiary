@@ -7,25 +7,18 @@ from app.schemas.concert import ConcertResponse
 
 
 class TicketCreate(BaseModel):
-    # 티켓 생성 요청
+    # 티켓 생성 요청 (concert_id, kopis_id 중 하나 필수)
     concert_id: UUID | None = None
     kopis_id: str | None = None
-    concert_name: str | None = None
-    concert_date: datetime | None = None
-    artist_name: list[str] | None = None
     delivery_date: datetime | None = None
     ticketing_site: str | None = None
     price: int | None = None
     seat_type: str | None = None
 
-    # concert_name으로 등록시 concert_date 필수
-    # concert_id, kopis_id, concert_name 중 하나 필수
     @model_validator(mode="after")
     def check_concert_provided(self) -> "TicketCreate":
-        if not any([self.concert_id, self.kopis_id, self.concert_name]):
-            raise ValueError("concert_id, kopis_id, concert_name 중 하나는 필수입니다.")
-        if self.concert_name and not self.concert_date:
-            raise ValueError("concert_name으로 등록할 때는 concert_date가 필요합니다.")
+        if self.concert_id is None and self.kopis_id is None:
+            raise ValueError("concert_id 또는 kopis_id 중 하나는 필수입니다.")
         return self
 
 

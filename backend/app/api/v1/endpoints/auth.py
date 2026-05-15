@@ -6,7 +6,7 @@ from app.core.security import create_access_token
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.schemas.auth import GuestLoginRequest, KakaoLoginRequest, KakaoAuthUrlResponse, TokenResponse, UserResponse
-from app.services.auth_service import guest_login, kakao_login, migrate_to_kakao
+from app.services.auth import guest_login, kakao_login, migrate_to_kakao
 from app.models.user import User, UserRole
 
 router = APIRouter()
@@ -49,7 +49,7 @@ async def migrate_guest_to_kakao(
 ):
     # 게스트 유저 검증 (400 Bad Request)
     if current_user.role != UserRole.GUEST:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="게스트 유저만 마이그레이션할 수 있습니다.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="게스트 유저만 마이그레이션할 수 있습니다.")
     
     user = await migrate_to_kakao(db, current_user, body.code)
     token = create_access_token(str(user.id))
