@@ -1,9 +1,7 @@
 from pathlib import Path
-from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(_ENV_FILE, override=True, encoding='utf-8-sig')
 
 
 class Settings(BaseSettings):

@@ -1,6 +1,6 @@
 import re
 import httpx
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from xml.etree import ElementTree as ET
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,10 +10,22 @@ from app.models.concert import Concert
 
 _DATE_FMT = "%Y.%m.%d"
 
+_FESTIVAL_KEYWORDS = [
+    "festival", "fest", "페스티벌", "페스", "뮤직페스",
+]
+
+
+# 공연명 기반 단독 공연 / 페스티벌 분류
+def _classify_event_type(name: str) -> str:
+    lower = name.lower()
+    if any(kw in lower for kw in _FESTIVAL_KEYWORDS):
+        return "FESTIVAL"
+    return "SOLO"
+
 
 # 공연 기간 파싱 ("YYYY.MM.DD" → datetime)
 def _parse_date(s: str) -> datetime:
-    return datetime.strptime(s.strip(), _DATE_FMT)
+    return datetime.strptime(s.strip(), _DATE_FMT).replace(tzinfo=timezone.utc)
 
 
 # 가격 파싱 ("VIP석 150,000원, R석 110,000원" → [{"seat_type": "VIP석", "price": 150000}])
@@ -94,15 +106,17 @@ async def search_concerts(
             continue
 
         # 목록 API에서는 출연진·상세·가격 미제공
+        name = elem.findtext("prfnm") or ""
         data = {
             "kopis_id": kopis_id,
-            "name": elem.findtext("prfnm") or "",
+            "name": name,
             "artist_name": [],
             "venue": elem.findtext("fcltynm") or None,
             "start_date": _parse_date(start_raw),
             "end_date": _parse_date(end_raw),
             "genre": [g for g in [elem.findtext("genrenm")] if g],
             "poster_url": elem.findtext("poster") or None,
+            "event_type": _classify_event_type(name),
         }
         await _upsert_concert(db, data)
         kopis_ids.append(kopis_id)
@@ -141,9 +155,10 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
     prfcrew = (elem.findtext("prfcrew") or "").strip()
     pcseguidance = (elem.findtext("pcseguidance") or "").strip()
 
+    name = elem.findtext("prfnm") or ""
     data = {
         "kopis_id": kopis_id,
-        "name": elem.findtext("prfnm") or "",
+        "name": name,
         "artist_name": _parse_artists(prfcrew) if prfcrew else [],
         "venue": elem.findtext("fcltynm") or None,
         "start_date": _parse_date(start_raw),
@@ -152,6 +167,7 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
         "poster_url": elem.findtext("poster") or None,
         "description": elem.findtext("sty") or None,
         "price": _parse_price(pcseguidance),
+        "event_type": _classify_event_type(name),
     }
 
     concert = await _upsert_concert(db, data)

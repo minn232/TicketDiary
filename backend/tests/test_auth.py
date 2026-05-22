@@ -4,8 +4,10 @@ from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 
-# ── 공통 목(mock) 데이터 ──────────────────────────────────────────────────────
 
+# 헬퍼
+
+# 카카오 사용자 정보 모킹
 _MOCK_KAKAO_USER = {
     "id": 12345678,
     "kakao_account": {
@@ -16,7 +18,7 @@ _MOCK_KAKAO_USER = {
     },
 }
 
-# ── 게스트 로그인 테스트 ──────────────────────────────────────────────────────
+# 게스트 로그인 테스트
 
 # 게스트 계정 생성 테스트
 @pytest.mark.asyncio
@@ -42,7 +44,7 @@ async def test_guest_login_same_login():
     assert res1.json()["user_id"] == res2.json()["user_id"]
 
 
-# ── 카카오 로그인 테스트 ──────────────────────────────────────────────────────
+# 카카오 로그인 테스트
 
 # 카카오 계정 생성 테스트
 @pytest.mark.asyncio

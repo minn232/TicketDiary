@@ -1,8 +1,10 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from conftest import _get_token, kopis_mock
 
+
+# 헬퍼
 
 # KOPIS 가짜 API
 def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str, artist: str = "") -> bytes:
@@ -29,27 +31,20 @@ def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str, artist: str 
 _EMPTY_XML = b'<?xml version="1.0" encoding="UTF-8"?><dbs></dbs>'
 
 
-# httpx.AsyncClient 모킹
-def _httpx_mock(content: bytes, status_code: int = 200):
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    mock_response.content = content
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(return_value=mock_response)
-    return patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client)
-
-
-# ── 공연 검색 테스트 ───────────────────────────────────────────────────────────
+# 공연 검색 테스트
 
 # KOPIS 검색 성공 테스트
 @pytest.mark.asyncio
 async def test_search_concerts_success():
+    token = await _get_token()
     xml = _make_kopis_xml("PF_SEARCH_001", "테스트 콘서트", "2030.06.01", "2030.06.30", "테스트아티스트")
-    with _httpx_mock(xml):
+    with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get("/api/v1/concerts/search", params={"keyword": "테스트"})
+            response = await ac.get(
+                "/api/v1/concerts/search",
+                params={"keyword": "테스트"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -61,9 +56,14 @@ async def test_search_concerts_success():
 # 검색 결과 없음 테스트
 @pytest.mark.asyncio
 async def test_search_concerts_empty_result():
-    with _httpx_mock(_EMPTY_XML):
+    token = await _get_token()
+    with kopis_mock(_EMPTY_XML):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get("/api/v1/concerts/search", params={"keyword": "없는공연xyz"})
+            response = await ac.get(
+                "/api/v1/concerts/search",
+                params={"keyword": "없는공연xyz"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     assert response.json() == []
@@ -72,9 +72,14 @@ async def test_search_concerts_empty_result():
 # KOPIS API 오류 시 502 반환 테스트
 @pytest.mark.asyncio
 async def test_search_concerts_kopis_502():
-    with _httpx_mock(b"", status_code=500):
+    token = await _get_token()
+    with kopis_mock(b"", status_code=500):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get("/api/v1/concerts/search", params={"keyword": "테스트"})
+            response = await ac.get(
+                "/api/v1/concerts/search",
+                params={"keyword": "테스트"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 502
 
@@ -82,24 +87,37 @@ async def test_search_concerts_kopis_502():
 # 동일 공연 중복 검색 시 같은 ID 반환 테스트
 @pytest.mark.asyncio
 async def test_search_concerts_upsert_same_id():
+    token = await _get_token()
     xml = _make_kopis_xml("PF_UPSERT_001", "업서트 테스트", "2030.07.01", "2030.07.31")
-    with _httpx_mock(xml):
+    with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res1 = await ac.get("/api/v1/concerts/search", params={"keyword": "업서트"})
-            res2 = await ac.get("/api/v1/concerts/search", params={"keyword": "업서트"})
+            res1 = await ac.get(
+                "/api/v1/concerts/search",
+                params={"keyword": "업서트"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            res2 = await ac.get(
+                "/api/v1/concerts/search",
+                params={"keyword": "업서트"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert res1.json()[0]["id"] == res2.json()[0]["id"]
 
 
-# ── 공연 상세 조회 테스트 ─────────────────────────────────────────────────────
+# 공연 상세 조회 테스트
 
 # KOPIS에서 상세 조회 성공 테스트
 @pytest.mark.asyncio
 async def test_get_concert_detail_from_kopis():
+    token = await _get_token()
     xml = _make_kopis_xml("PF_DETAIL_001", "상세 테스트 콘서트", "2030.08.01", "2030.08.31", "아티스트A")
-    with _httpx_mock(xml):
+    with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get("/api/v1/concerts/PF_DETAIL_001")
+            response = await ac.get(
+                "/api/v1/concerts/PF_DETAIL_001",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 200
     data = response.json()
@@ -115,17 +133,19 @@ async def test_get_concert_detail_from_kopis():
 # DB 조회 테스트
 @pytest.mark.asyncio
 async def test_get_concert_detail_db_cache():
+    token = await _get_token()
     xml = _make_kopis_xml("PF_CACHE_001", "캐시 테스트 콘서트", "2030.09.01", "2030.09.30")
+    headers = {"Authorization": f"Bearer {token}"}
 
     # 첫 번째 호출: KOPIS -> DB upsert
-    with _httpx_mock(xml):
+    with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res1 = await ac.get("/api/v1/concerts/PF_CACHE_001")
+            res1 = await ac.get("/api/v1/concerts/PF_CACHE_001", headers=headers)
 
     # 두 번째 호출: DB
-    with _httpx_mock(b"", status_code=500):
+    with kopis_mock(b"", status_code=500):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res2 = await ac.get("/api/v1/concerts/PF_CACHE_001")
+            res2 = await ac.get("/api/v1/concerts/PF_CACHE_001", headers=headers)
 
     assert res1.status_code == 200
     assert res2.status_code == 200
@@ -135,9 +155,13 @@ async def test_get_concert_detail_db_cache():
 # 존재하지 않는 공연 404 테스트
 @pytest.mark.asyncio
 async def test_get_concert_detail_not_found():
-    with _httpx_mock(_EMPTY_XML):
+    token = await _get_token()
+    with kopis_mock(_EMPTY_XML):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get("/api/v1/concerts/PF_NONEXISTENT_XYZ123")
+            response = await ac.get(
+                "/api/v1/concerts/PF_NONEXISTENT_XYZ123",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 404
 
@@ -145,8 +169,12 @@ async def test_get_concert_detail_not_found():
 # KOPIS API 오류 시 502 테스트
 @pytest.mark.asyncio
 async def test_get_concert_detail_kopis_502():
-    with _httpx_mock(b"", status_code=500):
+    token = await _get_token()
+    with kopis_mock(b"", status_code=500):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get("/api/v1/concerts/PF_ERROR_XYZ999")
+            response = await ac.get(
+                "/api/v1/concerts/PF_ERROR_XYZ999",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
     assert response.status_code == 502

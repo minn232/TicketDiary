@@ -1,11 +1,11 @@
 import uuid
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from conftest import _get_token, kopis_mock
 
 
-# ── KOPIS mock (공연 생성용) ──────────────────────────────────────────────────
+# 헬퍼
 
 # KOPIS 공연 정보 XML 생성
 def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str) -> bytes:
@@ -27,36 +27,21 @@ def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str) -> bytes:
     ).encode("utf-8")
 
 
-# httpx.AsyncClient 모킹
-def _httpx_mock(content: bytes, status_code: int = 200):
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    mock_response.content = content
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(return_value=mock_response)
-    return patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client)
-
-
 # 공연 생성 (kopis_mock)
 async def _create_concert(kopis_id: str, start: str = "2030.06.01", end: str = "2030.06.30") -> str:
+    token = await _get_token()
     xml = _make_kopis_xml(kopis_id, f"{kopis_id} 공연", start, end)
-    with _httpx_mock(xml):
+    with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(f"/api/v1/concerts/{kopis_id}")
+            response = await ac.get(
+                f"/api/v1/concerts/{kopis_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
     assert response.status_code == 200
     return response.json()["id"]
 
 
-# 토큰 발급 (게스트 로그인)
-async def _get_token() -> str:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.post("/api/v1/auth/guest", json={"device_id": uuid.uuid4().hex})
-    return response.json()["access_token"]
-
-
-# ── 티켓 등록 테스트 ──────────────────────────────────────────────────────────
+# 티켓 등록 테스트
 
 # concert_id로 티켓 등록 성공 테스트
 @pytest.mark.asyncio
@@ -126,18 +111,18 @@ async def test_create_ticket_duplicate_409():
     assert res2.status_code == 409
 
 
-# 미인증 요청 403 테스트
+# 미인증 요청 401 테스트
 @pytest.mark.asyncio
-async def test_create_ticket_no_auth_403():
+async def test_create_ticket_no_auth_401():
     concert_id = await _create_concert("PF_T_NOAUTH_001")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.post("/api/v1/tickets", json={"concert_id": concert_id})
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
-# ── 티켓 목록 조회 테스트 ─────────────────────────────────────────────────────
+# 티켓 목록 조회 테스트
 
 # 티켓 없을 때 빈 배열 반환 테스트
 @pytest.mark.asyncio
@@ -189,7 +174,7 @@ async def test_list_tickets_sorting():
     assert concert_ids.index(near_id) < concert_ids.index(far_id)
 
 
-# ── 티켓 상세 조회 테스트 ─────────────────────────────────────────────────────
+# 티켓 상세 조회 테스트
 
 # 티켓 상세 조회 성공 테스트
 @pytest.mark.asyncio
@@ -233,7 +218,7 @@ async def test_get_ticket_other_user_404():
     assert response.status_code == 404
 
 
-# ── 티켓 수정 테스트 ──────────────────────────────────────────────────────────
+# 티켓 수정 테스트
 
 # 티켓 정보 수정 성공 테스트
 @pytest.mark.asyncio
@@ -288,7 +273,7 @@ async def test_update_ticket_status():
     assert response.json()["status"] == "after_concert"
 
 
-# ── 티켓 삭제 테스트 ──────────────────────────────────────────────────────────
+# 티켓 삭제 테스트
 
 # 티켓 삭제 성공 테스트 (삭제 후 조회 시 404)
 @pytest.mark.asyncio

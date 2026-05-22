@@ -1,12 +1,12 @@
 from uuid import UUID
-from pydantic import BaseModel
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
 from app.schemas.setlist import (
-    RealSetlistResponse, PreSetlistResponse, SetlistFmCandidate, SetlistEditRequest,
+    RealSetlistResponse, PreSetlistResponse, SetlistFmCandidate,
+    SetlistEditRequest, FetchSetlistRequest,
 )
 from app.services.setlist import (
     get_real_setlist,
@@ -17,11 +17,6 @@ from app.services.setlist import (
 from app.services.pre_setlist import get_pre_setlist, generate_pre_setlist, update_pre_setlist
 
 router = APIRouter()
-
-
-class FetchSetlistRequest(BaseModel):
-    # Setlist.fm ID로 셋리스트 가져오기 요청
-    setlistfm_id: str
 
 
 # 저장된 실제 셋리스트 조회

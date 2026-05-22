@@ -26,28 +26,36 @@ async def scan_ticket(
     if len(image_bytes) > _MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
-    # OCR로 티켓 정보 추출
+    # OCR + LLM으로 티켓 정보 추출
     extracted_raw = await extract_ticket_info(image_bytes, image.content_type or "image/jpeg")
     extracted = TicketScanExtracted(
-        artist_name=extracted_raw.get("artist_name"),
-        venue=extracted_raw.get("venue"),
-        event_date=extracted_raw.get("event_date"),
+        title=extracted_raw.get("title"),
+        artist=extracted_raw.get("artist") or [],
+        date=extracted_raw.get("date"),
+        time=extracted_raw.get("time"),
+        location=extracted_raw.get("location"),
+        seat=extracted_raw.get("seat"),
+        platform=extracted_raw.get("platform"),
+        price=extracted_raw.get("price"),
+        shipping_date=extracted_raw.get("shipping_date"),
+        event_type=extracted_raw.get("event_type"),
     )
 
-    # 추출된 정보 기반으로 KOPIS에서 공연 후보 검색 (아티스트명 기준, 공연일 ±7일)
+    # 추출된 정보 기반으로 KOPIS에서 공연 후보 검색 (아티스트명 또는 공연명 기준, 공연일 앞 뒤 7일)
     candidates = []
-    if extracted.artist_name:
+    search_keyword = extracted.artist[0] if extracted.artist else extracted.title
+    if search_keyword:
         start_date = None
         end_date = None
-        if extracted.event_date:
+        if extracted.date:
             try:
-                event_date = date.fromisoformat(extracted.event_date)
+                event_date = date.fromisoformat(extracted.date)
                 start_date = event_date - timedelta(days=7)
                 end_date = event_date + timedelta(days=7)
             except ValueError:
                 pass
         try:
-            candidates = await kopis_search(db, extracted.artist_name, start_date, end_date)
+            candidates = await kopis_search(db, search_keyword, start_date, end_date)
         except HTTPException:
             pass
 
@@ -60,6 +68,7 @@ async def search_concerts(
     keyword: str = Query(...),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await kopis_search(db, keyword, start_date, end_date)
@@ -67,7 +76,11 @@ async def search_concerts(
 
 # 공연 상세 조회 (DB -> KOPIS API + DB upsert)
 @router.get("/{kopis_id}", response_model=ConcertResponse)
-async def get_concert(kopis_id: str, db: AsyncSession = Depends(get_db)):
+async def get_concert(
+    kopis_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # DB 조회
     result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
     concert = result.scalar_one_or_none()

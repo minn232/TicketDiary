@@ -7,16 +7,19 @@ from app.models.user import User
 from app.services.auth import get_user_by_id
 
 # 인증 관련 의존성 함수들
-_bearer = HTTPBearer()
+_bearer = HTTPBearer(auto_error=False)
 _optional_bearer = HTTPBearer(auto_error=False)
 
 
 # 로그인 필수 (카카오 유저 & 게스트 모두 허용)
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    
+
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="인증이 필요합니다.")
+
     # 토큰 검증 (401 Unauthorized)
     user_id = verify_token(credentials.credentials)
     if user_id is None:

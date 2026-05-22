@@ -4,8 +4,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi import HTTPException
-from app.models.setlist import PreSetlist
 from app.models.concert import Concert
+from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry
 from app.services.setlistfm import search_setlists_by_artist
 

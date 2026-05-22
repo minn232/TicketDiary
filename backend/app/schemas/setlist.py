@@ -4,21 +4,16 @@ from uuid import UUID
 
 
 class SongEntry(BaseModel):
-    # 셋리스트 곡 항목
     name: str
     encore: bool = False
 
 
 class SetlistEditRequest(BaseModel):
-    # 셋리스트 곡 목록 수정 요청 (실제/예상 공통)
     songs: list[SongEntry]
 
 
-class RealSetlistUpdate(BaseModel):
-    # 실제 셋리스트 수정 요청
-    songs: list[SongEntry] | None = None
-    is_user_edited: bool | None = None
-    edited_user_nickname: str | None = None
+class FetchSetlistRequest(BaseModel):
+    setlistfm_id: str
 
 
 class RealSetlistResponse(BaseModel):
@@ -51,13 +46,6 @@ class SetlistFmCandidate(BaseModel):
     song_count: int
     songs: list[SongEntry]
     url: str
-
-
-class PreSetlistUpdate(BaseModel):
-    # 예상 셋리스트 수정 요청
-    songs: list[SongEntry] | None = None
-    is_user_edited: bool | None = None
-    edited_user_nickname: str | None = None
 
 
 class PreSetlistResponse(BaseModel):

@@ -1,5 +1,4 @@
-import json
-from pydantic import BaseModel, model_validator, field_validator
+from pydantic import BaseModel, model_validator
 from uuid import UUID
 from datetime import datetime
 from app.models.ticket import TicketStatus
@@ -39,7 +38,6 @@ class TicketUpdate(BaseModel):
 class TicketResponse(BaseModel):
     model_config = {"from_attributes": True}
 
-    # 티켓 조회 응답
     id: UUID
     concert_id: UUID | None
     status: TicketStatus
@@ -52,14 +50,6 @@ class TicketResponse(BaseModel):
     concert_photo_urls: list[str] | None
     is_first_day: bool | None
     is_last_day: bool | None
-
-    # concert_photo_urls에서 JSON 문자열 -> 리스트
-    @field_validator("concert_photo_urls", mode="before")
-    @classmethod
-    def parse_concert_photo_urls(cls, v: str | list | None) -> list[str] | None:
-        if isinstance(v, str):
-            return json.loads(v)
-        return v
 
 
 class TicketWithConcert(TicketResponse):

@@ -3,9 +3,10 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+from conftest import _get_token, kopis_mock
 
 
-# ── KOPIS mock (공연 생성용) ──────────────────────────────────────────────────
+# 헬퍼
 
 # KOPIS 공연 정보 XML 생성
 def _make_kopis_xml(kopis_id: str, artist: str = "테스트아티스트") -> bytes:
@@ -28,19 +29,7 @@ def _make_kopis_xml(kopis_id: str, artist: str = "테스트아티스트") -> byt
     ).encode("utf-8")
 
 
-# httpx.AsyncClient 모킹
-def _kopis_mock(content: bytes, status_code: int = 200):
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    mock_response.content = content
-    mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=None)
-    mock_client.get = AsyncMock(return_value=mock_response)
-    return patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client)
-
-
-# ── Setlist.fm mock ───────────────────────────────────────────────────────────
+# Setlist.fm mock
 
 # Setlist.fm 공연 상세 정보 생성
 def _make_setlistfm_detail(setlistfm_id: str, artist: str = "테스트아티스트") -> dict:
@@ -85,26 +74,23 @@ def _setlistfm_mock(data: dict | None = None, status_code: int = 200):
     return patch("app.services.setlistfm.httpx.AsyncClient", return_value=mock_client)
 
 
-# ── 공통 헬퍼 ─────────────────────────────────────────────────────────────────
+# 공통 헬퍼
 
 # 공연 생성 (kopis_mock)
 async def _create_concert(kopis_id: str, artist: str = "테스트아티스트") -> str:
+    token = await _get_token()
     xml = _make_kopis_xml(kopis_id, artist)
-    with _kopis_mock(xml):
+    with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(f"/api/v1/concerts/{kopis_id}")
+            response = await ac.get(
+                f"/api/v1/concerts/{kopis_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
     assert response.status_code == 200
     return response.json()["id"]
 
 
-# 토큰 발급 (게스트 로그인)
-async def _get_token() -> str:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.post("/api/v1/auth/guest", json={"device_id": uuid.uuid4().hex})
-    return response.json()["access_token"]
-
-
-# ── 후보 검색 테스트 (GET /concerts/{concert_id}/setlist/search) ───────────────
+# 후보 검색 테스트 (GET /concerts/{concert_id}/setlist/search)
 
 # Setlist.fm 검색 성공 테스트 (후보 구조 검증)
 @pytest.mark.asyncio
@@ -197,7 +183,7 @@ async def test_search_no_artist_400():
     assert response.status_code == 400
 
 
-# ── 셋리스트 저장 테스트 (POST /concerts/{concert_id}/setlist) ────────────────
+# 셋리스트 저장 테스트 (POST /concerts/{concert_id}/setlist)
 
 # Setlist.fm ID로 셋리스트 가져와 저장 성공 테스트
 @pytest.mark.asyncio
@@ -288,7 +274,7 @@ async def test_fetch_real_setlist_api_502():
     assert response.status_code == 502
 
 
-# ── 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist) ─────────────────
+# 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist)
 
 # 저장된 셋리스트 조회 성공 테스트
 @pytest.mark.asyncio

@@ -1,4 +1,3 @@
-import json
 from uuid import UUID
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,13 +115,8 @@ async def update_ticket(
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
-    # body에서 전달된 필드만 업데이트
     for field, value in body.model_dump(exclude_unset=True).items():
-        # concert_photo_urls는 DB에 JSON 문자열로 저장
-        if field == "concert_photo_urls":
-            setattr(ticket, field, json.dumps(value) if value is not None else None)
-        else:
-            setattr(ticket, field, value)
+        setattr(ticket, field, value)
 
     await db.commit()
 
