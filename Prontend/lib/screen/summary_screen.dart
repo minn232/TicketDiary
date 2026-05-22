@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'widgets/diary_page_frame.dart';
-import 'widgets/diary_tabs.dart';
+import '../widgets/diary_page_frame.dart';
+import '../widgets/diary_tabs.dart';
 
 class SummaryScreen extends StatelessWidget {
   const SummaryScreen({super.key});
@@ -11,6 +11,7 @@ class SummaryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
+      isTabRoot: true,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.summary),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
@@ -140,11 +141,7 @@ class SummaryScreen extends StatelessWidget {
                   ),
 
                   /// 기간 태그(좌상단)
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: _PeriodTag(text: '기간'),
-                  ),
+                  Positioned(top: 6, left: 6, child: _PeriodTag(text: '기간')),
                 ],
               ),
             );
@@ -169,7 +166,10 @@ class _PeriodTag extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.45),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.35), width: 1.2),
+          border: Border.all(
+            color: Colors.black.withValues(alpha: 0.35),
+            width: 1.2,
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.10),
@@ -180,7 +180,11 @@ class _PeriodTag extends StatelessWidget {
         ),
         child: Text(
           text,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Colors.black87),
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: Colors.black87,
+          ),
         ),
       ),
     );
@@ -206,7 +210,8 @@ class _SummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = child ??
+    final content =
+        child ??
         Text(
           value ?? '',
           textAlign: center ? TextAlign.center : TextAlign.left,
@@ -241,7 +246,9 @@ class _SummaryCard extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
               child: Column(
-                crossAxisAlignment: center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+                crossAxisAlignment: center
+                    ? CrossAxisAlignment.center
+                    : CrossAxisAlignment.start,
                 children: [
                   Text(
                     title,
@@ -255,7 +262,9 @@ class _SummaryCard extends StatelessWidget {
                   const SizedBox(height: 10),
                   Expanded(
                     child: Align(
-                      alignment: center ? Alignment.center : Alignment.centerLeft,
+                      alignment: center
+                          ? Alignment.center
+                          : Alignment.centerLeft,
                       child: content,
                     ),
                   ),
@@ -331,11 +340,14 @@ class _ArtistList extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Text(
               '• $a',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.black87),
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
             ),
           ),
       ],
     );
   }
 }
-

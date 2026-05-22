@@ -131,77 +131,100 @@ class _TicketFlipCardState extends State<TicketFlipCard> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
-    Widget current = AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        // 진행도(0.0~1.0)
-        final t = _controller.value;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 앞/뒷면의 내부 패딩/레이아웃이 달라도 카드 외곽 크기는 동일해야 자연스럽습니다.
+        // 부모 제약이 유한할 때만(=대부분의 카드 UI) 앞/뒤를 같은 박스로 강제합니다.
+        final hasBox = constraints.hasBoundedWidth && constraints.hasBoundedHeight;
 
-        // 90도(0.5) 이전에는 앞면, 이후에는 뒷면을 보여줌
-        final showFront = t < 0.5;
+        Widget front = widget.front;
+        Widget back = widget.back;
+        if (hasBox) {
+          front = SizedBox(
+            width: constraints.maxWidth,
+            height: constraints.maxHeight,
+            child: front,
+          );
+          back = SizedBox(
+            width: constraints.maxWidth,
+            height: constraints.maxHeight,
+            child: back,
+          );
+        }
 
-        // 회전 각도: 0(0도) -> pi(180도)
-        final angle = t * math.pi;
+        Widget current = AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            // 진행도(0.0~1.0)
+            final t = _controller.value;
 
-        // 90도를 넘은 뒤에는 뒷면이 정방향으로 보이도록 180도 추가 회전
-        // (그냥 back을 보여주면 글씨가 좌우 반전되어 보이기 때문)
-        final child = showFront
-            ? widget.front
-            : Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.identity()..rotateY(math.pi),
-                child: widget.back,
-              );
+            // 90도(0.5) 이전에는 앞면, 이후에는 뒷면을 보여줌
+            final showFront = t < 0.5;
 
-        // 실제 3D 변환
-        // - setEntry(3, 2, perspective): 원근감 부여
-        // - rotateY(angle): 좌우 회전
-        // perspective 값을 낮추면 회전 중 "튀어나오는" 느낌이 줄고 안정적으로 보입니다.
-        final transform = Matrix4.identity()
-          ..setEntry(2, 2, widget.perspective)
-          ..rotateY(angle);
+            // 회전 각도: 0(0도) -> pi(180도)
+            final angle = t * math.pi;
 
-        return Transform(
-          alignment: Alignment.center,
-          transform: transform,
-          child: child,
+            // 90도를 넘은 뒤에는 뒷면이 정방향으로 보이도록 180도 추가 회전
+            // (그냥 back을 보여주면 글씨가 좌우 반전되어 보이기 때문)
+            final child = showFront
+                ? front
+                : Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.identity()..rotateY(math.pi),
+                    child: back,
+                  );
+
+            // 실제 3D 변환
+            // - setEntry(3, 2, perspective): 원근감 부여
+            // - rotateY(angle): 좌우 회전
+            // perspective 값을 낮추면 회전 중 "튀어나오는" 느낌이 줄고 안정적으로 보입니다.
+            final transform = Matrix4.identity()
+              ..setEntry(2, 2, widget.perspective)
+              ..rotateY(angle);
+
+            return Transform(
+              alignment: Alignment.center,
+              transform: transform,
+              child: child,
+            );
+          },
         );
+
+        if (widget.enabled) {
+          current = GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggle,
+            child: current,
+          );
+
+          if (kIsWeb ||
+              defaultTargetPlatform == TargetPlatform.macOS ||
+              defaultTargetPlatform == TargetPlatform.windows ||
+              defaultTargetPlatform == TargetPlatform.linux) {
+            current = MouseRegion(cursor: SystemMouseCursors.click, child: current);
+          }
+        }
+
+        if (widget.clipBehavior != Clip.none) {
+          // 회전(Transform)은 레이아웃 크기를 바꾸지 않지만, 그려지는 영역은 커질 수 있습니다.
+          // 따라서 clip을 켜두면 다른 위젯 위로 그려져 "움직임이 커 보이는" 문제를 줄일 수 있습니다.
+          if (widget.borderRadius != null) {
+            current = ClipRRect(
+              borderRadius: widget.borderRadius!,
+              clipBehavior: widget.clipBehavior,
+              child: current,
+            );
+          } else {
+            current = ClipRect(
+              clipBehavior: widget.clipBehavior,
+              child: current,
+            );
+          }
+        }
+
+        return current;
       },
     );
-
-    if (widget.enabled) {
-      current = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _toggle,
-        child: current,
-      );
-
-      if (kIsWeb ||
-          defaultTargetPlatform == TargetPlatform.macOS ||
-          defaultTargetPlatform == TargetPlatform.windows ||
-          defaultTargetPlatform == TargetPlatform.linux) {
-        current = MouseRegion(cursor: SystemMouseCursors.click, child: current);
-      }
-    }
-
-    if (widget.clipBehavior != Clip.none) {
-      // 회전(Transform)은 레이아웃 크기를 바꾸지 않지만, 그려지는 영역은 커질 수 있습니다.
-      // 따라서 clip을 켜두면 다른 위젯 위로 그려져 "움직임이 커 보이는" 문제를 줄일 수 있습니다.
-      if (widget.borderRadius != null) {
-        current = ClipRRect(
-          borderRadius: widget.borderRadius!,
-          clipBehavior: widget.clipBehavior,
-          child: current,
-        );
-      } else {
-        current = ClipRect(
-          clipBehavior: widget.clipBehavior,
-          child: current,
-        );
-      }
-    }
-
-    return current;
   }
 }
 

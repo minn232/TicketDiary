@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'favorite_pinned_settings_screen.dart';
-import 'widgets/diary_page_frame.dart';
-import 'widgets/diary_tabs.dart';
-import 'widgets/pressable_scale.dart';
+import '../widgets/diary_page_frame.dart';
+import '../widgets/diary_tabs.dart';
+import '../widgets/pressable_scale.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
+      isTabRoot: true,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
@@ -34,7 +35,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.black.withValues(alpha: 0.12), width: 1.2),
+            border: Border.all(
+              color: Colors.black.withValues(alpha: 0.12),
+              width: 1.2,
+            ),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
@@ -60,7 +64,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _SwitchRow(
                         title: '예상 셋리 노출 여부',
                         value: showExpectedSetlist,
-                        onChanged: (v) => setState(() => showExpectedSetlist = v),
+                        onChanged: (v) =>
+                            setState(() => showExpectedSetlist = v),
                       ),
                       _divider,
 
@@ -71,10 +76,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           highlightColor: Colors.transparent,
                         ),
                         child: ExpansionTile(
-                          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+                          tilePadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                          ),
                           childrenPadding: EdgeInsets.zero,
                           initiallyExpanded: pushExpanded,
-                          onExpansionChanged: (v) => setState(() => pushExpanded = v),
+                          onExpansionChanged: (v) =>
+                              setState(() => pushExpanded = v),
                           title: const Text(
                             '푸쉬 알림',
                             style: TextStyle(
@@ -84,7 +92,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           trailing: Icon(
-                            pushExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
+                            pushExpanded
+                                ? Icons.keyboard_arrow_down
+                                : Icons.keyboard_arrow_right,
                             color: Colors.black.withValues(alpha: 0.55),
                           ),
                           children: [
@@ -92,31 +102,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _SwitchRow(
                               title: '하루전 알림',
                               value: pushDayBefore,
-                              onChanged: (v) => setState(() => pushDayBefore = v),
+                              onChanged: (v) =>
+                                  setState(() => pushDayBefore = v),
                             ),
                             _divider,
                             _SwitchRow(
                               title: '당일날 알림',
                               value: pushOnTheDay,
-                              onChanged: (v) => setState(() => pushOnTheDay = v),
+                              onChanged: (v) =>
+                                  setState(() => pushOnTheDay = v),
                             ),
                             _divider,
                             _SwitchRow(
                               title: '티켓배송일 알림',
                               value: pushTicketDelivery,
-                              onChanged: (v) => setState(() => pushTicketDelivery = v),
+                              onChanged: (v) =>
+                                  setState(() => pushTicketDelivery = v),
                             ),
                             _divider,
                             _SwitchRow(
                               title: '선호 아티스트 공연 알림',
                               value: pushFavArtistConcert,
-                              onChanged: (v) => setState(() => pushFavArtistConcert = v),
+                              onChanged: (v) =>
+                                  setState(() => pushFavArtistConcert = v),
                             ),
                             _divider,
                             _SwitchRow(
                               title: '찜 공연 알림',
                               value: pushPinnedConcert,
-                              onChanged: (v) => setState(() => pushPinnedConcert = v),
+                              onChanged: (v) =>
+                                  setState(() => pushPinnedConcert = v),
                             ),
                           ],
                         ),
@@ -129,8 +144,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              settings: const RouteSettings(name: DiaryRoutes.favoritePinned),
-                              builder: (context) => const FavoritePinnedSettingsScreen(),
+                              settings: const RouteSettings(
+                                name: DiaryRoutes.favoritePinned,
+                              ),
+                              builder: (context) =>
+                                  const FavoritePinnedSettingsScreen(),
                             ),
                           );
                         },
@@ -225,7 +243,10 @@ class _MenuRow extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(Icons.chevron_right, color: Colors.black.withValues(alpha: 0.45)),
+              Icon(
+                Icons.chevron_right,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
             ],
           ),
         ),
@@ -233,4 +254,3 @@ class _MenuRow extends StatelessWidget {
     );
   }
 }
-

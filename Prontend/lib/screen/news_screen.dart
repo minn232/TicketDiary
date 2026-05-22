@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:ticketdiary/widgets/diary_page_frame.dart';
+import 'package:ticketdiary/widgets/diary_tabs.dart';
 
-import 'widgets/diary_page_frame.dart';
-import 'widgets/diary_tabs.dart';
-
-class NewsScreen extends StatelessWidget {
+class NewsScreen extends StatefulWidget {
   const NewsScreen({super.key});
+
+  @override
+  State<NewsScreen> createState() => _NewsScreenState();
 
   static const _items = <_NewsItemData>[
     _NewsItemData(concert: 'Concert', artist: 'Artist'),
@@ -12,58 +14,68 @@ class NewsScreen extends StatelessWidget {
     _NewsItemData(concert: 'Concert', artist: 'Artist'),
     _NewsItemData(concert: 'Concert', artist: 'Artist'),
   ];
+}
+
+class _NewsScreenState extends State<NewsScreen> {
+  static const Color _paperColor = Color(0xFFF4F1E1);
 
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
+      isTabRoot: true,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.news),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            const crossAxisCount = 2;
-            const spacing = 16.0;
-            final isExactly2x2 = _items.length == 4;
-
-            final gridDelegate = isExactly2x2
-                ? SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: spacing,
-                    mainAxisSpacing: spacing,
-                    // 2행이 화면 높이를 꽉 채우도록 아이템 높이를 직접 계산
-                    mainAxisExtent: (constraints.maxHeight - spacing) / 2,
-                  )
-                : const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: spacing,
-                    mainAxisSpacing: spacing,
-                    childAspectRatio: 0.80,
-                  );
-
-            return GridView.builder(
-              padding: EdgeInsets.zero,
-              physics: isExactly2x2 ? const NeverScrollableScrollPhysics() : null,
-              gridDelegate: gridDelegate,
-              itemCount: _items.length,
-              itemBuilder: (context, index) {
-                final item = _items[index];
-                final angle = switch (index % 4) {
-                  0 => -0.015,
-                  1 => 0.012,
-                  2 => 0.010,
-                  _ => -0.012,
-                };
-
-                return _PolaroidCard(
-                  concert: item.concert,
-                  artist: item.artist,
-                  angle: angle,
-                );
-              },
-            );
-          },
+      child: ColoredBox(
+        color: _paperColor,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
+          child: LayoutBuilder(
+            builder: (context, constraints) => _buildGrid(constraints),
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _buildGrid(BoxConstraints constraints) {
+    const crossAxisCount = 2;
+    const spacing = 16.0;
+    final isExactly2x2 = NewsScreen._items.length == 4;
+
+    final gridDelegate = isExactly2x2
+        ? SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+            // 2행이 화면 높이를 꽉 채우도록 아이템 높이를 직접 계산
+            mainAxisExtent: (constraints.maxHeight - spacing) / 2,
+          )
+        : const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+            childAspectRatio: 0.80,
+          );
+
+    return GridView.builder(
+      padding: EdgeInsets.zero,
+      physics: isExactly2x2 ? const NeverScrollableScrollPhysics() : null,
+      gridDelegate: gridDelegate,
+      itemCount: NewsScreen._items.length,
+      itemBuilder: (context, index) {
+        final item = NewsScreen._items[index];
+        final angle = switch (index % 4) {
+          0 => -0.015,
+          1 => 0.012,
+          2 => 0.010,
+          _ => -0.012,
+        };
+
+        return _PolaroidCard(
+          concert: item.concert,
+          artist: item.artist,
+          angle: angle,
+        );
+      },
     );
   }
 }
@@ -97,7 +109,10 @@ class _PolaroidCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFFFAFAFA),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.18), width: 1.2),
+          border: Border.all(
+            color: Colors.black.withValues(alpha: 0.18),
+            width: 1.2,
+          ),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.14),
@@ -130,10 +145,17 @@ class _PolaroidCard extends StatelessWidget {
                   child: Container(
                     decoration: BoxDecoration(
                       color: Colors.grey.withValues(alpha: 0.12),
-                      border: Border.all(color: Colors.black.withValues(alpha: 0.12), width: 1.2),
+                      border: Border.all(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        width: 1.2,
+                      ),
                     ),
                     child: Center(
-                      child: Icon(Icons.image_outlined, color: Colors.black.withValues(alpha: 0.35), size: 36),
+                      child: Icon(
+                        Icons.image_outlined,
+                        color: Colors.black.withValues(alpha: 0.35),
+                        size: 36,
+                      ),
                     ),
                   ),
                 ),
@@ -155,4 +177,3 @@ class _PolaroidCard extends StatelessWidget {
     );
   }
 }
-

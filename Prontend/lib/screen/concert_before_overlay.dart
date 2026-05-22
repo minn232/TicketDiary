@@ -2,7 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
-import 'widgets/concert_before_page_contents.dart';
+import '../widgets/concert_before_page_contents.dart';
 
 /// 다이어리 화면 위에 "공연 전" 상세를 오버레이로 띄우는 위젯.
 ///
@@ -44,8 +44,8 @@ class ConcertBeforeOverlay extends StatefulWidget {
       context: context,
       barrierDismissible: false, // 반드시 우리 로직(페이지 밖 탭)으로만 닫히도록
       barrierLabel: 'concert_before_overlay',
-      barrierColor: Colors
-          .transparent, // 다이어리 화면이 비치도록 투명. 실제 dim은 내부에서 애니메이션으로 구현
+      barrierColor:
+          Colors.transparent, // 다이어리 화면이 비치도록 투명. 실제 dim은 내부에서 애니메이션으로 구현
       pageBuilder: (context, animation, secondaryAnimation) {
         return ConcertBeforeOverlay(
           startRect: startRect,
@@ -167,74 +167,78 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
         child: AnimatedBuilder(
           animation: _controller,
           builder: (context, _) {
-          final t = _t.value;
-          final rect = _getRectForT(screenSize, t);
-          final radius = _getRadiusForT(t);
+            final t = _t.value;
+            final rect = _getRectForT(screenSize, t);
+            final radius = _getRadiusForT(t);
 
-          // 다이어리 화면 dim(불투명하게)
-          // - 확장 초반에는 더 약하게, 확장 후반에는 더 강하게
-              // 요청: 바깥 여백은 다이어리 화면을 80% 불투명(강하게 dim)
-              final dimOpacity = lerpDouble(0.0, 0.80, t)!;
+            // 다이어리 화면 dim(불투명하게)
+            // - 확장 초반에는 더 약하게, 확장 후반에는 더 강하게
+            // 요청: 바깥 여백은 다이어리 화면을 80% 불투명(강하게 dim)
+            final dimOpacity = lerpDouble(0.0, 0.80, t)!;
 
-          // 축소 티켓 -> 확장 콘텐츠로 자연스럽게 전환
-          final expandedOpacity = Curves.easeIn.transform(((t - 0.20) / 0.80).clamp(0.0, 1.0));
-          final collapsedOpacity = 1.0 - expandedOpacity;
+            // 축소 티켓 -> 확장 콘텐츠로 자연스럽게 전환
+            final expandedOpacity = Curves.easeIn.transform(
+              ((t - 0.20) / 0.80).clamp(0.0, 1.0),
+            );
+            final collapsedOpacity = 1.0 - expandedOpacity;
 
-          return Stack(
-            children: [
-              // 아래: 다이어리 화면을 어둡게(불투명하게) 만드는 레이어
-              Positioned.fill(
-                child: IgnorePointer(
-                  // 요청: 다이어리 화면을 "검정"이 아니라 "하얀색"으로 불투명하게(화이트 헤이즈)
-                  child: Container(color: Colors.white.withValues(alpha: dimOpacity)),
-                ),
-              ),
-
-              // 확장되는 티켓(시작Rect -> 화면 전체)
-              Positioned.fromRect(
-                rect: rect,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(radius),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(
-                    children: [
-                      // (1) 축소 상태에서 보이던 티켓 UI
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: Opacity(
-                            opacity: collapsedOpacity,
-                            child: widget.collapsedTicket,
-                          ),
-                        ),
-                      ),
-
-                      // (2) 확장 상태의 공연 전 화면(포스터 배경 + 메인 페이지 + 포스트잇)
-                      Positioned.fill(
-                        child: Opacity(
-                          opacity: expandedOpacity,
-                          child: _ExpandedConcertBefore(
-                            pageKey: _pageKey,
-                            postItOpacity: _postItOpacity,
-                            concertTitle: widget.concertTitle,
-                          ),
-                        ),
-                      ),
-                    ],
+            return Stack(
+              children: [
+                // 아래: 다이어리 화면을 어둡게(불투명하게) 만드는 레이어
+                Positioned.fill(
+                  child: IgnorePointer(
+                    // 요청: 다이어리 화면을 "검정"이 아니라 "하얀색"으로 불투명하게(화이트 헤이즈)
+                    child: Container(
+                      color: Colors.white.withValues(alpha: dimOpacity),
+                    ),
                   ),
                 ),
-              ),
 
-              // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘)
-              // - 최상단에 둬야, 확장된 티켓(전체 화면)을 덮고 있어도 탭을 확실히 받을 수 있습니다.
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onTapDown: _onBackgroundTap,
-                  child: const SizedBox.expand(),
+                // 확장되는 티켓(시작Rect -> 화면 전체)
+                Positioned.fromRect(
+                  rect: rect,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(radius),
+                    clipBehavior: Clip.antiAlias,
+                    child: Stack(
+                      children: [
+                        // (1) 축소 상태에서 보이던 티켓 UI
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Opacity(
+                              opacity: collapsedOpacity,
+                              child: widget.collapsedTicket,
+                            ),
+                          ),
+                        ),
+
+                        // (2) 확장 상태의 공연 전 화면(포스터 배경 + 메인 페이지 + 포스트잇)
+                        Positioned.fill(
+                          child: Opacity(
+                            opacity: expandedOpacity,
+                            child: _ExpandedConcertBefore(
+                              pageKey: _pageKey,
+                              postItOpacity: _postItOpacity,
+                              concertTitle: widget.concertTitle,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ],
-          );
+
+                // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘)
+                // - 최상단에 둬야, 확장된 티켓(전체 화면)을 덮고 있어도 탭을 확실히 받을 수 있습니다.
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapDown: _onBackgroundTap,
+                    child: const SizedBox.expand(),
+                  ),
+                ),
+              ],
+            );
           },
         ),
       ),
@@ -280,7 +284,10 @@ class _ExpandedConcertBefore extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.92),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.black.withValues(alpha: 0.10), width: 1.5),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.10),
+                      width: 1.5,
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.18),
@@ -289,22 +296,21 @@ class _ExpandedConcertBefore extends StatelessWidget {
                       ),
                     ],
                   ),
-                         child: Padding(
-                         padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-                         child: ConcertBeforePageContents(
-                           concertTitle: concertTitle,
-                           postItOpacity: postItOpacity,
-                         ),
-                         ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+                    child: ConcertBeforePageContents(
+                      concertTitle: concertTitle,
+                      postItOpacity: postItOpacity,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         ),
-        ),
       ],
     );
   }
-
 }
 
 class _PosterBackground extends StatelessWidget {
@@ -317,10 +323,7 @@ class _PosterBackground extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            const Color(0xFF1F1C2C),
-            const Color(0xFF928DAB),
-          ],
+          colors: [const Color(0xFF1F1C2C), const Color(0xFF928DAB)],
         ),
       ),
       child: Center(
@@ -338,6 +341,3 @@ class _PosterBackground extends StatelessWidget {
     );
   }
 }
-
-
-

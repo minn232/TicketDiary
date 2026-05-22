@@ -1,15 +1,12 @@
 import 'package:flutter/material.dart';
-import 'widgets/diary_page_frame.dart';
-import 'widgets/diary_tabs.dart';
+import '../widgets/diary_page_frame.dart';
+import '../widgets/diary_tabs.dart';
 
 /// 공연 후 상세 페이지(스크린샷의 2x2 그리드 레이아웃)
 class ConcertAfterScreen extends StatelessWidget {
   final String concertTitle;
 
-  const ConcertAfterScreen({
-    super.key,
-    required this.concertTitle,
-  });
+  const ConcertAfterScreen({super.key, required this.concertTitle});
 
   @override
   Widget build(BuildContext context) {
@@ -173,4 +170,3 @@ class _PostItCornerClipper extends CustomClipper<Path> {
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
-

@@ -27,7 +27,15 @@ List<DiarySideTabSpec> buildDiarySideTabs(
   required DiaryTab? active,
 }) {
   void go(String routeName) {
-    Navigator.pushNamedAndRemoveUntil(context, routeName, (route) => false);
+    // NOTE:
+    // 기존 구현(pushNamedAndRemoveUntil(..., (route) => false))은
+    // 스택을 완전히 비운 뒤 새 라우트를 push하기 때문에,
+    // 새 라우트가 '첫 라우트(isFirst)'가 되어 pageTransitions 애니메이션이
+    // 항상 완료(1.0) 상태로 시작 -> 전환이 눈에 보이지 않는 문제가 있습니다.
+    //
+    // 아래처럼 최소 1개의 라우트를 남겨두면(= 첫 라우트 유지),
+    // 새 라우트가 isFirst가 아니게 되어 전환 애니메이션이 정상적으로 재생됩니다.
+    Navigator.pushNamedAndRemoveUntil(context, routeName, (route) => route.isFirst);
   }
 
   DiarySideTabSpec spec({
@@ -41,6 +49,7 @@ List<DiarySideTabSpec> buildDiarySideTabs(
     return DiarySideTabSpec(
       right: right,
       top: top,
+      isActive: active != null && tab == active,
       onTap: (active != null && tab == active) ? null : () => go(routeName),
       child: DiaryIndexTab(color: color, text: text),
     );

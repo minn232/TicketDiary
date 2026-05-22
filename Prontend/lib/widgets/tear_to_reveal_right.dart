@@ -12,6 +12,12 @@ import 'package:flutter/material.dart';
 class TearToRevealRight extends StatefulWidget {
   final bool enabled;
 
+  /// 처음부터 '뜯긴 상태'로 시작할지 여부(앱 재실행 후 상태 복원용)
+  final bool initiallyTorn;
+
+  /// 뜯김이 확정(완료)되는 순간 호출되는 콜백(영구 저장용)
+  final VoidCallback? onTorn;
+
   /// 좌측(기념으로 남는) 본표 영역
   final Widget leftChild;
 
@@ -57,6 +63,8 @@ class TearToRevealRight extends StatefulWidget {
   const TearToRevealRight({
     super.key,
     required this.enabled,
+    this.initiallyTorn = false,
+    this.onTorn,
     required this.leftChild,
     required this.rightTearable,
     required this.rightRevealed,
@@ -91,9 +99,16 @@ class _TearToRevealRightState extends State<TearToRevealRight>
 
   bool _torn = false;
 
+  bool _tornNotified = false;
+
   @override
   void initState() {
     super.initState();
+
+    _torn = widget.initiallyTorn;
+    _progress = _torn ? 1.0 : 0.0;
+    _tornNotified = _torn;
+
     _controller = AnimationController(
       vsync: this,
       duration: widget.settleDuration,
@@ -101,13 +116,61 @@ class _TearToRevealRightState extends State<TearToRevealRight>
     _controller.addListener(() {
       final a = _anim;
       if (a == null) return;
+      if (!mounted) return;
       setState(() => _progress = a.value);
     });
     _controller.addStatusListener((status) {
       if (status == AnimationStatus.completed && _progress >= 0.999) {
-        setState(() => _torn = true);
+        if (!mounted) return;
+        if (!_torn) {
+          setState(() => _torn = true);
+        }
+
+        if (!_tornNotified) {
+          _tornNotified = true;
+          widget.onTorn?.call();
+        }
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant TearToRevealRight oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // 부모에서 settleDuration을 바꾸면 컨트롤러에도 반영
+    if (oldWidget.settleDuration != widget.settleDuration) {
+      _controller.duration = widget.settleDuration;
+    }
+
+    // 외부에서 '처음부터 뜯김' 상태가 뒤늦게 로드될 수 있으므로(SharedPreferences),
+    // initiallyTorn 변경을 내부 상태에 동기화합니다.
+    if (oldWidget.initiallyTorn != widget.initiallyTorn) {
+      if (widget.initiallyTorn) {
+        if (mounted) {
+          setState(() {
+            _torn = true;
+            _progress = 1.0;
+          });
+        } else {
+          _torn = true;
+          _progress = 1.0;
+        }
+        _tornNotified = true;
+      } else {
+        // 필요 시 리셋 가능한 구조로 유지(현재 UX에서는 사용하지 않지만 안전하게 처리)
+        if (mounted) {
+          setState(() {
+            _torn = false;
+            _progress = 0.0;
+          });
+        } else {
+          _torn = false;
+          _progress = 0.0;
+        }
+        _tornNotified = false;
+      }
+    }
   }
 
   @override
@@ -117,6 +180,7 @@ class _TearToRevealRightState extends State<TearToRevealRight>
   }
 
   void _animateTo(double target) {
+    if (!mounted) return;
     _controller.stop();
     _controller.reset();
     _anim = Tween<double>(begin: _progress, end: target).animate(
@@ -191,12 +255,12 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    SizedBox(
-                      width: leftW,
+                    Expanded(
+                      flex: widget.leftFlex,
                       child: widget.leftChild,
                     ),
-                    SizedBox(
-                      width: rightW,
+                    Expanded(
+                      flex: widget.rightFlex,
                       child: AbsorbPointer(
                         absorbing: !_torn,
                         child: widget.rightRevealed,
@@ -258,6 +322,9 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onVerticalDragStart: (_) {
+                      // 진행 중인 settle 애니메이션이 있으면 멈추고, 사용자의 드래그를 우선
+                      _controller.stop();
+
                       // 새 제스처 시작 시 진행 방향을 초기화
                       _swipeSign = 1;
                     },
@@ -271,13 +338,19 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                       if (details.delta.dy != 0) {
                         _swipeSign = details.delta.dy > 0 ? 1 : -1;
                       }
+                      final prev = _progress;
                       final next = (_progress +
                               (details.delta.dy.abs() / swipeDistance))
                           .clamp(0.0, 1.0);
-                      setState(() => _progress = next);
+
+                      if (!mounted) return;
+                      if (next != _progress) {
+                        setState(() => _progress = next);
+                      }
 
                       // 충분히 긁으면 손을 떼기 전이라도 뜯김 확정 애니메이션으로 전환
-                      if (_progress >= 1.0) {
+                      // (이미 1.0에 도달한 상태에서 반복적으로 reset/forward 되며 튀는 현상 방지)
+                      if (prev < 1.0 && next >= 1.0) {
                         _animateTo(1.0);
                       }
                     },

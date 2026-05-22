@@ -1,22 +1,34 @@
 import 'package:flutter/material.dart';
 
-import 'widgets/diary_page_frame.dart';
-import 'widgets/diary_tabs.dart';
+import 'package:ticketdiary/widgets/diary_page_frame.dart';
+import 'package:ticketdiary/widgets/diary_tabs.dart';
 
 /// 설정 > 선호 아티스트 / 찜 공연 설정 화면
 class FavoritePinnedSettingsScreen extends StatefulWidget {
   const FavoritePinnedSettingsScreen({super.key});
 
   @override
-  State<FavoritePinnedSettingsScreen> createState() => _FavoritePinnedSettingsScreenState();
+  State<FavoritePinnedSettingsScreen> createState() =>
+      _FavoritePinnedSettingsScreenState();
 }
 
-class _FavoritePinnedSettingsScreenState extends State<FavoritePinnedSettingsScreen> {
+class _FavoritePinnedSettingsScreenState
+    extends State<FavoritePinnedSettingsScreen> {
   String? selectedArtist;
   String? selectedConcert;
 
-  static const _artistOptions = <String>['Artist', 'Artist A', 'Artist B', 'Artist C'];
-  static const _concertOptions = <String>['Concert', 'Concert A', 'Concert B', 'Concert C'];
+  static const _artistOptions = <String>[
+    'Artist',
+    'Artist A',
+    'Artist B',
+    'Artist C',
+  ];
+  static const _concertOptions = <String>[
+    'Concert',
+    'Concert A',
+    'Concert B',
+    'Concert C',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +40,10 @@ class _FavoritePinnedSettingsScreenState extends State<FavoritePinnedSettingsScr
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.black.withValues(alpha: 0.12), width: 1.2),
+            border: Border.all(
+              color: Colors.black.withValues(alpha: 0.12),
+              width: 1.2,
+            ),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
@@ -66,7 +81,9 @@ class _FavoritePinnedSettingsScreenState extends State<FavoritePinnedSettingsScr
                           onChanged: (v) => setState(() => selectedConcert = v),
                         ),
                         const SizedBox(height: 14),
-                        const _ThumbRow(labels: ['Concert', 'Concert', 'Concert']),
+                        const _ThumbRow(
+                          labels: ['Concert', 'Concert', 'Concert'],
+                        ),
                       ],
                     ),
                   ),
@@ -100,7 +117,11 @@ class _TopBar extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Colors.black87),
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Colors.black87,
+              ),
             ),
           ),
         ],
@@ -147,7 +168,10 @@ class _DropdownField<T> extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.22), width: 1.3),
+        border: Border.all(
+          color: Colors.black.withValues(alpha: 0.22),
+          width: 1.3,
+        ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: DropdownButtonHideUnderline(
@@ -162,14 +186,21 @@ class _DropdownField<T> extends StatelessWidget {
               color: Colors.black.withValues(alpha: 0.25),
             ),
           ),
-          icon: Icon(Icons.keyboard_arrow_down, color: Colors.black.withValues(alpha: 0.45)),
+          icon: Icon(
+            Icons.keyboard_arrow_down,
+            color: Colors.black.withValues(alpha: 0.45),
+          ),
           items: items
               .map(
                 (e) => DropdownMenuItem<T>(
                   value: e,
                   child: Text(
                     e.toString(),
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: Colors.black87),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.black87,
+                    ),
                   ),
                 ),
               )
@@ -215,7 +246,10 @@ class _ThumbCard extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.25),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.black.withValues(alpha: 0.20), width: 1.2),
+              border: Border.all(
+                color: Colors.black.withValues(alpha: 0.20),
+                width: 1.2,
+              ),
             ),
           ),
         ),
@@ -232,4 +266,3 @@ class _ThumbCard extends StatelessWidget {
     );
   }
 }
-
