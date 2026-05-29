@@ -1,7 +1,9 @@
 import uuid
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 from conftest import _get_token, kopis_mock
 
@@ -170,7 +172,7 @@ async def test_search_concert_not_found_404():
 # 아티스트 정보 없는 공연 검색 시 400 테스트
 @pytest.mark.asyncio
 async def test_search_no_artist_400():
-    # artist 없이 공연 생성 → artist_name = []
+    # artist 없이 공연 생성 -> artist_name = []
     concert_id = await _create_concert("PF_SL_NO_ARTIST", artist="")
     token = await _get_token()
 

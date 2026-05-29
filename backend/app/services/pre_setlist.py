@@ -1,9 +1,11 @@
 import json
 from collections import Counter
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.concert import Concert
 from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry

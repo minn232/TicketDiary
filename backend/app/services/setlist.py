@@ -1,10 +1,12 @@
 import json
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
 from fastapi import HTTPException
-from app.models.setlist import RealSetlist
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.concert import Concert
+from app.models.setlist import RealSetlist
 from app.schemas.setlist import SongEntry
 from app.services.setlistfm import search_setlists, get_setlist_by_id, extract_songs
 

@@ -1,6 +1,8 @@
 import uuid
+
 import pytest
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 from conftest import _get_token, kopis_mock
 
@@ -158,7 +160,7 @@ async def test_list_tickets_sorting():
         ticket_far_id = res_far.json()["id"]
         ticket_past_id = res_past.json()["id"]
 
-        # far → BEFORE_CONCERT, past → AFTER_CONCERT 으로 상태 변경
+        # far -> BEFORE_CONCERT, past -> AFTER_CONCERT 으로 상태 변경
         await ac.patch(f"/api/v1/tickets/{ticket_far_id}", json={"status": "before_concert"}, headers=headers)
         await ac.patch(f"/api/v1/tickets/{ticket_past_id}", json={"status": "after_concert"}, headers=headers)
 

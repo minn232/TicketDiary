@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 from app.services.ocr import _extract_raw_text, _parse_ticket_fields
 from conftest import kopis_mock

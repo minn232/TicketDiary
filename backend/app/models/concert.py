@@ -1,8 +1,10 @@
 import uuid
 import enum
+
 from sqlalchemy import Column, String, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
 
 

@@ -1,6 +1,8 @@
 import uuid
+
 import pytest
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 from conftest import _get_token, kopis_mock
 

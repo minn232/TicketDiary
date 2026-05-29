@@ -1,7 +1,9 @@
 import asyncio
-import httpx
 from datetime import date
+
+import httpx
 from fastapi import HTTPException
+
 from app.core.config import settings
 
 _HEADERS = {

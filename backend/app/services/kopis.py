@@ -1,10 +1,12 @@
 import re
-import httpx
 from datetime import datetime, date, timedelta, timezone
 from xml.etree import ElementTree as ET
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
+import httpx
 from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
 from app.models.concert import Concert
 
@@ -23,12 +25,12 @@ def _classify_event_type(name: str) -> str:
     return "SOLO"
 
 
-# 공연 기간 파싱 ("YYYY.MM.DD" → datetime)
+# 공연 기간 파싱 ("YYYY.MM.DD" -> datetime)
 def _parse_date(s: str) -> datetime:
     return datetime.strptime(s.strip(), _DATE_FMT).replace(tzinfo=timezone.utc)
 
 
-# 가격 파싱 ("VIP석 150,000원, R석 110,000원" → [{"seat_type": "VIP석", "price": 150000}])
+# 가격 파싱 ("VIP석 150,000원, R석 110,000원" -> [{"seat_type": "VIP석", "price": 150000}])
 def _parse_price(text: str) -> list[dict] | None:
     prices = []
     for match in re.finditer(r"([^\s,]+)\s+([\d,]+)원", text):
@@ -39,7 +41,7 @@ def _parse_price(text: str) -> list[dict] | None:
     return prices or None
 
 
-# 아티스트 파싱 ("연출: A, 출연: B, C" → ["B", "C"])
+# 아티스트 파싱 ("연출: A, 출연: B, C" -> ["B", "C"])
 def _parse_artists(prfcrew: str) -> list[str]:
     match = re.search(r"출연\s*:\s*(.+)", prfcrew)
     raw = match.group(1) if match else prfcrew

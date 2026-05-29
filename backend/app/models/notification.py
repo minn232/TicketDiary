@@ -1,7 +1,9 @@
 ﻿import uuid
 import enum
+
 from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
+
 from app.core.database import Base
 
 
@@ -22,4 +24,5 @@ class Notification(Base):
     title = Column(String, nullable=False)
     body = Column(String, nullable=False)
     is_sent = Column(Boolean, default=False)
+    is_read = Column(Boolean, default=False)
     scheduled_at = Column(DateTime(timezone=True), nullable=False)

@@ -1,11 +1,13 @@
 import hashlib
-import httpx
 from uuid import UUID
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
+import httpx
 from fastapi import HTTPException
-from app.models.user import User, UserRole
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.config import settings
+from app.models.user import User, UserRole
 
 _KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 _KAKAO_USER_INFO_URL = "https://kapi.kakao.com/v2/user/me"

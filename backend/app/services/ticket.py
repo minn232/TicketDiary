@@ -1,12 +1,25 @@
 from uuid import UUID
-from datetime import datetime, timezone
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from datetime import datetime, timezone, timedelta
+
 from fastapi import HTTPException
-from app.models.ticket import Ticket, TicketStatus
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from app.models.concert import Concert
+from app.models.notification import Notification, NotificationType
+from app.models.ticket import Ticket, TicketStatus
 from app.schemas.ticket import TicketCreate, TicketUpdate
+
+KST = timezone(timedelta(hours=9))
+
+
+# KST 기준 해당 날짜 오전 9시 UTC 반환
+def _at_9am_kst(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=KST)
+    d = dt.astimezone(KST).replace(hour=9, minute=0, second=0, microsecond=0)
+    return d.astimezone(timezone.utc)
 
 
 # concert_id로 공연 조회
@@ -56,7 +69,9 @@ async def create_ticket(db: AsyncSession, user_id: UUID, body: TicketCreate) -> 
     result = await db.execute(
         select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.concert))
     )
-    return result.scalar_one()
+    ticket = result.scalar_one()
+    await schedule_ticket_notifications(db, ticket)
+    return ticket
 
 
 # 내 티켓 목록 조회 (공연전 티켓 먼저, 공연일 기준 현재와 가까운 순)
@@ -124,7 +139,9 @@ async def update_ticket(
     result = await db.execute(
         select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.concert))
     )
-    return result.scalar_one()
+    ticket = result.scalar_one()
+    await schedule_ticket_notifications(db, ticket)
+    return ticket
 
 
 # 티켓 삭제
@@ -136,10 +153,66 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
+    await db.execute(delete(Notification).where(Notification.ticket_id == ticket_id))
     await db.delete(ticket)
     await db.commit()
 
 
-# 티켓 알림 스케줄 등록 추후 구현
+# 티켓 알림 스케줄 등록 (기존 미발송 알림 초기화 후 재등록)
 async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket) -> None:
-    pass
+    concert = ticket.concert
+    if concert is None:
+        return
+
+    # 기존 미발송 알림 제거 후 재생성
+    await db.execute(
+        delete(Notification).where(
+            Notification.ticket_id == ticket.id,
+            Notification.is_sent == False,  # noqa: E712
+        )
+    )
+
+    now = datetime.now(timezone.utc)
+    to_add: list[Notification] = []
+
+    # 배송 예정일 알림 (배송일 오전 9시)
+    if ticket.delivery_date is not None:
+        scheduled = _at_9am_kst(ticket.delivery_date)
+        if scheduled > now:
+            to_add.append(Notification(
+                user_id=ticket.user_id,
+                ticket_id=ticket.id,
+                type=NotificationType.DELIVERY_DAY,
+                title=concert.name,
+                body="티켓 배송 예정일이에요.",
+                scheduled_at=scheduled,
+            ))
+
+    # 공연 하루 전 알림 (공연일 오전 9시)
+    day_before = _at_9am_kst(concert.start_date - timedelta(days=1))
+    if day_before > now:
+        to_add.append(Notification(
+            user_id=ticket.user_id,
+            ticket_id=ticket.id,
+            type=NotificationType.DAY_BEFORE,
+            title=concert.name,
+            body="내일 공연이에요.",
+            scheduled_at=day_before,
+        ))
+
+    # 공연 당일 알림 (공연일 오전 9시)
+    concert_day = _at_9am_kst(concert.start_date)
+    if concert_day > now:
+        to_add.append(Notification(
+            user_id=ticket.user_id,
+            ticket_id=ticket.id,
+            type=NotificationType.CONCERT_DAY,
+            title=concert.name,
+            body="오늘 공연 날이에요.",
+            scheduled_at=concert_day,
+        ))
+
+    for notif in to_add:
+        db.add(notif)
+
+    await db.commit()

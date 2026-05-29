@@ -1,10 +1,12 @@
 import asyncio
 import sys
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 
 # Windows에서 asyncio 에러 방지
@@ -12,9 +14,14 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
+# 테스트마다 DB 연결 풀 초기화
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_db_pool():
+    # 테스트 전
+
     yield
+
+    # 테스트 후 DB 연결 풀 종료
     from app.core.database import engine
     await engine.dispose()
 

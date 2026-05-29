@@ -1,7 +1,9 @@
-import pytest
 from datetime import date, timedelta, datetime, timezone
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 from app.services.summary import _is_standing, _period_start
 from conftest import _get_token, kopis_mock
@@ -115,21 +117,21 @@ def test_is_standing_none_returns_false():
 
 # _period_start 단위 테스트
 
-# 6m → 183일 전 datetime 반환 테스트
+# 6m -> 183일 전 datetime 반환 테스트
 def test_period_start_6m():
     result = _period_start("6m")
     expected = datetime.now(timezone.utc) - timedelta(days=183)
     assert abs((result - expected).total_seconds()) < 5
 
 
-# 1y → 365일 전 datetime 반환 테스트
+# 1y -> 365일 전 datetime 반환 테스트
 def test_period_start_1y():
     result = _period_start("1y")
     expected = datetime.now(timezone.utc) - timedelta(days=365)
     assert abs((result - expected).total_seconds()) < 5
 
 
-# all → None 반환 테스트
+# all -> None 반환 테스트
 def test_period_start_all_returns_none():
     assert _period_start("all") is None
 
@@ -217,7 +219,7 @@ async def test_summary_standing_and_seated():
     await _create_attended_ticket(concert_id1, token, seat_type="스탠딩")
     await _create_attended_ticket(concert_id2, token, seat_type="GA")
     await _create_attended_ticket(concert_id3, token, seat_type="R석 3열")
-    await _create_attended_ticket(concert_id4, token)              # seat_type 없음 → 미집계
+    await _create_attended_ticket(concert_id4, token)              # seat_type 없음 -> 미집계
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})

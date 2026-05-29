@@ -1,14 +1,30 @@
-﻿from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.batch.scheduler import start_scheduler, stop_scheduler
 from app.core.config import settings
 from app.api.v1.router import api_router
 
+
+# 앱 시작/종료 시 스케줄러 실행 및 중지
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_scheduler()
+    yield
+    stop_scheduler()
+
+
+# DEBUG 모드일 때만 /docs 노출
 app = FastAPI(
     title="Ticket Diary API",
     version="0.1.0",
     docs_url="/docs" if settings.APP_DEBUG else None,
+    lifespan=lifespan,
 )
 
+# CORS 설정 (프론트 도메인 허용)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -17,9 +33,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# API 라우터 등록
 app.include_router(api_router, prefix="/api/v1")
 
 
+# 헬스 체크
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}

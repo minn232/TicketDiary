@@ -1,8 +1,10 @@
 import uuid
 import enum
-from sqlalchemy import Column, String, Enum as SAEnum
+
+from sqlalchemy import Column, String, Boolean, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
 
 
@@ -20,6 +22,7 @@ class User(Base):
     nickname = Column(String, nullable=True)
     profile_image_url = Column(String, nullable=True)
     role = Column(SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]), default=UserRole.KAKAO_USER)
+    fcm_token = Column(String, nullable=True)
     tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")
     artist_follow = relationship("ArtistFollow", backref="user", uselist=False, cascade="all, delete")
     concert_follow = relationship("ConcertFollow", backref="user", uselist=False, cascade="all, delete")

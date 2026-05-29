@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
+
 from app.main import app
 
 

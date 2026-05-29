@@ -37,3 +37,6 @@ firebase-credentials.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Scripts
+backend/scripts/
