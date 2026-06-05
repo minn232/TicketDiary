@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.models.concert import Concert
 from app.models.notification import Notification, NotificationType
 from app.models.ticket import Ticket, TicketStatus
+from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
 
 KST = timezone(timedelta(hours=9))
@@ -158,11 +159,28 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     await db.commit()
 
 
+# 유저 알림 설정에서 delivery/before_concert 활성화 여부 반환
+async def _get_notif_flags(db: AsyncSession, user_id: UUID) -> tuple[bool, bool]:
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        return True, True
+    settings = user.notification_settings
+    if isinstance(settings, str):
+        import json
+        settings = json.loads(settings)
+    if not isinstance(settings, dict):
+        return True, True
+    return settings.get("delivery", True), settings.get("before_concert", True)
+
+
 # 티켓 알림 스케줄 등록 (기존 미발송 알림 초기화 후 재등록)
 async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket) -> None:
     concert = ticket.concert
     if concert is None:
         return
+
+    delivery_on, before_concert_on = await _get_notif_flags(db, ticket.user_id)
 
     # 기존 미발송 알림 제거 후 재생성
     await db.execute(
@@ -175,8 +193,8 @@ async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket) -> Non
     now = datetime.now(timezone.utc)
     to_add: list[Notification] = []
 
-    # 배송 예정일 알림 (배송일 오전 9시)
-    if ticket.delivery_date is not None:
+    # 배송 예정일 알림 (delivery 설정 on, 배송일 오전 9시)
+    if delivery_on and ticket.delivery_date is not None:
         scheduled = _at_9am_kst(ticket.delivery_date)
         if scheduled > now:
             to_add.append(Notification(
@@ -188,29 +206,31 @@ async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket) -> Non
                 scheduled_at=scheduled,
             ))
 
-    # 공연 하루 전 알림 (공연일 오전 9시)
-    day_before = _at_9am_kst(concert.start_date - timedelta(days=1))
-    if day_before > now:
-        to_add.append(Notification(
-            user_id=ticket.user_id,
-            ticket_id=ticket.id,
-            type=NotificationType.DAY_BEFORE,
-            title=concert.name,
-            body="내일 공연이에요.",
-            scheduled_at=day_before,
-        ))
+    # 공연 하루 전 알림 (before_concert 설정 on, 공연 전날 오전 9시)
+    if before_concert_on:
+        day_before = _at_9am_kst(concert.start_date - timedelta(days=1))
+        if day_before > now:
+            to_add.append(Notification(
+                user_id=ticket.user_id,
+                ticket_id=ticket.id,
+                type=NotificationType.DAY_BEFORE,
+                title=concert.name,
+                body="내일 공연이에요.",
+                scheduled_at=day_before,
+            ))
 
-    # 공연 당일 알림 (공연일 오전 9시)
-    concert_day = _at_9am_kst(concert.start_date)
-    if concert_day > now:
-        to_add.append(Notification(
-            user_id=ticket.user_id,
-            ticket_id=ticket.id,
-            type=NotificationType.CONCERT_DAY,
-            title=concert.name,
-            body="오늘 공연 날이에요.",
-            scheduled_at=concert_day,
-        ))
+    # 공연 당일 알림 (before_concert 설정 on, 공연일 오전 9시)
+    if before_concert_on:
+        concert_day = _at_9am_kst(concert.start_date)
+        if concert_day > now:
+            to_add.append(Notification(
+                user_id=ticket.user_id,
+                ticket_id=ticket.id,
+                type=NotificationType.CONCERT_DAY,
+                title=concert.name,
+                body="오늘 공연 날이에요.",
+                scheduled_at=concert_day,
+            ))
 
     for notif in to_add:
         db.add(notif)

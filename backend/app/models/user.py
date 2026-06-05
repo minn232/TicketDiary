@@ -1,8 +1,8 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, Boolean, Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Boolean, Enum as SAEnum, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -23,6 +23,13 @@ class User(Base):
     profile_image_url = Column(String, nullable=True)
     role = Column(SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]), default=UserRole.KAKAO_USER)
     fcm_token = Column(String, nullable=True)
+    show_predicted_setlist = Column(Boolean, nullable=False, server_default=text("true"))
+    notification_settings = Column(
+        JSONB,
+        nullable=False,
+        server_default=text('\'{"delivery": true, "before_concert": true}\'::jsonb'),
+        default=lambda: {"delivery": True, "before_concert": True},
+    )
     tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")
     artist_follow = relationship("ArtistFollow", backref="user", uselist=False, cascade="all, delete")
     concert_follow = relationship("ConcertFollow", backref="user", uselist=False, cascade="all, delete")

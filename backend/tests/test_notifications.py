@@ -391,3 +391,100 @@ async def test_process_pending_notifications_skips_future_scheduled():
             await process_pending_notifications(db)
 
     assert not mock_send.called
+
+
+# notification_settings 반영 테스트
+
+# delivery=False 시 배송 알림 미생성 테스트
+@pytest.mark.asyncio
+async def test_delivery_notification_skipped_when_setting_off():
+    concert_id = await _create_concert("PF_NOTIF_DEL_OFF_001", _make_future_xml("PF_NOTIF_DEL_OFF_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"delivery": False, "before_concert": True}},
+            headers=headers,
+        )
+        await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "delivery_date": "2030-05-15"},
+            headers=headers,
+        )
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    types = {n["type"] for n in res.json()}
+    assert "delivery_day" not in types
+    assert "day_before" in types
+    assert "concert_day" in types
+
+
+# before_concert=False 시 공연 전/당일 알림 미생성 테스트
+@pytest.mark.asyncio
+async def test_before_concert_notification_skipped_when_setting_off():
+    concert_id = await _create_concert("PF_NOTIF_BEFORE_OFF_001", _make_future_xml("PF_NOTIF_BEFORE_OFF_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"delivery": True, "before_concert": False}},
+            headers=headers,
+        )
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert res.json() == []
+
+
+# 모든 알림 off 시 알림 미생성 테스트
+@pytest.mark.asyncio
+async def test_all_notifications_skipped_when_all_settings_off():
+    concert_id = await _create_concert("PF_NOTIF_ALL_OFF_001", _make_future_xml("PF_NOTIF_ALL_OFF_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"delivery": False, "before_concert": False}},
+            headers=headers,
+        )
+        await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "delivery_date": "2030-05-15"},
+            headers=headers,
+        )
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert res.json() == []
+
+
+# 설정 변경 후 티켓 수정 시 재스케줄 반영 테스트
+@pytest.mark.asyncio
+async def test_notification_reschedule_respects_updated_settings():
+    concert_id = await _create_concert("PF_NOTIF_RESCHED_001", _make_future_xml("PF_NOTIF_RESCHED_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+
+        # 알림 생성 확인
+        res_before = await ac.get("/api/v1/notifications", headers=headers)
+        assert len(res_before.json()) >= 2
+
+        # before_concert off로 변경 후 티켓 수정 (재스케줄 트리거)
+        await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"delivery": True, "before_concert": False}},
+            headers=headers,
+        )
+        await ac.patch(f"/api/v1/tickets/{ticket_id}", json={"seat_type": "VIP"}, headers=headers)
+        res_after = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert res_after.json() == []

@@ -224,3 +224,65 @@ async def test_get_pre_setlist_not_found_404():
         )
 
     assert response.status_code == 404
+
+
+# show_predicted_setlist 설정 비활성화 시 403 테스트
+
+# 조회 비활성화 403 테스트
+@pytest.mark.asyncio
+async def test_get_pre_setlist_forbidden_when_setting_off():
+    concert_id = await _create_concert("PF_PRE_SETTING_001")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    concerts_data = _make_artist_setlists([["노래A"]])
+    with _setlistfm_artist_mock(concerts_data):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/settings", json={"show_predicted_setlist": False}, headers=headers)
+        res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
+
+    assert res.status_code == 403
+
+
+# 생성 비활성화 403 테스트
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_forbidden_when_setting_off():
+    concert_id = await _create_concert("PF_PRE_SETTING_002")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/settings", json={"show_predicted_setlist": False}, headers=headers)
+
+    concerts_data = _make_artist_setlists([["노래A"]])
+    with _setlistfm_artist_mock(concerts_data):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers=headers,
+            )
+
+    assert res.status_code == 403
+
+
+# 설정 다시 활성화 시 정상 조회 테스트
+@pytest.mark.asyncio
+async def test_get_pre_setlist_accessible_when_setting_restored():
+    concert_id = await _create_concert("PF_PRE_SETTING_003")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    concerts_data = _make_artist_setlists([["노래A"]])
+    with _setlistfm_artist_mock(concerts_data):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/settings", json={"show_predicted_setlist": False}, headers=headers)
+        await ac.patch("/api/v1/settings", json={"show_predicted_setlist": True}, headers=headers)
+        res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
+
+    assert res.status_code == 200

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.concert import Concert
+from app.models.social import ArtistFollow, NewsFeed
 
 _DATE_FMT = "%Y.%m.%d"
 
@@ -135,6 +136,43 @@ async def search_concerts(
     return list(result.scalars().all())
 
 
+# concert.artist_name 기반으로 팔로우 유저들에게 뉴스피드 생성 (중복 제외)
+async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> None:
+    if not concert.artist_name:
+        return
+
+    result = await db.execute(select(ArtistFollow))
+    follows = result.scalars().all()
+    if not follows:
+        return
+
+    concert_artists_lower = {a.lower() for a in concert.artist_name}
+
+    for follow in follows:
+        matched_artist = next(
+            (
+                entry.get("artist_name")
+                for entry in (follow.artists or [])
+                if entry.get("artist_name", "").lower() in concert_artists_lower
+            ),
+            None,
+        )
+        if matched_artist is None:
+            continue
+
+        # 중복 방지
+        dup = await db.execute(
+            select(NewsFeed).where(
+                NewsFeed.user_id == follow.user_id,
+                NewsFeed.concert_id == concert.id,
+            )
+        )
+        if dup.scalar_one_or_none() is not None:
+            continue
+
+        db.add(NewsFeed(user_id=follow.user_id, concert_id=concert.id, artist_name=matched_artist))
+
+
 # KOPIS 공연 상세 조회 (kopis_id -> Concert + DB upsert)
 async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -173,6 +211,7 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
     }
 
     concert = await _upsert_concert(db, data)
+    await _create_news_feeds_for_concert(db, concert)
     await db.commit()
     await db.refresh(concert)
     return concert
