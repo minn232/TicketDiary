@@ -1,4 +1,3 @@
-import json
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -48,7 +47,7 @@ async def update_real_setlist(
     if real_setlist is None:
         raise HTTPException(status_code=404, detail="셋리스트를 찾을 수 없습니다.")
 
-    real_setlist.songs = json.dumps([s.model_dump() for s in songs], ensure_ascii=False)
+    real_setlist.songs = [s.model_dump() for s in songs]
     real_setlist.is_user_edited = True
     real_setlist.edited_user_nickname = nickname or "익명"
 
@@ -66,7 +65,6 @@ async def fetch_and_save_real_setlist(
     # Setlist.fm에서 가져와 곡 목록 파싱
     setlist_data = await get_setlist_by_id(setlistfm_id)
     songs = extract_songs(setlist_data)
-    songs_json = json.dumps(songs, ensure_ascii=False)
 
     # DB upsert
     result = await db.execute(select(RealSetlist).where(RealSetlist.concert_id == concert_id))
@@ -76,13 +74,13 @@ async def fetch_and_save_real_setlist(
         real_setlist = RealSetlist(
             concert_id=concert_id,
             setlistfm_id=setlistfm_id,
-            songs=songs_json,
+            songs=songs,
         )
         db.add(real_setlist)
     else:
         # 기존 셋리스트 덮어씀 (유저 편집 이력 초기화)
         real_setlist.setlistfm_id = setlistfm_id
-        real_setlist.songs = songs_json
+        real_setlist.songs = songs
         real_setlist.is_user_edited = False
         real_setlist.edited_user_nickname = None
 

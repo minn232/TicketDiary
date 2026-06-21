@@ -1,7 +1,7 @@
 ﻿import uuid
 
-from sqlalchemy import Column, String, ForeignKey, Text, Boolean, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, ForeignKey, Boolean, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -13,7 +13,7 @@ class RealSetlist(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id"), nullable=False, unique=True)
     setlistfm_id = Column(String, nullable=True)
-    songs = Column(Text, nullable=False)
+    songs = Column(JSONB, nullable=False)
     is_user_edited = Column(Boolean, nullable=False, server_default=text("false"))
     edited_user_nickname = Column(String, nullable=True)
 
@@ -26,7 +26,7 @@ class PreSetlist(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id"), nullable=False, unique=True)
     setlistfm_id = Column(String, nullable=True)
-    songs = Column(Text, nullable=False)
+    songs = Column(JSONB, nullable=False)
     is_user_edited = Column(Boolean, nullable=False, server_default=text("false"))
     edited_user_nickname = Column(String, nullable=True)
 

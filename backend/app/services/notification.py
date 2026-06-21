@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from uuid import UUID
 from datetime import datetime, timezone
@@ -105,8 +106,9 @@ async def process_pending_notifications(db: AsyncSession) -> None:
     rows = result.all()
 
     # 각 알림에 대해 FCM 발송 시도 -> 성공 시 is_sent=True
+    loop = asyncio.get_event_loop()
     for notif, fcm_token in rows:
-        success = _send_fcm(fcm_token, notif.title, notif.body)
+        success = await loop.run_in_executor(None, _send_fcm, fcm_token, notif.title, notif.body)
         if success:
             notif.is_sent = True
 

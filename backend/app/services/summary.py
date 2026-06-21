@@ -1,4 +1,3 @@
-import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -81,10 +80,8 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
     # 들은 음악 수 (실제 셋리스트 기준)
     song_count = 0
     for setlist in setlists:
-        try:
-            song_count += len(json.loads(setlist.songs))
-        except (json.JSONDecodeError, TypeError):
-            pass
+        if isinstance(setlist.songs, list):
+            song_count += len(setlist.songs)
 
     # 선호 장르 (가장 많이 관람한 장르)
     genre_counter: Counter = Counter()

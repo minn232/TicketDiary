@@ -2,7 +2,8 @@ from uuid import UUID
 from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select, delete
+from sqlalchemy import case, func, select, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -42,7 +43,7 @@ async def _get_concert_by_kopis_id(db: AsyncSession, kopis_id: str) -> Concert:
 
 
 # 티켓 등록
-async def create_ticket(db: AsyncSession, user_id: UUID, body: TicketCreate) -> Ticket:
+async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Ticket:
     if body.concert_id is not None:
         concert = await _get_concert_by_id(db, body.concert_id)
     else:
@@ -50,28 +51,32 @@ async def create_ticket(db: AsyncSession, user_id: UUID, body: TicketCreate) -> 
 
     # 동일 유저-공연 중복 등록 방지
     result = await db.execute(
-        select(Ticket).where(Ticket.user_id == user_id, Ticket.concert_id == concert.id)
+        select(Ticket).where(Ticket.user_id == user.id, Ticket.concert_id == concert.id)
     )
     if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
 
     ticket = Ticket(
-        user_id=user_id,
+        user_id=user.id,
         concert_id=concert.id,
         delivery_date=body.delivery_date,
         ticketing_site=body.ticketing_site,
         price=body.price,
         seat_type=body.seat_type,
     )
-    db.add(ticket)
-    await db.commit()
+    try:
+        db.add(ticket)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
 
     # concert 관계 포함해서 재조회
     result = await db.execute(
         select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.concert))
     )
     ticket = result.scalar_one()
-    await schedule_ticket_notifications(db, ticket)
+    await schedule_ticket_notifications(db, ticket, user)
     return ticket
 
 
@@ -79,30 +84,15 @@ async def create_ticket(db: AsyncSession, user_id: UUID, body: TicketCreate) -> 
 async def get_sorted_tickets(db: AsyncSession, user_id: UUID) -> list[Ticket]:
     result = await db.execute(
         select(Ticket)
+        .outerjoin(Concert, Ticket.concert_id == Concert.id)
         .where(Ticket.user_id == user_id)
         .options(selectinload(Ticket.concert))
+        .order_by(
+            case((Ticket.status == TicketStatus.AFTER_CONCERT, 1), else_=0).asc(),
+            func.abs(func.extract("epoch", Concert.start_date - func.now())).asc().nulls_last(),
+        )
     )
-    tickets = list(result.scalars().all())
-
-    now = datetime.now(timezone.utc)
-
-    # 공연 상태 및 날짜 기준으로 정렬
-    def _sort_key(ticket: Ticket) -> tuple:
-
-        # 공연 전/후 구분 (공연 전이 먼저)
-        is_after = 1 if ticket.status == TicketStatus.AFTER_CONCERT else 0
-
-        # 공연일과 현재 시간 차이 (공연일이 가까운 순)
-        if ticket.concert is not None:
-            concert_date = ticket.concert.start_date
-            if concert_date.tzinfo is None:
-                concert_date = concert_date.replace(tzinfo=timezone.utc)
-            diff = abs((concert_date - now).total_seconds())
-        else:
-            diff = float("inf")
-        return (is_after, diff)
-
-    return sorted(tickets, key=_sort_key)
+    return list(result.scalars().all())
 
 
 # 티켓 단일 조회
@@ -120,11 +110,11 @@ async def get_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Ticket
 
 # 티켓 수정
 async def update_ticket(
-    db: AsyncSession, user_id: UUID, ticket_id: UUID, body: TicketUpdate
+    db: AsyncSession, user: User, ticket_id: UUID, body: TicketUpdate
 ) -> Ticket:
     result = await db.execute(
         select(Ticket)
-        .where(Ticket.id == ticket_id, Ticket.user_id == user_id)
+        .where(Ticket.id == ticket_id, Ticket.user_id == user.id)
         .options(selectinload(Ticket.concert))
     )
     ticket = result.scalar_one_or_none()
@@ -141,7 +131,7 @@ async def update_ticket(
         select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.concert))
     )
     ticket = result.scalar_one()
-    await schedule_ticket_notifications(db, ticket)
+    await schedule_ticket_notifications(db, ticket, user)
     return ticket
 
 
@@ -154,17 +144,12 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
-    await db.execute(delete(Notification).where(Notification.ticket_id == ticket_id))
     await db.delete(ticket)
     await db.commit()
 
 
 # 유저 알림 설정에서 delivery/before_concert 활성화 여부 반환
-async def _get_notif_flags(db: AsyncSession, user_id: UUID) -> tuple[bool, bool]:
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        return True, True
+def _get_notif_flags(user: User) -> tuple[bool, bool]:
     settings = user.notification_settings
     if isinstance(settings, str):
         import json
@@ -175,12 +160,12 @@ async def _get_notif_flags(db: AsyncSession, user_id: UUID) -> tuple[bool, bool]
 
 
 # 티켓 알림 스케줄 등록 (기존 미발송 알림 초기화 후 재등록)
-async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket) -> None:
+async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket, user: User) -> None:
     concert = ticket.concert
     if concert is None:
         return
 
-    delivery_on, before_concert_on = await _get_notif_flags(db, ticket.user_id)
+    delivery_on, before_concert_on = _get_notif_flags(user)
 
     # 기존 미발송 알림 제거 후 재생성
     await db.execute(

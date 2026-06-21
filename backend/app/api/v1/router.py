@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, concerts, tickets, setlists, timetables, summary, notifications, social, settings
+from app.api.v1.endpoints import auth, concerts, tickets, setlists, timetables, summary, notifications, social, settings, upload
 
 api_router = APIRouter()
 
@@ -13,3 +13,4 @@ api_router.include_router(summary.router, prefix="/summary", tags=["summary"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(social.router, prefix="/social", tags=["social"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
+api_router.include_router(upload.router, prefix="/upload", tags=["upload"])

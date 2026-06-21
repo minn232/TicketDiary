@@ -1,5 +1,5 @@
 ﻿import uuid
-from sqlalchemy import Column, String, ForeignKey, Boolean, text
+from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, text, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -30,5 +30,6 @@ class NewsFeed(Base):
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id", ondelete="CASCADE"), nullable=False, index=True)
     artist_name = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     concert = relationship("Concert")

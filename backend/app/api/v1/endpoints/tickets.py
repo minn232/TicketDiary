@@ -13,7 +13,6 @@ from app.services.ticket import (
     get_ticket,
     update_ticket,
     delete_ticket,
-    schedule_ticket_notifications,
 )
 
 router = APIRouter()
@@ -26,9 +25,8 @@ async def register_ticket(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    ticket = await create_ticket(db, current_user.id, body)
-    await schedule_ticket_notifications(db, ticket)
-    return ticket
+    return await create_ticket(db, current_user, body)
+
 
 
 # 내 티켓 목록 조회
@@ -58,7 +56,7 @@ async def modify_ticket(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await update_ticket(db, current_user.id, ticket_id, body)
+    return await update_ticket(db, current_user, ticket_id, body)
 
 
 # 티켓 삭제

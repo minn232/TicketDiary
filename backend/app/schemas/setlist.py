@@ -1,5 +1,4 @@
-import json
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 from uuid import UUID
 
 
@@ -27,14 +26,6 @@ class RealSetlistResponse(BaseModel):
     is_user_edited: bool
     edited_user_nickname: str | None
 
-    # DB에 JSON 문자열로 저장된 songs를 리스트로 파싱
-    @field_validator("songs", mode="before")
-    @classmethod
-    def parse_songs(cls, v) -> list:
-        if isinstance(v, str):
-            return json.loads(v)
-        return v
-
 
 class SetlistFmCandidate(BaseModel):
     # Setlist.fm 검색 결과 후보 항목
@@ -58,10 +49,3 @@ class PreSetlistResponse(BaseModel):
     songs: list[SongEntry]
     is_user_edited: bool
     edited_user_nickname: str | None
-
-    @field_validator("songs", mode="before")
-    @classmethod
-    def parse_songs(cls, v) -> list:
-        if isinstance(v, str):
-            return json.loads(v)
-        return v

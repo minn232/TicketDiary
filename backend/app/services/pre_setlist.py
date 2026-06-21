@@ -1,4 +1,3 @@
-import json
 from collections import Counter
 from uuid import UUID
 
@@ -39,7 +38,7 @@ async def update_pre_setlist(
     if pre_setlist is None:
         raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
 
-    pre_setlist.songs = json.dumps([s.model_dump() for s in songs], ensure_ascii=False)
+    pre_setlist.songs = [s.model_dump() for s in songs]
     pre_setlist.is_user_edited = True
     pre_setlist.edited_user_nickname = nickname or "익명"
 
@@ -89,17 +88,15 @@ async def generate_pre_setlist(
             "encore": song_encore_counts[key] > count / 2,
         })
 
-    songs_json = json.dumps(top_songs, ensure_ascii=False)
-
     # DB upsert
     result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
     pre_setlist = result.scalar_one_or_none()
 
     if pre_setlist is None:
-        pre_setlist = PreSetlist(concert_id=concert_id, songs=songs_json)
+        pre_setlist = PreSetlist(concert_id=concert_id, songs=top_songs)
         db.add(pre_setlist)
     else:
-        pre_setlist.songs = songs_json
+        pre_setlist.songs = top_songs
         pre_setlist.setlistfm_id = None
         pre_setlist.is_user_edited = False
         pre_setlist.edited_user_nickname = None

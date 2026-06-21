@@ -19,7 +19,7 @@ class Notification(Base):
     __tablename__ = "notifications"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
-    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id"), nullable=True)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("tickets.id", ondelete="CASCADE"), nullable=True)
     type = Column(SAEnum(NotificationType, values_callable=lambda x: [e.value for e in x]), nullable=False)
     title = Column(String, nullable=False)
     body = Column(String, nullable=False)

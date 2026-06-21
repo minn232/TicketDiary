@@ -61,7 +61,7 @@ async def get_news_feed(db: AsyncSession, user_id: UUID) -> list[NewsFeed]:
         select(NewsFeed)
         .options(selectinload(NewsFeed.concert))
         .where(NewsFeed.user_id == user_id)
-        .order_by(NewsFeed.is_read.asc(), NewsFeed.id.desc())
+        .order_by(NewsFeed.is_read.asc(), NewsFeed.created_at.desc())
     )
     return list(result.scalars().all())
 

@@ -1,15 +1,19 @@
+import asyncio
+import logging
 import re
 from datetime import datetime, date, timedelta, timezone
 from xml.etree import ElementTree as ET
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.concert import Concert
 from app.models.social import ArtistFollow, NewsFeed
+
+logger = logging.getLogger(__name__)
 
 _DATE_FMT = "%Y.%m.%d"
 
@@ -141,12 +145,17 @@ async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> 
     if not concert.artist_name:
         return
 
-    result = await db.execute(select(ArtistFollow))
+    concert_artists_lower = {a.lower() for a in concert.artist_name}
+
+    # 아티스트를 1명 이상 팔로우하는 유저만 조회 (빈 배열 제외)
+    result = await db.execute(
+        select(ArtistFollow).where(
+            func.jsonb_array_length(ArtistFollow.artists) > 0
+        )
+    )
     follows = result.scalars().all()
     if not follows:
         return
-
-    concert_artists_lower = {a.lower() for a in concert.artist_name}
 
     for follow in follows:
         matched_artist = next(
@@ -171,6 +180,59 @@ async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> 
             continue
 
         db.add(NewsFeed(user_id=follow.user_id, concert_id=concert.id, artist_name=matched_artist))
+
+
+# KOPIS 일별 배치: 신규 공연 수집 + 뉴스피드 생성
+async def sync_daily_concerts(db: AsyncSession) -> None:
+    today = date.today()
+    end_date = today + timedelta(days=365)
+
+    params = {
+        "service": settings.KOPIS_API_KEY,
+        "stdate": today.strftime("%Y%m%d"),
+        "eddate": end_date.strftime("%Y%m%d"),
+        "genrenm": "대중음악",
+        "rows": 100,
+        "cpage": 1,
+    }
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+
+    if response.status_code != 200:
+        logger.warning("KOPIS 배치 목록 조회 실패")
+        return
+
+    root = ET.fromstring(response.content)
+    kopis_ids = [
+        elem.findtext("mt20id", "").strip()
+        for elem in root.findall("db")
+        if elem.findtext("mt20id", "").strip()
+    ]
+
+    if not kopis_ids:
+        return
+
+    # DB에 이미 있는 공연 조회
+    result = await db.execute(
+        select(Concert).where(Concert.kopis_id.in_(kopis_ids))
+    )
+    existing = {c.kopis_id: c for c in result.scalars().all()}
+
+    for kopis_id in kopis_ids:
+        concert = existing.get(kopis_id)
+
+        if concert is None:
+            # 신규 공연: 상세 조회 + 뉴스피드 생성 (get_concert_detail 내부에서 처리)
+            try:
+                await get_concert_detail(db, kopis_id)
+                await asyncio.sleep(0.2)
+            except Exception as e:
+                logger.warning(f"KOPIS 상세 조회 실패 ({kopis_id}): {e}")
+        elif concert.artist_name:
+            # 이미 있고 아티스트 정보 있음: API 재호출 없이 뉴스피드만 생성
+            await _create_news_feeds_for_concert(db, concert)
+            await db.commit()
 
 
 # KOPIS 공연 상세 조회 (kopis_id -> Concert + DB upsert)

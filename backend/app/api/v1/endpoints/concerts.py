@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,11 +20,18 @@ _MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 # 티켓 사진 스캔 -> OCR 추출 + KOPIS 후보 검색
 @router.post("/scan", response_model=TicketScanResponse)
 async def scan_ticket(
+    request: Request,
     image: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    image_bytes = await image.read()
+    # Content-Length 헤더로 다운로드 전 사전 거절
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
+
+    # 최대 10MB+1 바이트만 읽어 초과 여부 판단
+    image_bytes = await image.read(_MAX_IMAGE_SIZE + 1)
     if len(image_bytes) > _MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
