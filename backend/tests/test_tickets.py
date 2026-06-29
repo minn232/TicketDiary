@@ -61,7 +61,7 @@ async def test_create_ticket_with_concert_id():
     assert response.status_code == 201
     data = response.json()
     assert data["concert_id"] == concert_id
-    assert data["status"] == "before_delivery"
+    assert data["status"] == "before_concert"
     assert data["seat_type"] == "R석"
     assert data["concert"] is not None
 

@@ -49,7 +49,6 @@ async def migrate_guest_to_kakao(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 게스트 유저 검증 (400 Bad Request)
     if current_user.role != UserRole.GUEST:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="게스트 유저만 마이그레이션할 수 있습니다.")
     

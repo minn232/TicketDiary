@@ -1,5 +1,6 @@
 from uuid import UUID
 from datetime import datetime, timezone, timedelta
+import logging
 
 from fastapi import HTTPException
 from sqlalchemy import case, func, select, delete
@@ -13,7 +14,17 @@ from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
 
+logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
+
+
+# concert.end_date 기준 초기 티켓 상태 결정
+# KOPIS end_date는 UTC 자정으로 저장되므로 +15h(=KST 다음날 자정)가 지나면 공연 종료로 판단
+def _initial_status(concert: Concert) -> TicketStatus:
+    now = datetime.now(timezone.utc)
+    if concert.end_date + timedelta(hours=15) < now:
+        return TicketStatus.AFTER_CONCERT
+    return TicketStatus.BEFORE_CONCERT
 
 
 # KST 기준 해당 날짜 오전 9시 UTC 반환
@@ -59,6 +70,7 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     ticket = Ticket(
         user_id=user.id,
         concert_id=concert.id,
+        status=_initial_status(concert),
         delivery_date=body.delivery_date,
         ticketing_site=body.ticketing_site,
         price=body.price,
@@ -221,3 +233,23 @@ async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket, user: 
         db.add(notif)
 
     await db.commit()
+
+
+# BEFORE_CONCERT 티켓 중 공연이 끝난 것을 AFTER_CONCERT로 자동 전환
+# KOPIS end_date는 UTC 자정 저장이므로 +15h(KST 다음날 자정) 기준으로 판단
+async def sync_ticket_statuses(db: AsyncSession) -> None:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Ticket)
+        .join(Concert, Ticket.concert_id == Concert.id)
+        .where(
+            Ticket.status == TicketStatus.BEFORE_CONCERT,
+            Concert.end_date + timedelta(hours=15) < now,
+        )
+    )
+    tickets = result.scalars().all()
+    for ticket in tickets:
+        ticket.status = TicketStatus.AFTER_CONCERT
+    if tickets:
+        await db.commit()
+        logger.info(f"티켓 상태 자동 전환: {len(tickets)}건 → AFTER_CONCERT")

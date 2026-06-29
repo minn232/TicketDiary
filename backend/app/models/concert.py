@@ -31,6 +31,7 @@ class Concert(Base):
     description = Column(Text, nullable=True)
     price = Column(JSONB, nullable=True)
     event_type = Column(String, nullable=False, default=EventType.UNKNOWN.value)
+    crawl_screenshot_url = Column(String, nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)

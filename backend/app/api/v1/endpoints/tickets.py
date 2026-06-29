@@ -1,12 +1,13 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate, TicketWithConcert
+from app.services.crawler import crawl_and_save
 from app.services.ticket import (
     create_ticket,
     get_sorted_tickets,
@@ -22,10 +23,14 @@ router = APIRouter()
 @router.post("", response_model=TicketWithConcert, status_code=status.HTTP_201_CREATED)
 async def register_ticket(
     body: TicketCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await create_ticket(db, current_user, body)
+    ticket = await create_ticket(db, current_user, body)
+    if ticket.ticketing_site:
+        background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
+    return ticket
 
 
 

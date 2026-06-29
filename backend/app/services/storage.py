@@ -54,5 +54,5 @@ def _do_upload(image_bytes: bytes, key: str, content_type: str) -> str:
 async def upload_image(image_bytes: bytes, folder: str, content_type: str) -> str:
     ext = ALLOWED_CONTENT_TYPES.get(content_type, ".jpg")
     key = f"{folder}/{uuid.uuid4()}{ext}"
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _do_upload, image_bytes, key, content_type)

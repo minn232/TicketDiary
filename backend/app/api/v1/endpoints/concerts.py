@@ -68,6 +68,24 @@ async def scan_ticket(
         except HTTPException:
             pass
 
+    # KOPIS artist 크로스체크: OCR 추출 실패 시 후보에서 보완
+    if not extracted.artist and candidates:
+        # A: DB에 이미 artist_name이 있는 후보 사용
+        for candidate in candidates:
+            if candidate.artist_name:
+                extracted.artist = candidate.artist_name
+                break
+
+        # B: 여전히 비어있고 후보가 정확히 1개뿐이면 상세 API 호출
+        if not extracted.artist and len(candidates) == 1:
+            try:
+                detail = await get_concert_detail(db, candidates[0].kopis_id)
+                if detail.artist_name:
+                    extracted.artist = detail.artist_name
+                    candidates = [detail]
+            except HTTPException:
+                pass
+
     return TicketScanResponse(extracted=extracted, candidates=candidates)
 
 
