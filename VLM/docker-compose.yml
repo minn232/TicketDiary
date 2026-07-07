@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # 1. 시각-언어 모델 (Qwen2.5-VL) 서빙
+  vlm-service:
+    image: ghcr.io/bentoml/openllm  # OpenLLM이 내장된 환경 가져오기
+    container_name: qwen-vl-server
+    restart: unless-stopped # 컨테이너가 종료되더라도 자동 재시작
+    ports:
+      - "3000:3000"  # 외부에서 3000번 포트로 접근 시 이 컨테이너로 연결
+    command: start Qwen/Qwen2.5-VL-7B-Instruct --backend vllm --port 3000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface # 모델 가중치 저장(재시작 시 다운로드 방지)
+
+  # 2. 텍스트 임베딩 모델 (BGE-m3) 서빙: 추천 서비스에 필요
+  embedding-service:
+    image: ghcr.io/bentoml/openllm
+    container_name: bge-m3-server
+    restart: unless-stopped
+    ports:
+      - "3001:3000"  # 외부에서 3001번 포트로 접근 시 이 컨테이너의 3000번으로 연결
+    command: start BAAI/bge-m3 --port 3000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+
+# 모델 다운로드 캐시를 공유하기 위한 볼륨 설정
+volumes:
+  huggingface_cache:
