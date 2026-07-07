@@ -6,37 +6,26 @@ on:
       - feature/build # feature/build 브랜치에 push가 일어나면 자동으로 로봇 작동
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
+      - uses: subosito/flutter-action@v2
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          channel: stable
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
+      - run: flutter pub get
 
-      - name: Install dependencies
-        run: flutter pub get
+      - run: flutter build web --release --base-href "/TicketDiary/"
 
-      - name: Build Flutter Web
-        run: flutter build web --base-href "/TicketDiary/"
-
-      - name: Upload Artifacts
-        uses: actions/upload-pages-artifact@v2
+      # 최신 만료되지 않은 v4 버전을 사용하여 결과물을 업로드합니다.
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
 
   deploy:
-    needs: build-and-deploy
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -45,6 +34,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v2
+      # 최신 만료되지 않은 v4 버전을 사용하여 깃허브 페이지스로 배포합니다.
+      - id: deployment
+        uses: actions/deploy-pages@v4
