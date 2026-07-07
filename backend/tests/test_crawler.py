@@ -6,6 +6,7 @@ import pytest
 from app.services.crawler import (
     crawl_and_save,
     crawl_interpark,
+    crawl_melon,
     crawl_yes24,
     send_screenshots_to_llm,
 )
@@ -149,7 +150,7 @@ async def test_crawl_and_save_interpark_updates_concert():
 @pytest.mark.asyncio
 async def test_crawl_and_save_unsupported_site_skips():
     with patch("app.services.crawler.AsyncSessionLocal") as mock_session:
-        await crawl_and_save(uuid.uuid4(), "MELON")
+        await crawl_and_save(uuid.uuid4(), "UNKNOWN_SITE")
     mock_session.assert_not_called()
 
 
@@ -181,6 +182,147 @@ async def test_crawl_and_save_crawler_returns_none_skips_upload():
         patch("app.services.crawler._upload_screenshot") as mock_upload,
     ):
         await crawl_and_save(concert_id, "INTERPARK")
+
+    mock_upload.assert_not_called()
+    mock_db.commit.assert_not_awaited()
+
+
+# crawl_melon 테스트
+
+def _make_melon_pw_mock(screenshot: bytes, current_url: str = "https://ticket.melon.com/search", link_href: str | None = None):
+    """멜론 mock: page.url 속성 지원 포함"""
+    mock_link = None
+    if link_href:
+        mock_link = AsyncMock()
+        mock_link.get_attribute = AsyncMock(return_value=link_href)
+
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.query_selector = AsyncMock(return_value=mock_link)
+    mock_page.screenshot = AsyncMock(return_value=screenshot)
+    type(mock_page).url = current_url
+
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_browser.close = AsyncMock()
+
+    mock_pw = AsyncMock()
+    mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    return mock_cm
+
+
+# 정상 검색 결과 스크린샷 반환
+@pytest.mark.asyncio
+async def test_crawl_melon_search_page_screenshot(mock_concert):
+    expected = b"melon-png"
+    with patch("app.services.crawler.async_playwright", return_value=_make_melon_pw_mock(expected)):
+        result = await crawl_melon(mock_concert)
+    assert result == expected
+
+
+# Kakao 리다이렉트 감지 시 None 반환 (graceful skip)
+@pytest.mark.asyncio
+async def test_crawl_melon_returns_none_on_kakao_redirect(mock_concert):
+    kakao_url = "https://accounts.kakao.com/login"
+    with patch("app.services.crawler.async_playwright", return_value=_make_melon_pw_mock(b"", current_url=kakao_url)):
+        result = await crawl_melon(mock_concert)
+    assert result is None
+
+
+# Playwright 예외 시 None 반환
+@pytest.mark.asyncio
+async def test_crawl_melon_returns_none_on_error(mock_concert):
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(side_effect=Exception("bot block"))
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    with patch("app.services.crawler.async_playwright", return_value=mock_cm):
+        result = await crawl_melon(mock_concert)
+    assert result is None
+
+
+# crawl_and_save - TICKETLINK → KOPIS 폴백 확인
+@pytest.mark.asyncio
+async def test_crawl_and_save_ticketlink_falls_back_to_kopis():
+    concert_id = uuid.uuid4()
+    fake_url = "https://s3.example.com/crawls/kopis.png"
+
+    mock_concert = MagicMock()
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+    mock_concert.kopis_id = "PF291361"
+    mock_concert.ticketing_links = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler.crawl_kopis", new=AsyncMock(return_value=b"kopis-bytes")),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+    ):
+        await crawl_and_save(concert_id, "TICKETLINK")
+
+    assert mock_concert.crawl_screenshot_url == fake_url
+
+
+# crawl_and_save - TICKETLINK + kopis_id 없으면 업로드 없이 종료
+@pytest.mark.asyncio
+async def test_crawl_and_save_ticketlink_no_kopis_id_skips():
+    concert_id = uuid.uuid4()
+
+    mock_concert = MagicMock()
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+    mock_concert.kopis_id = None
+    mock_concert.ticketing_links = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    mock_upload = AsyncMock()
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler._upload_screenshot", new=mock_upload),
+    ):
+        await crawl_and_save(concert_id, "TICKETLINK")
+
+    mock_upload.assert_not_called()
+
+
+# 멜론 봇 차단(None 반환) 시 S3 업로드 없이 종료
+@pytest.mark.asyncio
+async def test_crawl_and_save_melon_bot_block_skips():
+    concert_id = uuid.uuid4()
+    mock_concert = MagicMock()
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"MELON": AsyncMock(return_value=None)}),
+        patch("app.services.crawler._upload_screenshot") as mock_upload,
+    ):
+        await crawl_and_save(concert_id, "MELON")
 
     mock_upload.assert_not_called()
     mock_db.commit.assert_not_awaited()

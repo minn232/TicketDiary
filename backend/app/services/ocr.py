@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import re
@@ -62,15 +63,6 @@ _LABEL_SKIP = re.compile(
     r"|인터파크|yes24|티켓링크|멜론|네이버"
     r"|입장번호|일시|예매|예약|주최|주관|문의)",
     re.IGNORECASE,
-)
-
-# 아티스트 대괄호 오감지 필터 (요일·N/N 형식·고객명 등)
-_BRACKET_EXCLUDE = re.compile(
-    r"^[일월화수목금토]$"       # 요일 단일 글자
-    r"|^[A-Za-z가-힣]$"        # 단일 문자 (OCR 오감지)
-    r"|님$"                     # 고객명 (~님)
-    r"|\d+/\d+"                 # N/N 형식 (예매방식)
-    r"|^(모바일|인터넷)"         # 예매방식 시작
 )
 
 
@@ -262,7 +254,7 @@ def _extract_time(text: str) -> str | None:
     if not m:
         return None
     if m.group(1):   # 오후 N시
-        h = int(m.group(1)) + 12
+        h = (int(m.group(1)) % 12) + 12
         mi = int(m.group(2) or 0)
         return f"{h:02d}:{mi:02d}"
     if m.group(3):   # 오전 N시
@@ -270,7 +262,7 @@ def _extract_time(text: str) -> str | None:
         mi = int(m.group(4) or 0)
         return f"{h:02d}:{mi:02d}"
     if m.group(5):   # 오후 H:MM
-        return f"{int(m.group(5)) + 12:02d}:{m.group(6)}"
+        return f"{(int(m.group(5)) % 12) + 12:02d}:{m.group(6)}"
     if m.group(7):   # 오전 H:MM
         return f"{int(m.group(7)):02d}:{m.group(8)}"
     if m.group(9):   # HH:MM
@@ -323,28 +315,6 @@ def _extract_price(text: str) -> int | None:
     return candidates[0] if candidates else None
 
 
-# 아티스트 추출 (레이블 우선 → 대괄호 형식 폴백)
-def _extract_artist(text: str) -> list[str]:
-    m = re.search(r"(?:출연|아티스트|가수|Artist)\s*[:：]\s*(.+)", text, re.IGNORECASE)
-    if m:
-        raw = m.group(1).strip()
-        return [a.strip() for a in re.split(r"[,，/]", raw) if a.strip()]
-
-    # 고객명 컨텍스트 제거: "홍길동님" 같은 ~님 앞 대괄호 오감지 방지
-    customer_re = re.compile(r"\[([^\]]+)\]\s*님")
-    customer_names = {cm.group(1).strip() for cm in customer_re.finditer(text)}
-
-    bracket = re.findall(r"\[([^\]]{1,30})\]", text)
-    return [
-        a.strip()
-        for a in bracket
-        if a.strip()
-        and not re.match(r"\d", a)
-        and not _BRACKET_EXCLUDE.search(a.strip())
-        and a.strip() not in customer_names
-    ]
-
-
 # 단독 공연 / 페스티벌 분류
 def _classify_event_type(text: str) -> str:
     lower = text.lower()
@@ -364,13 +334,13 @@ def _parse_ticket_fields(raw_text: str) -> dict:
         "seat":          _extract_seat(raw_text),
         "platform":      _extract_platform(raw_text),
         "price":         _extract_price(raw_text),
-        "artist":        _extract_artist(raw_text),
         "event_type":    _classify_event_type(raw_text),
     }
 
 
 # 이미지 -> JPEG 변환 -> Vision OCR -> 로컬 파싱
 async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
-    jpeg_bytes = _to_jpeg(image_bytes, content_type)
+    loop = asyncio.get_running_loop()
+    jpeg_bytes = await loop.run_in_executor(None, _to_jpeg, image_bytes, content_type)
     raw_text = await _extract_raw_text(jpeg_bytes)
     return _parse_ticket_fields(raw_text)

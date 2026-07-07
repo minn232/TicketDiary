@@ -21,6 +21,24 @@ _FESTIVAL_KEYWORDS = [
     "festival", "fest", "페스티벌", "페스", "뮤직페스",
 ]
 
+_SITE_NAME_MAP = {
+    "yes24": "YES24",
+    "예스24": "YES24",
+    "인터파크": "INTERPARK",
+    "티켓링크": "TICKETLINK",
+    "멜론티켓": "MELON",
+    "멜론": "MELON",
+}
+
+
+# KOPIS relates relatenm → 표준 사이트 키 변환
+def _normalize_site_name(name: str) -> str | None:
+    normalized = name.lower().replace(" ", "")
+    for key, value in _SITE_NAME_MAP.items():
+        if key.lower().replace(" ", "") in normalized:
+            return value
+    return None
+
 
 # 공연명 기반 단독 공연 / 페스티벌 분류
 def _classify_event_type(name: str) -> str:
@@ -77,12 +95,12 @@ async def _upsert_concert(db: AsyncSession, data: dict) -> Concert:
     return concert
 
 
-# KOPIS 공연 검색 (keyword, start_date, end_date -> Concert 목록 + DB upsert)
-async def search_concerts(
+# KOPIS 공연 검색 단일 호출 (keyword 그대로 사용)
+async def _search_concerts_once(
     db: AsyncSession,
     keyword: str,
-    start_date: date | None = None,
-    end_date: date | None = None,
+    start_date: date | None,
+    end_date: date | None,
 ) -> list[Concert]:
     today = date.today()
     params = {
@@ -103,7 +121,6 @@ async def search_concerts(
     root = ET.fromstring(response.content)
     kopis_ids: list[str] = []
 
-    # KOPIS 공연 정보 파싱
     for elem in root.findall("db"):
         kopis_id = (elem.findtext("mt20id") or "").strip()
         start_raw = (elem.findtext("prfpdfrom") or "").strip()
@@ -112,7 +129,6 @@ async def search_concerts(
         if not kopis_id or not start_raw or not end_raw:
             continue
 
-        # 목록 API에서는 출연진·상세·가격 미제공
         name = elem.findtext("prfnm") or ""
         data = {
             "kopis_id": kopis_id,
@@ -133,11 +149,30 @@ async def search_concerts(
 
     await db.commit()
 
-    # commit 후 재조회
     result = await db.execute(
         select(Concert).where(Concert.kopis_id.in_(kopis_ids))
     )
     return list(result.scalars().all())
+
+
+# KOPIS 공연 검색 (keyword, start_date, end_date -> Concert 목록 + DB upsert)
+# 결과 없으면 keyword 끝 단어를 하나씩 줄여 재시도 (최소 2단어)
+async def search_concerts(
+    db: AsyncSession,
+    keyword: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[Concert]:
+    words = keyword.split()
+    min_words = min(2, len(words))
+    for end in range(len(words), min_words - 1, -1):
+        q = " ".join(words[:end])
+        concerts = await _search_concerts_once(db, q, start_date, end_date)
+        if concerts:
+            if q != keyword:
+                logger.info(f"KOPIS 검색어 축소: {keyword!r} → {q!r} ({len(concerts)}건)")
+            return concerts
+    return []
 
 
 # concert.artist_name 기반으로 팔로우 유저들에게 뉴스피드 생성 (중복 제외)
@@ -157,8 +192,10 @@ async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> 
     if not follows:
         return
 
+    # 매칭되는 팔로워 및 아티스트명 수집
+    matched: list[tuple] = []
     for follow in follows:
-        matched_artist = next(
+        artist = next(
             (
                 entry.get("artist_name")
                 for entry in (follow.artists or [])
@@ -166,20 +203,25 @@ async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> 
             ),
             None,
         )
-        if matched_artist is None:
-            continue
+        if artist:
+            matched.append((follow.user_id, artist))
 
-        # 중복 방지
-        dup = await db.execute(
-            select(NewsFeed).where(
-                NewsFeed.user_id == follow.user_id,
-                NewsFeed.concert_id == concert.id,
-            )
+    if not matched:
+        return
+
+    # 이미 존재하는 뉴스피드 일괄 조회 (N+1 방지)
+    matched_user_ids = [uid for uid, _ in matched]
+    existing_result = await db.execute(
+        select(NewsFeed.user_id).where(
+            NewsFeed.concert_id == concert.id,
+            NewsFeed.user_id.in_(matched_user_ids),
         )
-        if dup.scalar_one_or_none() is not None:
-            continue
+    )
+    existing_user_ids = set(existing_result.scalars().all())
 
-        db.add(NewsFeed(user_id=follow.user_id, concert_id=concert.id, artist_name=matched_artist))
+    for user_id, artist_name in matched:
+        if user_id not in existing_user_ids:
+            db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
 
 
 # KOPIS 일별 배치: 신규 공연 수집 + 뉴스피드 생성
@@ -257,6 +299,18 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
     prfcrew = (elem.findtext("prfcrew") or "").strip()
     pcseguidance = (elem.findtext("pcseguidance") or "").strip()
 
+    # relates 파싱: 예매 사이트 링크 추출
+    ticketing_links: dict[str, str] = {}
+    relates_elem = elem.find("relates")
+    if relates_elem is not None:
+        for relate in relates_elem.findall("relate"):
+            site_name = (relate.findtext("relatenm") or "").strip()
+            site_url = (relate.findtext("relateurl") or "").strip()
+            if site_name and site_url:
+                key = _normalize_site_name(site_name)
+                if key:
+                    ticketing_links[key] = site_url
+
     name = elem.findtext("prfnm") or ""
     data = {
         "kopis_id": kopis_id,
@@ -270,6 +324,7 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
         "description": elem.findtext("sty") or None,
         "price": _parse_price(pcseguidance),
         "event_type": _classify_event_type(name),
+        "ticketing_links": ticketing_links or None,
     }
 
     concert = await _upsert_concert(db, data)

@@ -128,3 +128,78 @@ async def test_kakao_auth_url():
     data = response.json()
     assert "url" in data
     assert "https://kauth.kakao.com/oauth/authorize" in data["url"]
+
+
+# 리프레시 토큰 테스트
+
+# 로그인 응답에 리프레시 토큰이 함께 내려오는지 확인
+@pytest.mark.asyncio
+async def test_login_returns_refresh_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/api/v1/auth/guest", json={"device_id": "refresh-device-001"})
+
+    data = response.json()
+    assert "refresh_token" in data
+    assert data["refresh_token"]
+
+
+# 리프레시 토큰으로 재발급 시 새 access/refresh 토큰을 받는지 확인
+@pytest.mark.asyncio
+async def test_refresh_issues_new_tokens():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/guest", json={"device_id": "refresh-device-002"})
+        old_refresh = login_res.json()["refresh_token"]
+
+        refresh_res = await ac.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
+
+    assert refresh_res.status_code == 200
+    new_data = refresh_res.json()
+    assert new_data["access_token"]
+    assert new_data["refresh_token"] != old_refresh
+    assert new_data["user_id"] == login_res.json()["user_id"]
+
+
+# 회전(rotation): 재발급에 이미 쓴 리프레시 토큰은 재사용 불가
+@pytest.mark.asyncio
+async def test_refresh_token_rotation_rejects_reuse():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/guest", json={"device_id": "refresh-device-003"})
+        old_refresh = login_res.json()["refresh_token"]
+
+        await ac.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
+        reuse_res = await ac.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
+
+    assert reuse_res.status_code == 401
+
+
+# 존재하지 않는 리프레시 토큰으로 재발급 시도
+@pytest.mark.asyncio
+async def test_refresh_with_invalid_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/api/v1/auth/refresh", json={"refresh_token": "not-a-real-token"})
+
+    assert response.status_code == 401
+
+
+# 로그아웃 후 해당 리프레시 토큰으로 재발급 불가
+@pytest.mark.asyncio
+async def test_logout_revokes_refresh_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/guest", json={"device_id": "refresh-device-004"})
+        refresh_token = login_res.json()["refresh_token"]
+
+        logout_res = await ac.post("/api/v1/auth/logout", json={"refresh_token": refresh_token})
+        assert logout_res.status_code == 204
+
+        refresh_res = await ac.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+
+    assert refresh_res.status_code == 401
+
+
+# 로그아웃은 이미 폐기되었거나 존재하지 않는 토큰이어도 항상 성공 처리
+@pytest.mark.asyncio
+async def test_logout_is_idempotent():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/api/v1/auth/logout", json={"refresh_token": "unknown-token"})
+
+    assert response.status_code == 204

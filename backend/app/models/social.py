@@ -24,7 +24,7 @@ class ConcertFollow(Base):
 class NewsFeed(Base):
     __tablename__ = "news_feeds"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id", ondelete="CASCADE"), nullable=False, index=True)
     artist_name = Column(String, nullable=False)
     is_read = Column(Boolean, default=False)

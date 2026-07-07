@@ -18,7 +18,9 @@ async def get_timetable(db: AsyncSession, concert_id: UUID) -> TimeTable:
 
 
 # 타임테이블 upsert
-async def upsert_timetable(db: AsyncSession, concert_id: UUID, contents: list[dict]) -> TimeTable:
+async def upsert_timetable(
+    db: AsyncSession, concert_id: UUID, contents: list[dict], commit: bool = True
+) -> TimeTable:
     concert_result = await db.execute(select(Concert).where(Concert.id == concert_id))
     if concert_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
@@ -32,6 +34,7 @@ async def upsert_timetable(db: AsyncSession, concert_id: UUID, contents: list[di
     else:
         timetable.contents = contents
 
-    await db.commit()
-    await db.refresh(timetable)
+    if commit:
+        await db.commit()
+        await db.refresh(timetable)
     return timetable

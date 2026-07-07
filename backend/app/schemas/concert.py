@@ -26,12 +26,12 @@ class ConcertResponse(BaseModel):
     description: str | None
     price: list[PriceEntry] | None
     event_type: str
+    ticketing_date: datetime | None
 
 
 class TicketScanExtracted(BaseModel):
     # OCR + LLM으로 추출된 티켓 정보
     title: str | None = None
-    artist: list[str] = []
     date: str | None = None           # YYYY-MM-DD
     time: str | None = None           # HH:MM
     location: str | None = None

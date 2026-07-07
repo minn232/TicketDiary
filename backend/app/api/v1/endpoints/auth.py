@@ -7,8 +7,16 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.core.config import settings
 from app.core.deps import get_current_user
-from app.schemas.auth import GuestLoginRequest, KakaoLoginRequest, KakaoAuthUrlResponse, TokenResponse, UserResponse
+from app.schemas.auth import (
+    GuestLoginRequest,
+    KakaoLoginRequest,
+    KakaoAuthUrlResponse,
+    RefreshTokenRequest,
+    TokenResponse,
+    UserResponse,
+)
 from app.services.auth import guest_login, kakao_login, migrate_to_kakao
+from app.services.refresh_token import issue_refresh_token, revoke_refresh_token, rotate_refresh_token
 from app.models.user import User, UserRole
 
 router = APIRouter()
@@ -19,7 +27,8 @@ router = APIRouter()
 async def login_as_guest(body: GuestLoginRequest, db: AsyncSession = Depends(get_db)):
     user = await guest_login(db, body.device_id)
     token = create_access_token(str(user.id))
-    return TokenResponse(access_token=token, user_id=user.id, role=user.role)
+    refresh_token = await issue_refresh_token(db, user.id)
+    return TokenResponse(access_token=token, refresh_token=refresh_token, user_id=user.id, role=user.role)
 
 
 # 카카오 OAuth 인증 URL 조회
@@ -39,7 +48,8 @@ async def get_kakao_auth_url():
 async def login_with_kakao(body: KakaoLoginRequest, db: AsyncSession = Depends(get_db)):
     user = await kakao_login(db, body.code)
     token = create_access_token(str(user.id))
-    return TokenResponse(access_token=token, user_id=user.id, role=user.role)
+    refresh_token = await issue_refresh_token(db, user.id)
+    return TokenResponse(access_token=token, refresh_token=refresh_token, user_id=user.id, role=user.role)
 
 
 # 게스트 -> 카카오 계정 연동 (마이그레이션)
@@ -51,10 +61,25 @@ async def migrate_guest_to_kakao(
 ):
     if current_user.role != UserRole.GUEST:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="게스트 유저만 마이그레이션할 수 있습니다.")
-    
+
     user = await migrate_to_kakao(db, current_user, body.code)
     token = create_access_token(str(user.id))
-    return TokenResponse(access_token=token, user_id=user.id, role=user.role)
+    refresh_token = await issue_refresh_token(db, user.id)
+    return TokenResponse(access_token=token, refresh_token=refresh_token, user_id=user.id, role=user.role)
+
+
+# 액세스 토큰 재발급 (리프레시 토큰 회전 — 기존 리프레시 토큰은 이 호출로 폐기되고 새 리프레시 토큰이 발급됨)
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    user, new_refresh_token = await rotate_refresh_token(db, body.refresh_token)
+    token = create_access_token(str(user.id))
+    return TokenResponse(access_token=token, refresh_token=new_refresh_token, user_id=user.id, role=user.role)
+
+
+# 로그아웃 (해당 리프레시 토큰 폐기 — 액세스 토큰은 자체 만료될 때까지 유효하나 재발급은 불가능해짐)
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(body: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    await revoke_refresh_token(db, body.refresh_token)
 
 
 # 내 정보 조회

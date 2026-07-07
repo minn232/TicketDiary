@@ -23,7 +23,6 @@ class TicketCreate(BaseModel):
 
 class TicketUpdate(BaseModel):
     # 티켓 부분 수정 요청
-    status: TicketStatus | None = None
     delivery_date: datetime | None = None
     ticketing_site: str | None = None
     price: int | None = None

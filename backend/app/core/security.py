@@ -1,4 +1,6 @@
-﻿from datetime import datetime, timedelta, timezone
+﻿import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from jose import jwt, JWTError
 
@@ -22,3 +24,13 @@ def verify_token(token: str) -> str | None:
         return payload.get("sub")
     except JWTError:
         return None
+
+
+# 리프레시 토큰 원문 생성 (JWT 아닌 불투명 랜덤 문자열 — DB 조회로만 검증되므로 자체 서명 불필요)
+def generate_refresh_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
+# 리프레시 토큰 원문 -> DB 저장용 해시 (원문은 클라이언트만 보관, 서버는 해시만 저장)
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()

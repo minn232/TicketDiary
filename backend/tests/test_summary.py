@@ -76,7 +76,7 @@ async def _create_attended_ticket(
     if price is not None:
         create_body["price"] = price
 
-    update_body: dict = {"status": "after_concert"}
+    update_body: dict = {}
     if is_first_day is not None:
         update_body["is_first_day"] = is_first_day
     if is_last_day is not None:
@@ -159,23 +159,18 @@ async def test_summary_empty():
     assert data["last_day_count"] == 0
 
 
-# before_delivery / before_concert 티켓은 결산에 포함되지 않는 테스트
+# before_concert 티켓은 결산에 포함되지 않는 테스트 (미래 공연 → 자동 BEFORE_CONCERT)
 @pytest.mark.asyncio
 async def test_summary_only_after_concert_counts():
-    concert_id = await _create_concert("PF_SUM_STATUS_001")
+    # 미래 공연 2개 (자동 BEFORE_CONCERT 상태)
+    concert_id1 = await _create_concert("PF_SUM_FUTURE_001", days_ago=-30)
+    concert_id2 = await _create_concert("PF_SUM_FUTURE_002", days_ago=-60)
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        # before_delivery 티켓
-        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
-
-        # before_concert 티켓
-        concert_id2 = await _create_concert("PF_SUM_STATUS_002")
-        res2 = await ac.post("/api/v1/tickets", json={"concert_id": concert_id2}, headers=headers)
-        ticket_id2 = res2.json()["id"]
-        await ac.patch(f"/api/v1/tickets/{ticket_id2}", json={"status": "before_concert"}, headers=headers)
-
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id1}, headers=headers)
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id2}, headers=headers)
         res = await ac.get("/api/v1/summary", headers=headers)
 
     assert res.status_code == 200

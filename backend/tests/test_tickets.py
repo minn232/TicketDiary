@@ -157,13 +157,6 @@ async def test_list_tickets_sorting():
         assert res_far.status_code == 201
         assert res_past.status_code == 201
 
-        ticket_far_id = res_far.json()["id"]
-        ticket_past_id = res_past.json()["id"]
-
-        # far -> BEFORE_CONCERT, past -> AFTER_CONCERT 으로 상태 변경
-        await ac.patch(f"/api/v1/tickets/{ticket_far_id}", json={"status": "before_concert"}, headers=headers)
-        await ac.patch(f"/api/v1/tickets/{ticket_past_id}", json={"status": "after_concert"}, headers=headers)
-
         response = await ac.get("/api/v1/tickets", headers=headers)
 
     assert response.status_code == 200
@@ -252,27 +245,6 @@ async def test_update_ticket_fields():
     assert data["review"] == "공연공연"
     assert data["concert_photo_urls"] == ["https://example.com/photo1.jpg"]
     assert data["is_first_day"] is True
-
-
-# 티켓 상태 변경 테스트
-@pytest.mark.asyncio
-async def test_update_ticket_status():
-    concert_id = await _create_concert("PF_STATUS_001")
-    token = await _get_token()
-    headers = {"Authorization": f"Bearer {token}"}
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
-        ticket_id = create_res.json()["id"]
-
-        response = await ac.patch(
-            f"/api/v1/tickets/{ticket_id}",
-            json={"status": "after_concert"},
-            headers=headers,
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "after_concert"
 
 
 # 티켓 삭제 테스트

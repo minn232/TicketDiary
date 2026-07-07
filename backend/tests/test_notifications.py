@@ -488,3 +488,134 @@ async def test_notification_reschedule_respects_updated_settings():
         res_after = await ac.get("/api/v1/notifications", headers=headers)
 
     assert res_after.json() == []
+
+
+# ticketing_day 알림 테스트
+
+_LLM_API_KEY = "test-llm-key"
+
+
+def _llm_headers():
+    return {"Authorization": f"Bearer {_LLM_API_KEY}"}
+
+
+# 찜 공연에 ticketing_date 수신 → 팔로워에게 TICKETING_DAY 알림 생성
+@pytest.mark.asyncio
+async def test_ticketing_day_notification_for_concert_follower():
+    concert_id = await _create_concert("PF_TICK_NOTIF_001", _make_future_xml("PF_TICK_NOTIF_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 공연 찜
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id}]},
+            headers=headers,
+        )
+
+    # ticketing_date 수신
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"ticketing_date": "2030-04-15"},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    types = {n["type"] for n in res.json()}
+    assert "ticketing_day" in types
+
+
+# 찜 안 한 유저에게는 TICKETING_DAY 알림 미생성
+@pytest.mark.asyncio
+async def test_ticketing_day_notification_not_for_non_follower():
+    concert_id = await _create_concert("PF_TICK_NOTIF_002", _make_future_xml("PF_TICK_NOTIF_002"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 찜 안 함 (concert_follow 미설정)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"ticketing_date": "2030-04-15"},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    types = {n["type"] for n in res.json()}
+    assert "ticketing_day" not in types
+
+
+# 이미 지난 ticketing_date → 알림 미생성
+@pytest.mark.asyncio
+async def test_ticketing_day_notification_past_date_skipped():
+    concert_id = await _create_concert("PF_TICK_NOTIF_003", _make_future_xml("PF_TICK_NOTIF_003"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id}]},
+            headers=headers,
+        )
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"ticketing_date": "2000-01-01"},  # 과거 날짜
+                headers=_llm_headers(),
+            )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    types = {n["type"] for n in res.json()}
+    assert "ticketing_day" not in types
+
+
+# ticketing_date 두 번 수신 → 알림 중복 없음 (이전 미발송 삭제 후 재생성)
+@pytest.mark.asyncio
+async def test_ticketing_day_notification_no_duplicate_on_resend():
+    concert_id = await _create_concert("PF_TICK_NOTIF_004", _make_future_xml("PF_TICK_NOTIF_004"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id}]},
+            headers=headers,
+        )
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"ticketing_date": "2030-04-15"},
+                headers=_llm_headers(),
+            )
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"ticketing_date": "2030-04-20"},  # 날짜 변경 재전송
+                headers=_llm_headers(),
+            )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    ticketing_notifs = [n for n in res.json() if n["type"] == "ticketing_day"]
+    assert len(ticketing_notifs) == 1  # 중복 없이 최신 날짜 1개만

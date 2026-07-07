@@ -39,7 +39,6 @@ async def scan_ticket(
     extracted_raw = await extract_ticket_info(image_bytes, image.content_type or "image/jpeg")
     extracted = TicketScanExtracted(
         title=extracted_raw.get("title"),
-        artist=extracted_raw.get("artist") or [],
         date=extracted_raw.get("date"),
         time=extracted_raw.get("time"),
         location=extracted_raw.get("location"),
@@ -50,10 +49,9 @@ async def scan_ticket(
         event_type=extracted_raw.get("event_type"),
     )
 
-    # 추출된 정보 기반으로 KOPIS에서 공연 후보 검색 (아티스트명 또는 공연명 기준, 공연일 앞 뒤 7일)
+    # 공연명 + 공연일 기준으로 KOPIS 후보 검색
     candidates = []
-    search_keyword = extracted.artist[0] if extracted.artist else extracted.title
-    if search_keyword:
+    if extracted.title:
         start_date = None
         end_date = None
         if extracted.date:
@@ -64,27 +62,9 @@ async def scan_ticket(
             except ValueError:
                 pass
         try:
-            candidates = await kopis_search(db, search_keyword, start_date, end_date)
+            candidates = await kopis_search(db, extracted.title, start_date, end_date)
         except HTTPException:
             pass
-
-    # KOPIS artist 크로스체크: OCR 추출 실패 시 후보에서 보완
-    if not extracted.artist and candidates:
-        # A: DB에 이미 artist_name이 있는 후보 사용
-        for candidate in candidates:
-            if candidate.artist_name:
-                extracted.artist = candidate.artist_name
-                break
-
-        # B: 여전히 비어있고 후보가 정확히 1개뿐이면 상세 API 호출
-        if not extracted.artist and len(candidates) == 1:
-            try:
-                detail = await get_concert_detail(db, candidates[0].kopis_id)
-                if detail.artist_name:
-                    extracted.artist = detail.artist_name
-                    candidates = [detail]
-            except HTTPException:
-                pass
 
     return TicketScanResponse(extracted=extracted, candidates=candidates)
 

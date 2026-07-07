@@ -13,14 +13,13 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     KAKAO_REST_API_KEY: str = ""
     KAKAO_REDIRECT_URI: str = ""
     KOPIS_API_KEY: str = ""
     KOPIS_BASE_URL: str = "http://www.kopis.or.kr/openApi/restful"
     SETLISTFM_API_KEY: str = ""
     SETLISTFM_BASE_URL: str = "https://api.setlist.fm/rest/1.0"
-    OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4o-mini"
     GOOGLE_VISION_API_KEY: str = ""
     # LLM_EXTRACT_URL: str = ""  # OCR 파싱이 로컬 regex로 전환되어 현재 미사용
     LLM_EXTRACT_API_KEY: str = ""

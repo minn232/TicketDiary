@@ -18,7 +18,6 @@ from app.services.ocr import (
     _extract_seat,
     _extract_platform,
     _extract_price,
-    _extract_artist,
     _classify_event_type,
 )
 from conftest import kopis_mock
@@ -88,7 +87,6 @@ _SAMPLE_EXTRACTED = {
     "seat": "R석 A구역 12열 15번",
     "platform": "INTERPARK",
     "price": 110000,
-    "artist": ["BTS"],
     "event_type": "SOLO",
 }
 
@@ -179,19 +177,12 @@ def test_parse_ticket_fields_bare_ticket():
     assert result["event_type"] == "FESTIVAL"
 
 
-# [아이유] 형식에서 아티스트 추출
-def test_parse_ticket_fields_artist_from_bracket():
-    result = _parse_ticket_fields(_YES24_TICKET)
-    assert "아이유" in result["artist"]
-
-
-# 인식 불가 필드는 None / 빈 리스트
+# 인식 불가 필드는 None
 def test_parse_ticket_fields_missing_fields_return_none():
     result = _parse_ticket_fields("공연 티켓")
     assert result["date"] is None
     assert result["time"] is None
     assert result["price"] is None
-    assert result["artist"] == []
 
 
 # 개별 파서 단위 테스트
@@ -278,18 +269,6 @@ def test_extract_price_noise_filtered():
     assert _extract_price("6원짜리 없음") is None
 
 
-def test_extract_artist_label():
-    assert _extract_artist("출연 : BTS, 세븐틴") == ["BTS", "세븐틴"]
-
-
-def test_extract_artist_bracket():
-    assert _extract_artist("[아이유] 콘서트") == ["아이유"]
-
-
-def test_extract_artist_empty():
-    assert _extract_artist("공연 티켓") == []
-
-
 def test_classify_event_type_festival():
     assert _classify_event_type("서머 페스티벌 2030") == "FESTIVAL"
     assert _classify_event_type("Music Festival") == "FESTIVAL"
@@ -337,23 +316,6 @@ def test_extract_platform_nol():
     assert _extract_platform("nol 티켓") == "NOL ticket"
 
 
-# 대괄호 안 요일 단일 글자는 아티스트로 추출하지 않음
-def test_extract_artist_filters_weekday():
-    assert _extract_artist("[토] 공연") == []
-    assert _extract_artist("[일] 2030.06.01") == []
-
-
-# ~님으로 이어지는 대괄호는 아티스트 후보에서 제외
-def test_extract_artist_filters_customer_name():
-    result = _extract_artist("[홍길동]님 안녕하세요")
-    assert "홍길동" not in result
-
-
-def test_extract_artist_bracket_still_works():
-    assert _extract_artist("[아이유] 2030 콘서트") == ["아이유"]
-    assert _extract_artist("[BTS] WORLD TOUR") == ["BTS"]
-
-
 # 예매·예약으로 시작하는 줄은 제목 후보에서 제외
 def test_extract_title_skips_booking_labels():
     text = "예매번호 : 12345\n예약자 : 홍길동\nBTS 콘서트"
@@ -375,7 +337,6 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
     assert response.status_code == 200
     data = response.json()
     assert data["extracted"]["title"] == "BTS World Tour"
-    assert data["extracted"]["artist"] == ["BTS"]
     assert data["extracted"]["event_type"] == "SOLO"
     assert data["extracted"]["price"] == 110000
     assert data["extracted"]["seat"] == "R석 A구역 12열 15번"
@@ -384,23 +345,8 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
 
 
 @pytest.mark.asyncio
-async def test_scan_title_fallback_when_no_artist(get_auth_token):
-    extracted = {**_SAMPLE_EXTRACTED, "artist": [], "title": "BTS World Tour"}
-    with _ocr_mock(extracted), kopis_mock(_make_kopis_xml("PF_OCR_002", "BTS World Tour")):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(
-                "/api/v1/concerts/scan",
-                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
-                headers={"Authorization": f"Bearer {get_auth_token}"},
-            )
-
-    assert response.status_code == 200
-    assert len(response.json()["candidates"]) == 1
-
-
-@pytest.mark.asyncio
 async def test_scan_no_candidates_when_no_keyword(get_auth_token):
-    extracted = {**_SAMPLE_EXTRACTED, "artist": [], "title": None}
+    extracted = {**_SAMPLE_EXTRACTED, "title": None}
     with _ocr_mock(extracted):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
@@ -415,7 +361,7 @@ async def test_scan_no_candidates_when_no_keyword(get_auth_token):
 
 @pytest.mark.asyncio
 async def test_scan_festival_event_type(get_auth_token):
-    extracted = {**_SAMPLE_EXTRACTED, "event_type": "FESTIVAL", "artist": ["아티스트A", "아티스트B"]}
+    extracted = {**_SAMPLE_EXTRACTED, "event_type": "FESTIVAL"}
     with _ocr_mock(extracted), kopis_mock(_make_kopis_xml("PF_OCR_FEST", "서머 페스티벌")):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
@@ -479,98 +425,3 @@ async def test_scan_unauthorized():
         )
 
     assert response.status_code == 401
-
-
-# KOPIS artist 크로스체크 테스트
-
-# DB에 캐시된 artist_name이 있는 후보에서 추출 결과 보완
-@pytest.mark.asyncio
-async def test_scan_artist_backfilled_from_db(get_auth_token):
-    extracted_no_artist = {**_SAMPLE_EXTRACTED, "artist": []}
-    candidate = _mock_concert(artist_name=["아이유"])
-
-    with (
-        _ocr_mock(extracted_no_artist),
-        patch("app.api.v1.endpoints.concerts.kopis_search", new=AsyncMock(return_value=[candidate])),
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(
-                "/api/v1/concerts/scan",
-                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
-                headers={"Authorization": f"Bearer {get_auth_token}"},
-            )
-
-    assert response.status_code == 200
-    assert response.json()["extracted"]["artist"] == ["아이유"]
-
-
-# 후보 1개이고 DB에 artist 없으면 상세 API로 보완, candidates도 갱신
-@pytest.mark.asyncio
-async def test_scan_artist_fetched_from_detail_api(get_auth_token):
-    extracted_no_artist = {**_SAMPLE_EXTRACTED, "artist": []}
-    candidate = _mock_concert(kopis_id="PF_B_001", artist_name=[])
-    detail = _mock_concert(kopis_id="PF_B_001", artist_name=["BTS"])
-
-    with (
-        _ocr_mock(extracted_no_artist),
-        patch("app.api.v1.endpoints.concerts.kopis_search", new=AsyncMock(return_value=[candidate])),
-        patch("app.api.v1.endpoints.concerts.get_concert_detail", new=AsyncMock(return_value=detail)),
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(
-                "/api/v1/concerts/scan",
-                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
-                headers={"Authorization": f"Bearer {get_auth_token}"},
-            )
-
-    data = response.json()
-    assert data["extracted"]["artist"] == ["BTS"]
-    assert data["candidates"][0]["artist_name"] == ["BTS"]
-
-
-# 후보가 여러 개이면 상세 API 호출 없이 artist 빈 채로 반환
-@pytest.mark.asyncio
-async def test_scan_no_detail_call_when_multiple_candidates(get_auth_token):
-    extracted_no_artist = {**_SAMPLE_EXTRACTED, "artist": []}
-    candidates = [
-        _mock_concert(kopis_id="PF_M_001", artist_name=[]),
-        _mock_concert(kopis_id="PF_M_002", artist_name=[]),
-    ]
-
-    with (
-        _ocr_mock(extracted_no_artist),
-        patch("app.api.v1.endpoints.concerts.kopis_search", new=AsyncMock(return_value=candidates)),
-        patch("app.api.v1.endpoints.concerts.get_concert_detail") as mock_detail,
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(
-                "/api/v1/concerts/scan",
-                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
-                headers={"Authorization": f"Bearer {get_auth_token}"},
-            )
-
-    assert response.status_code == 200
-    assert response.json()["extracted"]["artist"] == []
-    mock_detail.assert_not_called()
-
-
-# OCR 아티스트 추출 성공 시 크로스체크 건너뜀
-@pytest.mark.asyncio
-async def test_scan_artist_not_overridden_when_ocr_extracted(get_auth_token):
-    extracted_with_artist = {**_SAMPLE_EXTRACTED, "artist": ["세븐틴"]}
-    candidate = _mock_concert(artist_name=["BTS"])
-
-    with (
-        _ocr_mock(extracted_with_artist),
-        patch("app.api.v1.endpoints.concerts.kopis_search", new=AsyncMock(return_value=[candidate])),
-        patch("app.api.v1.endpoints.concerts.get_concert_detail") as mock_detail,
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(
-                "/api/v1/concerts/scan",
-                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
-                headers={"Authorization": f"Bearer {get_auth_token}"},
-            )
-
-    assert response.json()["extracted"]["artist"] == ["세븐틴"]
-    mock_detail.assert_not_called()

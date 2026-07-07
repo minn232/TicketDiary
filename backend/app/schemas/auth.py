@@ -6,6 +6,7 @@ from app.models.user import UserRole
 class TokenResponse(BaseModel):
     # 로그인 성공 시 반환되는 토큰 및 사용자 정보
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user_id: UUID
     role: UserRole
@@ -19,6 +20,11 @@ class GuestLoginRequest(BaseModel):
 class KakaoLoginRequest(BaseModel):
     # 카카오 로그인 요청 (인증 코드로 로그인)
     code: str
+
+
+class RefreshTokenRequest(BaseModel):
+    # 액세스 토큰 재발급 / 로그아웃 요청 공용 (리프레시 토큰 원문 전달)
+    refresh_token: str
 
 
 class KakaoAuthUrlResponse(BaseModel):

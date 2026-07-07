@@ -33,3 +33,4 @@ class User(Base):
     tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")
     artist_follow = relationship("ArtistFollow", backref="user", uselist=False, cascade="all, delete")
     concert_follow = relationship("ConcertFollow", backref="user", uselist=False, cascade="all, delete")
+    news_feeds = relationship("NewsFeed", cascade="all, delete-orphan")

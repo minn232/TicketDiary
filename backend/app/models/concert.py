@@ -32,8 +32,11 @@ class Concert(Base):
     price = Column(JSONB, nullable=True)
     event_type = Column(String, nullable=False, default=EventType.UNKNOWN.value)
     crawl_screenshot_url = Column(String, nullable=True)
+    ticketing_date = Column(DateTime(timezone=True), nullable=True)
+    ticketing_links = Column(JSONB, nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)
     real_setlist = relationship("RealSetlist", back_populates="concert", uselist=False)
     pre_setlist = relationship("PreSetlist", back_populates="concert", uselist=False)
+    venue_layout = relationship("VenueLayout", back_populates="concert", uselist=False)
