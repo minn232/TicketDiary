@@ -3,12 +3,7 @@ name: Deploy Flutter Web to GitHub Pages
 on:
   push:
     branches:
-      - feature/build
-
-# 모든 명령어들을 특정 하위 폴더 안으로 들어가서 실행하도록 기본값(defaults)을 설정합니다.
-defaults:
-  run:
-    working-directory: TicketDiary  # 🌟 여기에 pubspec.yaml이 들어있는 실제 폴더명을 적어주세요!
+      - feature/build # feature/build 브랜치에 push가 일어나면 자동으로 로봇 작동
 
 jobs:
   build:
@@ -27,8 +22,7 @@ jobs:
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          # 업로드할 폴더 경로 앞에도 폴더명을 붙여줍니다.
-          path: TicketDiary/build/web
+          path: build/web # 맨 바깥 폴더 기준으로 다시 경로 원상복구
 
   deploy:
     needs: build
