@@ -41,10 +41,5 @@ Thumbs.db
 # Scripts
 backend/scripts/
 
-# 개발 일정 (개인용)
-SCHEDULE.md
-
-# 내부 문서 (개인용)
-DB_SCHEMA.md
-Schemas & Endpoint.py
-backend/openapi.json
+# 내부 문서
+docs/
