@@ -3,7 +3,12 @@ name: Deploy Flutter Web to GitHub Pages
 on:
   push:
     branches:
-      - feature/build # feature/build 브랜치에 push가 일어나면 자동으로 로봇 작동
+      - feature/build
+
+# 모든 명령어들을 특정 하위 폴더 안으로 들어가서 실행하도록 기본값(defaults)을 설정합니다.
+defaults:
+  run:
+    working-directory: TicketDiary  # 🌟 여기에 pubspec.yaml이 들어있는 실제 폴더명을 적어주세요!
 
 jobs:
   build:
@@ -17,12 +22,13 @@ jobs:
 
       - run: flutter pub get
 
-      - run: flutter build web --release --base-href "/TicketDiary/"
+      - name: Build Flutter Web
+        run: flutter build web --release --base-href "/TicketDiary/"
 
-      # 최신 만료되지 않은 v4 버전을 사용하여 결과물을 업로드합니다.
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: build/web
+          # 업로드할 폴더 경로 앞에도 폴더명을 붙여줍니다.
+          path: TicketDiary/build/web
 
   deploy:
     needs: build
@@ -34,6 +40,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # 최신 만료되지 않은 v4 버전을 사용하여 깃허브 페이지스로 배포합니다.
       - id: deployment
         uses: actions/deploy-pages@v4
