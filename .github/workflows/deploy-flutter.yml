@@ -1,7 +1,9 @@
 name: Deploy Flutter Web to GitHub Pages
 
 on:
-  workflow_dispatch: # 수동 실행 가능하도록 설정
+  push:
+    branches:
+      - feature/build # feature/build 브랜치에 push가 일어나면 자동으로 로봇 작동
 
 jobs:
   build-and-deploy:
