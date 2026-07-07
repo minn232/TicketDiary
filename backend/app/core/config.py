@@ -1,9 +1,8 @@
 from pathlib import Path
-from dotenv import load_dotenv
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(_ENV_FILE, override=True, encoding='utf-8-sig')
 
 
 class Settings(BaseSettings):
@@ -14,14 +13,17 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     KAKAO_REST_API_KEY: str = ""
     KAKAO_REDIRECT_URI: str = ""
     KOPIS_API_KEY: str = ""
     KOPIS_BASE_URL: str = "http://www.kopis.or.kr/openApi/restful"
     SETLISTFM_API_KEY: str = ""
     SETLISTFM_BASE_URL: str = "https://api.setlist.fm/rest/1.0"
-    OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4o-mini"
+    GOOGLE_VISION_API_KEY: str = ""
+    # LLM_EXTRACT_URL: str = ""  # OCR 파싱이 로컬 regex로 전환되어 현재 미사용
+    LLM_EXTRACT_API_KEY: str = ""
+    LLM_CRAWL_URL: str = ""
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "ap-northeast-2"

@@ -3,8 +3,10 @@ from app.models.concert import Concert
 from app.models.ticket import Ticket, TicketStatus
 from app.models.setlist import RealSetlist, PreSetlist
 from app.models.timetable import TimeTable
+from app.models.venue_layout import VenueLayout
 from app.models.social import ArtistFollow, ConcertFollow, NewsFeed
 from app.models.notification import Notification, NotificationType
+from app.models.refresh_token import RefreshToken
 
 __all__ = [
     "User", "UserRole",
@@ -12,6 +14,8 @@ __all__ = [
     "Ticket", "TicketStatus",
     "RealSetlist", "PreSetlist",
     "TimeTable",
+    "VenueLayout",
     "ArtistFollow", "ConcertFollow", "NewsFeed",
     "Notification", "NotificationType",
+    "RefreshToken",
 ]

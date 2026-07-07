@@ -1,13 +1,21 @@
 import uuid
+import enum
+
 from sqlalchemy import Column, String, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
 
 
-"""
-price JSON 형식: [{"seat_type": "S석", "price": 10000}]
-"""
+# 공연 유형 (단독 공연 / 페스티벌 / 미분류)
+class EventType(str, enum.Enum):
+    SOLO = "SOLO"
+    FESTIVAL = "FESTIVAL"
+    UNKNOWN = "UNKNOWN"
+
+
+# price JSON 형식: [{"seat_type": "S석", "price": 10000}]
 class Concert(Base):
     __tablename__ = "concerts"
 
@@ -22,8 +30,13 @@ class Concert(Base):
     poster_url = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     price = Column(JSONB, nullable=True)
+    event_type = Column(String, nullable=False, default=EventType.UNKNOWN.value)
+    crawl_screenshot_url = Column(String, nullable=True)
+    ticketing_date = Column(DateTime(timezone=True), nullable=True)
+    ticketing_links = Column(JSONB, nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)
     real_setlist = relationship("RealSetlist", back_populates="concert", uselist=False)
     pre_setlist = relationship("PreSetlist", back_populates="concert", uselist=False)
+    venue_layout = relationship("VenueLayout", back_populates="concert", uselist=False)

@@ -1,0 +1,179 @@
+import asyncio
+import logging
+from uuid import UUID
+from datetime import datetime, timedelta, timezone
+
+from fastapi import HTTPException
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.models.concert import Concert
+from app.models.notification import Notification, NotificationType
+from app.models.social import ConcertFollow
+from app.models.user import User
+
+logger = logging.getLogger(__name__)
+
+_firebase_initialized = False
+
+
+# Firebase 초기화
+def _init_firebase() -> None:
+    global _firebase_initialized
+    if _firebase_initialized:
+        return
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+            firebase_admin.initialize_app(cred)
+        _firebase_initialized = True
+    except Exception as e:
+        logger.error(f"Firebase 초기화 실패: {e}")
+
+
+# 알림 목록 조회
+async def get_notifications(db: AsyncSession, user_id: UUID) -> list[Notification]:
+    result = await db.execute(
+        select(Notification)
+        .where(Notification.user_id == user_id)
+        .order_by(Notification.scheduled_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+# 알림 읽음 처리
+async def mark_as_read(db: AsyncSession, user_id: UUID, notification_id: UUID) -> Notification:
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == user_id,
+        )
+    )
+    notif = result.scalar_one_or_none()
+    if notif is None:
+        raise HTTPException(status_code=404, detail="알림을 찾을 수 없습니다.")
+    notif.is_read = True
+    await db.commit()
+    return notif
+
+
+# 알림 삭제
+async def delete_notification(db: AsyncSession, user_id: UUID, notification_id: UUID) -> None:
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == user_id,
+        )
+    )
+    notif = result.scalar_one_or_none()
+    if notif is None:
+        raise HTTPException(status_code=404, detail="알림을 찾을 수 없습니다.")
+    await db.delete(notif)
+    await db.commit()
+
+
+# FCM 푸시 발송
+def _send_fcm(token: str, title: str, body: str) -> bool:
+    try:
+        _init_firebase()
+        from firebase_admin import messaging
+        message = messaging.Message(
+            notification=messaging.Notification(title=title, body=body),
+            token=token,
+        )
+        messaging.send(message)
+        return True
+    except Exception as e:
+        logger.error(f"FCM 발송 실패: {e}")
+        return False
+
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _at_9am_kst(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_KST)
+    d = dt.astimezone(_KST).replace(hour=9, minute=0, second=0, microsecond=0)
+    return d.astimezone(timezone.utc)
+
+
+# 찜한 공연 팔로워에게 TICKETING_DAY 알림 생성 (crawl-result 웹훅에서 호출)
+async def schedule_ticketing_day_notifications(db: AsyncSession, concert_id: UUID) -> None:
+    result = await db.execute(select(Concert).where(Concert.id == concert_id))
+    concert = result.scalar_one_or_none()
+    if concert is None or concert.ticketing_date is None:
+        return
+
+    scheduled = _at_9am_kst(concert.ticketing_date)
+    now = datetime.now(timezone.utc)
+    if scheduled <= now:
+        logger.info(f"티켓팅 날짜가 이미 지났습니다: {concert.name}")
+        return
+
+    # 이 공연을 찜한 유저 조회
+    rows_result = await db.execute(
+        select(ConcertFollow, User)
+        .join(User, ConcertFollow.user_id == User.id)
+        .where(ConcertFollow.concerts.contains([{"concert_id": str(concert_id)}]))
+    )
+    rows = rows_result.all()
+    if not rows:
+        return
+
+    # 기존 미발송 TICKETING_DAY 알림 삭제 (날짜 변경 재전송 대비)
+    matched_user_ids = [user.id for _, user in rows]
+    await db.execute(
+        delete(Notification).where(
+            Notification.user_id.in_(matched_user_ids),
+            Notification.concert_id == concert_id,
+            Notification.type == NotificationType.TICKETING_DAY,
+            Notification.is_sent == False,  # noqa: E712
+        )
+    )
+
+    for _, user in rows:
+        notif_settings = user.notification_settings or {}
+        if not notif_settings.get("ticketing", True):
+            continue
+        db.add(Notification(
+            user_id=user.id,
+            concert_id=concert_id,
+            type=NotificationType.TICKETING_DAY,
+            title=concert.name,
+            body="티켓팅 날이에요! 지금 바로 예매하세요.",
+            scheduled_at=scheduled,
+        ))
+
+    await db.commit()
+    logger.info(f"티켓팅 알림 생성: {concert.name} ({len(rows)}명)")
+
+
+# 미발송 알림 처리 및 FCM 발송 (스케줄러 호출용)
+async def process_pending_notifications(db: AsyncSession) -> None:
+    # 현재 시각 기준으로 발송되지 않은 알림 조회
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        select(Notification, User.fcm_token)
+        .join(User, Notification.user_id == User.id)
+        .where(
+            Notification.is_sent == False,  # noqa: E712
+            Notification.scheduled_at <= now,
+            User.fcm_token.isnot(None),
+        )
+    )
+    rows = result.all()
+
+    # 각 알림에 대해 FCM 발송 시도 -> 성공 시 is_sent=True
+    loop = asyncio.get_running_loop()
+    for notif, fcm_token in rows:
+        success = await loop.run_in_executor(None, _send_fcm, fcm_token, notif.title, notif.body)
+        if success:
+            notif.is_sent = True
+
+    if rows:
+        await db.commit()

@@ -1,8 +1,10 @@
 ﻿import uuid
 import enum
+
 from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SAEnum, Text, Integer, Boolean, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
 
 
@@ -11,7 +13,9 @@ class TicketStatus(str, enum.Enum):
     BEFORE_CONCERT = "before_concert"
     AFTER_CONCERT = "after_concert"
 
-
+"""
+concert_photo_urls JSON 형식: ["https://example.com/photo1.jpg", "https://example.com/photo2.jpg"]
+"""
 class Ticket(Base):
     __tablename__ = "tickets"
 
@@ -27,7 +31,7 @@ class Ticket(Base):
     seat_type = Column(String, nullable=True)
     ticket_image_url = Column(String, nullable=True)
     review = Column(Text, nullable=True)
-    concert_photo_urls = Column(Text, nullable=True)
+    concert_photo_urls = Column(JSONB, nullable=True)
     is_first_day = Column(Boolean, nullable=True)
     is_last_day = Column(Boolean, nullable=True)
 

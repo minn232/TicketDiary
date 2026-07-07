@@ -1,0 +1,28 @@
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+class VenueLayoutInput(BaseModel):
+    image_url: str | None = None
+    layout_data: dict | None = None
+
+
+class VenueLayoutResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: UUID
+    concert_id: UUID
+    image_url: str | None
+    layout_data: dict | None
+
+
+class CrawlResultRequest(BaseModel):
+    timetable: list[dict] | None = None
+    prices: list[dict] | None = None
+    venue_layout: VenueLayoutInput | None = None
+    ticketing_date: str | None = None  # YYYY-MM-DD
+
+
+class CrawlResultResponse(BaseModel):
+    updated: list[str]
