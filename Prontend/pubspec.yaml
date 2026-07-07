@@ -37,6 +37,8 @@ dependencies:
 
   # 로컬에 간단한 bool/문자열 등을 저장(티켓 뜯김 상태 영구화)
   shared_preferences: ^2.2.3
+  image_picker: ^1.0.7
+  camera: ^0.12.0+1
 
 dev_dependencies:
   flutter_test:

@@ -8,7 +8,7 @@ import 'package:ticketdiary/widgets/diary_tabs.dart';
 
 /// 앱의 루트 위젯.
 ///
-/// - 라우팅/테마/전환 애니메이션/옵저버를 한 곳에서 관리합니다.
+/// - 라우팅/테마를 한 곳에서 관리합니다.
 class TicketDiaryApp extends StatelessWidget {
   const TicketDiaryApp({super.key});
 
@@ -19,12 +19,31 @@ class TicketDiaryApp extends StatelessWidget {
       title: 'Ticket Diary',
       theme: ThemeData(fontFamily: 'Roboto'),
       initialRoute: DiaryRoutes.diary,
-      routes: {
-        DiaryRoutes.diary: (context) => const DiaryScreen(),
-        DiaryRoutes.news: (context) => const NewsScreen(),
-        DiaryRoutes.summary: (context) => const SummaryScreen(),
-        DiaryRoutes.settings: (context) => const SettingsScreen(),
+      onGenerateRoute: (settings) {
+        Widget nextScreen;
+        switch (settings.name) {
+          case DiaryRoutes.diary:
+            nextScreen = const DiaryScreen();
+            break;
+          case DiaryRoutes.news:
+            nextScreen = const NewsScreen();
+            break;
+          case DiaryRoutes.summary:
+            nextScreen = const SummaryScreen();
+            break;
+          case DiaryRoutes.settings:
+            nextScreen = const SettingsScreen();
+            break;
+          default:
+            return null;
+        }
+
+        return MaterialPageRoute(
+          settings: settings,
+          builder: (context) => nextScreen,
+        );
       },
     );
   }
 }
+
