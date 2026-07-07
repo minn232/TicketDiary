@@ -1,4 +1,4 @@
-yaml_content = """name: Deploy Flutter Web to GitHub Pages
+name: Deploy Flutter Web to GitHub Pages
 
 on:
   workflow_dispatch: # 수동 실행 가능하도록 설정
@@ -8,35 +8,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 깃허브 레포지토리의 코드를 가상 컴퓨터로 가져옵니다.
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 가상 컴퓨터에 Java 환경을 세팅합니다. (빌드 필수 요소)
       - name: Set up Java
         uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # 3. 가상 컴퓨터에 Flutter 환경을 세팅합니다.
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          # 프로젝트에 맞는 플러터 버전을 지정할 수 있습니다. (생략 시 최신 stable)
 
-      # 4. 플러터 라이브러리 패키지들을 다운로드합니다.
       - name: Install dependencies
         run: flutter pub get
 
-      # 5. 플러터 프로젝트를 웹(Web) 형태로 빌드합니다.
-      # GitHub Pages는 기본 주소 뒤에 레포지토리 이름(/TicketDiary)이 붙으므로 base-href 처리가 필수입니다.
       - name: Build Flutter Web
         run: flutter build web --base-href "/TicketDiary/"
 
-      # 6. 빌드가 완료된 web 폴더 안의 결과물들을 GitHub Pages로 최종 배포합니다.
-      - name: Deploy to GitHub Pages
+      - name: Upload Artifacts
         uses: actions/upload-pages-artifact@v2
         with:
           path: build/web
@@ -54,9 +46,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v2
-"""
-
-with open("deploy-flutter.yml", "w", encoding="utf-8") as f:
-    f.write(yaml_content)
-
-print("Generated deploy-flutter.yml")
