@@ -266,6 +266,10 @@ async def crawl_and_save(concert_id, ticketing_site: str | None) -> None:
         if concert is None:
             return
 
+        if concert.crawl_screenshot_url is not None:
+            logger.info(f"이미 크롤링된 공연, 스킵: {concert.name}")
+            return
+
         site_key, direct_url = _pick_crawl_target(ticketing_site, concert.ticketing_links)
         if site_key is None:
             # 티켓링크 전용 공연 → KOPIS 페이지로 폴백

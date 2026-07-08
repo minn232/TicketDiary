@@ -126,6 +126,7 @@ async def test_crawl_and_save_interpark_updates_concert():
     mock_concert = MagicMock()
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
+    mock_concert.crawl_screenshot_url = None
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
@@ -162,6 +163,34 @@ async def test_crawl_and_save_none_ticketing_site_skips():
     mock_session.assert_not_called()
 
 
+# 이미 크롤링된 공연(crawl_screenshot_url 존재)은 재크롤링 없이 종료
+@pytest.mark.asyncio
+async def test_crawl_and_save_already_crawled_skips():
+    concert_id = uuid.uuid4()
+    mock_concert = MagicMock()
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+    mock_concert.crawl_screenshot_url = "https://s3.example.com/crawls/existing.png"
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    mock_crawler = AsyncMock(return_value=b"bytes")
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock()) as mock_upload,
+    ):
+        await crawl_and_save(concert_id, "INTERPARK")
+
+    mock_crawler.assert_not_called()
+    mock_upload.assert_not_called()
+    mock_db.commit.assert_not_awaited()
+
+
 # 크롤링 결과 None이면 S3 업로드 없이 종료
 @pytest.mark.asyncio
 async def test_crawl_and_save_crawler_returns_none_skips_upload():
@@ -169,6 +198,7 @@ async def test_crawl_and_save_crawler_returns_none_skips_upload():
     mock_concert = MagicMock()
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
+    mock_concert.crawl_screenshot_url = None
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
@@ -259,6 +289,7 @@ async def test_crawl_and_save_ticketlink_falls_back_to_kopis():
     mock_concert.name = "공연명"
     mock_concert.kopis_id = "PF291361"
     mock_concert.ticketing_links = None
+    mock_concert.crawl_screenshot_url = None
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
@@ -286,6 +317,7 @@ async def test_crawl_and_save_ticketlink_no_kopis_id_skips():
     mock_concert.name = "공연명"
     mock_concert.kopis_id = None
     mock_concert.ticketing_links = None
+    mock_concert.crawl_screenshot_url = None
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
@@ -310,6 +342,7 @@ async def test_crawl_and_save_melon_bot_block_skips():
     mock_concert = MagicMock()
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
+    mock_concert.crawl_screenshot_url = None
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))

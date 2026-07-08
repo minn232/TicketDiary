@@ -26,12 +26,13 @@ _s3_client = None
 def _get_s3_client():
     global _s3_client
     if _s3_client is None:
-        _s3_client = boto3.client(
-            "s3",
-            region_name=settings.AWS_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        )
+        # 액세스 키가 설정된 경우에만 명시적으로 전달하고, 없으면 boto3 기본 자격증명
+        # 체인(EC2 인스턴스에 연결된 IAM 역할 등)을 사용하도록 둔다.
+        kwargs = {"region_name": settings.AWS_REGION}
+        if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+            kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
+            kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+        _s3_client = boto3.client("s3", **kwargs)
     return _s3_client
 
 

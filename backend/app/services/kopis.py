@@ -175,36 +175,41 @@ async def search_concerts(
     return []
 
 
-# concert.artist_name 기반으로 팔로우 유저들에게 뉴스피드 생성 (중복 제외)
-async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> None:
-    if not concert.artist_name:
-        return
-
-    concert_artists_lower = {a.lower() for a in concert.artist_name}
-
-    # 아티스트를 1명 이상 팔로우하는 유저만 조회 (빈 배열 제외)
+# 아티스트명(소문자) -> [(user_id, 원본 아티스트명), ...] 역인덱스 구축
+# 배치 1회 실행당 한 번만 호출해서 공연마다 팔로우 테이블을 재조회하지 않도록 함
+async def _build_follow_index(db: AsyncSession) -> dict[str, list[tuple]]:
     result = await db.execute(
         select(ArtistFollow).where(
             func.jsonb_array_length(ArtistFollow.artists) > 0
         )
     )
     follows = result.scalars().all()
-    if not follows:
+
+    index: dict[str, list[tuple]] = {}
+    for follow in follows:
+        for entry in follow.artists or []:
+            name = entry.get("artist_name")
+            if not name:
+                continue
+            index.setdefault(name.lower(), []).append((follow.user_id, name))
+    return index
+
+
+# concert.artist_name 기반으로 팔로우 유저들에게 뉴스피드 생성 (중복 제외)
+# follow_index를 넘기면 재조회 없이 재사용, 없으면 단발 호출로 간주해 직접 구축
+async def _create_news_feeds_for_concert(
+    db: AsyncSession, concert: Concert, follow_index: dict[str, list[tuple]] | None = None
+) -> None:
+    if not concert.artist_name:
         return
+
+    if follow_index is None:
+        follow_index = await _build_follow_index(db)
 
     # 매칭되는 팔로워 및 아티스트명 수집
     matched: list[tuple] = []
-    for follow in follows:
-        artist = next(
-            (
-                entry.get("artist_name")
-                for entry in (follow.artists or [])
-                if entry.get("artist_name", "").lower() in concert_artists_lower
-            ),
-            None,
-        )
-        if artist:
-            matched.append((follow.user_id, artist))
+    for artist in concert.artist_name:
+        matched.extend(follow_index.get(artist.lower(), []))
 
     if not matched:
         return
@@ -224,33 +229,71 @@ async def _create_news_feeds_for_concert(db: AsyncSession, concert: Concert) -> 
             db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
 
 
+# 배치 1회당 최대 조회 페이지 수 (무한 루프 방지용 안전장치, rows=100 기준 최대 2000건)
+_MAX_KOPIS_LIST_PAGES = 20
+
+
+# KOPIS 목록 API 전체 페이지 순회하여 kopis_id 전부 수집
+async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date: date) -> list[str]:
+    kopis_ids: list[str] = []
+    cpage = 1
+
+    while cpage <= _MAX_KOPIS_LIST_PAGES:
+        params = {
+            "service": settings.KOPIS_API_KEY,
+            "stdate": today.strftime("%Y%m%d"),
+            "eddate": end_date.strftime("%Y%m%d"),
+            "genrenm": "대중음악",
+            "rows": 100,
+            "cpage": cpage,
+        }
+        response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+
+        if response.status_code != 200:
+            logger.warning(f"KOPIS 배치 목록 조회 실패 (cpage={cpage})")
+            break
+
+        root = ET.fromstring(response.content)
+        page_ids = [
+            elem.findtext("mt20id", "").strip()
+            for elem in root.findall("db")
+            if elem.findtext("mt20id", "").strip()
+        ]
+        kopis_ids.extend(page_ids)
+
+        # 반환 건수가 rows(100)보다 적으면 마지막 페이지
+        if len(page_ids) < 100:
+            break
+        cpage += 1
+
+    return kopis_ids
+
+
+# 신규 공연 상세 조회 동시 요청 수 제한 (KOPIS API 레이트리밋 고려)
+_KOPIS_DETAIL_CONCURRENCY = 4
+
+
+# 세마포어로 동시성 제한하며 상세 조회 (DB 접근 없이 fetch+파싱만 수행, 실패 시 None)
+async def _fetch_new_concert_data(
+    client: httpx.AsyncClient, kopis_id: str, semaphore: asyncio.Semaphore
+) -> dict | None:
+    async with semaphore:
+        try:
+            data = await _fetch_kopis_detail_data(client, kopis_id)
+            await asyncio.sleep(0.2)
+            return data
+        except Exception as e:
+            logger.warning(f"KOPIS 상세 조회 실패 ({kopis_id}): {e}")
+            return None
+
+
 # KOPIS 일별 배치: 신규 공연 수집 + 뉴스피드 생성
 async def sync_daily_concerts(db: AsyncSession) -> None:
     today = date.today()
     end_date = today + timedelta(days=365)
 
-    params = {
-        "service": settings.KOPIS_API_KEY,
-        "stdate": today.strftime("%Y%m%d"),
-        "eddate": end_date.strftime("%Y%m%d"),
-        "genrenm": "대중음악",
-        "rows": 100,
-        "cpage": 1,
-    }
-
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
-
-    if response.status_code != 200:
-        logger.warning("KOPIS 배치 목록 조회 실패")
-        return
-
-    root = ET.fromstring(response.content)
-    kopis_ids = [
-        elem.findtext("mt20id", "").strip()
-        for elem in root.findall("db")
-        if elem.findtext("mt20id", "").strip()
-    ]
+        kopis_ids = await _fetch_all_kopis_ids(client, today, end_date)
 
     if not kopis_ids:
         return
@@ -261,29 +304,41 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
     )
     existing = {c.kopis_id: c for c in result.scalars().all()}
 
+    # 팔로우 역인덱스를 배치 1회당 한 번만 구축해 공연마다 재조회하지 않도록 함
+    follow_index = await _build_follow_index(db)
+
+    new_kopis_ids = [kid for kid in kopis_ids if kid not in existing]
+
+    # 신규 공연 상세 조회는 동시성 제한을 걸어 병렬로 수행 (DB 세션은 공유하지 않음)
+    if new_kopis_ids:
+        semaphore = asyncio.Semaphore(_KOPIS_DETAIL_CONCURRENCY)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            results = await asyncio.gather(
+                *(_fetch_new_concert_data(client, kid, semaphore) for kid in new_kopis_ids)
+            )
+
+        # DB upsert + 뉴스피드 생성은 세션이 공유되므로 순차 처리
+        for data in results:
+            if data is None:
+                continue
+            concert = await _upsert_concert(db, data)
+            await _create_news_feeds_for_concert(db, concert, follow_index)
+            await db.commit()
+
     for kopis_id in kopis_ids:
         concert = existing.get(kopis_id)
-
-        if concert is None:
-            # 신규 공연: 상세 조회 + 뉴스피드 생성 (get_concert_detail 내부에서 처리)
-            try:
-                await get_concert_detail(db, kopis_id)
-                await asyncio.sleep(0.2)
-            except Exception as e:
-                logger.warning(f"KOPIS 상세 조회 실패 ({kopis_id}): {e}")
-        elif concert.artist_name:
+        if concert is not None and concert.artist_name:
             # 이미 있고 아티스트 정보 있음: API 재호출 없이 뉴스피드만 생성
-            await _create_news_feeds_for_concert(db, concert)
+            await _create_news_feeds_for_concert(db, concert, follow_index)
             await db.commit()
 
 
-# KOPIS 공연 상세 조회 (kopis_id -> Concert + DB upsert)
-async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(
-            f"{settings.KOPIS_BASE_URL}/pblprfr/{kopis_id}",
-            params={"service": settings.KOPIS_API_KEY},
-        )
+# KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
+async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
+    response = await client.get(
+        f"{settings.KOPIS_BASE_URL}/pblprfr/{kopis_id}",
+        params={"service": settings.KOPIS_API_KEY},
+    )
 
     if response.status_code != 200:
         raise HTTPException(status_code=502, detail="KOPIS API 호출에 실패했습니다.")
@@ -312,7 +367,7 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
                     ticketing_links[key] = site_url
 
     name = elem.findtext("prfnm") or ""
-    data = {
+    return {
         "kopis_id": kopis_id,
         "name": name,
         "artist_name": _parse_artists(prfcrew) if prfcrew else [],
@@ -327,8 +382,16 @@ async def get_concert_detail(db: AsyncSession, kopis_id: str) -> Concert:
         "ticketing_links": ticketing_links or None,
     }
 
+
+# KOPIS 공연 상세 조회 (kopis_id -> Concert + DB upsert)
+async def get_concert_detail(
+    db: AsyncSession, kopis_id: str, follow_index: dict[str, list[tuple]] | None = None
+) -> Concert:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        data = await _fetch_kopis_detail_data(client, kopis_id)
+
     concert = await _upsert_concert(db, data)
-    await _create_news_feeds_for_concert(db, concert)
+    await _create_news_feeds_for_concert(db, concert, follow_index)
     await db.commit()
     await db.refresh(concert)
     return concert

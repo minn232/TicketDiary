@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.concert import Concert
 from app.models.social import ArtistFollow, ConcertFollow, NewsFeed
 from app.schemas.social import ArtistEntry, ConcertEntry
 
@@ -21,14 +23,67 @@ async def get_or_create_artist_follow(db: AsyncSession, user_id: UUID) -> Artist
     return row
 
 
+# 새로 팔로우한 아티스트와 매칭되는 기존 DB 공연에 대해 즉시 뉴스피드 생성
+# (배치는 자정에만 도니, 팔로우 시점에 이미 존재하는 공연은 바로 반영해줌)
+async def _generate_feeds_for_new_follows(
+    db: AsyncSession, user_id: UUID, new_artist_names: list[str]
+) -> None:
+    artist_names_lower = {name.lower() for name in new_artist_names if name}
+    if not artist_names_lower:
+        return
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(select(Concert).where(Concert.start_date >= now))
+    concerts = result.scalars().all()
+
+    matched: list[tuple[Concert, str]] = []
+    for concert in concerts:
+        for artist in concert.artist_name or []:
+            if artist.lower() in artist_names_lower:
+                matched.append((concert, artist))
+                break
+
+    if not matched:
+        return
+
+    concert_ids = [c.id for c, _ in matched]
+    existing_result = await db.execute(
+        select(NewsFeed.concert_id).where(
+            NewsFeed.user_id == user_id,
+            NewsFeed.concert_id.in_(concert_ids),
+        )
+    )
+    existing_concert_ids = set(existing_result.scalars().all())
+
+    for concert, artist_name in matched:
+        if concert.id not in existing_concert_ids:
+            db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
+
+    await db.commit()
+
+
 # 선호 아티스트 수정 (전체 교체)
 async def update_artist_follow(
     db: AsyncSession, user_id: UUID, artists: list[ArtistEntry]
 ) -> ArtistFollow:
     row = await get_or_create_artist_follow(db, user_id)
+
+    previous_names_lower = {
+        entry.get("artist_name", "").lower()
+        for entry in (row.artists or [])
+        if entry.get("artist_name")
+    }
+
     row.artists = [a.model_dump(mode="json") for a in artists]
     await db.commit()
     await db.refresh(row)
+
+    new_artist_names = [
+        a.artist_name for a in artists if a.artist_name.lower() not in previous_names_lower
+    ]
+    if new_artist_names:
+        await _generate_feeds_for_new_follows(db, user_id, new_artist_names)
+
     return row
 
 
