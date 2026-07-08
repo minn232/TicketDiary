@@ -15,6 +15,25 @@ from app.models.social import ArtistFollow, NewsFeed
 
 logger = logging.getLogger(__name__)
 
+# KOPIS Open API 이용제한 공식 정책: IP당 초당 10회 초과 호출 시 서비스 중지됨
+# 안전마진을 두고 초당 약 2.8회로 제한 (list/detail 등 KOPIS로 나가는 모든 요청에 공통 적용)
+_KOPIS_MIN_REQUEST_INTERVAL = 0.35
+_kopis_request_lock = asyncio.Lock()
+_kopis_last_request_at = 0.0
+
+
+# KOPIS로 나가는 모든 HTTP 요청 직전에 호출 -> IP당 초당 10회 제한을 넘지 않도록 간격 보장
+async def _throttle_kopis_request() -> None:
+    global _kopis_last_request_at
+    async with _kopis_request_lock:
+        loop = asyncio.get_event_loop()
+        now = loop.time()
+        wait = _kopis_last_request_at + _KOPIS_MIN_REQUEST_INTERVAL - now
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _kopis_last_request_at = loop.time()
+
+
 _DATE_FMT = "%Y.%m.%d"
 
 _FESTIVAL_KEYWORDS = [
@@ -232,8 +251,20 @@ async def _create_news_feeds_for_concert(
 # 배치 1회당 최대 조회 페이지 수 (무한 루프 방지용 안전장치, rows=100 기준 최대 20000건)
 _MAX_KOPIS_LIST_PAGES = 200
 
+# 공연장 규모로 대상을 좁히고 싶을 때 키워드를 채워 넣으면 됨 (비어있으면 필터 비활성화)
+# 속도 제한(_throttle_kopis_request) + 1회당 처리 상한(_MAX_NEW_CONCERTS_PER_RUN)으로
+# API 이용제한 문제는 이미 방어되므로 현재는 필터링하지 않음
+_LARGE_VENUE_KEYWORDS: list[str] = []
 
-# KOPIS 목록 API 전체 페이지 순회하여 kopis_id 전부 수집
+
+# fcltynm(공연장명)에 대형 공연장 키워드가 포함되는지 확인 (키워드 목록이 비면 전체 통과)
+def _is_large_venue(fclty_name: str) -> bool:
+    if not _LARGE_VENUE_KEYWORDS:
+        return True
+    return any(keyword in fclty_name for keyword in _LARGE_VENUE_KEYWORDS)
+
+
+# KOPIS 목록 API 전체 페이지 순회하여 대형 공연장 kopis_id만 수집
 async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date: date) -> list[str]:
     kopis_ids: list[str] = []
     cpage = 1
@@ -247,6 +278,7 @@ async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date:
             "rows": 100,
             "cpage": cpage,
         }
+        await _throttle_kopis_request()
         response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
 
         if response.status_code != 200:
@@ -254,15 +286,17 @@ async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date:
             break
 
         root = ET.fromstring(response.content)
+        entries = root.findall("db")
         page_ids = [
             elem.findtext("mt20id", "").strip()
-            for elem in root.findall("db")
+            for elem in entries
             if elem.findtext("mt20id", "").strip()
+            and _is_large_venue(elem.findtext("fcltynm", "") or "")
         ]
         kopis_ids.extend(page_ids)
 
-        # 반환 건수가 rows(100)보다 적으면 마지막 페이지
-        if len(page_ids) < 100:
+        # 마지막 페이지 판단은 필터링 전 원본 응답 건수 기준 (필터링 후 건수로 판단하면 조기 종료될 수 있음)
+        if len(entries) < 100:
             break
         cpage += 1
 
@@ -286,15 +320,17 @@ async def _fetch_new_concert_data(
         last_error: Exception | None = None
         for attempt in range(_KOPIS_DETAIL_MAX_RETRIES):
             try:
-                data = await _fetch_kopis_detail_data(client, kopis_id)
-                await asyncio.sleep(0.2)
-                return data
+                return await _fetch_kopis_detail_data(client, kopis_id)
             except Exception as e:
                 last_error = e
                 if attempt < _KOPIS_DETAIL_MAX_RETRIES - 1:
                     await asyncio.sleep(_KOPIS_DETAIL_RETRY_BACKOFF * (attempt + 1))
         logger.warning(f"KOPIS 상세 조회 실패 ({kopis_id}): {last_error}")
         return None
+
+
+# 1회 실행당 상세조회할 신규 공연 최대 건수 (초기 대량 백필을 여러 날에 나눠 처리하기 위한 상한)
+_MAX_NEW_CONCERTS_PER_RUN = 3000
 
 
 # KOPIS 일별 배치: 신규 공연 수집 + 뉴스피드 생성
@@ -318,6 +354,14 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
     follow_index = await _build_follow_index(db)
 
     new_kopis_ids = [kid for kid in kopis_ids if kid not in existing]
+
+    # 1회 실행당 처리량 상한 (초기 대량 백필을 여러 날에 걸쳐 나눠 처리하기 위함)
+    # 상한에 걸려 못 받은 나머지는 계속 "신규" 상태로 남아 다음 실행(다음날 자정 배치 등)에서 이어서 처리됨
+    if len(new_kopis_ids) > _MAX_NEW_CONCERTS_PER_RUN:
+        logger.info(
+            f"신규 공연 {len(new_kopis_ids)}건 중 {_MAX_NEW_CONCERTS_PER_RUN}건만 이번 실행에서 처리, 나머지는 다음 실행에서 처리"
+        )
+        new_kopis_ids = new_kopis_ids[:_MAX_NEW_CONCERTS_PER_RUN]
 
     # 신규 공연 상세 조회는 동시성 제한을 걸어 병렬로 수행 (DB 세션은 공유하지 않음)
     if new_kopis_ids:
@@ -345,6 +389,7 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
 
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
 async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
+    await _throttle_kopis_request()
     response = await client.get(
         f"{settings.KOPIS_BASE_URL}/pblprfr/{kopis_id}",
         params={"service": settings.KOPIS_API_KEY},

@@ -7,17 +7,19 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select
 
+import app.services.kopis as kopis_module
 from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.social import NewsFeed
-from app.services.kopis import _fetch_all_kopis_ids, sync_daily_concerts
+from app.services.kopis import _fetch_all_kopis_ids, _is_large_venue, sync_daily_concerts
 from conftest import _get_token, kopis_mock
 
 
 # 헬퍼
 
 # KOPIS 목록 API XML 생성 (kopis_id 목록 기반)
+# fcltynm에 대형 공연장 키워드("체조경기장")를 포함시켜 _is_large_venue 필터를 통과하도록 함
 def _make_list_xml(kopis_ids: list[str]) -> bytes:
     dbs = ""
     for kid in kopis_ids:
@@ -27,7 +29,7 @@ def _make_list_xml(kopis_ids: list[str]) -> bytes:
             f"<prfnm>{kid} 공연</prfnm>"
             f"<prfpdfrom>2030.06.01</prfpdfrom>"
             f"<prfpdto>2030.06.30</prfpdto>"
-            f"<fcltynm>테스트공연장</fcltynm>"
+            f"<fcltynm>테스트체조경기장</fcltynm>"
             f"<genrenm>대중음악</genrenm>"
             f"<poster></poster>"
             f"</db>"
@@ -79,7 +81,118 @@ def _batch_kopis_mock(list_xml: bytes, detail_xml: bytes):
         yield
 
 
+# kopis_id, fcltynm 쌍으로 목록 API XML 생성 (공연장 필터 테스트용)
+def _make_list_xml_with_venues(entries: list[tuple[str, str]]) -> bytes:
+    dbs = ""
+    for kid, fclty in entries:
+        dbs += (
+            f"<db>"
+            f"<mt20id>{kid}</mt20id>"
+            f"<prfnm>{kid} 공연</prfnm>"
+            f"<prfpdfrom>2030.06.01</prfpdfrom>"
+            f"<prfpdto>2030.06.30</prfpdto>"
+            f"<fcltynm>{fclty}</fcltynm>"
+            f"<genrenm>대중음악</genrenm>"
+            f"<poster></poster>"
+            f"</db>"
+        )
+    return f'<?xml version="1.0" encoding="UTF-8"?><dbs>{dbs}</dbs>'.encode("utf-8")
+
+
+_TEST_LARGE_VENUE_KEYWORDS = ["체조경기장", "스카이돔", "종합운동장", "주경기장"]
+
+
+# _is_large_venue 테스트
+
+# 대형 공연장 키워드 포함 여부로 판별 (운영 기본값은 빈 리스트=필터 비활성화라 테스트용 키워드로 명시적 패치)
+def test_is_large_venue_matches_known_keywords():
+    with patch("app.services.kopis._LARGE_VENUE_KEYWORDS", _TEST_LARGE_VENUE_KEYWORDS):
+        assert _is_large_venue("올림픽공원 체조경기장")
+        assert _is_large_venue("고척스카이돔")
+        assert _is_large_venue("잠실종합운동장 (주경기장)")
+        assert not _is_large_venue("대학로 소극장")
+
+
+# 키워드 목록이 비어있으면(운영 기본값) 전부 통과되는지 테스트
+def test_is_large_venue_passes_everything_when_keywords_empty():
+    with patch("app.services.kopis._LARGE_VENUE_KEYWORDS", []):
+        assert _is_large_venue("대학로 소극장")
+        assert _is_large_venue("동네공연장")
+
+
+# _throttle_kopis_request 테스트
+
+# KOPIS IP당 초당 10회 제한(공식 정책)을 넘지 않도록 연속 호출 시 대기하는지 테스트
+@pytest.mark.asyncio
+async def test_throttle_kopis_request_waits_when_called_too_soon():
+    kopis_module._kopis_last_request_at = 0.0
+    sleep_mock = AsyncMock()
+    mock_loop = MagicMock()
+    # 1번째 호출: now=10.0 (마지막 요청 0.0과 충분히 떨어져 대기 없음), 이후 last_request_at=10.0으로 갱신
+    # 2번째 호출: now=10.1 (0.35초 간격에 못 미침 -> 약 0.25초 대기해야 함)
+    mock_loop.time.side_effect = [10.0, 10.0, 10.1, 10.45]
+
+    with (
+        patch("asyncio.sleep", sleep_mock),
+        patch("asyncio.get_event_loop", return_value=mock_loop),
+    ):
+        await kopis_module._throttle_kopis_request()
+        sleep_mock.assert_not_called()
+
+        await kopis_module._throttle_kopis_request()
+        sleep_mock.assert_awaited_once()
+        waited = sleep_mock.await_args[0][0]
+        assert waited == pytest.approx(0.25, abs=0.01)
+
+
 # _fetch_all_kopis_ids 테스트
+
+# 대형 공연장만 필터링해서 kopis_id를 수집하는지 테스트 (운영 기본값은 필터 비활성화라 테스트용 키워드로 명시적 패치)
+@pytest.mark.asyncio
+async def test_fetch_all_kopis_ids_filters_to_large_venues():
+    entries = [
+        ("PF_SMALL_1", "대학로 소극장"),
+        ("PF_BIG_1", "올림픽공원 체조경기장"),
+        ("PF_SMALL_2", "동네공연장"),
+        ("PF_BIG_2", "고척스카이돔"),
+    ]
+
+    async def _mock_get(url, **kwargs):
+        return MagicMock(status_code=200, content=_make_list_xml_with_venues(entries))
+
+    mock_client = MagicMock()
+    mock_client.get = _mock_get
+
+    with patch("app.services.kopis._LARGE_VENUE_KEYWORDS", _TEST_LARGE_VENUE_KEYWORDS):
+        ids = await _fetch_all_kopis_ids(mock_client, date(2030, 1, 1), date(2030, 12, 31))
+
+    assert ids == ["PF_BIG_1", "PF_BIG_2"]
+
+
+# 필터링 후 건수가 100건 미만이어도, 원본 응답이 100건 꽉 찼으면 다음 페이지를 계속 조회하는지 테스트
+@pytest.mark.asyncio
+async def test_fetch_all_kopis_ids_pagination_uses_raw_count_not_filtered_count():
+    async def _mock_get(url, **kwargs):
+        cpage = kwargs["params"]["cpage"]
+        if cpage == 1:
+            # 100건 꽉 찬 페이지지만 대형 공연장은 1건뿐
+            entries = [("PF_SMALL", "동네공연장")] * 99 + [("PF_BIG_P1", "고척스카이돔")]
+        elif cpage == 2:
+            # 마지막 페이지 (50건, 대형 공연장 1건)
+            entries = [("PF_SMALL2", "동네공연장")] * 49 + [("PF_BIG_P2", "올림픽공원 체조경기장")]
+        else:
+            entries = []
+        return MagicMock(status_code=200, content=_make_list_xml_with_venues(entries))
+
+    mock_client = MagicMock()
+    mock_client.get = _mock_get
+
+    with patch("app.services.kopis._LARGE_VENUE_KEYWORDS", _TEST_LARGE_VENUE_KEYWORDS):
+        ids = await _fetch_all_kopis_ids(mock_client, date(2030, 1, 1), date(2030, 12, 31))
+
+    # 1페이지의 필터링 후 건수(1건)만 보고 조기 종료됐다면 PF_BIG_P2는 못 받았을 것
+    assert ids == ["PF_BIG_P1", "PF_BIG_P2"]
+
 
 # 21페이지 이상 존재해도 (구 상한 20페이지=2000건을 넘어) 끝까지 수집하는지 테스트
 @pytest.mark.asyncio
@@ -104,6 +217,45 @@ async def test_fetch_all_kopis_ids_collects_beyond_old_page_cap():
 
 
 # sync_daily_concerts 테스트
+
+# 1회 실행당 신규 공연 처리 상한 테스트 - 상한 초과분은 다음 실행에서 이어서 처리됨
+@pytest.mark.asyncio
+async def test_sync_caps_new_concerts_per_run_and_continues_next_run():
+    kopis_ids = [f"PF_CAP_{i}_{uuid.uuid4().hex[:6]}" for i in range(5)]
+    list_xml = _make_list_xml(kopis_ids)
+
+    async def _mock_get(url, **kwargs):
+        parts = url.split("/pblprfr/")
+        if len(parts) > 1 and parts[1]:
+            kid = parts[1]
+            return MagicMock(status_code=200, content=_make_detail_xml(kid, f"아티스트_{kid}"))
+        return MagicMock(status_code=200, content=list_xml)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = _mock_get
+
+    with (
+        patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
+        patch("app.services.kopis._MAX_NEW_CONCERTS_PER_RUN", 2),
+        patch("asyncio.sleep"),
+    ):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Concert).where(Concert.kopis_id.in_(kopis_ids)))
+            assert len(result.scalars().all()) == 2
+
+        # 다음 실행 -> 상한에 걸려 못 받은 나머지 3건을 이어서 처리
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Concert).where(Concert.kopis_id.in_(kopis_ids)))
+            assert len(result.scalars().all()) == 5
+
 
 # 신규 공연 DB 저장 및 아티스트 정보 포함 테스트
 @pytest.mark.asyncio
