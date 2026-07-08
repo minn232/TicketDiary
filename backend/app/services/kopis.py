@@ -354,6 +354,9 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
     follow_index = await _build_follow_index(db)
 
     new_kopis_ids = [kid for kid in kopis_ids if kid not in existing]
+    logger.info(
+        f"KOPIS 조회 대상 총 {len(kopis_ids)}건 (기존 {len(existing)}건, 신규 {len(new_kopis_ids)}건)"
+    )
 
     # 1회 실행당 처리량 상한 (초기 대량 백필을 여러 날에 걸쳐 나눠 처리하기 위함)
     # 상한에 걸려 못 받은 나머지는 계속 "신규" 상태로 남아 다음 실행(다음날 자정 배치 등)에서 이어서 처리됨
