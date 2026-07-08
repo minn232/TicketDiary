@@ -1,5 +1,6 @@
 import uuid
 from contextlib import contextmanager
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +11,7 @@ from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.social import NewsFeed
-from app.services.kopis import sync_daily_concerts
+from app.services.kopis import _fetch_all_kopis_ids, sync_daily_concerts
 from conftest import _get_token, kopis_mock
 
 
@@ -76,6 +77,30 @@ def _batch_kopis_mock(list_xml: bytes, detail_xml: bytes):
 
     with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
         yield
+
+
+# _fetch_all_kopis_ids 테스트
+
+# 21페이지 이상 존재해도 (구 상한 20페이지=2000건을 넘어) 끝까지 수집하는지 테스트
+@pytest.mark.asyncio
+async def test_fetch_all_kopis_ids_collects_beyond_old_page_cap():
+    # 25페이지 100건씩(2500건) + 26페이지째 50건(마지막 페이지) = 총 2550건
+    async def _mock_get(url, **kwargs):
+        cpage = kwargs["params"]["cpage"]
+        if cpage <= 25:
+            ids = [f"PF_PAGE{cpage}_{i}" for i in range(100)]
+        elif cpage == 26:
+            ids = [f"PF_PAGE26_{i}" for i in range(50)]
+        else:
+            ids = []
+        return MagicMock(status_code=200, content=_make_list_xml(ids))
+
+    mock_client = MagicMock()
+    mock_client.get = _mock_get
+
+    ids = await _fetch_all_kopis_ids(mock_client, date(2030, 1, 1), date(2030, 12, 31))
+
+    assert len(ids) == 2550
 
 
 # sync_daily_concerts 테스트

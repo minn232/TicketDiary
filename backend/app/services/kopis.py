@@ -229,8 +229,8 @@ async def _create_news_feeds_for_concert(
             db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
 
 
-# 배치 1회당 최대 조회 페이지 수 (무한 루프 방지용 안전장치, rows=100 기준 최대 2000건)
-_MAX_KOPIS_LIST_PAGES = 20
+# 배치 1회당 최대 조회 페이지 수 (무한 루프 방지용 안전장치, rows=100 기준 최대 20000건)
+_MAX_KOPIS_LIST_PAGES = 200
 
 
 # KOPIS 목록 API 전체 페이지 순회하여 kopis_id 전부 수집
