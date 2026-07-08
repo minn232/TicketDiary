@@ -226,6 +226,84 @@ async def test_sync_handles_empty_kopis_response():
     # 예외 없이 정상 종료됨 (assert 없음 — 예외 발생 시 테스트 실패)
 
 
+# 상세 조회가 일시적으로 실패(400)했다가 재시도 시 성공하면 공연이 정상 저장되는지 테스트
+@pytest.mark.asyncio
+async def test_sync_retries_transient_detail_failure():
+    kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
+    list_xml = _make_list_xml([kopis_id])
+    detail_xml = _make_detail_xml(kopis_id, "재시도아티스트")
+
+    call_count = 0
+
+    async def _mock_get(url, **kwargs):
+        nonlocal call_count
+        parts = url.split("/pblprfr/")
+        if len(parts) > 1 and parts[1]:
+            call_count += 1
+            if call_count == 1:
+                return MagicMock(status_code=400, content=b"")
+            return MagicMock(status_code=200, content=detail_xml)
+        return MagicMock(status_code=200, content=list_xml)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = _mock_get
+
+    with (
+        patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
+        patch("asyncio.sleep"),
+    ):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+    assert call_count == 2
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
+        concert = result.scalar_one_or_none()
+
+    assert concert is not None
+    assert "재시도아티스트" in concert.artist_name
+
+
+# 상세 조회가 재시도 횟수만큼 계속 실패하면 해당 공연은 포기하고 넘어가는지 테스트
+@pytest.mark.asyncio
+async def test_sync_gives_up_after_max_detail_retries():
+    kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
+    list_xml = _make_list_xml([kopis_id])
+
+    call_count = 0
+
+    async def _mock_get(url, **kwargs):
+        nonlocal call_count
+        parts = url.split("/pblprfr/")
+        if len(parts) > 1 and parts[1]:
+            call_count += 1
+            return MagicMock(status_code=400, content=b"")
+        return MagicMock(status_code=200, content=list_xml)
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = _mock_get
+
+    with (
+        patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
+        patch("asyncio.sleep"),
+    ):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+    assert call_count == 3
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
+        concert = result.scalar_one_or_none()
+
+    assert concert is None
+
+
 # KOPIS 목록 API 실패 시 조기 종료 테스트
 @pytest.mark.asyncio
 async def test_sync_handles_kopis_list_api_failure():

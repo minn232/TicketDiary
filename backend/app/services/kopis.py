@@ -273,18 +273,28 @@ async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date:
 _KOPIS_DETAIL_CONCURRENCY = 4
 
 
+# 배치로 대량 상세 조회 시 KOPIS 쪽에서 순간적으로 거부(400)하는 경우가 있어 재시도로 흡수
+_KOPIS_DETAIL_MAX_RETRIES = 3
+_KOPIS_DETAIL_RETRY_BACKOFF = 1.0
+
+
 # 세마포어로 동시성 제한하며 상세 조회 (DB 접근 없이 fetch+파싱만 수행, 실패 시 None)
 async def _fetch_new_concert_data(
     client: httpx.AsyncClient, kopis_id: str, semaphore: asyncio.Semaphore
 ) -> dict | None:
     async with semaphore:
-        try:
-            data = await _fetch_kopis_detail_data(client, kopis_id)
-            await asyncio.sleep(0.2)
-            return data
-        except Exception as e:
-            logger.warning(f"KOPIS 상세 조회 실패 ({kopis_id}): {e}")
-            return None
+        last_error: Exception | None = None
+        for attempt in range(_KOPIS_DETAIL_MAX_RETRIES):
+            try:
+                data = await _fetch_kopis_detail_data(client, kopis_id)
+                await asyncio.sleep(0.2)
+                return data
+            except Exception as e:
+                last_error = e
+                if attempt < _KOPIS_DETAIL_MAX_RETRIES - 1:
+                    await asyncio.sleep(_KOPIS_DETAIL_RETRY_BACKOFF * (attempt + 1))
+        logger.warning(f"KOPIS 상세 조회 실패 ({kopis_id}): {last_error}")
+        return None
 
 
 # KOPIS 일별 배치: 신규 공연 수집 + 뉴스피드 생성
