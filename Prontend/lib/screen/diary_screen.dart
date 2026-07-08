@@ -1,5 +1,6 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'concert_after_screen.dart';
 import 'concert_before_overlay.dart';
@@ -10,8 +11,8 @@ import 'package:ticketdiary/services/ticket_ocr_service.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/add_ticket_option.dart';
+import 'package:ticketdiary/widgets/entry_ticket_tear_piece.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
-import 'package:ticketdiary/widgets/tear_to_reveal_right.dart';
 import 'package:ticketdiary/widgets/ticket_flip_card.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart';
 import 'package:ticketdiary/widgets/ticket_scan_camera_screen.dart';
@@ -45,9 +46,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   bool _isAddTicketExpanded = false;
 
-  static const String _prefsAfterTicketTornKey = 'concert_after_ticket_torn_v1';
-  bool _afterTicketTorn = false;
-  bool _afterTicketTornLoaded = false;
+  /// 로딩 직후 "공연 전 -> 공연 후" 자동 전환 애니메이션을 사용자가 놓치지
+  /// 않도록, 잠깐 동안 티켓 영역 조작을 막아둡니다.
+  bool _interactionLocked = true;
+  Timer? _interactionLockTimer;
 
   /// 다중 페이지 상태
   int _currentPageIndex = 0;
@@ -62,12 +64,27 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   /// 티켓 데이터 리스트 (백엔드 연동을 위해 초기값을 비웁니다)
   ///
-  /// 단, "배송 전"/"공연 후" 상태는 실제 플로우로는 아직 도달할 방법이 없어
-  /// 화면을 확인할 수 있도록 예시 티켓을 하나씩 미리 넣어둡니다.
+  /// 단, "배송 전" 상태는 실제 플로우로는 아직 도달할 방법이 없어 화면을
+  /// 확인할 수 있도록 예시 티켓을 하나 미리 넣어둡니다.
+  ///
+  /// "공연 후 티켓 예시"는 일부러 "공연 전" 상태 + 이미 지난 공연 날짜로
+  /// 만들어뒀습니다. 이렇게 하면 앱을 처음 켰을 때 실제 플로우와 똑같이
+  /// [_promoteDueTickets]가 이 티켓을 감지해서 "공연 후"로 자동 전환하고,
+  /// 그 과정에서 페이드 인아웃 전환도 그대로 시뮬레이션됩니다.
   final List<TicketData> _tickets = [
     TicketData(title: '배송 전 티켓 예시', status: TicketStatus.beforeDelivery),
-    TicketData(title: '공연 후 티켓 예시', status: TicketStatus.afterConcert),
+    TicketData(
+      title: '공연 후 티켓 예시',
+      status: TicketStatus.beforeConcert,
+      info: TicketInfo(
+        date: DateTime.now().subtract(const Duration(minutes: 1)),
+      ),
+    ),
   ];
+
+  /// 공연 전 -> 공연 후로 전환 중인 티켓의 제목들. 비어있지 않으면, 이 티켓들을
+  /// 제외한 나머지 영역을 어둡게 해서 "지금 이 티켓이 바뀌고 있다"는 걸 강조합니다.
+  Set<String> _transitionSpotlightTitles = {};
 
   final TicketOcrService _ocrService = const MockTicketOcrService();
 
@@ -78,41 +95,86 @@ class _DiaryScreenState extends State<DiaryScreen> {
   @override
   void initState() {
     super.initState();
-    _loadAfterTicketTorn();
     // "공연 전" 페이지의 예상 셋 리스트 블러 여부에 쓰이는 설정값을 미리 불러옵니다.
     AppSettingsStore.instance.load();
+
+    // 앱을 열 때 한 번만, "공연 전" 티켓의 날짜/시간이 지났는지 확인하고
+    // (지연 + 강조 어둡게 + 전환 + 복귀 순서로) 시뮬레이션합니다.
+    unawaited(_runTicketPromotionSimulation());
+
+    // 로딩(첫 프레임)이 끝난 뒤 약 3초 동안은 티켓 영역을 조작할 수 없게 막아서,
+    // 아래 시뮬레이션 전체 과정을 놓치지 않고 볼 수 있게 합니다.
+    _interactionLockTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      setState(() => _interactionLocked = false);
+    });
   }
 
-  Future<void> _loadAfterTicketTorn() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final torn = prefs.getBool(_prefsAfterTicketTornKey) ?? false;
-      if (!mounted) return;
-      setState(() {
-        _afterTicketTorn = torn;
-        _afterTicketTornLoaded = true;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _afterTicketTorn = false;
-        _afterTicketTornLoaded = true;
-      });
-    }
+  @override
+  void dispose() {
+    _interactionLockTimer?.cancel();
+    super.dispose();
   }
 
-  Future<void> _persistAfterTicketTorn() async {
-    if (_afterTicketTorn) return;
-    if (mounted) {
-      setState(() => _afterTicketTorn = true);
-    } else {
-      _afterTicketTorn = true;
+  /// 공연 전 -> 공연 후 자동 전환을, 눈으로 확인할 수 있도록 시간차를 두고 진행합니다.
+  ///
+  /// 순서: 잠깐 대기(공연 전 상태를 눈으로 확인) -> 바뀔 티켓만 남기고 나머지를
+  /// 어둡게(강조) -> 실제 상태 전환(페이드 인아웃) -> 어둡게 했던 걸 원래대로.
+  ///
+  /// 주의: postFrameCallback은 첫 프레임 직후 거의 즉시(수 ms 안에) 실행되기
+  /// 때문에, 그대로 쓰면 "공연 전" 디자인이 사람 눈에 보일 새도 없이 바로
+  /// 전환돼버립니다. 그래서 일부러 시간을 두고 진행합니다.
+  Future<void> _runTicketPromotionSimulation() async {
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (!mounted) return;
+
+    final now = DateTime.now();
+    final promotingTitles = _tickets
+        .where(
+          (t) =>
+              t.status == TicketStatus.beforeConcert &&
+              t.info?.date != null &&
+              !t.info!.date!.isAfter(now),
+        )
+        .map((t) => t.title)
+        .toSet();
+    if (promotingTitles.isEmpty) return;
+
+    setState(() => _transitionSpotlightTitles = promotingTitles);
+
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!mounted) return;
+    _promoteDueTickets();
+
+    // 0.6초 페이드 전환이 끝날 때까지 강조를 유지한 뒤 원래대로 되돌립니다.
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+    setState(() => _transitionSpotlightTitles = {});
+  }
+
+  /// 공연 날짜/시간(D-day)이 지난 "공연 전" 티켓을 "공연 후" 상태로 바꿉니다.
+  void _promoteDueTickets() {
+    final now = DateTime.now();
+    var changed = false;
+
+    for (var i = 0; i < _tickets.length; i++) {
+      final ticket = _tickets[i];
+      final date = ticket.info?.date;
+      if (ticket.status == TicketStatus.beforeConcert &&
+          date != null &&
+          !date.isAfter(now)) {
+        _tickets[i] = TicketData(
+          title: ticket.title,
+          status: TicketStatus.afterConcert,
+          info: ticket.info,
+        );
+        changed = true;
+      }
     }
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_prefsAfterTicketTornKey, true);
-    } catch (_) {}
+    if (changed && mounted) {
+      setState(() {});
+    }
   }
 
   /// 티켓 개수에 따라 필요한 전체 페이지 수를 계산합니다.
@@ -349,62 +411,112 @@ class _DiaryScreenState extends State<DiaryScreen> {
     final double fixedTopPadding =
         (constraints.maxHeight - targetTotalHeight) / 2;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _isAddTicketExpanded
-          ? () => setState(() => _isAddTicketExpanded = false)
-          : null,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 25),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.start, // 상단 고정 시작
-          children: [
-            SizedBox(
-              height: fixedTopPadding.clamp(20.0, double.infinity),
-            ), // 계산된 고정 상단 여백
-            if (isFirstPage) ...[
-              _buildAddTicketArea(context),
-              const SizedBox(height: 30), // 추가 버튼과 리스트 사이 간격 고정
-            ],
-            if (pageTickets.isEmpty && isFirstPage)
-              // 티켓이 없을 때도 자리를 유지하기 위한 투명 박스 또는 안내 문구
+    return AbsorbPointer(
+      absorbing: _interactionLocked,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _isAddTicketExpanded
+            ? () => setState(() => _isAddTicketExpanded = false)
+            : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 25),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.start, // 상단 고정 시작
+            children: [
               SizedBox(
-                height: 300,
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.airplane_ticket_outlined,
-                        size: 60,
-                        color: Colors.black.withValues(alpha: 0.1),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        "티켓을 스캔해보세요!",
-                        style: TextStyle(
-                          color: Colors.black.withValues(alpha: 0.3),
+                height: fixedTopPadding.clamp(20.0, double.infinity),
+              ), // 계산된 고정 상단 여백
+              if (isFirstPage) ...[
+                _buildDimmedDuringTransition(
+                  dim: _transitionSpotlightTitles.isNotEmpty,
+                  child: _buildAddTicketArea(context),
+                ),
+                const SizedBox(height: 30), // 추가 버튼과 리스트 사이 간격 고정
+              ],
+              if (pageTickets.isEmpty && isFirstPage)
+                // 티켓이 없을 때도 자리를 유지하기 위한 투명 박스 또는 안내 문구
+                SizedBox(
+                  height: 300,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.airplane_ticket_outlined,
+                          size: 60,
+                          color: Colors.black.withValues(alpha: 0.1),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          "티켓을 스캔해보세요!",
+                          style: TextStyle(
+                            color: Colors.black.withValues(alpha: 0.3),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: pageTickets.length,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: 25),
+                  itemBuilder: (context, index) {
+                    final ticket = pageTickets[index];
+                    final isSpotlighted = _transitionSpotlightTitles.contains(
+                      ticket.title,
+                    );
+                    final shouldDim =
+                        _transitionSpotlightTitles.isNotEmpty && !isSpotlighted;
+                    // 공연 시간이 지나 "공연 전" -> "공연 후"로 자동 전환될 때,
+                    // 같은 자리에서 자연스럽게 페이드 인아웃되도록 상태를 key로 씁니다.
+                    return _buildDimmedDuringTransition(
+                      dim: shouldDim,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 600),
+                        child: KeyedSubtree(
+                          key: ValueKey(ticket.status),
+                          child: _buildTicketByStatus(ticket),
                         ),
                       ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: pageTickets.length,
-                separatorBuilder: (context, index) =>
-                    const SizedBox(height: 25),
-                itemBuilder: (context, index) {
-                  final ticket = pageTickets[index];
-                  return _buildTicketByStatus(ticket);
-                },
-              ),
-          ],
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  /// 공연 전 -> 공연 후 전환을 강조하는 동안, 지금 바뀌는 티켓을 제외한
+  /// 나머지 영역(추가 버튼/다른 티켓)을 살짝 어둡게(검정 50%) 덮습니다.
+  Widget _buildDimmedDuringTransition({
+    required bool dim,
+    required Widget child,
+  }) {
+    return Stack(
+      children: [
+        child,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: dim ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -786,6 +898,17 @@ class _DiaryScreenState extends State<DiaryScreen> {
               color: Colors.white,
               borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
             ),
+            child: Center(
+              child: Text(
+                '입장 티켓',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.black.withValues(alpha: 0.55),
+                ),
+              ),
+            ),
           ),
         ),
       ],
@@ -798,10 +921,94 @@ class _DiaryScreenState extends State<DiaryScreen> {
     TicketInfo? info,
     required GlobalKey overlayKey,
   }) {
-    final revealedBeforeCell = PressableScale(
-      onTap: _isAddTicketExpanded
-          ? null
-          : () {
+    return Row(
+      children: [
+        Expanded(
+          flex: 3,
+          child: PressableScale(
+            onTap: _isAddTicketExpanded
+                ? null
+                : () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ConcertAfterScreen(concertTitle: title),
+                      ),
+                    );
+                  },
+            pressScale: 0.985,
+            tapScale: 1.03,
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
+              ),
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const _DashedVerticalDivider(),
+        Expanded(
+          flex: 1,
+          child: EntryTicketTearPiece(
+            enabled: !_isAddTicketExpanded,
+            // 뜯기 전: 다른 티켓 오른쪽 칸과 동일한 디자인 + "관람 완료" 라벨
+            front: DecoratedBox(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.horizontal(
+                  right: Radius.circular(8),
+                ),
+              ),
+              child: Center(
+                child: Text(
+                  '관람 완료',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            ),
+            // 뜯긴 뒤: 지금의 "공연전" 디자인이 남아서 눌러볼 수 있게 됨
+            revealed: KeyedSubtree(
+              key: overlayKey,
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.horizontal(
+                    right: Radius.circular(8),
+                  ),
+                ),
+                child: _concertBeforeShortcutWidget(dark: true),
+              ),
+            ),
+            onRevealedTap: () {
               final startRect = _globalRectOf(overlayKey);
               if (startRect == null) return;
               ConcertBeforeOverlay.show(
@@ -812,83 +1019,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 ticketInfo: info,
               );
             },
-      pressScale: 0.985,
-      tapScale: 1.03,
-      child: KeyedSubtree(
-        key: overlayKey,
-        child: _concertBeforeShortcutWidget(dark: true),
-      ),
-    );
-
-    return TearToRevealRight(
-      enabled: !_isAddTicketExpanded && _afterTicketTornLoaded,
-      initiallyTorn: _afterTicketTorn,
-      onTorn: _persistAfterTicketTorn,
-      borderRadius: BorderRadius.circular(8),
-      borderColor: Colors.grey.shade300,
-      leftFlex: 3,
-      rightFlex: 1,
-      perforationWidth: 8,
-      tearThreshold: 0.35,
-      leftChild: PressableScale(
-        onTap: _isAddTicketExpanded
-            ? null
-            : () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ConcertAfterScreen(concertTitle: title),
-                  ),
-                );
-              },
-        pressScale: 0.985,
-        tapScale: 1.03,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                ),
-              ),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
-            ],
           ),
         ),
-      ),
-      rightTearable: _concertAfterTearPieceWidget(),
-      rightRevealed: revealedBeforeCell,
-    );
-  }
-
-  Widget _concertAfterTearPieceWidget() {
-    return Container(
-      color: Colors.white,
-      child: Center(
-        child: Text(
-          '입장\n조각',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: Colors.black.withValues(alpha: 0.55),
-          ),
-        ),
-      ),
+      ],
     );
   }
 
@@ -906,5 +1039,50 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
       ),
     );
+  }
+}
+
+/// "공연 후" 티켓의 본표와 입장 티켓 사이에 쓰는 점선 구분선(절취선 느낌).
+class _DashedVerticalDivider extends StatelessWidget {
+  const _DashedVerticalDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 1,
+      child: CustomPaint(
+        size: const Size(double.infinity, double.infinity),
+        painter: _DashedLinePainter(color: Colors.grey.shade400),
+      ),
+    );
+  }
+}
+
+class _DashedLinePainter extends CustomPainter {
+  final Color color;
+
+  const _DashedLinePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round;
+
+    const dashHeight = 5.0;
+    const dashGap = 4.0;
+    final x = size.width / 2;
+    double y = 0;
+    while (y < size.height) {
+      final y2 = (y + dashHeight).clamp(0.0, size.height);
+      canvas.drawLine(Offset(x, y), Offset(x, y2), paint);
+      y += dashHeight + dashGap;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedLinePainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
