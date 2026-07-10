@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/screen/news_screen.dart';
 import 'package:ticketdiary/screen/settings_screen.dart';
+import 'package:ticketdiary/screen/splash_screen.dart';
 import 'package:ticketdiary/screen/summary_screen.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 
@@ -18,10 +19,13 @@ class TicketDiaryApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Ticket Diary',
       theme: ThemeData(fontFamily: 'Roboto'),
-      initialRoute: DiaryRoutes.diary,
+      initialRoute: DiaryRoutes.splash,
       onGenerateRoute: (settings) {
         Widget nextScreen;
         switch (settings.name) {
+          case DiaryRoutes.splash:
+            nextScreen = const SplashScreen();
+            break;
           case DiaryRoutes.diary:
             nextScreen = const DiaryScreen();
             break;

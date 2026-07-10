@@ -4,6 +4,10 @@ import 'diary_page_frame.dart';
 
 /// 앱 전역에서 사용하는 탭 라우트 경로
 abstract class DiaryRoutes {
+  /// 앱 실행 시 보여주는 시작 애니메이션 화면(SplashScreen). 탭이 아니라서
+  /// [buildDiarySideTabs]의 [DiaryTab]에는 포함되지 않습니다.
+  static const String splash = '/splash';
+
   static const String diary = '/';
   static const String news = '/news';
   static const String summary = '/summary';

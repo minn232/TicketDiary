@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import 'favorite_pinned_settings_screen.dart';
+import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
+import '../services/auth_service.dart';
+import '../services/kakao_login_controller.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
@@ -287,15 +290,73 @@ class _MenuRow extends StatelessWidget {
 ///
 /// 계정 목록(Profile/Guest)과 카카오 OAuth/Login 버튼은 레이아웃만 준비된
 /// 상태이며, 실제 로그인/계정 전환/로그아웃 로직은 아직 연결되지 않았습니다.
-class _MemberSettingsSheet extends StatelessWidget {
+class _MemberSettingsSheet extends StatefulWidget {
   const _MemberSettingsSheet();
+
+  @override
+  State<_MemberSettingsSheet> createState() => _MemberSettingsSheetState();
+}
+
+class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
+  final AuthService _auth = AuthService.instance;
+  bool _busy = false;
 
   // 원래 내용물 높이(약 260) 대비 1.5배로 시트 높이를 키웁니다.
   static const double _baseHeight = 260;
   static const double _heightScale = 1.5;
 
   @override
+  void initState() {
+    super.initState();
+    _auth.addListener(_onAuthChanged);
+  }
+
+  @override
+  void dispose() {
+    _auth.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  void _onAuthChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _runGuarded(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } on AlreadyKakaoUserException {
+      _showMessage('이미 다른 계정으로 가입된 카카오 계정이에요.');
+    } on KakaoLoginCancelledException {
+      // 사용자가 브라우저를 그냥 닫은 경우: 조용히 무시합니다.
+    } on KakaoLoginTimeoutException {
+      _showMessage('로그인 시간이 초과됐어요. 다시 시도해주세요.');
+    } on ApiException catch (e) {
+      _showMessage('요청에 실패했어요: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _loginWithKakao() {
+    _runGuarded(
+      () => KakaoLoginController.instance.login(
+        migrateFromGuest: _auth.isGuest,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isGuest = _auth.isGuest;
+    final nickname = _auth.currentUser?.nickname;
+
     return SizedBox(
       height: _baseHeight * _heightScale,
       child: SafeArea(
@@ -313,34 +374,27 @@ class _MemberSettingsSheet extends StatelessWidget {
                 ),
               ),
               _AccountRow(
-                label: 'Profile',
-                isActive: true,
-                onRemove: () {
-                  // TODO: 계정 로그아웃/제거 연동
-                },
+                label: !isGuest && nickname != null && nickname.isNotEmpty
+                    ? nickname
+                    : 'Profile',
+                isActive: !isGuest,
+                onRemove: () => _runGuarded(_auth.logout),
               ),
               const SizedBox(height: 14),
               _AccountRow(
                 label: 'Guest',
-                isActive: false,
-                onRemove: () {
-                  // TODO: 게스트 계정 제거 연동
-                },
+                isActive: isGuest,
+                onRemove: () => _runGuarded(_auth.deleteAccount),
               ),
               const Spacer(),
               Row(
                 children: [
-                  _KakaoOAuthButton(
-                    onTap: () {
-                      // TODO: 카카오 OAuth 로그인 연동
-                    },
-                  ),
+                  _KakaoOAuthButton(onTap: _busy ? null : _loginWithKakao),
                   const SizedBox(width: 14),
                   Expanded(
                     child: _LoginButton(
-                      onTap: () {
-                        // TODO: 로그인 화면/로직 연동
-                      },
+                      onTap: _busy ? null : _loginWithKakao,
+                      busy: _busy,
                     ),
                   ),
                 ],
@@ -395,7 +449,7 @@ class _AccountRow extends StatelessWidget {
 }
 
 class _KakaoOAuthButton extends StatelessWidget {
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   const _KakaoOAuthButton({required this.onTap});
 
@@ -422,9 +476,10 @@ class _KakaoOAuthButton extends StatelessWidget {
 }
 
 class _LoginButton extends StatelessWidget {
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool busy;
 
-  const _LoginButton({required this.onTap});
+  const _LoginButton({required this.onTap, this.busy = false});
 
   @override
   Widget build(BuildContext context) {
@@ -439,10 +494,19 @@ class _LoginButton extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
           ),
         ),
-        child: const Text(
-          'Login',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-        ),
+        child: busy
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: Colors.white,
+                ),
+              )
+            : const Text(
+                'Login',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
       ),
     );
   }

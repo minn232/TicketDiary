@@ -16,6 +16,11 @@ import 'package:flutter/material.dart';
 ///   호출됩니다. 20도에 도달하기 전에 손을 떼면 원래 각도(0도)로 돌아갑니다.
 /// - 뜯긴 뒤에는 [revealed](예: 지금의 "공연전" 디자인)가 그 자리에 남고,
 ///   눌렀을 때 [onRevealedTap]이 호출됩니다.
+/// - [vibrate]가 false인 동안은 자동 떨림이 멈춰있다가, true로 바뀌는 순간부터
+///   떨리기 시작합니다(예: 다른 애니메이션이 끝난 뒤에야 이 힌트를 보여주고
+///   싶을 때 씁니다).
+/// - [initiallyRevealed]가 true면 처음부터 이미 뜯긴 것으로 보고, [front]
+///   없이 바로 [revealed]를 보여줍니다(예: 이전에 뜯어둔 티켓을 다시 열었을 때).
 class EntryTicketTearPiece extends StatefulWidget {
   /// 뜯기기 전 보이는 조각(입장 티켓 디자인).
   final Widget front;
@@ -31,6 +36,12 @@ class EntryTicketTearPiece extends StatefulWidget {
 
   final bool enabled;
 
+  /// false인 동안은 자동 떨림을 재생하지 않습니다.
+  final bool vibrate;
+
+  /// true면 애니메이션 없이 처음부터 뜯긴 상태(=[revealed])로 시작합니다.
+  final bool initiallyRevealed;
+
   const EntryTicketTearPiece({
     super.key,
     required this.front,
@@ -38,6 +49,8 @@ class EntryTicketTearPiece extends StatefulWidget {
     this.onRevealedTap,
     this.onTorn,
     this.enabled = true,
+    this.vibrate = true,
+    this.initiallyRevealed = false,
   });
 
   @override
@@ -86,8 +99,32 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
+
+    if (widget.initiallyRevealed) {
+      // 이미 뜯긴 채로 시작: 애니메이션 없이 바로 revealed 상태로 둡니다.
+      _detached = true;
+      _released = true;
+      _fadeController.value = 1.0;
+      return;
+    }
+
     // 누르지 않아도 "뜯을 수 있다"는 걸 계속 알려주도록 자동으로 반복 재생.
-    _trembleController.repeat();
+    // (단, vibrate가 false로 시작하면 아직은 떨지 않습니다.)
+    if (widget.vibrate) _trembleController.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant EntryTicketTearPiece oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.vibrate == oldWidget.vibrate) return;
+    if (_detached || _released) return; // 이미 뜯긴 뒤라면 떨림과 무관합니다.
+
+    if (widget.vibrate) {
+      // 눌려있는 동안(_onPanDown에서 멈춘 경우)이 아니라면 다시 떨기 시작합니다.
+      if (!_trembleController.isAnimating) _trembleController.repeat();
+    } else {
+      _trembleController.stop();
+    }
   }
 
   @override
@@ -163,7 +200,7 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
         )
         .whenComplete(() {
           if (!mounted || _detached || _released) return;
-          _trembleController.repeat();
+          if (widget.vibrate) _trembleController.repeat();
         });
   }
 
