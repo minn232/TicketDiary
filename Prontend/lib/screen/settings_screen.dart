@@ -94,6 +94,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: ListView(
                     padding: EdgeInsets.zero,
                     children: [
+                      _LoginStatusBanner(
+                        onTap: () => _openMemberSettingsSheet(context),
+                      ),
+                      _divider,
                       _SwitchRow(
                         title: '예상 셋리 노출 여부',
                         value: _appSettings.showExpectedSetlist,
@@ -185,11 +189,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           );
                         },
-                      ),
-                      _divider,
-                      _MenuRow(
-                        title: '회원 설정',
-                        onTap: () => _openMemberSettingsSheet(context),
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -286,10 +285,69 @@ class _MenuRow extends StatelessWidget {
   }
 }
 
-/// "회원 설정"을 누르면 아래에서 올라오는 계정 전환/로그인 시트.
+/// 설정 인덱스 최상단에서 현재 로그인 상태(게스트/닉네임)를 미리 보여주는 배지.
+/// 탭하면 "회원 설정" 시트(아래 [_MemberSettingsSheet])가 그대로 열립니다.
+class _LoginStatusBanner extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _LoginStatusBanner({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: AuthService.instance,
+      builder: (context, _) {
+        final auth = AuthService.instance;
+        final nickname = auth.currentUser?.nickname;
+        final label = !auth.isGuest && nickname != null && nickname.isNotEmpty
+            ? '$nickname님으로 로그인됨'
+            : '게스트로 이용 중';
+
+        return PressableScale(
+          onTap: onTap,
+          pressScale: 0.985,
+          tapScale: 1.02,
+          child: SizedBox(
+            height: 56,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Icon(
+                    auth.isGuest ? Icons.person_outline : Icons.verified_user,
+                    size: 20,
+                    color: Colors.black.withValues(alpha: 0.55),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right,
+                    color: Colors.black.withValues(alpha: 0.45),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// "회원 설정"을 누르면 아래에서 올라오는 계정 시트.
 ///
-/// 계정 목록(Profile/Guest)과 카카오 OAuth/Login 버튼은 레이아웃만 준비된
-/// 상태이며, 실제 로그인/계정 전환/로그아웃 로직은 아직 연결되지 않았습니다.
+/// 게스트/카카오 로그인 상태에 따라 프로필 한 줄 + 액션 버튼 한 개만
+/// 보여줍니다(게스트면 "카카오로 로그인", 카카오 로그인 상태면 "로그아웃").
+/// [AuthService]/[KakaoLoginController]에 연결되어 실제로 동작합니다.
 class _MemberSettingsSheet extends StatefulWidget {
   const _MemberSettingsSheet();
 
@@ -301,9 +359,8 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   final AuthService _auth = AuthService.instance;
   bool _busy = false;
 
-  // 원래 내용물 높이(약 260) 대비 1.5배로 시트 높이를 키웁니다.
-  static const double _baseHeight = 260;
-  static const double _heightScale = 1.5;
+  // 드래그 핸들 + 프로필 + 버튼만 담을 만큼의 시트 높이(여백 최소화).
+  static const double _sheetHeight = 240;
 
   @override
   void initState() {
@@ -321,19 +378,29 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _runGuarded(Future<void> Function() action) async {
+  Future<void> _runGuarded(
+    Future<void> Function() action, {
+    String? successMessage,
+  }) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
       await action();
+      if (successMessage != null) _showMessage(successMessage);
     } on AlreadyKakaoUserException {
-      _showMessage('이미 다른 계정으로 가입된 카카오 계정이에요.');
+      await _showAlertDialog('로그인 실패', '이미 다른 계정으로 가입된 카카오 계정이에요.');
     } on KakaoLoginCancelledException {
-      // 사용자가 브라우저를 그냥 닫은 경우: 조용히 무시합니다.
+      // 카카오 계정 연결 중 비정상적으로 종료된 경우(브라우저를 그냥 닫는 등):
+      // 알림창으로 알리고, 상태 변화가 없으므로(토큰 미저장) 자동으로 원상복귀됩니다.
+      await _showAlertDialog('로그인이 완료되지 않았어요', '카카오 로그인이 중간에 중단됐어요. 다시 시도해주세요.');
     } on KakaoLoginTimeoutException {
-      _showMessage('로그인 시간이 초과됐어요. 다시 시도해주세요.');
+      await _showAlertDialog('로그인 시간 초과', '로그인 시간이 초과됐어요. 다시 시도해주세요.');
     } on ApiException catch (e) {
-      _showMessage('요청에 실패했어요: ${e.message}');
+      await _showAlertDialog('요청에 실패했어요', e.message);
+    } catch (_) {
+      // 위 타입들로 잡히지 않는 예상 밖의 오류(네트워크 단절 등)도 조용히
+      // 삼키지 않고 사용자에게 알립니다.
+      await _showAlertDialog('오류', '알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -344,21 +411,46 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// 비정상 종료/실패를 알리는 확인용 알림창. 확인을 누르면 닫히고, 이미
+  /// 상태는 실패 이전으로 유지된 채라(성공 시에만 토큰이 갱신됨) 그대로
+  /// 원래 화면으로 복귀합니다.
+  Future<void> _showAlertDialog(String title, String message) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _loginWithKakao() {
     _runGuarded(
       () => KakaoLoginController.instance.login(
         migrateFromGuest: _auth.isGuest,
       ),
+      successMessage: '로그인됐어요.',
     );
+  }
+
+  void _logout() {
+    _runGuarded(_auth.logout, successMessage: '로그아웃했어요.');
   }
 
   @override
   Widget build(BuildContext context) {
     final isGuest = _auth.isGuest;
-    final nickname = _auth.currentUser?.nickname;
+    final currentUser = _auth.currentUser;
 
     return SizedBox(
-      height: _baseHeight * _heightScale,
+      height: _sheetHeight,
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
@@ -373,31 +465,23 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              _AccountRow(
-                label: !isGuest && nickname != null && nickname.isNotEmpty
-                    ? nickname
-                    : 'Profile',
-                isActive: !isGuest,
-                onRemove: () => _runGuarded(_auth.logout),
+              _ProfileRow(
+                isGuest: isGuest,
+                nickname: currentUser?.nickname,
+                profileImageUrl: currentUser?.profileImageUrl,
               ),
-              const SizedBox(height: 14),
-              _AccountRow(
-                label: 'Guest',
-                isActive: isGuest,
-                onRemove: () => _runGuarded(_auth.deleteAccount),
-              ),
-              const Spacer(),
-              Row(
-                children: [
-                  _KakaoOAuthButton(onTap: _busy ? null : _loginWithKakao),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: _LoginButton(
-                      onTap: _busy ? null : _loginWithKakao,
-                      busy: _busy,
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: isGuest
+                    ? _KakaoLoginButton(
+                        onTap: _busy ? null : _loginWithKakao,
+                        busy: _busy,
+                      )
+                    : _LogoutButton(
+                        onTap: _busy ? null : _logout,
+                        busy: _busy,
+                      ),
               ),
             ],
           ),
@@ -407,79 +491,118 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   }
 }
 
-class _AccountRow extends StatelessWidget {
-  final String label;
-  final bool isActive;
-  final VoidCallback onRemove;
+/// 현재 계정 상태를 보여주는 프로필. 큰 프로필 사진 아래에 이름처럼
+/// 텍스트를 세로로 붙여 보여줍니다. 게스트면 "게스트로 로그인 중"과 함께
+/// 아직 계정이 연결되지 않았음을 알리는 빨간 느낌표 배지가 뜹니다.
+class _ProfileRow extends StatelessWidget {
+  final bool isGuest;
+  final String? nickname;
+  final String? profileImageUrl;
 
-  const _AccountRow({
-    required this.label,
-    required this.isActive,
-    required this.onRemove,
+  const _ProfileRow({
+    required this.isGuest,
+    this.nickname,
+    this.profileImageUrl,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final hasImage = !isGuest && profileImageUrl != null && profileImageUrl!.isNotEmpty;
+    final label = isGuest
+        ? '게스트로 로그인 중'
+        : (nickname != null && nickname!.isNotEmpty ? nickname! : '카카오 계정');
+
+    return Column(
       children: [
-        CircleAvatar(
-          radius: 20,
-          backgroundColor: Colors.grey.shade300,
-          child: Icon(Icons.person, color: Colors.grey.shade600, size: 22),
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            CircleAvatar(
+              radius: 44,
+              backgroundColor: Colors.grey.shade300,
+              backgroundImage: hasImage ? NetworkImage(profileImageUrl!) : null,
+              child: hasImage
+                  ? null
+                  : Icon(Icons.person, color: Colors.grey.shade600, size: 46),
+            ),
+            if (isGuest)
+              Positioned(
+                right: -2,
+                top: -2,
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    '!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
-        const SizedBox(width: 14),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-          ),
-        ),
-        if (isActive) ...[
-          const Icon(Icons.check, color: Color(0xFF34C759)),
-          const SizedBox(width: 10),
-        ],
-        IconButton(
-          onPressed: onRemove,
-          icon: const Icon(Icons.close, size: 20),
-          color: Colors.black.withValues(alpha: 0.55),
+        const SizedBox(height: 10),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
         ),
       ],
     );
   }
 }
 
-class _KakaoOAuthButton extends StatelessWidget {
+class _KakaoLoginButton extends StatelessWidget {
   final VoidCallback? onTap;
+  final bool busy;
 
-  const _KakaoOAuthButton({required this.onTap});
+  const _KakaoLoginButton({required this.onTap, this.busy = false});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 56,
-        height: 56,
-        decoration: const BoxDecoration(
-          color: Color(0xFFFEE500),
-          shape: BoxShape.circle,
+    return SizedBox(
+      height: 56,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFFEE500),
+          foregroundColor: const Color(0xFF3C1E1E),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
-        alignment: Alignment.center,
-        child: const Icon(
-          Icons.chat_bubble,
-          color: Color(0xFF3C1E1E),
-          size: 24,
-        ),
+        child: busy
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: Color(0xFF3C1E1E),
+                ),
+              )
+            : const Text(
+                '카카오로 로그인',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              ),
       ),
     );
   }
 }
 
-class _LoginButton extends StatelessWidget {
+class _LogoutButton extends StatelessWidget {
   final VoidCallback? onTap;
   final bool busy;
 
-  const _LoginButton({required this.onTap, this.busy = false});
+  const _LogoutButton({required this.onTap, this.busy = false});
 
   @override
   Widget build(BuildContext context) {
@@ -504,7 +627,7 @@ class _LoginButton extends StatelessWidget {
                 ),
               )
             : const Text(
-                'Login',
+                '로그아웃',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
               ),
       ),

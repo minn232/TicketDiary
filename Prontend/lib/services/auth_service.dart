@@ -73,8 +73,14 @@ class AlreadyKakaoUserException implements Exception {
 ///   강한 보안은 아니지만, 별도 패키지 의존성 없이 동일한 API로 동작합니다.
 /// - [ApiClient]가 매 요청마다 [accessToken]을 읽어 Authorization 헤더에
 ///   실어 보내므로, 다른 서비스는 로그인 여부를 신경 쓰지 않고 API를 호출하면 됩니다.
+/// - access_token이 만료되어 401이 오면 [ApiClient.onUnauthorized]를 통해
+///   자동으로 `/auth/refresh`를 호출해 재발급받고 원래 요청을 재시도합니다
+///   (그래도 실패하면, 즉 refresh_token까지 만료/폐기됐다면 로컬 세션을
+///   정리합니다 — 다음 [ensureSession] 또는 재로그인에서 새 세션이 생깁니다).
 class AuthService extends ChangeNotifier {
-  AuthService._();
+  AuthService._() {
+    _client.onUnauthorized = _handleUnauthorized;
+  }
 
   static final AuthService instance = AuthService._();
 
@@ -89,20 +95,20 @@ class AuthService extends ChangeNotifier {
 
   String? _accessToken;
 
-  // TODO(backend): 서버 스펙에 refresh_token으로 access_token을 재발급받는
-  // 엔드포인트(예: POST /auth/refresh)가 아직 없습니다. 지금은 access_token이
-  // 만료되면 재로그인이 필요합니다. 엔드포인트가 추가되면 [ApiClient]의 401
-  // 응답을 가로채 이 값으로 재발급받도록 확장하면 됩니다.
+  /// access_token이 만료(401)되면 [_handleUnauthorized]가 이 값으로
+  /// `/auth/refresh`를 호출해 재발급을 시도합니다.
   String? _refreshToken;
   String? _userId;
   String? _role;
   AuthUser? _currentUser;
   bool _loaded = false;
 
-  String? get accessToken => _accessToken;
+  /// 재발급 요청이 동시에 여러 번 나가지 않도록(리프레시 토큰은 1회용
+  /// 회전 방식이라 동시 요청 시 하나만 성공하고 나머지는 무효화됨) 진행 중인
+  /// 재발급 Future를 공유합니다.
+  Future<String?>? _refreshFuture;
 
-  /// 지금은 소비하는 곳이 없지만(위 TODO 참고), 재발급 엔드포인트가 생기면
-  /// 바로 쓸 수 있도록 값 자체는 계속 저장/보관해둡니다.
+  String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
   String? get userId => _userId;
   String? get role => _role;
@@ -190,11 +196,55 @@ class AuthService extends ChangeNotifier {
     await _loginAsGuest();
   }
 
-  /// 로그아웃(로컬 토큰만 제거). 다음 실행 시 [ensureSession]이 새 게스트
-  /// 세션을 만듭니다.
+  /// 로그아웃. 서버에 현재 refresh token 폐기를 요청한 뒤 로컬 토큰을
+  /// 지웁니다. 다음 실행 시 [ensureSession]이 새 게스트 세션을 만듭니다.
+  ///
+  /// 서버 요청이 실패해도(오프라인 등) 로컬 로그아웃은 항상 진행합니다 —
+  /// 사용자 입장에서 로그아웃은 실패해서는 안 되는 동작이기 때문입니다.
   Future<void> logout() async {
+    final currentRefreshToken = _refreshToken;
+    if (currentRefreshToken != null) {
+      try {
+        await _client.post(
+          '/auth/logout',
+          body: {'refresh_token': currentRefreshToken},
+          allowAuthRetry: false,
+        );
+      } catch (_) {
+        // 위 주석 참고: 서버 실패는 무시하고 로컬 로그아웃을 계속 진행합니다.
+      }
+    }
     await _clearTokens();
     await _loginAsGuest();
+  }
+
+  /// [ApiClient.onUnauthorized]로 등록되는 콜백. 저장된 refresh token으로
+  /// access token 재발급을 시도합니다.
+  Future<String?> _handleUnauthorized() {
+    return _refreshFuture ??= _performRefresh().whenComplete(() {
+      _refreshFuture = null;
+    });
+  }
+
+  Future<String?> _performRefresh() async {
+    final currentRefreshToken = _refreshToken;
+    if (currentRefreshToken == null) return null;
+
+    try {
+      final json = await _client.post(
+        '/auth/refresh',
+        body: {'refresh_token': currentRefreshToken},
+        allowAuthRetry: false,
+      );
+      final tokens = AuthTokens.fromJson(json);
+      await _saveTokens(tokens);
+      return tokens.accessToken;
+    } catch (_) {
+      // refresh token도 만료/폐기된 경우: 로컬 세션을 정리합니다. 다음
+      // ensureSession(앱 재시작) 또는 사용자의 재로그인에서 새 세션이 생깁니다.
+      await _clearTokens();
+      return null;
+    }
   }
 
   Future<void> _saveTokens(AuthTokens tokens) async {

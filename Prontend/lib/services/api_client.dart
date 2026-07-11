@@ -28,7 +28,8 @@ class ApiException implements Exception {
 /// [authToken]을 설정해두면 이후 모든 요청에 `Authorization` 헤더가 자동으로
 /// 실립니다. [AuthService]가 로그인/로그아웃 시점마다 이 값을 갱신합니다.
 /// (여기서 AuthService를 직접 참조하지 않는 이유: AuthService가 이 클래스를
-/// 쓰는 쪽이라 순환 참조가 생기기 때문입니다.)
+/// 쓰는 쪽이라 순환 참조가 생기기 때문입니다. 대신 401 처리는 [onUnauthorized]
+/// 콜백으로 AuthService가 주입합니다.)
 class ApiClient {
   ApiClient._()
     : _dio = Dio(
@@ -46,35 +47,65 @@ class ApiClient {
   /// 현재 로그인된 사용자의 access token. null이면 인증 헤더 없이 요청합니다.
   String? authToken;
 
+  /// 요청이 401로 실패했을 때 한 번 호출됩니다. 재발급에 성공하면 새
+  /// access token을 반환하고(이 값으로 요청을 한 번 재시도합니다), 실패하면
+  /// null을 반환해 원래 401을 그대로 던지게 합니다. [AuthService]가 설정합니다.
+  Future<String?> Function()? onUnauthorized;
+
   Options get _authOptions => Options(
     headers: authToken == null ? null : {'Authorization': 'Bearer $authToken'},
   );
 
-  Future<Map<String, dynamic>> get(String path) async {
-    return _unwrap(() => _dio.get(path, options: _authOptions));
+  Future<Map<String, dynamic>> get(String path, {bool allowAuthRetry = true}) async {
+    return _unwrap(() => _dio.get(path, options: _authOptions), allowAuthRetry: allowAuthRetry);
   }
 
-  Future<Map<String, dynamic>> post(String path, {Map<String, dynamic>? body}) async {
-    return _unwrap(() => _dio.post(path, data: body, options: _authOptions));
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowAuthRetry = true,
+  }) async {
+    return _unwrap(
+      () => _dio.post(path, data: body, options: _authOptions),
+      allowAuthRetry: allowAuthRetry,
+    );
   }
 
-  Future<Map<String, dynamic>> delete(String path) async {
-    return _unwrap(() => _dio.delete(path, options: _authOptions));
+  Future<Map<String, dynamic>> delete(String path, {bool allowAuthRetry = true}) async {
+    return _unwrap(() => _dio.delete(path, options: _authOptions), allowAuthRetry: allowAuthRetry);
   }
 
   Future<Map<String, dynamic>> _unwrap(
-    Future<Response<dynamic>> Function() request,
-  ) async {
+    Future<Response<dynamic>> Function() request, {
+    required bool allowAuthRetry,
+  }) async {
     try {
       final response = await request();
-      final data = response.data;
-      if (data is Map<String, dynamic>) return data;
-      return <String, dynamic>{};
+      return _asMap(response.data);
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode ?? -1;
-      final message = _extractMessage(e.response?.data) ?? e.message ?? '알 수 없는 오류';
-      throw ApiException(statusCode, message);
+      if (statusCode == 401 && allowAuthRetry && onUnauthorized != null) {
+        final newToken = await onUnauthorized!();
+        if (newToken != null) {
+          try {
+            final retryResponse = await request();
+            return _asMap(retryResponse.data);
+          } on DioException catch (retryError) {
+            throw _toApiException(retryError);
+          }
+        }
+      }
+      throw _toApiException(e);
     }
+  }
+
+  Map<String, dynamic> _asMap(dynamic data) =>
+      data is Map<String, dynamic> ? data : <String, dynamic>{};
+
+  ApiException _toApiException(DioException e) {
+    final statusCode = e.response?.statusCode ?? -1;
+    final message = _extractMessage(e.response?.data) ?? e.message ?? '알 수 없는 오류';
+    return ApiException(statusCode, message);
   }
 
   String? _extractMessage(dynamic data) {
