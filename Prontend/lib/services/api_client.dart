@@ -57,7 +57,20 @@ class ApiClient {
   );
 
   Future<Map<String, dynamic>> get(String path, {bool allowAuthRetry = true}) async {
-    return _unwrap(() => _dio.get(path, options: _authOptions), allowAuthRetry: allowAuthRetry);
+    return _send(
+      () => _dio.get(path, options: _authOptions),
+      _asMap,
+      allowAuthRetry: allowAuthRetry,
+    );
+  }
+
+  /// 응답이 JSON 객체 배열인 목록 조회용(예: `GET /tickets`).
+  Future<List<dynamic>> getList(String path, {bool allowAuthRetry = true}) async {
+    return _send(
+      () => _dio.get(path, options: _authOptions),
+      _asList,
+      allowAuthRetry: allowAuthRetry,
+    );
   }
 
   Future<Map<String, dynamic>> post(
@@ -65,23 +78,75 @@ class ApiClient {
     Map<String, dynamic>? body,
     bool allowAuthRetry = true,
   }) async {
-    return _unwrap(
+    return _send(
       () => _dio.post(path, data: body, options: _authOptions),
+      _asMap,
+      allowAuthRetry: allowAuthRetry,
+    );
+  }
+
+  Future<Map<String, dynamic>> patch(
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowAuthRetry = true,
+  }) async {
+    return _send(
+      () => _dio.patch(path, data: body, options: _authOptions),
+      _asMap,
       allowAuthRetry: allowAuthRetry,
     );
   }
 
   Future<Map<String, dynamic>> delete(String path, {bool allowAuthRetry = true}) async {
-    return _unwrap(() => _dio.delete(path, options: _authOptions), allowAuthRetry: allowAuthRetry);
+    return _send(
+      () => _dio.delete(path, options: _authOptions),
+      _asMap,
+      allowAuthRetry: allowAuthRetry,
+    );
   }
 
-  Future<Map<String, dynamic>> _unwrap(
-    Future<Response<dynamic>> Function() request, {
+  /// 이미지 등 파일을 `multipart/form-data`로 업로드합니다.
+  /// (예: `POST /concerts/scan`의 `image` 필드)
+  ///
+  /// OCR(Vision API) + KOPIS 검색까지 서버에서 순차로 처리되어 기본 타임아웃
+  /// (10초)보다 오래 걸릴 수 있으므로 이 요청만 더 넉넉한 타임아웃을 씁니다.
+  Future<Map<String, dynamic>> postMultipart(
+    String path, {
+    required String fileField,
+    required List<int> fileBytes,
+    required String filename,
+    Map<String, dynamic>? fields,
+    bool allowAuthRetry = true,
+  }) async {
+    // FormData는 한 번 전송하면 재사용할 수 없으므로(401 재시도 시 재전송 필요),
+    // 요청마다 새로 만듭니다.
+    FormData buildFormData() => FormData.fromMap({
+      ...?fields,
+      fileField: MultipartFile.fromBytes(fileBytes, filename: filename),
+    });
+
+    final options = _authOptions.copyWith(
+      sendTimeout: const Duration(seconds: 30),
+      receiveTimeout: const Duration(seconds: 30),
+    );
+
+    return _send(
+      () => _dio.post(path, data: buildFormData(), options: options),
+      _asMap,
+      allowAuthRetry: allowAuthRetry,
+    );
+  }
+
+  /// 요청을 보내고, [extract]로 응답 body를 원하는 타입으로 변환합니다.
+  /// 401을 받으면 [onUnauthorized]로 재발급을 시도한 뒤 한 번만 재시도합니다.
+  Future<T> _send<T>(
+    Future<Response<dynamic>> Function() request,
+    T Function(dynamic data) extract, {
     required bool allowAuthRetry,
   }) async {
     try {
       final response = await request();
-      return _asMap(response.data);
+      return extract(response.data);
     } on DioException catch (e) {
       final statusCode = e.response?.statusCode ?? -1;
       if (statusCode == 401 && allowAuthRetry && onUnauthorized != null) {
@@ -89,7 +154,7 @@ class ApiClient {
         if (newToken != null) {
           try {
             final retryResponse = await request();
-            return _asMap(retryResponse.data);
+            return extract(retryResponse.data);
           } on DioException catch (retryError) {
             throw _toApiException(retryError);
           }
@@ -101,6 +166,8 @@ class ApiClient {
 
   Map<String, dynamic> _asMap(dynamic data) =>
       data is Map<String, dynamic> ? data : <String, dynamic>{};
+
+  List<dynamic> _asList(dynamic data) => data is List ? data : const [];
 
   ApiException _toApiException(DioException e) {
     final statusCode = e.response?.statusCode ?? -1;

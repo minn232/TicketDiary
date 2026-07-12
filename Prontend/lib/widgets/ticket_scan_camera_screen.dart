@@ -4,8 +4,9 @@ import 'dart:ui';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-import '../models/ticket_info.dart';
-import '../services/ticket_ocr_service.dart';
+import '../models/ticket_scan.dart';
+import '../services/api_client.dart';
+import '../services/ticket_scan_service.dart';
 import 'ticket_alignment_detector.dart';
 
 enum _ScanStage { positioning, aligned, capturing }
@@ -13,19 +14,21 @@ enum _ScanStage { positioning, aligned, capturing }
 /// 신분증 스캔 UI처럼, 가이드 박스에 티켓을 맞추면
 /// 자동으로 정렬을 인식(초록 테두리)하고 촬영까지 이어지는 카메라 화면.
 ///
-/// 정렬 판단은 [TicketAlignmentDetector]에, 정보 추출은 [TicketOcrService]에
-/// 위임하므로, 실제 정렬 감지/OCR이 준비되면 각각 구현체만 교체하면 됩니다.
-/// 성공 시 [Navigator.pop]으로 [TicketInfo]를 반환합니다.
+/// 정렬 판단은 [TicketAlignmentDetector]에, 촬영된 사진의 OCR 추출 + 공연
+/// 매칭은 [TicketScanService](백엔드 `POST /concerts/scan`)에 위임합니다.
+/// 성공 시 [Navigator.pop]으로 [TicketScanResponse]를 반환합니다.
 class TicketScanCameraScreen extends StatefulWidget {
   TicketScanCameraScreen({
     super.key,
-    TicketOcrService? ocrService,
-    TicketAlignmentDetector Function()? detectorFactory,
-  })  : ocrService = ocrService ?? const MockTicketOcrService(),
-        detectorFactory = detectorFactory ?? SimulatedTicketAlignmentDetector.new;
+    TicketScanService? scanService,
+    TicketAlignmentDetector Function(CameraController controller)?
+    detectorFactory,
+  })  : scanService = scanService ?? BackendTicketScanService(),
+        detectorFactory = detectorFactory ?? LiveTicketAlignmentDetector.new;
 
-  final TicketOcrService ocrService;
-  final TicketAlignmentDetector Function() detectorFactory;
+  final TicketScanService scanService;
+  final TicketAlignmentDetector Function(CameraController controller)
+  detectorFactory;
 
   @override
   State<TicketScanCameraScreen> createState() => _TicketScanCameraScreenState();
@@ -75,7 +78,9 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   }
 
   void _startAlignmentDetection() {
-    final detector = widget.detectorFactory();
+    final controller = _controller;
+    if (controller == null) return;
+    final detector = widget.detectorFactory(controller);
     _detector = detector;
     _alignSub = detector.alignmentStream.listen((aligned) {
       if (aligned && _stage == _ScanStage.positioning) {
@@ -98,12 +103,27 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
 
+    // 정렬 인식이 카메라 이미지 스트림을 쓰고 있으면, 스트리밍 중에는
+    // takePicture()가 실패하거나 화질이 떨어질 수 있는 기기가 있어 먼저 멈춥니다.
+    _alignSub?.cancel();
+    _detector?.dispose();
+    _detector = null;
+
     setState(() => _stage = _ScanStage.capturing);
     try {
       final photo = await controller.takePicture();
-      final info = await widget.ocrService.extractTicketInfo(photo);
+      final result = await widget.scanService.scanTicket(photo);
       if (!mounted) return;
-      Navigator.of(context).pop(info);
+      Navigator.of(context).pop(result);
+    } on ApiException catch (e) {
+      // 백엔드가 준 구체적인 실패 사유(이미지 인식 실패/용량 초과/Vision API
+      // 오류 등)를 그대로 보여줍니다.
+      if (!mounted) return;
+      setState(() {
+        _stage = _ScanStage.positioning;
+        _errorMessage = e.message;
+      });
+      _startAlignmentDetection();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -114,14 +134,12 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     }
   }
 
-  /// 카메라/정렬 인식이 없는 개발 환경에서 테스트할 수 있도록,
-  /// 실제 촬영 없이 바로 임시 스캔 결과를 반환하는 디버그용 버튼 핸들러.
+  /// 정렬 인식을 기다리지 않고 바로 촬영·스캔하는 디버그용 버튼 핸들러.
+  /// (정렬 감지가 잘 안 되는 개발 환경에서 테스트용. 실제 카메라로 촬영은
+  /// 그대로 진행되며, 스캔 자체는 실제 백엔드로 전송됩니다.)
   Future<void> _debugForceScan() async {
     if (_stage == _ScanStage.capturing) return;
-    setState(() => _stage = _ScanStage.capturing);
-    final info = await widget.ocrService.extractTicketInfo(XFile(''));
-    if (!mounted) return;
-    Navigator.of(context).pop(info);
+    await _captureAndExtract();
   }
 
   @override

@@ -5,9 +5,13 @@ import 'package:flutter/material.dart';
 import 'concert_after_screen.dart';
 import 'concert_before_overlay.dart';
 import 'package:ticketdiary/models/ticket_info.dart';
+import 'package:ticketdiary/models/ticket_response.dart';
+import 'package:ticketdiary/models/ticket_scan.dart';
+import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
-import 'package:ticketdiary/services/concert_lookup_service.dart';
-import 'package:ticketdiary/services/ticket_ocr_service.dart';
+import 'package:ticketdiary/services/auth_service.dart';
+import 'package:ticketdiary/services/ticket_scan_service.dart';
+import 'package:ticketdiary/services/ticket_service.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/add_ticket_option.dart';
@@ -49,9 +53,81 @@ class TicketData {
     this.tornRevealed = false,
   }) : overlayKey = GlobalKey(),
        id = id ?? 'ticket_${_nextId++}';
+
+  /// 백엔드에 실제로 등록된 티켓([TicketWithConcert])으로부터 화면에 쓸
+  /// [TicketData]를 만듭니다. `id`는 백엔드가 발급한 실제 티켓 UUID를
+  /// 그대로 씁니다(이후 수정/삭제 API 연동 시 이 id를 그대로 쓸 수 있도록).
+  ///
+  /// [scanExtracted]는 방금 스캔해서 만든 티켓일 때만 넘겨주면 됩니다
+  /// (`GET /tickets`로 불러온 기존 티켓엔 없음). `time`(공연 시각)은
+  /// 백엔드에 저장되는 값이 아니라 스캔 결과에만 잠깐 존재하므로, 이
+  /// 시점에만 [TicketInfo.extraFields]에 반영할 수 있습니다. `event_type`
+  /// (단독공연/페스티벌)은 반대로 공연 자체에 저장되는 값이라 [scanExtracted]
+  /// 없이도(=기존 티켓을 불러올 때도) 항상 채워집니다.
+  factory TicketData.fromBackend(
+    TicketWithConcert ticket, {
+    TicketScanExtracted? scanExtracted,
+  }) {
+    final concert = ticket.concert;
+    final extraFields = <String, String>{};
+
+    final eventType = concert?.eventType;
+    if (eventType != null && eventType.isNotEmpty) {
+      extraFields['공연 유형'] = _eventTypeLabel(eventType);
+    }
+    final time = scanExtracted?.time;
+    if (time != null && time.isNotEmpty) {
+      extraFields['공연 시간'] = time;
+    }
+
+    return TicketData(
+      title: concert?.name ?? '알 수 없는 공연',
+      status: _ticketStatusFromBackend(ticket.status),
+      info: TicketInfo(
+        concertName: concert?.name ?? '',
+        venueName: concert?.venue ?? '',
+        date: concert?.startDate,
+        price: ticket.price?.toString() ?? '',
+        seat: ticket.seatType ?? '',
+        posterImageUrl: concert?.posterUrl,
+        deliveryDate: ticket.deliveryDate,
+        vendorName: ticket.ticketingSite,
+        extraFields: extraFields,
+      ),
+      id: ticket.id,
+    );
+  }
 }
 
 enum TicketStatus { beforeDelivery, beforeConcert, afterConcert, error }
+
+/// 백엔드 `TicketStatus`(schemas/ticket.py: before_delivery/before_concert/
+/// after_concert) 문자열을 프론트 [TicketStatus]로 변환합니다.
+TicketStatus _ticketStatusFromBackend(String status) {
+  switch (status) {
+    case 'before_delivery':
+      return TicketStatus.beforeDelivery;
+    case 'before_concert':
+      return TicketStatus.beforeConcert;
+    case 'after_concert':
+      return TicketStatus.afterConcert;
+    default:
+      return TicketStatus.error;
+  }
+}
+
+/// 백엔드 `Concert.event_type`("SOLO"/"FESTIVAL"/그 외)을 화면에 보여줄
+/// 한국어 라벨로 바꿉니다.
+String _eventTypeLabel(String eventType) {
+  switch (eventType) {
+    case 'FESTIVAL':
+      return '페스티벌';
+    case 'SOLO':
+      return '단독공연';
+    default:
+      return eventType;
+  }
+}
 
 class DiaryScreen extends StatefulWidget {
   const DiaryScreen({super.key});
@@ -124,11 +200,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return _highlightKeys.putIfAbsent(id, () => GlobalKey());
   }
 
-  final TicketOcrService _ocrService = const MockTicketOcrService();
+  /// 티켓 이미지 스캔(OCR + KOPIS 매칭 후보 조회, `POST /concerts/scan`).
+  final TicketScanService _scanService = BackendTicketScanService();
 
-  /// 백엔드에 등록된 공연인지 확인하는 서비스(백엔드 연동 전까지는 mock 사용)
-  final ConcertLookupService _concertLookupService =
-      const MockConcertLookupService();
+  /// 티켓 등록(`POST /tickets`).
+  final TicketService _ticketService = TicketService();
 
   /// "공연 전 -> 공연 후" 전환 페이드 지속 시간. 두 디자인이 겹쳐 보이는 구간이
   /// 보이도록 하되, 너무 늘어지지 않게 6초의 50% 속도(=3초)로 잡습니다.
@@ -147,11 +223,82 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 맞춰져 있습니다(_runTicketPromotionSimulation 참고).
   static const Duration _spotlightHoldDuration = Duration(milliseconds: 1500);
 
+  /// 백엔드에서 티켓 목록을 이미 불러왔는지. [_tickets]가 static이라 다이어리
+  /// 화면을 나갔다 돌아올 때마다 [initState]가 다시 호출되는데, 이 플래그가
+  /// 없으면 재방문할 때마다 같은 티켓이 중복으로 쌓입니다(앱 프로세스가 살아
+  /// 있는 동안 1회만 불러오면 충분 — 새로 추가/삭제한 티켓은 그 자리에서
+  /// [_tickets]를 직접 갱신하므로 매번 다시 불러올 필요가 없습니다).
+  static bool _backendTicketsLoaded = false;
+
+  /// 마지막으로 [_tickets]를 채운 로그인 유저의 id. 로그아웃/계정 전환으로
+  /// 유저가 바뀌면 이전 유저의 서버 기원 티켓을 화면에서 지우고 새 유저
+  /// 것으로 다시 불러오기 위해 씁니다([_onAuthChanged] 참고).
+  static String? _loadedForUserId;
+
   @override
   void initState() {
     super.initState();
     // "공연 전" 페이지의 예상 셋 리스트 블러 여부에 쓰이는 설정값을 미리 불러옵니다.
     AppSettingsStore.instance.load();
+    AuthService.instance.addListener(_onAuthChanged);
+    unawaited(_loadTicketsFromBackend());
+  }
+
+  @override
+  void dispose() {
+    AuthService.instance.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.
+  /// 로그인된 유저가 마지막으로 티켓을 불러왔던 유저와 다르면, 이전 유저의
+  /// 서버 기원 티켓(id가 백엔드 UUID인 것)을 화면에서 지우고 새 유저 것으로
+  /// 다시 불러옵니다. 로컬 전용 예시 티켓은 계정과 무관하므로 그대로 둡니다.
+  void _onAuthChanged() {
+    final currentUserId = AuthService.instance.userId;
+    if (currentUserId == _loadedForUserId) return;
+
+    if (mounted) {
+      setState(() {
+        _tickets.removeWhere((t) => _uuidPattern.hasMatch(t.id));
+      });
+    } else {
+      _tickets.removeWhere((t) => _uuidPattern.hasMatch(t.id));
+    }
+    _backendTicketsLoaded = false;
+    unawaited(_loadTicketsFromBackend());
+  }
+
+  /// 서버에 저장된 내 티켓 목록을 불러와 [_tickets]에 반영합니다.
+  ///
+  /// 이미 [_tickets]에 있는(예: 방금 스캔으로 막 추가한) 티켓과 id가 겹치면
+  /// 먼저 지운 뒤 서버 응답으로 다시 채웁니다 — "서버 응답이 항상 최신
+  /// 진실"이라는 원칙으로 처리해, 이 조회가 끝나기 전에 사용자가 스캔으로
+  /// 티켓을 추가해도 화면에 같은 티켓이 두 번 뜨지 않습니다.
+  ///
+  /// - 주고받는 데이터: `GET /tickets` 응답(`TicketWithConcert` 배열,
+  ///   `id`/`concert_id`/`status`/`delivery_date`/`ticketing_site`/`price`/
+  ///   `seat_type`/`ticket_image_url`/`review`/`concert_photo_urls`/
+  ///   `is_first_day`/`is_last_day`/`concert`)을 그대로 받아
+  ///   [TicketData.fromBackend]로 변환합니다. 보내는 값은 없습니다(인증
+  ///   헤더만 필요).
+  /// - 실패(오프라인 등)하면 조용히 무시합니다 — 로컬 예시 티켓만으로도
+  ///   화면은 정상적으로 뜨고, 다음에 다이어리 탭을 다시 열면 재시도합니다.
+  Future<void> _loadTicketsFromBackend() async {
+    if (_backendTicketsLoaded) return;
+    _backendTicketsLoaded = true;
+    try {
+      final tickets = await _ticketService.listTickets();
+      if (!mounted) return;
+      setState(() {
+        final fetchedIds = tickets.map((t) => t.id).toSet();
+        _tickets.removeWhere((t) => fetchedIds.contains(t.id));
+        _tickets.addAll(tickets.map(TicketData.fromBackend));
+      });
+      _loadedForUserId = AuthService.instance.userId;
+    } catch (_) {
+      _backendTicketsLoaded = false;
+    }
   }
 
   /// 공연 시간이 이미 지난 "공연 전" 티켓인지 확인합니다.
@@ -277,15 +424,16 @@ class _DiaryScreenState extends State<DiaryScreen> {
   Future<void> _startCameraScan() async {
     setState(() => _isAddTicketExpanded = false);
 
-    final TicketInfo? info = await Navigator.of(context).push<TicketInfo>(
-      MaterialPageRoute(
-        builder: (_) => TicketScanCameraScreen(ocrService: _ocrService),
-        fullscreenDialog: true,
-      ),
-    );
+    final TicketScanResponse? scanResult = await Navigator.of(context)
+        .push<TicketScanResponse>(
+          MaterialPageRoute(
+            builder: (_) => TicketScanCameraScreen(scanService: _scanService),
+            fullscreenDialog: true,
+          ),
+        );
 
-    if (info == null || !mounted) return;
-    await _addTicketIfConcertExists(info);
+    if (scanResult == null || !mounted) return;
+    await _registerTicketFromScan(scanResult);
   }
 
   /// 갤러리 기능은 아직 준비 중입니다.
@@ -296,9 +444,28 @@ class _DiaryScreenState extends State<DiaryScreen> {
     ).showSnackBar(const SnackBar(content: Text('곧 기능이 추가됩니다!')));
   }
 
-  /// 스캔된 [TicketInfo]의 공연이 백엔드에 등록되어 있는지 확인한 뒤,
-  /// 사용자가 수정할 수 없도록 바로 "공연 전" 상태의 티켓으로 다이어리에 추가합니다.
-  Future<void> _addTicketIfConcertExists(TicketInfo info) async {
+  /// 스캔 결과(OCR 추출 정보 + KOPIS 매칭 후보)를 바탕으로 백엔드에 티켓을
+  /// 등록합니다.
+  ///
+  /// - 매칭되는 공연이 하나도 없으면(candidates 비어있음) **등록을 허용하지
+  ///   않고** 안내만 표시합니다 — KOPIS에서 찾은 공연과 매치될 때만 티켓을
+  ///   저장한다는 정책을 그대로 구현한 부분입니다.
+  /// - 후보가 여러 개면 사용자가 직접 하나를 고르게 합니다.
+  /// - 후보가 정해지면 그 공연의 concert_id로 `POST /tickets`를 호출해
+  ///   실제로 서버에 저장하고, 성공하면 그 응답으로 다이어리에 티켓을 추가합니다.
+  Future<void> _registerTicketFromScan(TicketScanResponse scanResult) async {
+    final candidates = scanResult.candidates;
+
+    if (candidates.isEmpty) {
+      _showSnack('일치하는 공연을 찾을 수 없어요. KOPIS에 등록되지 않은 공연일 수 있어요.');
+      return;
+    }
+
+    final ConcertResponse? selected = candidates.length == 1
+        ? candidates.first
+        : await _pickConcertCandidate(candidates);
+    if (selected == null || !mounted) return; // 여러 후보 중 아무것도 선택 안 하고 취소함
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -306,31 +473,161 @@ class _DiaryScreenState extends State<DiaryScreen> {
           const Center(child: CircularProgressIndicator(color: Colors.white)),
     );
 
-    final exists = await _concertLookupService.exists(info.concertName);
+    try {
+      final extracted = scanResult.extracted;
+      final ticket = await _ticketService.createTicket(
+        concertId: selected.id,
+        deliveryDate: _parseYmd(extracted.shippingDate),
+        ticketingSite: extracted.platform,
+        price: extracted.price,
+        seatType: extracted.seat,
+      );
 
+      if (!mounted) return;
+      Navigator.pop(context); // 로딩 다이얼로그 닫기
+
+      setState(() {
+        _tickets.insert(
+          0,
+          TicketData.fromBackend(ticket, scanExtracted: extracted),
+        );
+      });
+      _showSnack('다이어리에 티켓이 추가되었습니다.');
+    } on TicketAlreadyRegisteredException {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('이미 등록된 공연 티켓이에요.');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('티켓 등록에 실패했어요: ${e.message}');
+    } catch (_) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+    }
+  }
+
+  /// KOPIS 매칭 후보가 여러 개일 때 사용자가 하나를 고르게 하는 시트.
+  /// 취소하면(바깥 탭 등) null을 반환합니다.
+  Future<ConcertResponse?> _pickConcertCandidate(
+    List<ConcertResponse> candidates,
+  ) {
+    return showModalBottomSheet<ConcertResponse>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: Text(
+                '일치하는 공연이 여러 개예요. 하나를 선택해주세요.',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
+            for (final candidate in candidates)
+              ListTile(
+                title: Text(
+                  candidate.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  '${candidate.venue ?? '장소 미정'} · '
+                  '${candidate.startDate.year}.'
+                  '${candidate.startDate.month.toString().padLeft(2, '0')}.'
+                  '${candidate.startDate.day.toString().padLeft(2, '0')}',
+                ),
+                onTap: () => Navigator.pop(context, candidate),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// "YYYY-MM-DD" 문자열(백엔드 `shipping_date` 등)을 [DateTime]으로 변환합니다.
+  /// 형식이 아니거나 없으면 null.
+  DateTime? _parseYmd(String? yyyyMmDd) {
+    if (yyyyMmDd == null) return null;
+    return DateTime.tryParse(yyyyMmDd);
+  }
+
+  void _showSnack(String message) {
     if (!mounted) return;
-    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
 
-    if (!exists) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('오래되었거나 일치하는 공연이 없습니다!')));
+  /// 백엔드가 발급하는 UUID 형식(예: `d87a138e-702a-4bac-8998-b7393266204e`).
+  /// 로컬 예시 티켓의 id(`ticket_0`, `ticket_1`, ...)와 구분하는 데 씁니다.
+  static final RegExp _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
+
+  /// 티켓을 길게 누르면 삭제를 확인합니다.
+  ///
+  /// - 서버에 저장된 티켓(id가 백엔드 UUID)이면 확인 후 `DELETE
+  ///   /tickets/{id}`를 호출해 실제로 서버에서도 지웁니다. 보내는 데이터는
+  ///   없고(URL 경로에 id만 실림), 받는 데이터도 없습니다(204 No Content).
+  /// - 로컬 예시 티켓(서버에 저장된 적 없는 것)은 화면에서만 지웁니다.
+  Future<void> _confirmDeleteTicket(TicketData ticket) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('티켓 삭제'),
+        content: Text('"${ticket.title}" 티켓을 삭제할까요? 되돌릴 수 없어요.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    if (!_uuidPattern.hasMatch(ticket.id)) {
+      // 서버에 저장된 적 없는 로컬 예시 티켓은 로컬에서만 제거합니다.
+      setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
       return;
     }
 
-    setState(() {
-      _tickets.insert(
-        0,
-        TicketData(
-          title: info.concertName,
-          status: TicketStatus.beforeConcert,
-          info: info,
-        ),
-      );
-    });
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('다이어리에 티켓이 추가되었습니다.')));
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+
+    try {
+      await _ticketService.deleteTicket(ticket.id);
+      if (!mounted) return;
+      Navigator.pop(context);
+      setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
+      _showSnack('티켓을 삭제했어요.');
+    } on TicketNotFoundException {
+      if (!mounted) return;
+      Navigator.pop(context);
+      setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
+      _showSnack('이미 삭제된 티켓이에요.');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('삭제에 실패했어요: ${e.message}');
+    } catch (_) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+    }
   }
 
   @override
@@ -614,11 +911,16 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     // 위치(Rect)를 찾을 수 있도록 붙여둔 것입니다.
                     return KeyedSubtree(
                       key: _highlightKeyFor(ticket.id),
-                      child: AnimatedSwitcher(
-                        duration: _promotionFadeDuration,
-                        child: KeyedSubtree(
-                          key: ValueKey(ticket.status),
-                          child: _buildTicketByStatus(ticket),
+                      child: GestureDetector(
+                        onLongPress: _isAddTicketExpanded
+                            ? null
+                            : () => unawaited(_confirmDeleteTicket(ticket)),
+                        child: AnimatedSwitcher(
+                          duration: _promotionFadeDuration,
+                          child: KeyedSubtree(
+                            key: ValueKey(ticket.status),
+                            child: _buildTicketByStatus(ticket),
+                          ),
                         ),
                       ),
                     );
