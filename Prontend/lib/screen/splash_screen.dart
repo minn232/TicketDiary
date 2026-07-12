@@ -1004,9 +1004,19 @@ class _MainPageReplica extends StatelessWidget {
                 SizedBox(height: topPad),
                 _buildMiniAddButton(k),
                 SizedBox(height: 30 * k),
-                _buildMiniTicketPocket(k, '배송 전 티켓 예시'),
+                _buildMiniTicketStub(
+                  k,
+                  label: '위켄드 내한공연',
+                  mainText: 'D-5',
+                  stubText: '예매처',
+                ),
                 SizedBox(height: 25 * k),
-                _buildMiniTicketPocket(k, '공연 전 티켓 예시'),
+                _buildMiniTicketStub(
+                  k,
+                  label: '첫사랑 페스티벌',
+                  mainText: '첫사랑 페스티벌',
+                  stubText: '입장 티켓',
+                ),
               ],
             ),
           ),
@@ -1092,7 +1102,17 @@ class _MainPageReplica extends StatelessWidget {
     );
   }
 
-  Widget _buildMiniTicketPocket(double k, String title) {
+  /// 실제 다이어리 화면의 티켓 카드(DiaryScreen._buildTicketBeforeDelivery /
+  /// _buildTicketBeforeConcert)와 같은 구조로 그린 축소 복제본.
+  /// 왼쪽 메인 정보 + 얇은 구분선 + 오른쪽 좁은 "스텁"(예매처/입장 티켓 등)
+  /// 조합이 실제 콘서트 티켓 반쪽처럼 보이게 하는 핵심 디테일이라, 텍스트만
+  /// 있던 예전 버전 대신 이 구조를 그대로 재현합니다.
+  Widget _buildMiniTicketStub(
+    double k, {
+    required String label,
+    required String mainText,
+    required String stubText,
+  }) {
     return Container(
       height: 120 * k,
       decoration: BoxDecoration(
@@ -1110,32 +1130,56 @@ class _MainPageReplica extends StatelessWidget {
           ),
         ],
       ),
-      child: Container(
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8 * k),
-        ),
-        padding: EdgeInsets.all(12 * k),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8 * k),
+        child: Row(
           children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 12 * k,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
+            Expanded(
+              flex: 3,
+              child: Container(
+                color: Colors.white,
+                padding: EdgeInsets.all(12 * k),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12 * k,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    SizedBox(height: 6 * k),
+                    Text(
+                      mainText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20 * k,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+            Container(width: 1, color: Colors.grey.shade400),
             Expanded(
-              child: Center(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 22 * k,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
+              flex: 1,
+              child: Container(
+                color: Colors.white,
+                child: Center(
+                  child: Text(
+                    stubText,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12 * k,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.black.withValues(alpha: 0.55),
+                    ),
                   ),
                 ),
               ),
