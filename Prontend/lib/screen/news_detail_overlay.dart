@@ -294,18 +294,10 @@ class _ExpandedNewsDetail extends StatelessWidget {
                             child: SizedBox(
                               width: double.infinity,
                               height: 140,
-                              child: Image.network(
-                                news.articleImageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Container(
-                                      color: Colors.grey.shade200,
-                                      alignment: Alignment.center,
-                                      child: const Icon(
-                                        Icons.broken_image_outlined,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
+                              // 이미지가 없거나 로드에 실패하면 그라데이션
+                              // 플레이스홀더로 폴백합니다.
+                              child: PosterBackground(
+                                imageUrl: news.articleImageUrl,
                               ),
                             ),
                           ),

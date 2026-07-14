@@ -71,6 +71,10 @@ class TicketData {
     final concert = ticket.concert;
     final extraFields = <String, String>{};
 
+    final artistName = concert?.artistName;
+    if (artistName != null && artistName.isNotEmpty) {
+      extraFields['아티스트'] = artistName.join(', ');
+    }
     final eventType = concert?.eventType;
     if (eventType != null && eventType.isNotEmpty) {
       extraFields['공연 유형'] = _eventTypeLabel(eventType);
@@ -92,6 +96,7 @@ class TicketData {
         posterImageUrl: concert?.posterUrl,
         deliveryDate: ticket.deliveryDate,
         vendorName: ticket.ticketingSite,
+        concertId: concert?.id,
         extraFields: extraFields,
       ),
       id: ticket.id,
@@ -138,6 +143,11 @@ class DiaryScreen extends StatefulWidget {
 
 class _DiaryScreenState extends State<DiaryScreen> {
   static const Color _paperColor = Color(0xFFF4F1E1);
+
+  /// 포스터가 티켓에 녹아든 새 디자인([_PosterTicketFace] + [_TicketBarcodeStub])
+  /// 사용 여부. 마음에 들지 않으면 이 값만 `false`로 바꾸면 기존 흰색 티켓
+  /// 디자인으로 즉시 되돌아갑니다(기존 디자인 코드는 그대로 남아 있음).
+  static const bool _usePosterTicketDesign = true;
 
   bool _isAddTicketExpanded = false;
 
@@ -421,19 +431,57 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   /// 카메라로 실시간 정렬 인식(초록 테두리) 스캔을 진행한 뒤,
   /// 사용자의 수정 없이 바로 다이어리에 추가합니다.
+  ///
+  /// 카메라 화면은 실제 스캔 결과([TicketScanResponse]) 또는 "임시 스캔"
+  /// 디버그 버튼으로 나온 [DebugFakeScanRequested] 중 하나를 반환할 수 있어
+  /// `Object`로 받아 분기합니다.
   Future<void> _startCameraScan() async {
     setState(() => _isAddTicketExpanded = false);
 
-    final TicketScanResponse? scanResult = await Navigator.of(context)
-        .push<TicketScanResponse>(
-          MaterialPageRoute(
-            builder: (_) => TicketScanCameraScreen(scanService: _scanService),
-            fullscreenDialog: true,
-          ),
-        );
+    final Object? scanResult = await Navigator.of(context).push<Object>(
+      MaterialPageRoute(
+        builder: (_) => TicketScanCameraScreen(scanService: _scanService),
+        fullscreenDialog: true,
+      ),
+    );
 
     if (scanResult == null || !mounted) return;
-    await _registerTicketFromScan(scanResult);
+
+    if (scanResult is DebugFakeScanRequested) {
+      _addDebugFakeTicket();
+      return;
+    }
+    if (scanResult is TicketScanResponse) {
+      await _registerTicketFromScan(scanResult);
+    }
+  }
+
+  /// "임시 스캔" 버튼 전용 테스트 티켓 추가. 카메라 촬영도, 백엔드 호출(OCR/
+  /// KOPIS 매칭/티켓 등록)도 거치지 않고 화면에 바로 보여줄 더미 데이터를
+  /// 추가합니다. concertId가 없으므로 공연 전 상세 화면도 서버 조회 없이
+  /// 이 값을 그대로 보여줍니다(예시 티켓과 동일한 방식).
+  void _addDebugFakeTicket() {
+    setState(() {
+      _tickets.insert(
+        0,
+        TicketData(
+          title: '임시 스캔 테스트 공연',
+          status: TicketStatus.beforeConcert,
+          info: TicketInfo(
+            concertName: '임시 스캔 테스트 공연',
+            venueName: '테스트 공연장',
+            date: DateTime.now().add(const Duration(days: 7)),
+            price: '99000',
+            seat: 'R석',
+            vendorName: 'INTERPARK',
+            // 포스터 티켓 디자인 확인용 샘플 이미지(CORS 허용이라 웹에서도 표시됨)
+            posterImageUrl: 'https://picsum.photos/seed/ticket/400/600',
+            extraFields: const {'아티스트': '테스트 아티스트', '공연 유형': '단독공연'},
+          ),
+        ),
+      );
+    });
+    _showSnack('테스트용 임시 티켓이 추가되었습니다.');
   }
 
   /// 갤러리 기능은 아직 준비 중입니다.
@@ -711,7 +759,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 ),
               )
             : _buildTicketPocket(
-                child: _buildTicketBeforeConcert(title: ticket.title),
+                child: _buildTicketBeforeConcert(
+                  title: ticket.title,
+                  info: ticket.info,
+                ),
               ),
       ),
     );
@@ -966,7 +1017,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     context,
                     startRect: startRect,
                     collapsedTicket: _buildTicketPocket(
-                      child: _buildTicketBeforeConcert(title: ticket.title),
+                      child: _buildTicketBeforeConcert(
+                        title: ticket.title,
+                        info: ticket.info,
+                      ),
                     ),
                     concertTitle: ticket.title,
                     ticketInfo: ticket.info,
@@ -975,7 +1029,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
           child: KeyedSubtree(
             key: ticket.overlayKey,
             child: _buildTicketPocket(
-              child: _buildTicketBeforeConcert(title: ticket.title),
+              child: _buildTicketBeforeConcert(
+                title: ticket.title,
+                info: ticket.info,
+              ),
             ),
           ),
         );
@@ -1101,6 +1158,34 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ? '등록'
         : ((info?.vendorName?.isNotEmpty ?? false) ? info!.vendorName! : '예매처');
 
+    if (_usePosterTicketDesign) {
+      return Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: _PosterTicketFace(
+              title: title,
+              info: info,
+              bigCenterText: dDayLabel,
+            ),
+          ),
+          Container(width: 1, color: Colors.grey.shade400),
+          Expanded(
+            flex: 1,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: isRegisterReady && !_isAddTicketExpanded
+                  ? () => _startCameraScan()
+                  : null,
+              child: _TicketStub(
+                label: vendorLabel,
+                labelColor: isRegisterReady ? const Color(0xFF16A34A) : null,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
     return Row(
       children: [
         Expanded(
@@ -1283,7 +1368,22 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Widget _buildTicketBeforeConcert({required String title}) {
+  Widget _buildTicketBeforeConcert({required String title, TicketInfo? info}) {
+    if (_usePosterTicketDesign) {
+      return Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: _PosterTicketFace(title: title, info: info),
+          ),
+          Container(width: 1, color: Colors.grey.shade400),
+          const Expanded(
+            flex: 1,
+            child: _TicketStub(label: '입장 티켓'),
+          ),
+        ],
+      );
+    }
     return Row(
       children: [
         Expanded(
@@ -1364,43 +1464,50 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 : () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => ConcertAfterScreen(concertTitle: title),
+                        builder: (_) => ConcertAfterScreen(
+                          concertTitle: title,
+                          ticketInfo: info,
+                        ),
                       ),
                     );
                   },
             pressScale: 0.985,
             tapScale: 1.03,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
-              ),
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey,
-                    ),
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
+            child: _usePosterTicketDesign
+                ? _PosterTicketFace(title: title, info: info)
+                : Container(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.horizontal(
+                        left: Radius.circular(8),
                       ),
                     ),
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
-            ),
           ),
         ),
         const _DashedVerticalDivider(),
@@ -1412,25 +1519,27 @@ class _DiaryScreenState extends State<DiaryScreen> {
             initiallyRevealed: initiallyRevealed,
             onTorn: onTorn,
             // 뜯기 전: 다른 티켓 오른쪽 칸과 동일한 디자인 + "관람 완료" 라벨
-            front: DecoratedBox(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.horizontal(
-                  right: Radius.circular(8),
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  '관람 완료',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black.withValues(alpha: 0.55),
+            front: _usePosterTicketDesign
+                ? const _TicketStub(label: '관람 완료')
+                : DecoratedBox(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.horizontal(
+                        right: Radius.circular(8),
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '관람 완료',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.black.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ),
             // 뜯긴 뒤: 지금의 "공연전" 디자인이 남아서 눌러볼 수 있게 됨
             revealed: KeyedSubtree(
               key: overlayKey,
@@ -1520,5 +1629,247 @@ class _DashedLinePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _DashedLinePainter oldDelegate) {
     return oldDelegate.color != color;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 포스터가 녹아든 티켓 디자인 (_DiaryScreenState._usePosterTicketDesign으로
+// 켜고 끕니다. false로 두면 아래 위젯들은 전혀 쓰이지 않고 기존 디자인 유지.)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// 포스터가 없을 때 공연마다 서로 다른 무드의 배경을 주기 위한 그라데이션
+/// 팔레트. 제목 문자열에서 결정적으로(앱을 껐다 켜도 동일하게) 골라, 같은
+/// 공연은 항상 같은 색을 갖습니다.
+const List<List<Color>> _posterFallbackPalettes = [
+  [Color(0xFF241734), Color(0xFF7B4B94)], // 자주빛 밤
+  [Color(0xFF0F2A43), Color(0xFF3E7CB1)], // 네이비
+  [Color(0xFF3B2416), Color(0xFFB07D3D)], // 앰버 브라운
+  [Color(0xFF12403C), Color(0xFF4C9A82)], // 딥 그린
+  [Color(0xFF461426), Color(0xFFA34672)], // 버건디
+];
+
+List<Color> _posterFallbackGradient(String seedText) {
+  var h = 0;
+  for (final c in seedText.codeUnits) {
+    h = (h * 31 + c) & 0x7fffffff;
+  }
+  return _posterFallbackPalettes[h % _posterFallbackPalettes.length];
+}
+
+/// 티켓 왼쪽(본표) 영역: 공연 포스터를 꽉 채운 배경으로 깔고, 가독성을 위한
+/// 어두운 스크림 위에 공연명/날짜·공연장/좌석·가격을 올립니다.
+/// 포스터가 없거나 로드에 실패하면 공연별 그라데이션으로 폴백합니다.
+///
+/// [bigCenterText]를 주면(배송 전 티켓의 D-day) 공연명 대신 가운데 큰 텍스트
+/// 레이아웃으로 바뀝니다.
+class _PosterTicketFace extends StatelessWidget {
+  const _PosterTicketFace({
+    required this.title,
+    this.info,
+    this.bigCenterText,
+  });
+
+  final String title;
+  final TicketInfo? info;
+  final String? bigCenterText;
+
+  static const List<Shadow> _textShadows = [
+    Shadow(color: Colors.black45, blurRadius: 4),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final posterUrl = info?.posterImageUrl;
+
+    return ClipRRect(
+      borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: _posterFallbackGradient(title),
+              ),
+            ),
+          ),
+          if (posterUrl != null && posterUrl.isNotEmpty)
+            Image.network(
+              posterUrl,
+              fit: BoxFit.cover,
+              // 실패 시 아무것도 그리지 않아 아래 그라데이션이 그대로 보임
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          // 텍스트 가독성을 위한 스크림(위/아래를 더 어둡게)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withValues(alpha: 0.32),
+                  Colors.black.withValues(alpha: 0.10),
+                  Colors.black.withValues(alpha: 0.45),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: bigCenterText != null
+                ? _buildBigCenterLayout()
+                : _buildConcertLayout(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 배송 전 티켓: 작은 제목 + 가운데 큰 D-day.
+  Widget _buildBigCenterLayout() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: Colors.white.withValues(alpha: 0.85),
+            shadows: _textShadows,
+          ),
+        ),
+        const Spacer(),
+        Center(
+          child: Text(
+            bigCenterText!,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+              shadows: _textShadows,
+            ),
+          ),
+        ),
+        const Spacer(),
+      ],
+    );
+  }
+
+  /// 공연 전/후 티켓: 큰 공연명 + 날짜·공연장 + 하단 좌석/가격.
+  Widget _buildConcertLayout() {
+    final seat = info?.seat ?? '';
+    final price = info?.price ?? '';
+    final metaParts = <String>[
+      if (info?.date != null) info!.formattedDate,
+      if (info != null && info!.venueName.isNotEmpty) info!.venueName,
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
+            height: 1.15,
+            shadows: _textShadows,
+          ),
+        ),
+        if (metaParts.isNotEmpty) ...[
+          const SizedBox(height: 3),
+          Text(
+            metaParts.join(' | '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: Colors.white.withValues(alpha: 0.85),
+              shadows: _textShadows,
+            ),
+          ),
+        ],
+        const Spacer(),
+        Row(
+          children: [
+            if (seat.isNotEmpty) _miniStat('좌석', seat),
+            if (seat.isNotEmpty && price.isNotEmpty) const SizedBox(width: 14),
+            if (price.isNotEmpty) _miniStat('가격', price),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _miniStat(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: Colors.white.withValues(alpha: 0.7),
+            shadows: _textShadows,
+          ),
+        ),
+        Text(
+          value,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            shadows: _textShadows,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 티켓 오른쪽(반권) 영역: 흰 배경에 라벨만 가운데 표시합니다.
+class _TicketStub extends StatelessWidget {
+  const _TicketStub({required this.label, this.labelColor});
+
+  final String label;
+  final Color? labelColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: labelColor ?? Colors.black.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

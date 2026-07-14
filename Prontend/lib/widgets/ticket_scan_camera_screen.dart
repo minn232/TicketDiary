@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -11,12 +10,20 @@ import 'ticket_alignment_detector.dart';
 
 enum _ScanStage { positioning, aligned, capturing }
 
+/// 화면 오른쪽 아래 "임시 스캔" 버튼을 눌렀을 때 [TicketScanCameraScreen]이
+/// 반환하는 값. 카메라 촬영이나 백엔드 OCR 호출을 전혀 거치지 않고, 호출부
+/// (다이어리 화면)가 테스트용 더미 티켓을 바로 추가하도록 신호만 보냅니다.
+class DebugFakeScanRequested {
+  const DebugFakeScanRequested();
+}
+
 /// 신분증 스캔 UI처럼, 가이드 박스에 티켓을 맞추면
 /// 자동으로 정렬을 인식(초록 테두리)하고 촬영까지 이어지는 카메라 화면.
 ///
 /// 정렬 판단은 [TicketAlignmentDetector]에, 촬영된 사진의 OCR 추출 + 공연
 /// 매칭은 [TicketScanService](백엔드 `POST /concerts/scan`)에 위임합니다.
-/// 성공 시 [Navigator.pop]으로 [TicketScanResponse]를 반환합니다.
+/// 성공 시 [Navigator.pop]으로 [TicketScanResponse]를, 디버그 버튼으로
+/// 종료하면 [DebugFakeScanRequested]를 반환합니다.
 class TicketScanCameraScreen extends StatefulWidget {
   TicketScanCameraScreen({
     super.key,
@@ -134,12 +141,12 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     }
   }
 
-  /// 정렬 인식을 기다리지 않고 바로 촬영·스캔하는 디버그용 버튼 핸들러.
-  /// (정렬 감지가 잘 안 되는 개발 환경에서 테스트용. 실제 카메라로 촬영은
-  /// 그대로 진행되며, 스캔 자체는 실제 백엔드로 전송됩니다.)
-  Future<void> _debugForceScan() async {
+  /// 카메라 촬영도, 백엔드 OCR 호출도 하지 않고 [DebugFakeScanRequested]를
+  /// 반환해 즉시 화면을 닫는 테스트 전용 버튼 핸들러. 실제 기기/백엔드 없이
+  /// UI 흐름(다이어리에 티켓이 추가되는 모습)만 확인하고 싶을 때 씁니다.
+  void _debugAddFakeTicket() {
     if (_stage == _ScanStage.capturing) return;
-    await _captureAndExtract();
+    Navigator.of(context).pop(const DebugFakeScanRequested());
   }
 
   @override
@@ -188,13 +195,13 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               ),
             ),
 
-          // 개발용 임시 버튼: 카메라/정렬 인식 없이 바로 스캔된 것으로 처리
+          // 개발용 임시 버튼: 카메라/백엔드 없이 테스트용 더미 티켓만 추가
           Positioned(
             bottom: 24,
             right: 16,
             child: FloatingActionButton.extended(
               heroTag: 'debug_force_scan',
-              onPressed: _debugForceScan,
+              onPressed: _debugAddFakeTicket,
               backgroundColor: Colors.grey,
               label: const Text('임시 스캔'),
             ),
@@ -218,7 +225,7 @@ class _ScanGuideOverlay extends StatelessWidget {
 
   Color get _borderColor => switch (stage) {
         _ScanStage.positioning => Colors.white70,
-        _ScanStage.aligned || _ScanStage.capturing => const Color(0xFF34D399),
+        _ScanStage.aligned || _ScanStage.capturing => const Color(0xFF38BDF8),
       };
 
   @override
@@ -236,13 +243,10 @@ class _ScanGuideOverlay extends StatelessWidget {
         return Stack(
           fit: StackFit.expand,
           children: [
-            // 가이드 박스 바깥은 블러 + 어둡게 처리
+            // 가이드 박스 바깥만 살짝 어둡게(블러 없이, 안쪽은 카메라 화면 그대로)
             ClipPath(
               clipper: _OutsideGuideClipper(guideRect: guideRect, radius: 18),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-                child: Container(color: Colors.black.withValues(alpha: 0.45)),
-              ),
+              child: Container(color: Colors.black.withValues(alpha: 0.35)),
             ),
 
             // 가이드 박스 테두리(정렬되면 초록색으로 전환)

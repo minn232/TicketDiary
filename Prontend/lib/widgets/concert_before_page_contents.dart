@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
 import '../models/ticket_info.dart';
+import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
+import '../services/concert_detail_service.dart';
 
 /// 공연 전(오버레이/스크린 공용) 페이지 내부 콘텐츠.
 ///
@@ -74,11 +77,38 @@ class ConcertBeforePageContents extends StatelessWidget {
   }
 }
 
-class _PostItGrid extends StatelessWidget {
+class _PostItGrid extends StatefulWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
 
   const _PostItGrid({required this.concertTitle, this.ticketInfo});
+
+  @override
+  State<_PostItGrid> createState() => _PostItGridState();
+}
+
+/// 타임테이블/예상 셋리스트 포스트잇의 조회 상태.
+/// - [loading]: 조회 중(응답 대기)
+/// - [empty]: 조회는 끝났는데 아직 등록된 데이터가 없음(백엔드 404) — "미정"
+/// - [disabled]: 예상 셋리스트 표시 설정이 꺼져 있음(백엔드 403)
+/// - [error]: 그 외 실패(500, 네트워크 오류 등) — 상태 코드를 같이 보여줌
+/// - [loaded]: 정상적으로 데이터를 받아옴
+enum _FetchStatus { loading, empty, disabled, error, loaded }
+
+class _PostItGridState extends State<_PostItGrid> {
+  final ConcertDetailService _service = ConcertDetailService();
+
+  List<TimetableEntry> _fetchedTimetable = const [];
+  _FetchStatus _timetableStatus = _FetchStatus.loading;
+  int? _timetableErrorCode;
+
+  List<String> _fetchedSetlist = const [];
+  _FetchStatus _presetlistStatus = _FetchStatus.loading;
+  int? _presetlistErrorCode;
+
+  /// 어떤 concertId로 이미 조회했는지 기억해, 같은 concertId로 다시
+  /// build되어도 중복 요청하지 않습니다.
+  String? _loadedConcertId;
 
   /// 스캔된 정보가 없을 때 보여줄 예시용 placeholder.
   static const _placeholderFields = [
@@ -86,6 +116,124 @@ class _PostItGrid extends StatelessWidget {
     MapEntry('공연일', '0000.00.00'),
     MapEntry('예매처', '예매 링크'),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetails();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PostItGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ticketInfo?.concertId != widget.ticketInfo?.concertId) {
+      _loadedConcertId = null;
+      _fetchedTimetable = const [];
+      _fetchedSetlist = const [];
+      _timetableStatus = _FetchStatus.loading;
+      _presetlistStatus = _FetchStatus.loading;
+      _timetableErrorCode = null;
+      _presetlistErrorCode = null;
+      _loadDetails();
+    }
+  }
+
+  void _loadDetails() {
+    final concertId = widget.ticketInfo?.concertId;
+    // concertId가 없으면(로컬 예시 티켓 등) 애초에 조회할 대상이 없으므로
+    // "로딩 중"으로 두지 않고 곧장 티켓에 담겨 있던 값(또는 "미정")을 씁니다.
+    if (concertId == null) {
+      setState(() {
+        _timetableStatus = _FetchStatus.empty;
+        _presetlistStatus = _FetchStatus.empty;
+      });
+      return;
+    }
+    if (concertId == _loadedConcertId) return;
+    _loadedConcertId = concertId;
+    unawaited(_loadTimetable(concertId));
+    unawaited(_loadPreSetlist(concertId));
+  }
+
+  /// `GET /concerts/{concertId}/timetable`. 미등록(404)은 "미정", 그 외
+  /// 실패는 상태 코드와 함께 오류로 표시합니다.
+  Future<void> _loadTimetable(String concertId) async {
+    try {
+      final res = await _service.getTimetable(concertId);
+      if (!mounted) return;
+      setState(() {
+        _fetchedTimetable = res.contents
+            .map((e) => TimetableEntry(time: e.time, label: e.description))
+            .toList();
+        _timetableStatus = _FetchStatus.loaded;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _timetableStatus = e.statusCode == 404
+            ? _FetchStatus.empty
+            : _FetchStatus.error;
+        _timetableErrorCode = e.statusCode;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _timetableStatus = _FetchStatus.error);
+    }
+  }
+
+  /// `GET /concerts/{concertId}/setlist/pre`. 유저의 `show_predicted_setlist`
+  /// 설정이 꺼져있으면(403) "표시 꺼짐"으로, 미등록(404)은 "미정"으로, 그 외
+  /// 실패는 상태 코드와 함께 오류로 표시합니다.
+  Future<void> _loadPreSetlist(String concertId) async {
+    try {
+      final res = await _service.getPreSetlist(concertId);
+      if (!mounted) return;
+      setState(() {
+        _fetchedSetlist = res.songs
+            .map((s) => s.encore ? '${s.name} (앵콜)' : s.name)
+            .toList();
+        _presetlistStatus = _FetchStatus.loaded;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (e.statusCode == 403) {
+          _presetlistStatus = _FetchStatus.disabled;
+        } else if (e.statusCode == 404) {
+          _presetlistStatus = _FetchStatus.empty;
+        } else {
+          _presetlistStatus = _FetchStatus.error;
+          _presetlistErrorCode = e.statusCode;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _presetlistStatus = _FetchStatus.error);
+    }
+  }
+
+  /// 상태별로 포스트잇에 보여줄 안내 위젯. [loaded]는 호출부에서 별도로
+  /// 처리하므로 여기선 다루지 않습니다.
+  Widget _statusText(_FetchStatus status, int? errorCode) {
+    switch (status) {
+      case _FetchStatus.loading:
+        return const _UndecidedText(message: '조회 중');
+      case _FetchStatus.empty:
+        return const _UndecidedText();
+      case _FetchStatus.disabled:
+        return const _UndecidedText(message: '예상 셋리스트 표시가\n꺼져 있어요');
+      case _FetchStatus.error:
+        // 네트워크 단절 등 HTTP 응답 자체가 없으면 ApiClient가 statusCode -1로
+        // 던지므로, 양수 코드일 때만 코드를 그대로 보여줍니다.
+        return _UndecidedText(
+          message: errorCode != null && errorCode > 0
+              ? '오류 ($errorCode)'
+              : '오류 (연결 실패)',
+        );
+      case _FetchStatus.loaded:
+        return const _UndecidedText();
+    }
+  }
 
   String _dDayLabel(DateTime? date) {
     if (date == null) return 'D-12';
@@ -98,13 +246,54 @@ class _PostItGrid extends StatelessWidget {
     return 'D+${-diff}';
   }
 
+  /// concertId가 없는(로컬 예시 등) 티켓은 서버 조회 자체를 안 하므로,
+  /// 티켓에 이미 담겨 있던 값을 그대로 쓰고 없으면 "미정"을 보여줍니다.
+  /// concertId가 있으면 조회 상태([_FetchStatus])에 따라 로딩 중/미정/오류/
+  /// 실제 데이터를 구분해서 보여줍니다.
+  Widget _buildTimetableBody(bool hasConcertId) {
+    if (!hasConcertId) {
+      final local = widget.ticketInfo?.timetable ?? const [];
+      return local.isEmpty ? const _UndecidedText() : _timetableList(local);
+    }
+    if (_timetableStatus != _FetchStatus.loaded) {
+      return _statusText(_timetableStatus, _timetableErrorCode);
+    }
+    return _fetchedTimetable.isEmpty
+        ? const _UndecidedText()
+        : _timetableList(_fetchedTimetable);
+  }
+
+  Widget _timetableList(List<TimetableEntry> timetable) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+    children: [
+      for (final entry in timetable)
+        _TimeRow(time: entry.time, label: entry.label),
+    ],
+  );
+
+  Widget _buildSetlistBody(bool hasConcertId) {
+    if (!hasConcertId) {
+      final local = widget.ticketInfo?.setlist ?? const [];
+      return local.isEmpty
+          ? const _UndecidedText()
+          : _SetlistContent(setlist: local);
+    }
+    if (_presetlistStatus != _FetchStatus.loaded) {
+      return _statusText(_presetlistStatus, _presetlistErrorCode);
+    }
+    return _fetchedSetlist.isEmpty
+        ? const _UndecidedText()
+        : _SetlistContent(setlist: _fetchedSetlist);
+  }
+
   @override
   Widget build(BuildContext context) {
     const spacing = 14.0;
+    final ticketInfo = widget.ticketInfo;
     final fields = ticketInfo?.displayFields ?? _placeholderFields;
     final dDayLabel = _dDayLabel(ticketInfo?.date);
-    final timetable = ticketInfo?.timetable ?? const [];
-    final setlist = ticketInfo?.setlist ?? const [];
+    final hasConcertId = ticketInfo?.concertId != null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -121,7 +310,7 @@ class _PostItGrid extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _kv('공연명', concertTitle),
+                            _kv('공연명', widget.concertTitle),
                             const SizedBox(height: 6),
                             for (final field in fields) ...[
                               _kv(field.key, field.value),
@@ -137,19 +326,7 @@ class _PostItGrid extends StatelessWidget {
                     child: _PostItNote(
                       title: '타임테이블',
                       color: const Color(0xFFCFF5E7),
-                      child: timetable.isEmpty
-                          ? const _UndecidedText()
-                          : Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                for (final entry in timetable)
-                                  _TimeRow(
-                                    time: entry.time,
-                                    label: entry.label,
-                                  ),
-                              ],
-                            ),
+                      child: _buildTimetableBody(hasConcertId),
                     ),
                   ),
                 ],
@@ -172,9 +349,7 @@ class _PostItGrid extends StatelessWidget {
                     child: _PostItNote(
                       title: '예상 셋 리스트',
                       color: const Color(0xFFD9E8FF),
-                      child: setlist.isEmpty
-                          ? const _UndecidedText()
-                          : _SetlistContent(setlist: setlist),
+                      child: _buildSetlistBody(hasConcertId),
                     ),
                   ),
                 ],
@@ -337,13 +512,16 @@ class _SetlistContent extends StatelessWidget {
 
 /// 백엔드에 아직 데이터가 없을 때(타임테이블/셋리스트) 보여주는 안내 텍스트.
 class _UndecidedText extends StatelessWidget {
-  const _UndecidedText();
+  final String message;
+
+  const _UndecidedText({this.message = '미정'});
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Text(
-        '미정',
+        message,
+        textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w700,

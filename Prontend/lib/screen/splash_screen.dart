@@ -1140,11 +1140,12 @@ class _MainPageReplica extends StatelessWidget {
                 color: Colors.white,
                 padding: EdgeInsets.all(12 * k),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
                       label,
+                      textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 12 * k,
                         fontWeight: FontWeight.bold,
@@ -1154,6 +1155,7 @@ class _MainPageReplica extends StatelessWidget {
                     SizedBox(height: 6 * k),
                     Text(
                       mainText,
+                      textAlign: TextAlign.center,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

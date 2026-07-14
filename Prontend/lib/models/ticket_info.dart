@@ -38,6 +38,12 @@ class TicketInfo {
   final DateTime? deliveryDate;
   final String? vendorName;
 
+  /// 백엔드 공연 UUID. 타임테이블/셋리스트를 조회할 때(`GET
+  /// /concerts/{concertId}/timetable`, `.../setlist`, `.../setlist/pre`)
+  /// 이 값이 있어야 실제 데이터를 불러올 수 있습니다. 스캔 mock 등 백엔드에
+  /// 등록되지 않은 티켓은 null입니다.
+  final String? concertId;
+
   const TicketInfo({
     this.concertName = '',
     this.venueName = '',
@@ -50,6 +56,7 @@ class TicketInfo {
     this.posterImageUrl,
     this.deliveryDate,
     this.vendorName,
+    this.concertId,
   });
 
   TicketInfo copyWith({
@@ -64,6 +71,7 @@ class TicketInfo {
     String? posterImageUrl,
     DateTime? deliveryDate,
     String? vendorName,
+    String? concertId,
   }) {
     return TicketInfo(
       concertName: concertName ?? this.concertName,
@@ -77,6 +85,7 @@ class TicketInfo {
       posterImageUrl: posterImageUrl ?? this.posterImageUrl,
       deliveryDate: deliveryDate ?? this.deliveryDate,
       vendorName: vendorName ?? this.vendorName,
+      concertId: concertId ?? this.concertId,
     );
   }
 
