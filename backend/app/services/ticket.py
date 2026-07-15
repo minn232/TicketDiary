@@ -67,11 +67,24 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
 
+    # 실제 티켓(OCR)이 회차를 증명하는 자료이므로 KOPIS 시간과 다르면 OCR을 신뢰하고 로그만 남김
+    start_time = body.start_time
+    if start_time and concert.start_time and start_time != concert.start_time:
+        logger.warning(
+            f"티켓 시작시간 불일치 (concert_id={concert.id}): "
+            f"KOPIS={concert.start_time} OCR={start_time} -> OCR 값 사용"
+        )
+    if not start_time:
+        start_time = concert.start_time
+    elif concert.start_time is None:
+        concert.start_time = start_time
+
     ticket = Ticket(
         user_id=user.id,
         concert_id=concert.id,
         status=_initial_status(concert),
         delivery_date=body.delivery_date,
+        start_time=start_time,
         ticketing_site=body.ticketing_site,
         price=body.price,
         seat_type=body.seat_type,

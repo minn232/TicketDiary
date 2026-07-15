@@ -12,7 +12,12 @@ from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.social import NewsFeed
-from app.services.kopis import _fetch_all_kopis_ids, _is_large_venue, sync_daily_concerts
+from app.services.kopis import (
+    _fetch_all_kopis_ids,
+    _is_allowed_genre,
+    _is_large_venue,
+    sync_daily_concerts,
+)
 from conftest import _get_token, kopis_mock
 
 
@@ -99,7 +104,64 @@ def _make_list_xml_with_venues(entries: list[tuple[str, str]]) -> bytes:
     return f'<?xml version="1.0" encoding="UTF-8"?><dbs>{dbs}</dbs>'.encode("utf-8")
 
 
+# kopis_id, genrenm 쌍으로 목록 API XML 생성 (장르 필터 테스트용)
+def _make_list_xml_with_genres(entries: list[tuple[str, str]]) -> bytes:
+    dbs = ""
+    for kid, genre in entries:
+        dbs += (
+            f"<db>"
+            f"<mt20id>{kid}</mt20id>"
+            f"<prfnm>{kid} 공연</prfnm>"
+            f"<prfpdfrom>2030.06.01</prfpdfrom>"
+            f"<prfpdto>2030.06.30</prfpdto>"
+            f"<fcltynm>테스트공연장</fcltynm>"
+            f"<genrenm>{genre}</genrenm>"
+            f"<poster></poster>"
+            f"</db>"
+        )
+    return f'<?xml version="1.0" encoding="UTF-8"?><dbs>{dbs}</dbs>'.encode("utf-8")
+
+
 _TEST_LARGE_VENUE_KEYWORDS = ["체조경기장", "스카이돔", "종합운동장", "주경기장"]
+
+
+# _is_allowed_genre 테스트
+
+# KOPIS 응답의 genrenm이 실제로는 요청 파라미터로 걸러지지 않아 (연극/뮤지컬 등이 섞여 들어옴)
+# 클라이언트에서 대중음악만 통과시키는지 확인
+def test_is_allowed_genre_only_passes_popular_music():
+    assert _is_allowed_genre("대중음악")
+    assert not _is_allowed_genre("연극")
+    assert not _is_allowed_genre("뮤지컬")
+    assert not _is_allowed_genre("서양음악(클래식)")
+
+
+# 허용 장르 목록이 비어있으면 전부 통과되는지 테스트
+def test_is_allowed_genre_passes_everything_when_list_empty():
+    with patch("app.services.kopis._ALLOWED_GENRES", []):
+        assert _is_allowed_genre("연극")
+        assert _is_allowed_genre("아무거나")
+
+
+# 목록 API 응답에 장르가 섞여 있어도 대중음악만 수집하는지 테스트 (요청 파라미터 genrenm 미작동 대비)
+@pytest.mark.asyncio
+async def test_fetch_all_kopis_ids_filters_to_allowed_genre():
+    entries = [
+        ("PF_PLAY", "연극"),
+        ("PF_POP_1", "대중음악"),
+        ("PF_MUSICAL", "뮤지컬"),
+        ("PF_POP_2", "대중음악"),
+    ]
+
+    async def _mock_get(url, **kwargs):
+        return MagicMock(status_code=200, content=_make_list_xml_with_genres(entries))
+
+    mock_client = MagicMock()
+    mock_client.get = _mock_get
+
+    ids = await _fetch_all_kopis_ids(mock_client, date(2030, 1, 1), date(2030, 12, 31))
+
+    assert ids == ["PF_POP_1", "PF_POP_2"]
 
 
 # _is_large_venue 테스트
@@ -238,7 +300,7 @@ async def test_sync_caps_new_concerts_per_run_and_continues_next_run():
 
     with (
         patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
-        patch("app.services.kopis._MAX_NEW_CONCERTS_PER_RUN", 2),
+        patch("app.services.kopis._MAX_NEW_CONCERTS_PER_RUN", 3),
         patch("asyncio.sleep"),
     ):
         async with AsyncSessionLocal() as db:
@@ -246,9 +308,9 @@ async def test_sync_caps_new_concerts_per_run_and_continues_next_run():
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(select(Concert).where(Concert.kopis_id.in_(kopis_ids)))
-            assert len(result.scalars().all()) == 2
+            assert len(result.scalars().all()) == 3
 
-        # 다음 실행 -> 상한에 걸려 못 받은 나머지 3건을 이어서 처리
+        # 다음 실행 -> 상한에 걸려 못 받은 나머지 2건을 이어서 처리
         async with AsyncSessionLocal() as db:
             await sync_daily_concerts(db)
 

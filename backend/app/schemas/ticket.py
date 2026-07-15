@@ -10,6 +10,7 @@ class TicketCreate(BaseModel):
     concert_id: UUID | None = None
     kopis_id: str | None = None
     delivery_date: datetime | None = None
+    start_time: str | None = None  # OCR로 추출한 티켓 실제 시작시간 ("HH:MM")
     ticketing_site: str | None = None
     price: int | None = None
     seat_type: str | None = None
@@ -24,6 +25,7 @@ class TicketCreate(BaseModel):
 class TicketUpdate(BaseModel):
     # 티켓 부분 수정 요청
     delivery_date: datetime | None = None
+    start_time: str | None = None
     ticketing_site: str | None = None
     price: int | None = None
     seat_type: str | None = None
@@ -41,6 +43,7 @@ class TicketResponse(BaseModel):
     concert_id: UUID | None
     status: TicketStatus
     delivery_date: datetime | None
+    start_time: str | None
     ticketing_site: str | None
     price: int | None
     seat_type: str | None

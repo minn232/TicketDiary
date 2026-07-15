@@ -10,7 +10,8 @@ from conftest import _get_token, kopis_mock
 # 헬퍼
 
 # KOPIS 공연 정보 XML 생성
-def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str) -> bytes:
+def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str, dtguidance: str = "") -> bytes:
+    dt = f"<dtguidance>{dtguidance}</dtguidance>" if dtguidance else ""
     return (
         f'<?xml version="1.0" encoding="UTF-8"?>'
         f"<dbs><db>"
@@ -24,15 +25,18 @@ def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str) -> bytes:
         f"<prfstate>공연예정</prfstate>"
         f"<prfcrew>출연: 테스트아티스트</prfcrew>"
         f"<pcseguidance>R석 110,000원</pcseguidance>"
+        f"{dt}"
         f"<sty>공연 소개</sty>"
         f"</db></dbs>"
     ).encode("utf-8")
 
 
 # 공연 생성 (kopis_mock)
-async def _create_concert(kopis_id: str, start: str = "2030.06.01", end: str = "2030.06.30") -> str:
+async def _create_concert(
+    kopis_id: str, start: str = "2030.06.01", end: str = "2030.06.30", dtguidance: str = ""
+) -> str:
     token = await _get_token()
-    xml = _make_kopis_xml(kopis_id, f"{kopis_id} 공연", start, end)
+    xml = _make_kopis_xml(kopis_id, f"{kopis_id} 공연", start, end, dtguidance)
     with kopis_mock(xml):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
@@ -81,6 +85,66 @@ async def test_create_ticket_with_kopis_id():
 
     assert response.status_code == 201
     assert response.json()["concert"] is not None
+
+
+# concert.start_time이 비어있을 때 OCR 시간으로 최초 백필되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_backfills_concert_start_time_from_ocr():
+    concert_id = await _create_concert("PF_T_TIME_001")  # dtguidance 없음 -> concert.start_time None
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "start_time": "19:00"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        detail = await ac.get(
+            "/api/v1/concerts/PF_T_TIME_001",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["start_time"] == "19:00"
+    assert detail.json()["start_time"] == "19:00"
+
+
+# OCR 시간과 KOPIS 시간이 다르면 OCR(실물 티켓) 값을 신뢰해서 저장하는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_prefers_ocr_time_on_mismatch():
+    concert_id = await _create_concert(
+        "PF_T_TIME_002", dtguidance="화~금 19:30"
+    )  # concert.start_time == "19:30"
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "start_time": "20:00"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["start_time"] == "20:00"
+
+
+# OCR 시간이 없으면 concert.start_time으로 폴백되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_falls_back_to_concert_start_time():
+    concert_id = await _create_concert(
+        "PF_T_TIME_003", dtguidance="화~금 19:30"
+    )
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["start_time"] == "19:30"
 
 
 # 존재하지 않는 concert_id로 등록 404 테스트

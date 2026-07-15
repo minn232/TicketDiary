@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
+from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
 
 logger = logging.getLogger(__name__)
@@ -70,20 +71,33 @@ async def crawl_interpark(concert: Concert, direct_url: str | None = None) -> by
                 if direct_url:
                     await page.goto(direct_url, wait_until="domcontentloaded", timeout=30_000)
                     await page.wait_for_timeout(2_000)
-                else:
-                    keyword = quote(concert.name)
-                    search_url = f"https://tickets.interpark.com/search?keyword={keyword}"
-                    await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
-                    await page.wait_for_timeout(2_000)
+                    return await page.screenshot(full_page=True, type="png")
 
-                    href = await page.get_attribute('a[href*="/goods/"]', "href")
-                    if href:
-                        if not href.startswith("http"):
-                            href = f"https://tickets.interpark.com{href}"
-                        await page.goto(href, wait_until="domcontentloaded", timeout=30_000)
-                        await page.wait_for_timeout(2_000)
+                keyword = quote(concert.name)
+                # 기본 /search 경로는 "판매중/판매예정"만 검색해 이미 끝난 공연은 결과가 0건이 되므로
+                # status에 CLOSED를 명시해 판매종료 공연도 검색되게 함
+                search_url = (
+                    f"https://tickets.interpark.com/contents/search?keyword={keyword}"
+                    f"&status=OPENED&status=CLOSED&status=SCHEDULED"
+                )
+                await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
+                await page.wait_for_timeout(2_000)
 
-                return await page.screenshot(full_page=True, type="png")
+                # 검색 결과 카드는 <a>에 href가 없고 JS 클릭 핸들러로만 라우팅되며 새 탭(target=_blank)으로 열림
+                # (실제 사이트 DOM 확인 결과, role="link"인데 href 속성 자체가 없어 get_attribute로는 못 읽음)
+                result_card = page.locator('a[class*="TicketItem_ticketItem"]').first
+                if await result_card.count() == 0:
+                    # 검색 결과가 0건("검색결과가 없습니다")인 경우 - 빈 검색결과 페이지를 성공으로
+                    # 오인해 스크린샷하지 않도록 실패로 처리
+                    logger.info(f"인터파크 검색 결과 없음: {concert.name}")
+                    return None
+
+                async with page.context.expect_page(timeout=10_000) as new_page_info:
+                    await result_card.click()
+                detail_page = await new_page_info.value
+                await detail_page.wait_for_load_state("domcontentloaded")
+                await detail_page.wait_for_timeout(2_000)
+                return await detail_page.screenshot(full_page=True, type="png")
             finally:
                 await browser.close()
     except Exception as e:
@@ -239,7 +253,7 @@ def _pick_crawl_target(
     for site in _PREFERRED_SITES:
         if site in links:
             return site, links[site]
-    site_key = ticketing_site.upper()
+    site_key = normalize_site_key(ticketing_site)
     if site_key in _UNSUPPORTED_SITES:
         return None, None
     return site_key, links.get(site_key)
@@ -256,7 +270,7 @@ async def crawl_and_save(concert_id, ticketing_site: str | None) -> None:
     if not ticketing_site:
         return
 
-    if ticketing_site.upper() not in _KNOWN_SITE_KEYS:
+    if normalize_site_key(ticketing_site) not in _KNOWN_SITE_KEYS:
         logger.info(f"크롤링 미지원 사이트: {ticketing_site}")
         return
 

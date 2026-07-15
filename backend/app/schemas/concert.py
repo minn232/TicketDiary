@@ -20,6 +20,7 @@ class ConcertResponse(BaseModel):
     artist_name: list[str]
     venue: str | None
     start_date: datetime
+    start_time: str | None
     end_date: datetime
     genre: list[str] | None
     poster_url: str | None

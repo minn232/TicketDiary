@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.crawler import (
+    _pick_crawl_target,
     crawl_and_save,
     crawl_interpark,
     crawl_melon,
@@ -51,25 +52,98 @@ def _make_pw_mock(screenshot: bytes, link_href: str | None = None):
     return mock_cm
 
 
+# context.expect_page()의 async with ... as info / await info.value 흐름을 흉내내는 가짜 객체
+# (인터파크 검색 결과 카드는 href 없이 클릭 시 새 탭으로 열려서 이 방식으로 감지해야 함)
+class _FakeExpectPageCM:
+    def __init__(self, page):
+        self._page = page
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    @property
+    def value(self):
+        async def _get():
+            return self._page
+        return _get()
+
+
+# 인터파크 mock: 검색결과 카드 클릭 -> 새 탭(context.expect_page)으로 상세 페이지가 열리는 흐름 지원
+def _make_interpark_pw_mock(screenshot: bytes, card_count: int = 0, detail_screenshot: bytes | None = None):
+    mock_detail_page = AsyncMock()
+    mock_detail_page.wait_for_load_state = AsyncMock()
+    mock_detail_page.wait_for_timeout = AsyncMock()
+    mock_detail_page.screenshot = AsyncMock(return_value=detail_screenshot or screenshot)
+
+    mock_locator = AsyncMock()
+    mock_locator.count = AsyncMock(return_value=card_count)
+    mock_locator.click = AsyncMock()
+    mock_locator.first = mock_locator
+
+    mock_browser_context = MagicMock()
+    mock_browser_context.expect_page = MagicMock(return_value=_FakeExpectPageCM(mock_detail_page))
+
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.screenshot = AsyncMock(return_value=screenshot)
+    mock_page.locator = MagicMock(return_value=mock_locator)
+    mock_page.context = mock_browser_context
+
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_browser.close = AsyncMock()
+
+    mock_pw = AsyncMock()
+    mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    return mock_cm, mock_page, mock_detail_page
+
+
 # crawl_interpark 테스트
 
-# 링크 없어도 검색 결과 페이지 스크린샷 반환
+# 검색 결과 카드가 없으면(검색결과 0건) 빈 페이지를 성공으로 오인하지 않고 None 반환
 @pytest.mark.asyncio
-async def test_crawl_interpark_search_page_screenshot(mock_concert):
-    expected = b"png-bytes"
-    with patch("app.services.crawler.async_playwright", return_value=_make_pw_mock(expected)):
+async def test_crawl_interpark_no_results_returns_none(mock_concert):
+    pw_mock, _, _ = _make_interpark_pw_mock(b"empty-search-page-png", card_count=0)
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
         result = await crawl_interpark(mock_concert)
-    assert result == expected
+    assert result is None
 
 
-# goods/ 링크 발견 시 상세 페이지로 이동
+# 검색 결과 카드 발견 시 클릭 -> 새 탭으로 열린 상세 페이지를 스크린샷
 @pytest.mark.asyncio
 async def test_crawl_interpark_navigates_to_detail(mock_concert):
     expected = b"detail-png"
-    pw_mock = _make_pw_mock(expected, link_href="/goods/12345678")
+    pw_mock, _, mock_detail_page = _make_interpark_pw_mock(
+        b"search-png", card_count=1, detail_screenshot=expected
+    )
     with patch("app.services.crawler.async_playwright", return_value=pw_mock):
         result = await crawl_interpark(mock_concert)
     assert result == expected
+    mock_detail_page.screenshot.assert_awaited_once()
+
+
+# 검색 URL에 CLOSED 상태를 포함해 이미 끝난 공연도 검색되는지 확인
+# (NOL 리브랜딩 후 기본 /search는 판매중/예정만 조회해 종료된 공연은 0건 -> 검색결과 카드가 아예 안 뜸)
+@pytest.mark.asyncio
+async def test_crawl_interpark_search_url_includes_closed_status(mock_concert):
+    pw_mock, mock_page, _ = _make_interpark_pw_mock(b"png-bytes", card_count=0)
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        await crawl_interpark(mock_concert)
+
+    called_url = mock_page.goto.call_args_list[0].args[0]
+    assert called_url.startswith("https://tickets.interpark.com/contents/search")
+    assert "status=CLOSED" in called_url
 
 
 # Playwright 예외 시 None 반환
@@ -115,7 +189,57 @@ async def test_crawl_yes24_returns_none_on_error(mock_concert):
     assert result is None
 
 
+# NOL 티켓(인터파크 리브랜딩) 별칭 테스트
+
+# "NOL ticket"/"NOL" 표기가 INTERPARK 크롤러로 정규화되는지 확인
+@pytest.mark.parametrize("ticketing_site", ["NOL ticket", "NOL", "nol", "Nol Ticket", "NOL티켓"])
+def test_pick_crawl_target_nol_variants_resolve_to_interpark(ticketing_site):
+    site_key, direct_url = _pick_crawl_target(ticketing_site, None)
+    assert site_key == "INTERPARK"
+    assert direct_url is None
+
+
+# ticketing_links에 인터파크 직접 URL이 있으면 NOL 표기여도 그 URL을 그대로 사용
+def test_pick_crawl_target_nol_prefers_direct_interpark_link():
+    site_key, direct_url = _pick_crawl_target(
+        "NOL ticket", {"INTERPARK": "https://tickets.interpark.com/goods/12345"}
+    )
+    assert site_key == "INTERPARK"
+    assert direct_url == "https://tickets.interpark.com/goods/12345"
+
+
 # crawl_and_save 테스트
+
+# NOL ticket으로 등록된 티켓도 INTERPARK 크롤러로 처리되는지 확인
+@pytest.mark.asyncio
+async def test_crawl_and_save_nol_ticket_uses_interpark_crawler():
+    concert_id = uuid.uuid4()
+    fake_url = "https://s3.example.com/crawls/screenshot.png"
+
+    mock_concert = MagicMock()
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+    mock_concert.ticketing_links = None
+    mock_concert.crawl_screenshot_url = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    mock_crawler = AsyncMock(return_value=b"bytes")
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+    ):
+        await crawl_and_save(concert_id, "NOL ticket")
+
+    mock_crawler.assert_awaited_once()
+    assert mock_concert.crawl_screenshot_url == fake_url
+
 
 # INTERPARK 크롤링 성공 시 Concert.crawl_screenshot_url 저장
 @pytest.mark.asyncio

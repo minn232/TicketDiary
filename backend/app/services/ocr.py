@@ -10,6 +10,7 @@ from PIL import Image
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.services.text_utils import min_len_ok
 
 _VISION_URL = "https://vision.googleapis.com/v1/images:annotate"
 
@@ -58,10 +59,13 @@ _PLATFORMS = [
 _FESTIVAL_KEYWORDS = ["festival", "fest", "페스티벌", "페스", "뮤직페스"]
 
 # title 후보에서 제외할 줄 시작 패턴
+# nol은 단독으로 두면 "Nolan"/"Nolgong" 같은 실제 제목 앞부분과 겹치므로 뒤에 ticket/티켓이
+# 붙는 경우(NOL 티켓 플랫폼 라벨)만 매칭하도록 좁힘
 _LABEL_SKIP = re.compile(
     r"^(장소|좌석|가격|날짜|시간|발송|배송|출고"
-    r"|인터파크|yes24|티켓링크|멜론|네이버"
-    r"|입장번호|일시|예매|예약|주최|주관|문의)",
+    r"|인터파크|interpark|nol\s*(ticket|티켓)|yes24|티켓링크|멜론|네이버"
+    r"|입장번호|일시|예매|예약|주최|주관|문의|전화번호"
+    r"|금액|결제|수량|매수|판매일자|구매일자|발권일자)",
     re.IGNORECASE,
 )
 
@@ -203,15 +207,12 @@ def _label_pos(text: str, label_re: str) -> int | None:
     return m.start() if m else None
 
 
-# 공연명 추출 (레이블 우선 → 첫 번째 유효 줄 폴백)
-def _extract_title(text: str) -> str | None:
-    m = re.search(r"(?:공연명|행사명|제목)\s*[:：]\s*(.+)", text)
-    if m:
-        return m.group(1).strip()
-
+# 공연명 후보가 될 수 있는 줄 전부 반환 (라벨/날짜/가격/좌석 등 노이즈 줄만 제외, 순서 유지)
+def _title_line_candidates(text: str) -> list[str]:
+    candidates = []
     for line in text.splitlines():
         line = line.strip()
-        if not line or len(line) < 3 or len(line) > 80:
+        if not line or not min_len_ok(line) or len(line) > 80:
             continue
         if _DATE_RE.match(line):
             continue
@@ -219,11 +220,33 @@ def _extract_title(text: str) -> str | None:
             continue
         if _LABEL_SKIP.match(line):
             continue
-        if re.match(r"^\d", line):
+        # "2024 HA HYUN SANG CONCERT"처럼 연도로 시작하는 제목은 통과시키고,
+        # 그 외 숫자로 시작하는 줄(예매번호/좌석코드 등)만 제외
+        if re.match(r"^\d", line) and not re.match(r"^(19|20)\d{2}\s", line):
             continue
-        return line
+        # "비지정석"처럼 라벨 없이 좌석 등급만 단독으로 적힌 줄은 공연명이 아니므로 제외
+        if _SEAT_RE.fullmatch(line):
+            continue
+        candidates.append(line)
+    return candidates
 
-    return None
+
+# 공연명 추출 (레이블 우선 → 첫 번째 유효 줄 폴백)
+def _extract_title(text: str) -> str | None:
+    m = re.search(r"(?:공연명|행사명|제목)\s*[:：]\s*(.+)", text)
+    if m:
+        return m.group(1).strip()
+
+    candidates = _title_line_candidates(text)
+    return candidates[0] if candidates else None
+
+
+# 공연명 후보 목록 추출 (첫 줄이 KOPIS 등록명과 표기가 달라 검색이 실패할 때
+# "빨래는 오늘을 살아가는" -> "빨래"처럼 뒤쪽 줄로도 KOPIS 검색을 재시도하기 위함)
+def _extract_title_candidates(text: str) -> list[str]:
+    m = re.search(r"(?:공연명|행사명|제목)\s*[:：]\s*(.+)", text)
+    labeled = [m.group(1).strip()] if m else []
+    return labeled + _title_line_candidates(text)
 
 
 # 공연 날짜 추출 (레이블 우선 → 발송일 이전의 첫 날짜 폴백)
@@ -326,15 +349,17 @@ def _classify_event_type(text: str) -> str:
 # OCR 순수 텍스트에서 티켓 필드 로컬 파싱
 def _parse_ticket_fields(raw_text: str) -> dict:
     return {
-        "title":         _extract_title(raw_text),
-        "date":          _extract_concert_date(raw_text),
-        "time":          _extract_time(raw_text),
-        "shipping_date": _extract_shipping_date(raw_text),
-        "location":      _extract_location(raw_text),
-        "seat":          _extract_seat(raw_text),
-        "platform":      _extract_platform(raw_text),
-        "price":         _extract_price(raw_text),
-        "event_type":    _classify_event_type(raw_text),
+        "title":            _extract_title(raw_text),
+        # KOPIS 검색이 title로 실패할 때 순서대로 재시도할 대체 후보들 (title 포함, 중복 없이)
+        "title_candidates": _extract_title_candidates(raw_text),
+        "date":             _extract_concert_date(raw_text),
+        "time":             _extract_time(raw_text),
+        "shipping_date":    _extract_shipping_date(raw_text),
+        "location":         _extract_location(raw_text),
+        "seat":             _extract_seat(raw_text),
+        "platform":         _extract_platform(raw_text),
+        "price":            _extract_price(raw_text),
+        "event_type":       _classify_event_type(raw_text),
     }
 
 

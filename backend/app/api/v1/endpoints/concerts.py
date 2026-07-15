@@ -9,7 +9,12 @@ from app.core.deps import get_current_user
 from app.models.concert import Concert
 from app.models.user import User
 from app.schemas.concert import ConcertResponse, TicketScanExtracted, TicketScanResponse
-from app.services.kopis import search_concerts as kopis_search, get_concert_detail
+from app.services.kopis import (
+    search_concerts as kopis_search,
+    search_concerts_multi as kopis_search_multi,
+    search_concerts_by_venue as kopis_search_by_venue,
+    get_concert_detail,
+)
 from app.services.ocr import extract_ticket_info
 
 router = APIRouter()
@@ -50,8 +55,13 @@ async def scan_ticket(
     )
 
     # 공연명 + 공연일 기준으로 KOPIS 후보 검색
+    # title 하나만으로 실패하면 원본 텍스트의 다른 후보 줄들로 순서대로 재시도
+    # (예: "빨래는 오늘을 살아가는"으로 실패 -> 원본 텍스트 뒷줄의 "빨래"로 재시도)
     candidates = []
-    if extracted.title:
+    title_candidates = extracted_raw.get("title_candidates") or (
+        [extracted.title] if extracted.title else []
+    )
+    if title_candidates:
         start_date = None
         end_date = None
         if extracted.date:
@@ -62,7 +72,9 @@ async def scan_ticket(
             except ValueError:
                 pass
         try:
-            candidates = await kopis_search(db, extracted.title, start_date, end_date)
+            candidates = await kopis_search_multi(
+                db, title_candidates, start_date, end_date, extracted.location
+            )
         except HTTPException:
             pass
 
@@ -79,6 +91,19 @@ async def search_concerts(
     db: AsyncSession = Depends(get_db),
 ):
     return await kopis_search(db, keyword, start_date, end_date)
+
+
+# 공연장 + 날짜 기준 KOPIS 재검색 (/scan 후보 목록에 원하는 공연이 없을 때 사용)
+# 공연장+날짜 조합은 보통 1~2건으로 좁혀지는 강한 필터라 제목 표기가 KOPIS 등록명과 완전히 달라도 찾을 수 있음
+@router.get("/search-by-venue", response_model=list[ConcertResponse])
+async def search_concerts_by_venue(
+    venue: str = Query(...),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await kopis_search_by_venue(db, venue, start_date, end_date)
 
 
 # 공연 상세 조회 (DB -> KOPIS API + DB upsert)
