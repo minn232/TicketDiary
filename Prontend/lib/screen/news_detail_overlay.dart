@@ -155,7 +155,7 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
             final rect = _getRectForT(screenSize, t);
             final radius = _getRadiusForT(t);
 
-            final dimOpacity = lerpDouble(0.0, 0.80, t)!;
+            final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
             final expandedOpacity = Curves.easeIn.transform(
               ((t - 0.20) / 0.80).clamp(0.0, 1.0),
@@ -167,7 +167,7 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
                 Positioned.fill(
                   child: IgnorePointer(
                     child: Container(
-                      color: Colors.white.withValues(alpha: dimOpacity),
+                      color: Colors.black.withValues(alpha: dimOpacity),
                     ),
                   ),
                 ),
@@ -237,7 +237,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
         Positioned.fill(child: PosterBackground(imageUrl: news.imageUrl)),
 
         Positioned.fill(
-          child: Container(color: Colors.black.withValues(alpha: 0.20)),
+          child: Container(color: Colors.white.withValues(alpha: 0.50)),
         ),
 
         SafeArea(
@@ -245,11 +245,12 @@ class _ExpandedNewsDetail extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
             child: Center(
               child: FractionallySizedBox(
-                widthFactor: 0.888,
-                heightFactor: 0.888,
+                // 카드를 기존보다 가로/세로 8% 더 크게(20% 키운 뒤 10% 축소 = 순증 8%)
+                widthFactor: 0.888 * 1.08,
+                heightFactor: 0.888 * 1.08,
                 child: Container(
                   key: pageKey,
-                  constraints: const BoxConstraints(maxWidth: 520),
+                  constraints: const BoxConstraints(maxWidth: 562),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.94),
                     borderRadius: BorderRadius.circular(14),
@@ -268,14 +269,14 @@ class _ExpandedNewsDetail extends StatelessWidget {
                   child: FadeTransition(
                     opacity: contentOpacity,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                      padding: const EdgeInsets.fromLTRB(22, 19, 22, 19),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             news.concert,
                             style: const TextStyle(
-                              fontSize: 18,
+                              fontSize: 19,
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -283,17 +284,17 @@ class _ExpandedNewsDetail extends StatelessWidget {
                           Text(
                             news.artist,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 14,
                               fontWeight: FontWeight.w700,
                               color: Colors.black.withValues(alpha: 0.55),
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 15),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: SizedBox(
                               width: double.infinity,
-                              height: 140,
+                              height: 151,
                               // 이미지가 없거나 로드에 실패하면 그라데이션
                               // 플레이스홀더로 폴백합니다.
                               child: PosterBackground(
@@ -301,7 +302,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 15),
                           Expanded(
                             child: SingleChildScrollView(
                               child: Text(
@@ -309,7 +310,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                                     ? '아직 등록된 소식 내용이 없습니다.'
                                     : news.content,
                                 style: const TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 15,
                                   height: 1.6,
                                   color: Colors.black87,
                                 ),

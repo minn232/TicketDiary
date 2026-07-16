@@ -181,8 +181,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
 
             // 다이어리 화면 dim(불투명하게)
             // - 확장 초반에는 더 약하게, 확장 후반에는 더 강하게
-            // 요청: 바깥 여백은 다이어리 화면을 80% 불투명(강하게 dim)
-            final dimOpacity = lerpDouble(0.0, 0.80, t)!;
+            final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
             // 축소 티켓 -> 확장 콘텐츠로 자연스럽게 전환
             final expandedOpacity = Curves.easeIn.transform(
@@ -195,9 +194,8 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
                 // 아래: 다이어리 화면을 어둡게(불투명하게) 만드는 레이어
                 Positioned.fill(
                   child: IgnorePointer(
-                    // 요청: 다이어리 화면을 "검정"이 아니라 "하얀색"으로 불투명하게(화이트 헤이즈)
                     child: Container(
-                      color: Colors.white.withValues(alpha: dimOpacity),
+                      color: Colors.black.withValues(alpha: dimOpacity),
                     ),
                   ),
                 ),
@@ -276,9 +274,9 @@ class _ExpandedConcertBefore extends StatelessWidget {
           child: PosterBackground(imageUrl: ticketInfo?.posterImageUrl),
         ),
 
-        // 포스터를 조금 어둡게 해서 페이지가 더 잘 보이게(이 영역이 "불투명한 부분" 역할)
+        // 포스터를 밝게 해서 페이지가 더 잘 보이게(이 영역이 "불투명한 부분" 역할)
         Positioned.fill(
-          child: Container(color: Colors.black.withValues(alpha: 0.20)),
+          child: Container(color: Colors.white.withValues(alpha: 0.50)),
         ),
 
         SafeArea(
@@ -288,12 +286,13 @@ class _ExpandedConcertBefore extends StatelessWidget {
               child: FractionallySizedBox(
                 // 오버레이(포스터)는 화면의 90%로 커졌고,
                 // 내부 메인 페이지는 화면의 80% 크기 느낌을 유지해야 하므로
-                // 0.80 / 0.90 = 0.888.. 비율로 제한
-                widthFactor: 0.888,
-                heightFactor: 0.888,
+                // 0.80 / 0.90 = 0.888.. 비율로 제한하되, 카드 자체를 기존보다
+                // 가로/세로 8% 더 크게 키웁니다(20% 키운 뒤 10% 축소 = 순증 8%).
+                widthFactor: 0.888 * 1.08,
+                heightFactor: 0.888 * 1.08,
                 child: Container(
                   key: pageKey,
-                  constraints: const BoxConstraints(maxWidth: 520),
+                  constraints: const BoxConstraints(maxWidth: 562),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.92),
                     borderRadius: BorderRadius.circular(14),
@@ -310,7 +309,7 @@ class _ExpandedConcertBefore extends StatelessWidget {
                     ],
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+                    padding: const EdgeInsets.fromLTRB(19, 19, 19, 19),
                     child: ConcertBeforePageContents(
                       concertTitle: concertTitle,
                       ticketInfo: ticketInfo,

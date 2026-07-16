@@ -1,3 +1,5 @@
+import 'concert_model.dart';
+
 /// 소식(뉴스 피드) 데이터 모델.
 ///
 /// 백엔드 `GET /social/feed`의 `NewsFeedResponse`(schemas/social.py)를 그대로
@@ -88,6 +90,57 @@ class NewsModel {
       content: contentLines.join('\n'),
       articleImageUrl: posterUrl,
     );
+  }
+
+  /// 찜한 공연([ConcertModel])을 그대로 카드로 보여주기 위해 생성합니다.
+  /// 백엔드 소식 피드(아티스트 매칭)와 달리 순수 로컬 표시용이라 [id]가 없어
+  /// 읽음 처리 대상이 아니고, 그래서 [isRead]도 항상 true(NEW 배지 없음)로 둡니다.
+  ///
+  /// 카드 요약([description])은 제목 아래에 티케팅(예매) 오픈일까지 남은
+  /// 일수를 D-day로 보여줍니다. 상세 본문([content])에는 아티스트/공연
+  /// 기간/공연장/티케팅 상태를 모두 채워 넣습니다.
+  factory NewsModel.fromFavoritedConcert(ConcertModel concert) {
+    final period = _formatPeriod(
+      concert.startDate?.toIso8601String(),
+      concert.endDate?.toIso8601String(),
+    );
+    final dDay = _ticketingDDay(concert.ticketingDate);
+    final artists = concert.artistName.isNotEmpty
+        ? concert.artistName.join(', ')
+        : null;
+
+    final contentLines = <String>[
+      '찜한 공연 <${concert.name}>의 정보입니다.',
+      '',
+      if (artists != null) '아티스트  $artists',
+      if (period != null) '공연 기간  $period',
+      '공연장  ${concert.venue ?? '미정'}',
+      '티케팅  $dDay',
+    ];
+
+    return NewsModel(
+      concertId: concert.id.isNotEmpty ? concert.id : null,
+      isRead: true,
+      artist: '찜한 공연',
+      concert: concert.name,
+      imageUrl: concert.posterImageUrl,
+      description: '티케팅 $dDay',
+      content: contentLines.join('\n'),
+      articleImageUrl: concert.posterImageUrl,
+    );
+  }
+
+  /// 티케팅(예매) 오픈일까지 남은 일수. 크롤러가 아직 수집 못 한 공연은
+  /// 값이 없어 "미정"으로 표시됩니다.
+  static String _ticketingDDay(DateTime? date) {
+    if (date == null) return '미정';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+    final diff = target.difference(today).inDays;
+    if (diff > 0) return 'D-$diff';
+    if (diff == 0) return 'D-DAY';
+    return '예매 중';
   }
 
   /// ISO 날짜 문자열 두 개를 "2026.07.21" 또는 "2026.07.21 ~ 2026.07.23"

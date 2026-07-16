@@ -47,6 +47,11 @@ class BackendConcertSearchService implements ConcertSearchService {
           posterImageUrl: c.posterUrl ?? '',
           id: c.id,
           kopisId: c.kopisId,
+          venue: c.venue,
+          startDate: c.startDate,
+          endDate: c.endDate,
+          artistName: c.artistName,
+          ticketingDate: c.ticketingDate,
         ),
     ];
   }

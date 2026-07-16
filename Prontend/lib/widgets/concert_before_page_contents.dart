@@ -45,29 +45,29 @@ class ConcertBeforePageContents extends StatelessWidget {
       children: [
         Text(
           concertTitle,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 6),
         Text(
           '공연 전',
           style: TextStyle(
-            fontSize: 13,
+            fontSize: 14,
             fontWeight: FontWeight.w800,
             color: Colors.black.withValues(alpha: 0.55),
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 15),
         Expanded(
           child: postItOpacity == null
               ? postItBody
               : FadeTransition(opacity: postItOpacity!, child: postItBody),
         ),
         if (showCloseHint) ...[
-          const SizedBox(height: 10),
+          const SizedBox(height: 11),
           Text(
             '닫기: 포스트잇이 있는 페이지 바깥(포스터/불투명 영역)을 눌러주세요.',
             style: TextStyle(
-              fontSize: 11,
+              fontSize: 12,
               color: Colors.black.withValues(alpha: 0.45),
             ),
           ),
@@ -289,7 +289,7 @@ class _PostItGridState extends State<_PostItGrid> {
 
   @override
   Widget build(BuildContext context) {
-    const spacing = 14.0;
+    const spacing = 15.0;
     final ticketInfo = widget.ticketInfo;
     final fields = ticketInfo?.displayFields ?? _placeholderFields;
     final dDayLabel = _dDayLabel(ticketInfo?.date);
@@ -365,11 +365,11 @@ class _PostItGridState extends State<_PostItGrid> {
     return Row(
       children: [
         SizedBox(
-          width: 44,
+          width: 48,
           child: Text(
             k,
             style: const TextStyle(
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: FontWeight.bold,
               color: Colors.black54,
             ),
@@ -381,7 +381,7 @@ class _PostItGridState extends State<_PostItGrid> {
             v,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
         ),
       ],
@@ -419,19 +419,19 @@ class _PostItNote extends StatelessWidget {
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+        padding: const EdgeInsets.fromLTRB(13, 13, 13, 13),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               title,
               style: const TextStyle(
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.w900,
                 color: Colors.black87,
               ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 11),
             Expanded(child: child),
           ],
         ),
@@ -449,7 +449,7 @@ class _DDayStickerPostIt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 11),
       decoration: BoxDecoration(
         color: const Color(0xFFFFF6A6),
         borderRadius: BorderRadius.circular(10),
@@ -468,9 +468,9 @@ class _DDayStickerPostIt extends StatelessWidget {
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 28,
+          fontSize: 30,
           fontWeight: FontWeight.w900,
-          letterSpacing: 1.0,
+          letterSpacing: 1.08,
           color: Colors.black.withValues(alpha: 0.85),
         ),
       ),
@@ -495,7 +495,7 @@ class _SetlistContent extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             for (final song in setlist)
-              Text(song, style: const TextStyle(fontSize: 12)),
+              Text(song, style: const TextStyle(fontSize: 13)),
           ],
         );
 
@@ -523,7 +523,7 @@ class _UndecidedText extends StatelessWidget {
         message,
         textAlign: TextAlign.center,
         style: TextStyle(
-          fontSize: 13,
+          fontSize: 14,
           fontWeight: FontWeight.w700,
           color: Colors.black.withValues(alpha: 0.35),
         ),
@@ -545,9 +545,9 @@ class _TimeRow extends StatelessWidget {
       children: [
         Text(
           time,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
         ),
-        Text(label, style: const TextStyle(fontSize: 12)),
+        Text(label, style: const TextStyle(fontSize: 13)),
       ],
     );
   }

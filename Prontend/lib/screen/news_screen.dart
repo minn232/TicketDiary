@@ -13,11 +13,12 @@ import 'package:ticketdiary/widgets/pressable_scale.dart';
 import 'news_detail_overlay.dart';
 
 // =============================================================================
-// [소식 탭] 백엔드 `GET /social/feed` 연동.
-// 피드는 "서버에 저장된 아티스트 팔로우 목록" 기준으로 생성되므로, 조회 전에
-// 로컬 찜 아티스트 목록(FavoritesStore)을 서버에 동기화합니다(SocialService 참고).
-// 아직 백엔드에 소스가 없는 소식(찜한 공연의 소식/추천 공연 소식)은 추후
-// 백엔드가 준비되면 여기에 합치면 됩니다.
+// [소식 탭] 카드 두 소스를 같은 형식(_PolaroidCard)으로 합쳐서 보여줍니다.
+// 1. 찜한 공연 — 백엔드 매칭 없이, 순수 로컬 찜 목록(FavoritesStore)을 그대로
+//    카드로 만듭니다(NewsModel.fromFavoritedConcert). 그래서 항상 "찜한 그
+//    공연"만 정확히 나타납니다.
+// 2. 백엔드 `GET /social/feed` — "서버에 저장된 아티스트 팔로우 목록" 기준으로
+//    생성되므로, 조회 전에 로컬 찜 아티스트 목록을 서버에 동기화합니다.
 // =============================================================================
 
 class NewsScreen extends StatefulWidget {
@@ -56,7 +57,34 @@ class _NewsScreenState extends State<NewsScreen> {
       // 동기화에 실패해도(네트워크 순단 등) 기존 서버 팔로우 목록 기준의
       // 피드는 조회할 수 있으므로 계속 진행합니다.
     }
-    return _socialService.getNewsFeed();
+
+    final feed = await _socialService.getNewsFeed();
+
+    // 백엔드는 한 번 생성된 소식을 아티스트 언팔로우 후에도 지우지 않고
+    // 그대로 돌려주므로(GET /social/feed가 팔로우 상태와 무관하게 전체
+    // 반환), 지금 실제로 팔로우 중인 아티스트의 소식만 화면에 남깁니다.
+    List<NewsModel> filteredFeed;
+    try {
+      final entries = await _socialService.getArtistFollowEntries();
+      final currentFollows = {
+        for (final e in entries)
+          if ((e['artist_name'] as String?)?.isNotEmpty ?? false)
+            e['artist_name'] as String,
+      };
+      filteredFeed = feed
+          .where((item) => currentFollows.contains(item.artist))
+          .toList();
+    } catch (_) {
+      // 팔로우 목록 조회에 실패하면 필터링 없이 원본 그대로 보여줍니다.
+      filteredFeed = feed;
+    }
+
+    // 찜한 공연은 아티스트 매칭을 거치지 않고 그대로 카드로 보여줍니다.
+    final favoritedConcertCards = FavoritesStore.instance.favoriteConcerts
+        .map(NewsModel.fromFavoritedConcert)
+        .toList();
+
+    return [...favoritedConcertCards, ...filteredFeed];
   }
 
   GlobalKey _cardKeyFor(int index) {
