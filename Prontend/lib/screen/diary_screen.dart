@@ -1699,7 +1699,10 @@ class _PosterTicketFace extends StatelessWidget {
             Image.network(
               posterUrl,
               fit: BoxFit.cover,
-              // 실패 시 아무것도 그리지 않아 아래 그라데이션이 그대로 보임
+              // KOPIS처럼 CORS 헤더가 없는 이미지 서버는 웹에서 일반 로드가
+              // 실패하므로, 실패 시 <img> 태그로 대신 렌더링합니다(웹 전용).
+              webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+              // 그래도 실패하면 아무것도 그리지 않아 아래 그라데이션이 보임
               errorBuilder: (_, _, _) => const SizedBox.shrink(),
             ),
           // 텍스트 가독성을 위한 스크림(위/아래를 더 어둡게)

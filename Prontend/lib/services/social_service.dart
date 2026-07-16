@@ -33,12 +33,44 @@ class SocialService {
   /// 서버에 저장된 팔로우 아티스트 항목들을 그대로 가져옵니다
   /// (`GET /social/artists`). 각 항목은 `artist_name`(+ 있으면
   /// `kopis_artist_id`)을 담은 JSON입니다.
-  Future<List<Map<String, dynamic>>> _getArtistFollowEntries() async {
+  Future<List<Map<String, dynamic>>> getArtistFollowEntries() async {
     final json = await _client.get('/social/artists');
     final artists = json['artists'] as List<dynamic>? ?? const [];
     return [
       for (final a in artists) (a as Map).cast<String, dynamic>(),
     ];
+  }
+
+  /// 서버 팔로우 아티스트 목록을 [artistNames]로 통째로 교체합니다
+  /// (`PATCH /social/artists`). 찜 설정 화면처럼 사용자가 목록 전체를
+  /// 직접 관리하는 곳에서 사용합니다(해제도 서버에 반영됨).
+  Future<void> replaceArtistFollows(List<String> artistNames) async {
+    await _client.patch(
+      '/social/artists',
+      body: {
+        'artists': [
+          for (final name in artistNames) {'artist_name': name},
+        ],
+      },
+    );
+  }
+
+  /// 서버에 저장된 찜 공연 항목들을 가져옵니다(`GET /social/concerts`).
+  /// 각 항목은 `concert_id`(+ 있으면 `kopis_concert_id`)를 담은 JSON입니다.
+  Future<List<Map<String, dynamic>>> getConcertFollowEntries() async {
+    final json = await _client.get('/social/concerts');
+    final concerts = json['concerts'] as List<dynamic>? ?? const [];
+    return [
+      for (final c in concerts) (c as Map).cast<String, dynamic>(),
+    ];
+  }
+
+  /// 서버 찜 공연 목록을 통째로 교체합니다(`PATCH /social/concerts`).
+  /// [entries]의 각 항목은 `{'concert_id': ..., 'kopis_concert_id': ...}` 형태.
+  Future<void> replaceConcertFollows(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    await _client.patch('/social/concerts', body: {'concerts': entries});
   }
 
   /// 로컬 선호 아티스트를 서버 팔로우 목록에 "추가" 동기화합니다.
@@ -50,7 +82,7 @@ class SocialService {
   /// 대신 로컬에서 찜을 해제해도 서버에서는 지워지지 않는데, 멀티 기기
   /// 사용 시의 유실 위험보다 안전한 쪽을 택한 것입니다.
   Future<void> syncArtistFollows(List<String> artistNames) async {
-    final entries = await _getArtistFollowEntries();
+    final entries = await getArtistFollowEntries();
     final existingNames = {
       for (final e in entries) e['artist_name'] as String,
     };
