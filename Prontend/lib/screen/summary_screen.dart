@@ -1,71 +1,8 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 
+import '../services/summary_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
-
-/// [준비 1] 결산 데이터 모델
-class SummaryModel {
-  final int concertCount;
-  final int totalSpending;
-  final int songCount;
-  final String favoriteGenre;
-  final List<String> visitedArtists;
-  final double standingRatio;
-  final double seatRatio;
-  final double firstConcertRatio;
-  final double lastConcertRatio;
-
-  SummaryModel({
-    required this.concertCount,
-    required this.totalSpending,
-    required this.songCount,
-    required this.favoriteGenre,
-    required this.visitedArtists,
-    required this.standingRatio,
-    required this.seatRatio,
-    required this.firstConcertRatio,
-    required this.lastConcertRatio,
-  });
-
-  factory SummaryModel.fromJson(Map<String, dynamic> json) {
-    return SummaryModel(
-      concertCount: json['concert_count'] ?? 0,
-      totalSpending: json['total_spending'] ?? 0,
-      songCount: json['song_count'] ?? 0,
-      favoriteGenre: json['favorite_genre'] ?? '-',
-      visitedArtists: List<String>.from(json['visited_artists'] ?? []),
-      standingRatio: (json['standing_ratio'] ?? 0.0).toDouble(),
-      seatRatio: (json['seat_ratio'] ?? 0.0).toDouble(),
-      firstConcertRatio: (json['first_concert_ratio'] ?? 0.0).toDouble(),
-      lastConcertRatio: (json['last_concert_ratio'] ?? 0.0).toDouble(),
-    );
-  }
-}
-
-/// [준비 2] API 서비스 레이어
-class SummaryApiService {
-  static Future<SummaryModel> fetchSummary() async {
-    // 가짜 JSON 데이터 (백엔드 연동 전까지 비워둡니다 - 모든 값 0 또는 빈 값 처리)
-    // 테스트가 필요하다면 아래 주석을 풀고 실제 값을 넣어보세요.
-    final String mockJsonResponse = '''
-    {
-      "concert_count": 0,
-      "total_spending": 0,
-      "song_count": 0,
-      "favorite_genre": "-",
-      "visited_artists": [],
-      "standing_ratio": 0.0,
-      "seat_ratio": 0.0,
-      "first_concert_ratio": 0.0,
-      "last_concert_ratio": 0.0
-    }
-    ''';
-
-    final Map<String, dynamic> data = jsonDecode(mockJsonResponse);
-    return SummaryModel.fromJson(data);
-  }
-}
 
 class SummaryScreen extends StatefulWidget {
   const SummaryScreen({super.key});
@@ -77,12 +14,13 @@ class SummaryScreen extends StatefulWidget {
 class _SummaryScreenState extends State<SummaryScreen> {
   static const Color _paperColor = Color(0xFFF4F1E1);
   static const double _periodTagReservedHeight = 62;
+  final SummaryService _summaryService = SummaryService();
   late Future<SummaryModel> _summaryFuture;
 
   @override
   void initState() {
     super.initState();
-    _summaryFuture = SummaryApiService.fetchSummary();
+    _summaryFuture = _summaryService.fetchSummary();
   }
 
   @override
@@ -121,6 +59,11 @@ class _SummaryScreenState extends State<SummaryScreen> {
   }
 
   Widget _buildSummaryContent(BoxConstraints constraints, SummaryModel data) {
+    // 공연 기록 자체가 없으면(AFTER_CONCERT 티켓 0건) 모든 집계값이 무의미한
+    // 0이므로, 숫자 대신 "기록 없음"을 보여줍니다.
+    final bool hasData = data.concertCount > 0;
+    String withFallback(String value) => hasData ? value : '기록 없음';
+
     return SizedBox(
       height: constraints.maxHeight,
       child: Stack(
@@ -141,7 +84,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                                 Expanded(
                                   child: _SummaryCard(
                                     title: '간 공연 수',
-                                    value: '${data.concertCount}회',
+                                    value: withFallback('${data.concertCount}회'),
                                     noteColor: const Color(0xFFFFF6A6),
                                     angle: -0.010,
                                   ),
@@ -150,7 +93,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                                 Expanded(
                                   child: _SummaryCard(
                                     title: '소비 금액',
-                                    value: '${data.totalSpending.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}원',
+                                    value: withFallback('${data.totalSpending.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}원'),
                                     noteColor: const Color(0xFFFFD6E8),
                                     angle: 0.012,
                                   ),
@@ -159,7 +102,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                                 Expanded(
                                   child: _SummaryCard(
                                     title: '선호 장르',
-                                    value: data.favoriteGenre,
+                                    value: withFallback(data.favoriteGenre),
                                     noteColor: const Color(0xFFCFF5E7),
                                     angle: -0.008,
                                   ),
@@ -174,7 +117,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                                 Expanded(
                                   child: _SummaryCard(
                                     title: '들은 음악 수',
-                                    value: '${data.songCount}곡',
+                                    value: withFallback('${data.songCount}곡'),
                                     noteColor: const Color(0xFFD9E8FF),
                                     angle: 0.010,
                                   ),
@@ -203,7 +146,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
                           Expanded(
                             child: _SummaryCard(
                               title: '스탠딩 / 좌석\n선호도',
-                              value: '좌석 ${(data.seatRatio * 100).toInt()}% / 스탠딩 ${(data.standingRatio * 100).toInt()}%',
+                              value: withFallback(
+                                '좌석 ${(data.seatRatio * 100).toInt()}% / 스탠딩 ${(data.standingRatio * 100).toInt()}%',
+                              ),
                               center: true,
                               noteColor: const Color(0xFFE7E2FF),
                               angle: 0.010,
@@ -213,7 +158,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
                           Expanded(
                             child: _SummaryCard(
                               title: '첫콘 / 막콘\n선호도',
-                              value: '첫콘 ${(data.firstConcertRatio * 100).toInt()}% / 막콘 ${(data.lastConcertRatio * 100).toInt()}%',
+                              value: withFallback(
+                                '첫콘 ${(data.firstConcertRatio * 100).toInt()}% / 막콘 ${(data.lastConcertRatio * 100).toInt()}%',
+                              ),
                               center: true,
                               noteColor: const Color(0xFFFFE7C7),
                               angle: -0.010,
@@ -416,7 +363,7 @@ class _ArtistList extends StatelessWidget {
   Widget build(BuildContext context) {
     if (artists.isEmpty) {
       return const Text(
-        '기록이 없습니다.',
+        '기록 없음',
         style: TextStyle(fontSize: 13, color: Colors.black38),
       );
     }
