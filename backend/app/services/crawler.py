@@ -176,7 +176,6 @@ async def crawl_melon(concert: Concert, direct_url: str | None = None) -> bytes 
         return None
 
 
-
 # KOPIS 공연 상세 페이지 전체 스크린샷 (티켓링크 폴백용)
 async def crawl_kopis(concert: Concert) -> bytes | None:
     if not concert.kopis_id:
@@ -240,15 +239,12 @@ _PREFERRED_SITES = ["YES24", "INTERPARK", "MELON"]
 _UNSUPPORTED_SITES = {"TICKETLINK", "티켓링크"}
 
 
+# 크롤링할 사이트와 직접 URL을 결정 (ticketing_links에 지원 사이트가 있으면 YES24 > INTERPARK > MELON
+# 순 우선 선택, 없으면 ticketing_site가 지원 사이트인 경우에만 이름 검색 방식으로 진행,
+# 티켓링크만 있거나 ticketing_site가 티켓링크면 (None, None) 반환)
 def _pick_crawl_target(
     ticketing_site: str, ticketing_links: dict[str, str] | None
 ) -> tuple[str | None, str | None]:
-    """크롤링할 사이트와 직접 URL을 결정한다.
-
-    ticketing_links에 지원 사이트가 있으면 YES24 > INTERPARK > MELON 순 우선 선택.
-    없으면 ticketing_site가 지원 사이트인 경우에만 이름 검색 방식으로 진행.
-    ticketlink만 있거나 ticketing_site가 ticketlink면 (None, None) 반환.
-    """
     links = ticketing_links or {}
     for site in _PREFERRED_SITES:
         if site in links:

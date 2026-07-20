@@ -23,7 +23,7 @@ def _make_kopis_xml(kopis_id: str, name: str, start: str, end: str, dtguidance: 
         f'<poster>https://example.com/poster.jpg</poster>'
         f"<genrenm>팝</genrenm>"
         f"<prfstate>공연예정</prfstate>"
-        f"<prfcrew>출연: 테스트아티스트</prfcrew>"
+        f"<prfcast>테스트아티스트</prfcast>"
         f"<pcseguidance>R석 110,000원</pcseguidance>"
         f"{dt}"
         f"<sty>공연 소개</sty>"

@@ -15,7 +15,7 @@ from conftest import _get_token, kopis_mock
 def _make_kopis_xml(
     kopis_id: str, name: str, start: str, end: str, artist: str = "", dtguidance: str = ""
 ) -> bytes:
-    crew = f"<prfcrew>출연: {artist}</prfcrew>" if artist else ""
+    cast = f"<prfcast>{artist}</prfcast>" if artist else ""
     dt = f"<dtguidance>{dtguidance}</dtguidance>" if dtguidance else ""
     return (
         f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -26,9 +26,9 @@ def _make_kopis_xml(
         f"<prfpdto>{end}</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f'<poster>https://example.com/poster.jpg</poster>'
-        f"<genrenm>팝</genrenm>"
+        f"<genrenm>대중음악</genrenm>"
         f"<prfstate>공연예정</prfstate>"
-        f"{crew}"
+        f"{cast}"
         f"<pcseguidance>VIP석 150,000원, R석 110,000원</pcseguidance>"
         f"{dt}"
         f"<sty>공연 소개</sty>"
@@ -261,7 +261,7 @@ async def test_search_concerts_sorts_candidates_by_date_match():
     dbs = "".join(
         f"<db><mt20id>{kid}</mt20id><prfnm>SURL {kid}</prfnm>"
         f"<prfpdfrom>{start}</prfpdfrom><prfpdto>{end}</prfpdto>"
-        f"<fcltynm>테스트공연장</fcltynm><poster></poster></db>"
+        f"<fcltynm>테스트공연장</fcltynm><poster></poster><genrenm>대중음악</genrenm></db>"
         for kid, start, end in [
             ("PF_FAR_001", "2024.02.02", "2024.02.02"),
             ("PF_NEAR_001", "2024.04.27", "2024.04.28"),

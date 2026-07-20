@@ -91,11 +91,13 @@ def _parse_price(text: str) -> list[dict] | None:
     return prices or None
 
 
-# 아티스트 파싱 ("연출: A, 출연: B, C" -> ["B", "C"])
-def _parse_artists(prfcrew: str) -> list[str]:
-    match = re.search(r"출연\s*:\s*(.+)", prfcrew)
-    raw = match.group(1) if match else prfcrew
-    return [a.strip() for a in raw.split(",") if a.strip()]
+# 아티스트 파싱 (KOPIS 출연진(prfcast) 필드는 콤마로 구분된 이름 목록이며, 목록이 길면 마지막
+# 항목에 "등"을 붙여 생략을 표시함 -> 이름이 아니므로 제거) ("김가은, 우리라, 이정민 등" -> ["김가은", "우리라", "이정민"])
+def _parse_artists(prfcast: str) -> list[str]:
+    names = [a.strip() for a in prfcast.split(",") if a.strip()]
+    if names and names[-1].endswith(" 등"):
+        names[-1] = names[-1][: -len(" 등")].strip()
+    return [n for n in names if n]
 
 
 # concert 정보 DB upsert
@@ -154,6 +156,12 @@ async def _fetch_and_upsert_concerts(
         if not kopis_id or not start_raw or not end_raw:
             continue
 
+        # 요청 파라미터로는 KOPIS가 장르를 걸러주지 않으므로(뮤지컬/연극 등이 섞여 들어옴)
+        # 목록/검색 계열 API 전부 여기서 공통으로 클라이언트 사이드 필터링
+        genre_name = elem.findtext("genrenm") or ""
+        if not _is_allowed_genre(genre_name):
+            continue
+
         name = elem.findtext("prfnm") or ""
         data = {
             "kopis_id": kopis_id,
@@ -162,7 +170,7 @@ async def _fetch_and_upsert_concerts(
             "venue": elem.findtext("fcltynm") or None,
             "start_date": _parse_date(start_raw),
             "end_date": _parse_date(end_raw),
-            "genre": [g for g in [elem.findtext("genrenm")] if g],
+            "genre": [g for g in [genre_name] if g],
             "poster_url": elem.findtext("poster") or None,
             "event_type": _classify_event_type(name),
         }
@@ -676,7 +684,7 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
     # 공연 상세 정보 파싱
     start_raw = (elem.findtext("prfpdfrom") or "").strip()
     end_raw = (elem.findtext("prfpdto") or "").strip()
-    prfcrew = (elem.findtext("prfcrew") or "").strip()
+    prfcast = (elem.findtext("prfcast") or "").strip()
     pcseguidance = (elem.findtext("pcseguidance") or "").strip()
     dtguidance = (elem.findtext("dtguidance") or "").strip()
 
@@ -696,7 +704,7 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
     return {
         "kopis_id": kopis_id,
         "name": name,
-        "artist_name": _parse_artists(prfcrew) if prfcrew else [],
+        "artist_name": _parse_artists(prfcast) if prfcast else [],
         "venue": elem.findtext("fcltynm") or None,
         "start_date": _parse_date(start_raw),
         "start_time": _parse_start_time(dtguidance) if dtguidance else None,

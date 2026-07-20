@@ -12,7 +12,7 @@ from conftest import _get_token, kopis_mock
 
 # KOPIS 공연 정보 XML 생성
 def _make_kopis_xml(kopis_id: str, artist: str = "테스트아티스트") -> bytes:
-    crew = f"<prfcrew>출연: {artist}</prfcrew>" if artist else ""
+    cast = f"<prfcast>{artist}</prfcast>" if artist else ""
     return (
         f'<?xml version="1.0" encoding="UTF-8"?>'
         f"<dbs><db>"
@@ -24,7 +24,7 @@ def _make_kopis_xml(kopis_id: str, artist: str = "테스트아티스트") -> byt
         f'<poster>https://example.com/poster.jpg</poster>'
         f"<genrenm>팝</genrenm>"
         f"<prfstate>공연예정</prfstate>"
-        f"{crew}"
+        f"{cast}"
         f"<pcseguidance>R석 110,000원</pcseguidance>"
         f"<sty>공연 소개</sty>"
         f"</db></dbs>"

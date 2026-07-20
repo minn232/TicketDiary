@@ -8,6 +8,7 @@ from app.models.concert import Concert
 from app.models.venue_layout import VenueLayout
 
 
+# 좌석 배치 조회
 async def get_venue_layout(db: AsyncSession, concert_id: UUID) -> VenueLayout:
     result = await db.execute(select(VenueLayout).where(VenueLayout.concert_id == concert_id))
     venue_layout = result.scalar_one_or_none()
@@ -16,6 +17,7 @@ async def get_venue_layout(db: AsyncSession, concert_id: UUID) -> VenueLayout:
     return venue_layout
 
 
+# 좌석 배치 upsert
 async def upsert_venue_layout(
     db: AsyncSession,
     concert_id: UUID,

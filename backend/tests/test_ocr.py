@@ -421,7 +421,7 @@ async def test_scan_uses_confident_later_candidate(get_auth_token):
             f'<?xml version="1.0" encoding="UTF-8"?><dbs><db>'
             f"<mt20id>{kopis_id}</mt20id><prfnm>{name}</prfnm>"
             f"<prfpdfrom>{start}</prfpdfrom><prfpdto>{end}</prfpdto>"
-            f"<fcltynm>테스트공연장</fcltynm><genrenm>연극</genrenm>"
+            f"<fcltynm>테스트공연장</fcltynm><genrenm>대중음악</genrenm>"
             f"</db></dbs>"
         ).encode("utf-8")
 
@@ -478,7 +478,7 @@ async def test_scan_falls_back_to_venue_search(get_auth_token):
         '<?xml version="1.0" encoding="UTF-8"?><dbs><db>'
         "<mt20id>PF_BYVENUE_001</mt20id><prfnm>빨래 [대학로]</prfnm>"
         "<prfpdfrom>2024.06.07</prfpdfrom><prfpdto>2025.03.02</prfpdto>"
-        "<fcltynm>유니플렉스</fcltynm><genrenm>연극</genrenm>"
+        "<fcltynm>유니플렉스</fcltynm><genrenm>대중음악</genrenm>"
         "</db></dbs>"
     ).encode("utf-8")
 

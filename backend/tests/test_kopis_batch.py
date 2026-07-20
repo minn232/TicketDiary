@@ -53,7 +53,7 @@ def _make_detail_xml(kopis_id: str, artist: str = "테스트아티스트") -> by
         f"<prfpdto>2030.06.30</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f"<genrenm>대중음악</genrenm>"
-        f"<prfcrew>출연: {artist}</prfcrew>"
+        f"<prfcast>{artist}</prfcast>"
         f"<pcseguidance></pcseguidance>"
         f"<sty></sty>"
         f"</db></dbs>"

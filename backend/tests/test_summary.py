@@ -32,7 +32,7 @@ def _make_kopis_xml(
         f"<prfpdto>{start}</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f"<genrenm>{genre}</genrenm>"
-        f"<prfcrew>출연: {artists}</prfcrew>"
+        f"<prfcast>{artists}</prfcast>"
         f"<pcseguidance></pcseguidance>"
         f"<sty></sty>"
         f"</db></dbs>"
