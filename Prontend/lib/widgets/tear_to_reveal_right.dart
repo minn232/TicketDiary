@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// 공연 후 티켓에서 '점선(절취선) 부분을 슬라이드'하면 오른쪽 조각이 뜯기듯 사라지고,
 /// 그 자리에 다른 위젯(예: 공연전 칸)이 남는 인터랙션 위젯.
@@ -54,8 +55,11 @@ class TearToRevealRight extends StatefulWidget {
   /// 값이 작을수록 더 쉽게 뜯깁니다.
   final double tearSwipeDistanceFactor;
 
-  /// 뜯김 확정/복귀 애니메이션 속도
+  /// 뜯김이 취소되어(임계치 미만) 제자리로 되돌아갈 때의 애니메이션 속도.
   final Duration settleDuration;
+
+  /// 뜯김이 확정되었을 때의 애니메이션 속도(되돌아갈 때보다 더 빠르고 경쾌하게).
+  final Duration tearConfirmDuration;
 
   final BorderRadius borderRadius;
   final Color borderColor;
@@ -77,7 +81,8 @@ class TearToRevealRight extends StatefulWidget {
     this.tearSlideDistanceFactor = 1.2,
     this.tearVerticalSlideFactor = 0.22,
     this.tearSwipeDistanceFactor = 0.65,
-    this.settleDuration = const Duration(milliseconds: 380),
+    this.settleDuration = const Duration(milliseconds: 420),
+    this.tearConfirmDuration = const Duration(milliseconds: 240),
   });
 
   @override
@@ -92,10 +97,10 @@ class _TearToRevealRightState extends State<TearToRevealRight>
   /// 0.0(붙어있음) -> 1.0(완전히 뜯김)
   double _progress = 0.0;
 
-  /// 마지막으로 감지된 스와이프 방향
-  /// - +1: 위→아래(Down)
-  /// - -1: 아래→위(Up)
-  int _swipeSign = 1;
+  /// 제스처 시작 이후 실제로 누적된 세로 이동량(부호 있음, px).
+  /// 방향이 왔다갔다해도 순간적으로 뒤집히지 않고 연속적으로 변하므로,
+  /// 이 값을 기준으로 조각의 위/아래 흔들림을 그리면 자연스럽게 이어집니다.
+  double _netVerticalDrag = 0.0;
 
   bool _torn = false;
 
@@ -124,6 +129,7 @@ class _TearToRevealRightState extends State<TearToRevealRight>
         if (!mounted) return;
         if (!_torn) {
           setState(() => _torn = true);
+          HapticFeedback.mediumImpact();
         }
 
         if (!_tornNotified) {
@@ -138,10 +144,8 @@ class _TearToRevealRightState extends State<TearToRevealRight>
   void didUpdateWidget(covariant TearToRevealRight oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // 부모에서 settleDuration을 바꾸면 컨트롤러에도 반영
-    if (oldWidget.settleDuration != widget.settleDuration) {
-      _controller.duration = widget.settleDuration;
-    }
+    // 애니메이션 속도(확정/취소)는 _animateTo 호출 시점마다 직접 지정하므로
+    // 여기서 컨트롤러 duration을 미리 맞춰둘 필요는 없습니다.
 
     // 외부에서 '처음부터 뜯김' 상태가 뒤늦게 로드될 수 있으므로(SharedPreferences),
     // initiallyTorn 변경을 내부 상태에 동기화합니다.
@@ -179,14 +183,34 @@ class _TearToRevealRightState extends State<TearToRevealRight>
     super.dispose();
   }
 
-  void _animateTo(double target) {
+  void _animateTo(
+    double target, {
+    required Duration duration,
+    required Curve curve,
+  }) {
     if (!mounted) return;
     _controller.stop();
     _controller.reset();
-    _anim = Tween<double>(begin: _progress, end: target).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
-    );
+    _controller.duration = duration;
+    _anim = Tween<double>(
+      begin: _progress,
+      end: target,
+    ).animate(CurvedAnimation(parent: _controller, curve: curve));
     _controller.forward();
+  }
+
+  /// 뜯김이 확정될 때: 빠르고 경쾌하게(살짝 튕기듯) 끝까지 진행.
+  void _animateConfirmTear() {
+    _animateTo(
+      1.0,
+      duration: widget.tearConfirmDuration,
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// 뜯김이 취소될 때: 종이가 제자리에 붙듯, 살짝 되튕기며 복귀.
+  void _animateSettleBack() {
+    _animateTo(0.0, duration: widget.settleDuration, curve: Curves.easeOutBack);
   }
 
   @override
@@ -206,11 +230,43 @@ class _TearToRevealRightState extends State<TearToRevealRight>
         final perfLeft = (leftW - perfW / 2).clamp(0.0, w - perfW);
 
         // 조각이 밀려나가는 실제 이동 거리
-        final slideDistance =
-            (rightW * widget.tearSlideDistanceFactor).clamp(1.0, double.infinity);
+        final slideDistance = (rightW * widget.tearSlideDistanceFactor).clamp(
+          1.0,
+          double.infinity,
+        );
 
-        final verticalSlide =
-            (h * widget.tearVerticalSlideFactor).clamp(0.0, double.infinity);
+        final verticalSlide = (h * widget.tearVerticalSlideFactor).clamp(
+          0.0,
+          double.infinity,
+        );
+
+        // 실제 사용자가 긁은 세로 방향(부호 있음, -1.0~1.0)을 연속적으로 반영합니다.
+        // (직전 델타의 부호만 보고 뒤집던 방식은 방향이 바뀔 때 순간적으로 튀어 보였습니다.)
+        final verticalDragRange = (h * widget.tearSwipeDistanceFactor).clamp(
+          1.0,
+          double.infinity,
+        );
+        final netDragFactor = (_netVerticalDrag / verticalDragRange).clamp(
+          -1.0,
+          1.0,
+        );
+
+        // 진행률 자체를 그대로 쓰지 않고 완만한 가속 곡선을 입혀서,
+        // 처음엔 잘 안 뜯기다가(저항) 어느 정도 지나면 훅 뜯기는 느낌을 줍니다.
+        final rawProgress = _progress.clamp(0.0, 1.0);
+        final visualProgress = Curves.easeIn.transform(rawProgress);
+
+        // 조각은 뜯기는 중반부터 서서히 사라지도록(초반엔 또렷하게 밀려나기만 함).
+        const fadeStart = 0.35;
+        final fadeT = ((visualProgress - fadeStart) / (1 - fadeStart)).clamp(
+          0.0,
+          1.0,
+        );
+        final pieceOpacity = 1.0 - fadeT;
+
+        // 종이가 뜯기며 살짝 비틀리는 느낌을 주는 미세한 회전.
+        const maxTiltRadians = 0.12;
+        final tiltAngle = visualProgress * netDragFactor * maxTiltRadians;
 
         Widget perforation() {
           return SizedBox(
@@ -255,10 +311,7 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      flex: widget.leftFlex,
-                      child: widget.leftChild,
-                    ),
+                    Expanded(flex: widget.leftFlex, child: widget.leftChild),
                     Expanded(
                       flex: widget.rightFlex,
                       child: AbsorbPointer(
@@ -283,17 +336,20 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                   // 드래그는 점선에서만 받기 때문에, 조각 자체는 포인터를 막지 않음
                   ignoring: true,
                   child: Opacity(
-                    opacity: 1.0 - _progress,
+                    opacity: pieceOpacity,
                     child: Transform.translate(
                       offset: Offset(
-                        _progress * slideDistance,
-                        _progress * verticalSlide * _swipeSign,
+                        visualProgress * slideDistance,
+                        visualProgress * verticalSlide * netDragFactor,
                       ),
-                      child: ClipRRect(
-                        // 이동 중에도 우측 모서리 라운드가 유지되도록
-                        borderRadius: rightPieceRadius,
-                        clipBehavior: Clip.antiAlias,
-                        child: SizedBox.expand(child: widget.rightTearable),
+                      child: Transform.rotate(
+                        angle: tiltAngle,
+                        child: ClipRRect(
+                          // 이동 중에도 우측 모서리 라운드가 유지되도록
+                          borderRadius: rightPieceRadius,
+                          clipBehavior: Clip.antiAlias,
+                          child: SizedBox.expand(child: widget.rightTearable),
+                        ),
                       ),
                     ),
                   ),
@@ -324,24 +380,21 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                     onVerticalDragStart: (_) {
                       // 진행 중인 settle 애니메이션이 있으면 멈추고, 사용자의 드래그를 우선
                       _controller.stop();
-
-                      // 새 제스처 시작 시 진행 방향을 초기화
-                      _swipeSign = 1;
+                      _netVerticalDrag = 0.0;
                     },
                     // 요구사항: 점선(절취선) 영역을 '위→아래 / 아래→위'로 슬라이드하면 뜯김 진행
                     onVerticalDragUpdate: (details) {
-                      final swipeDistance =
-                          (h * widget.tearSwipeDistanceFactor)
-                              .clamp(1.0, double.infinity);
+                      final swipeDistance = (h * widget.tearSwipeDistanceFactor)
+                          .clamp(1.0, double.infinity);
 
-                      // 위/아래 어느 방향이든 긁는 정도(절대값)로 진행
-                      if (details.delta.dy != 0) {
-                        _swipeSign = details.delta.dy > 0 ? 1 : -1;
-                      }
+                      // 방향이 바뀌어도 순간적으로 뒤집히지 않도록, 실제 누적 이동량을 그대로 더합니다.
+                      _netVerticalDrag += details.delta.dy;
+
+                      // 위/아래 어느 방향이든 긁은 정도(절대값)만큼 뜯김 진행률에 더합니다.
                       final prev = _progress;
-                      final next = (_progress +
-                              (details.delta.dy.abs() / swipeDistance))
-                          .clamp(0.0, 1.0);
+                      final next =
+                          (_progress + (details.delta.dy.abs() / swipeDistance))
+                              .clamp(0.0, 1.0);
 
                       if (!mounted) return;
                       if (next != _progress) {
@@ -351,17 +404,17 @@ class _TearToRevealRightState extends State<TearToRevealRight>
                       // 충분히 긁으면 손을 떼기 전이라도 뜯김 확정 애니메이션으로 전환
                       // (이미 1.0에 도달한 상태에서 반복적으로 reset/forward 되며 튀는 현상 방지)
                       if (prev < 1.0 && next >= 1.0) {
-                        _animateTo(1.0);
+                        _animateConfirmTear();
                       }
                     },
                     onVerticalDragEnd: (details) {
                       if (_progress >= widget.tearThreshold) {
-                        _animateTo(1.0);
+                        _animateConfirmTear();
                       } else {
-                        _animateTo(0.0);
+                        _animateSettleBack();
                       }
                     },
-                    onVerticalDragCancel: () => _animateTo(0.0),
+                    onVerticalDragCancel: _animateSettleBack,
                     child: const SizedBox.expand(),
                   ),
                 ),
@@ -412,5 +465,3 @@ class _PerforationPainter extends CustomPainter {
         oldDelegate.thickness != thickness;
   }
 }
-
-

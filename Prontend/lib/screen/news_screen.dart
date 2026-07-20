@@ -1,55 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:ticketdiary/models/news_model.dart';
+import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
+import 'package:ticketdiary/services/social_service.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
+import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
 
 import 'news_detail_overlay.dart';
 
 // =============================================================================
-// [소식 탭 로드맵] 추후 아래 3가지 소스에서 가져온 소식을 함께 보여줄 예정입니다.
-// 1. 설정(인덱스) 탭에서 "찜"한 아티스트의 새 공연 소식
-// 2. 설정(인덱스) 탭에서 "찜"한 공연의 소식
-// 3. 추천 공연 소식
-// 지금은 세 종류를 구분하지 않고 NewsApiService가 하나의 통합 목록만 반환한다고
-// 가정해 두었습니다. 실제 연동 시 백엔드가 이 3가지를 합쳐서 내려줄지, 종류별로
-// 나눠서 내려줄지에 따라 NewsApiService/NewsModel과 화면 구성(탭·섹션 분리 등)을
-// 조정하면 됩니다.
+// [소식 탭] 카드 두 소스를 같은 형식(_PolaroidCard)으로 합쳐서 보여줍니다.
+// 1. 찜한 공연 — 백엔드 매칭 없이, 순수 로컬 찜 목록(FavoritesStore)을 그대로
+//    카드로 만듭니다(NewsModel.fromFavoritedConcert). 그래서 항상 "찜한 그
+//    공연"만 정확히 나타납니다.
+// 2. 백엔드 `GET /social/feed` — "서버에 저장된 아티스트 팔로우 목록" 기준으로
+//    생성되므로, 조회 전에 로컬 찜 아티스트 목록을 서버에 동기화합니다.
 // =============================================================================
-
-/// [준비 2] API 서비스 레이어
-/// 실제 서버 연동 시 http/dio 패키지를 사용하여 여기를 채우면 됩니다.
-class NewsApiService {
-  /// [favoriteArtistNames]/[favoriteConcertNames]는 설정 > 선호 아티스트 / 찜 공연
-  /// 화면([FavoritesStore])에서 가져온 찜 목록입니다. 백엔드 연동 시 이 목록을
-  /// 쿼리 파라미터 등으로 실어 보내, 찜한 아티스트/공연에 대한 소식만 받아오면 됩니다.
-  static Future<List<NewsModel>> fetchNewsItems({
-    required List<String> favoriteArtistNames,
-    required List<String> favoriteConcertNames,
-  }) async {
-    // TODO: 백엔드 연동 시 이 부분을 실제 HTTP 호출로 교체하세요.
-    // 지금은 오류 발생 시 대체 화면(_fallbackNewsItems)이 잘 보이는지
-    // 확인할 수 있도록 일부러 예외를 던지는 상태로 두었습니다.
-    await Future.delayed(const Duration(milliseconds: 300));
-    throw Exception('소식 데이터를 불러오지 못했습니다.');
-  }
-}
-
-/// [준비 3] 소식을 불러오다 오류가 발생했을 때 대신 보여줄 더미 데이터.
-/// 실제 서버 연동 후에도 응답 파싱 실패 등 예외 상황에서 화면이 완전히 비지
-/// 않도록, 최소 한 장의 예시 카드를 보여주는 용도로 사용합니다.
-final List<NewsModel> _fallbackNewsItems = [
-  NewsModel(
-    artist: '알 수 없는 아티스트',
-    concert: '알 수 없는 공연',
-    imageUrl: '',
-    description: '소식을 불러오지 못했습니다.',
-    content: '소식 내용을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.',
-    // 백엔드 연동 전이라 일부러 빈 URL을 둬서, 상세 화면에서 깨진 이미지로 보이도록 합니다.
-    articleImageUrl: '',
-  ),
-];
 
 class NewsScreen extends StatefulWidget {
   const NewsScreen({super.key});
@@ -62,6 +32,8 @@ class _NewsScreenState extends State<NewsScreen> {
   static const Color _paperColor = Color(0xFFF4F1E1);
   late Future<List<NewsModel>> _newsFuture;
 
+  final SocialService _socialService = SocialService();
+
   /// 카드 확장 애니메이션의 시작 Rect를 구하기 위한, 카드 인덱스별 key.
   final List<GlobalKey> _cardKeys = [];
 
@@ -73,16 +45,46 @@ class _NewsScreenState extends State<NewsScreen> {
   }
 
   Future<List<NewsModel>> _loadNews() async {
-    // 찜 목록을 먼저 불러온 뒤, 그 목록을 기준으로 소식을 요청합니다.
+    // 백엔드 피드는 서버에 저장된 팔로우 목록 기준으로 생성되므로,
+    // 로컬 찜 아티스트 목록을 먼저 서버에 동기화한 뒤 피드를 조회합니다.
     await FavoritesStore.instance.load();
-    return NewsApiService.fetchNewsItems(
-      favoriteArtistNames: FavoritesStore.instance.favoriteArtists
-          .map((a) => a.name)
-          .toList(),
-      favoriteConcertNames: FavoritesStore.instance.favoriteConcerts
-          .map((c) => c.name)
-          .toList(),
-    );
+    final artistNames = FavoritesStore.instance.favoriteArtists
+        .map((a) => a.name)
+        .toList();
+    try {
+      await _socialService.syncArtistFollows(artistNames);
+    } catch (_) {
+      // 동기화에 실패해도(네트워크 순단 등) 기존 서버 팔로우 목록 기준의
+      // 피드는 조회할 수 있으므로 계속 진행합니다.
+    }
+
+    final feed = await _socialService.getNewsFeed();
+
+    // 백엔드는 한 번 생성된 소식을 아티스트 언팔로우 후에도 지우지 않고
+    // 그대로 돌려주므로(GET /social/feed가 팔로우 상태와 무관하게 전체
+    // 반환), 지금 실제로 팔로우 중인 아티스트의 소식만 화면에 남깁니다.
+    List<NewsModel> filteredFeed;
+    try {
+      final entries = await _socialService.getArtistFollowEntries();
+      final currentFollows = {
+        for (final e in entries)
+          if ((e['artist_name'] as String?)?.isNotEmpty ?? false)
+            e['artist_name'] as String,
+      };
+      filteredFeed = feed
+          .where((item) => currentFollows.contains(item.artist))
+          .toList();
+    } catch (_) {
+      // 팔로우 목록 조회에 실패하면 필터링 없이 원본 그대로 보여줍니다.
+      filteredFeed = feed;
+    }
+
+    // 찜한 공연은 아티스트 매칭을 거치지 않고 그대로 카드로 보여줍니다.
+    final favoritedConcertCards = FavoritesStore.instance.favoriteConcerts
+        .map(NewsModel.fromFavoritedConcert)
+        .toList();
+
+    return [...favoritedConcertCards, ...filteredFeed];
   }
 
   GlobalKey _cardKeyFor(int index) {
@@ -99,6 +101,16 @@ class _NewsScreenState extends State<NewsScreen> {
     if (box == null || !box.hasSize) return;
     final topLeft = box.localToGlobal(Offset.zero);
     final startRect = topLeft & box.size;
+
+    // 안 읽은 소식이면: 화면에서 먼저 읽음으로 바꾸고(NEW 배지 제거),
+    // 서버에도 읽음 처리를 보냅니다(실패해도 다음 조회에서 다시 미읽음으로 올 뿐).
+    final feedId = item.id;
+    if (feedId != null && !item.isRead) {
+      setState(() => item.isRead = true);
+      unawaited(
+        _socialService.markFeedRead(feedId).catchError((_) {}),
+      );
+    }
 
     NewsDetailOverlay.show(
       context,
@@ -127,12 +139,10 @@ class _NewsScreenState extends State<NewsScreen> {
                   );
                 }
 
-                // [상태 2] 에러 발생: 더미 데이터로 대체해서 보여줍니다.
+                // [상태 2] 에러 발생: 실패 원인(오류 코드)과 재시도 버튼을
+                // 보여줍니다.
                 if (snapshot.hasError) {
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(32, 20, 20, 20),
-                    child: _buildNewsGrid(constraints, _fallbackNewsItems),
-                  );
+                  return _buildErrorView(snapshot.error);
                 }
 
                 // [상태 3] 데이터 없음
@@ -149,6 +159,49 @@ class _NewsScreenState extends State<NewsScreen> {
             );
           },
         ),
+      ),
+    );
+  }
+
+  /// 피드 조회 실패 화면. HTTP 오류면 상태 코드를, 그 외(네트워크 순단 등)는
+  /// "연결 실패"를 보여주고 재시도 버튼을 제공합니다.
+  Widget _buildErrorView(Object? error) {
+    // 네트워크 단절 등 HTTP 응답 자체가 없으면 ApiClient가 statusCode -1로
+    // 던지므로, 양수 코드일 때만 코드를 그대로 보여줍니다.
+    final reason = error is ApiException && error.statusCode > 0
+        ? '오류 (${error.statusCode})'
+        : '오류 (연결 실패)';
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.cloud_off_outlined,
+            size: 48,
+            color: Colors.black.withValues(alpha: 0.25),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '소식을 불러오지 못했어요.\n$reason',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Colors.black.withValues(alpha: 0.45),
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton(
+            onPressed: () => setState(() => _newsFuture = _loadNews()),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.brown,
+              side: const BorderSide(color: Colors.brown),
+            ),
+            child: const Text('다시 시도'),
+          ),
+        ],
       ),
     );
   }
@@ -220,33 +273,52 @@ class _PolaroidCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                data.artist,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black.withValues(alpha: 0.4),
-                  letterSpacing: 0.5,
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      data.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black.withValues(alpha: 0.4),
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                  // 아직 안 읽은 소식 표시(상세를 열면 사라짐)
+                  if (!data.isRead)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1.5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE0455E),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'NEW',
+                        style: TextStyle(
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 6),
               Expanded(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(2),
-                  child: Image.network(
-                    data.imageUrl,
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      width: double.infinity,
-                      height: double.infinity,
-                      color: Colors.grey.shade200,
-                      alignment: Alignment.center,
-                      child: const Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.grey,
-                      ),
-                    ),
+                  // 포스터가 없거나 로드에 실패하면 그라데이션 플레이스홀더로
+                  // 폴백합니다(깨진 이미지 아이콘 대신).
+                  child: SizedBox.expand(
+                    child: PosterBackground(imageUrl: data.imageUrl),
                   ),
                 ),
               ),
