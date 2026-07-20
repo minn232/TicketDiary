@@ -98,6 +98,9 @@ class TicketData {
         vendorName: ticket.ticketingSite,
         concertId: concert?.id,
         extraFields: extraFields,
+        ticketId: ticket.id,
+        review: ticket.review,
+        concertPhotoUrls: ticket.concertPhotoUrls,
       ),
       id: ticket.id,
     );

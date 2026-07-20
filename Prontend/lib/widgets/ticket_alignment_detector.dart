@@ -8,6 +8,12 @@ abstract class TicketAlignmentDetector {
   /// 정렬 상태가 바뀔 때마다 true/false를 흘려보내는 스트림.
   Stream<bool> get alignmentStream;
 
+  /// 이 플랫폼/기기에서 실시간 프레임 스트리밍 자체를 지원하지 않아 자동
+  /// 정렬 인식을 아예 쓸 수 없을 때 한 번 신호를 보내는 스트림.
+  /// (예: Flutter 웹은 `camera` 패키지가 이미지 스트리밍을 구현하지 않음 —
+  /// `startImageStream()`이 즉시 `UnimplementedError`를 던짐)
+  Stream<void> get unsupportedStream;
+
   /// 감지를 시작합니다.
   void start();
 
@@ -24,10 +30,15 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
   final Duration alignDelay;
   final StreamController<bool> _controller =
       StreamController<bool>.broadcast();
+  final StreamController<void> _unsupported =
+      StreamController<void>.broadcast();
   Timer? _timer;
 
   @override
   Stream<bool> get alignmentStream => _controller.stream;
+
+  @override
+  Stream<void> get unsupportedStream => _unsupported.stream;
 
   @override
   void start() {
@@ -41,6 +52,7 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
   void dispose() {
     _timer?.cancel();
     _controller.close();
+    _unsupported.close();
   }
 }
 
@@ -73,8 +85,9 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     this.minBrightness = 35,
     this.maxBrightness = 235,
     this.minContrast = 12,
-    this.maxFrameDelta = 6,
-    this.sampleStride = 97, // 규칙적인 샘플링 무늬(모아레)를 피하려 소수 사용
+    this.maxFrameDelta = 10,
+    this.sampleStride = 31, // 규칙적인 샘플링 무늬(모아레)를 피하려 소수 사용
+    this.smoothingFactor = 0.25,
   });
 
   final CameraController _controller;
@@ -87,23 +100,34 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   final double maxFrameDelta;
   final int sampleStride;
 
+  /// 밝기 기준선을 갱신하는 지수이동평균(EMA) 계수. 값이 작을수록 기준선이
+  /// 천천히 움직여, 카메라 자동노출의 프레임 단위 미세 흔들림에 덜 민감해집니다.
+  final double smoothingFactor;
+
   final StreamController<bool> _output = StreamController<bool>.broadcast();
+  final StreamController<void> _unsupported =
+      StreamController<void>.broadcast();
   bool _busy = false;
   bool _emitted = false;
-  double? _lastBrightness;
+  double? _smoothBrightness;
   int _stableCount = 0;
 
   @override
   Stream<bool> get alignmentStream => _output.stream;
 
   @override
+  Stream<void> get unsupportedStream => _unsupported.stream;
+
+  @override
   void start() {
     if (!_controller.value.isInitialized) return;
     unawaited(
       _controller.startImageStream(_onFrame).catchError((Object _) {
-        // 이미지 스트리밍을 지원하지 않는 기기/시뮬레이터 등: 정렬 자동
-        // 인식만 안 될 뿐, "임시 스캔" 버튼으로는 여전히 촬영할 수 있으므로
-        // 조용히 무시합니다.
+        // 이미지 스트리밍을 지원하지 않는 기기/브라우저(예: Flutter 웹은
+        // startImageStream() 자체가 UnimplementedError를 던짐): 자동 정렬
+        // 인식을 아예 쓸 수 없다는 신호를 보내, 화면이 수동 촬영으로
+        // 안내하도록 합니다.
+        if (!_unsupported.isClosed) _unsupported.add(null);
       }),
     );
   }
@@ -116,11 +140,18 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
       final brightnessOk =
           stats.brightness >= minBrightness && stats.brightness <= maxBrightness;
       final contrastOk = stats.contrast >= minContrast;
-      final lastBrightness = _lastBrightness;
-      final steady = lastBrightness == null
+
+      // 바로 직전 프레임과 비교하면 카메라 자동노출의 프레임 단위 노이즈에도
+      // 흔들림으로 오판하기 쉬우므로, 천천히 따라오는 이동평균 기준선과
+      // 비교합니다(진짜 손떨림/움직임은 몇 프레임 안에 기준선도 같이 밀어내
+      // 여전히 잡아냅니다).
+      final baseline = _smoothBrightness;
+      final steady = baseline == null
           ? false
-          : (stats.brightness - lastBrightness).abs() <= maxFrameDelta;
-      _lastBrightness = stats.brightness;
+          : (stats.brightness - baseline).abs() <= maxFrameDelta;
+      _smoothBrightness = baseline == null
+          ? stats.brightness
+          : baseline + (stats.brightness - baseline) * smoothingFactor;
 
       _stableCount = (brightnessOk && contrastOk && steady) ? _stableCount + 1 : 0;
 
@@ -170,6 +201,7 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
       unawaited(_controller.stopImageStream());
     }
     if (!_output.isClosed) _output.close();
+    if (!_unsupported.isClosed) _unsupported.close();
   }
 }
 

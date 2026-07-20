@@ -45,8 +45,15 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   CameraController? _controller;
   TicketAlignmentDetector? _detector;
   StreamSubscription<bool>? _alignSub;
+  StreamSubscription<void>? _unsupportedSub;
   _ScanStage _stage = _ScanStage.positioning;
   String? _errorMessage;
+
+  /// true면 이 플랫폼/기기가 실시간 프레임 스트리밍을 지원하지 않아(예:
+  /// Flutter 웹) 자동 정렬 인식이 아예 동작할 수 없다는 뜻입니다. 이 경우
+  /// 가이드 박스가 절대 초록색으로 바뀌지 않으므로, 대신 수동 촬영 버튼을
+  /// 보여줍니다.
+  bool _autoAlignUnsupported = false;
 
   @override
   void initState() {
@@ -94,6 +101,10 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
         _onAligned();
       }
     });
+    _unsupportedSub = detector.unsupportedStream.listen((_) {
+      if (!mounted) return;
+      setState(() => _autoAlignUnsupported = true);
+    });
     detector.start();
   }
 
@@ -113,6 +124,7 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     // 정렬 인식이 카메라 이미지 스트림을 쓰고 있으면, 스트리밍 중에는
     // takePicture()가 실패하거나 화질이 떨어질 수 있는 기기가 있어 먼저 멈춥니다.
     _alignSub?.cancel();
+    _unsupportedSub?.cancel();
     _detector?.dispose();
     _detector = null;
 
@@ -152,6 +164,7 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   @override
   void dispose() {
     _alignSub?.cancel();
+    _unsupportedSub?.cancel();
     _detector?.dispose();
     _controller?.dispose();
     super.dispose();
@@ -172,7 +185,11 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
           else
             const Center(child: CircularProgressIndicator(color: Colors.white)),
 
-          if (ready) _ScanGuideOverlay(stage: _stage),
+          if (ready)
+            _ScanGuideOverlay(
+              stage: _stage,
+              autoAlignUnsupported: _autoAlignUnsupported,
+            ),
 
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
@@ -195,6 +212,22 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               ),
             ),
 
+          // 자동 정렬 인식을 아예 쓸 수 없는 환경(예: Flutter 웹)에서는
+          // 가이드 박스가 절대 초록색으로 안 바뀌므로, 수동으로 실제
+          // 촬영·스캔을 진행할 수 있는 버튼을 보여줍니다.
+          if (_autoAlignUnsupported && _stage == _ScanStage.positioning)
+            Positioned(
+              bottom: 24,
+              left: 16,
+              child: FloatingActionButton.extended(
+                heroTag: 'manual_capture',
+                onPressed: _captureAndExtract,
+                backgroundColor: const Color(0xFF38BDF8),
+                icon: const Icon(Icons.camera_alt),
+                label: const Text('지금 촬영하기'),
+              ),
+            ),
+
           // 개발용 임시 버튼: 카메라/백엔드 없이 테스트용 더미 티켓만 추가
           Positioned(
             bottom: 24,
@@ -213,15 +246,26 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
 }
 
 class _ScanGuideOverlay extends StatelessWidget {
-  const _ScanGuideOverlay({required this.stage});
+  const _ScanGuideOverlay({
+    required this.stage,
+    this.autoAlignUnsupported = false,
+  });
 
   final _ScanStage stage;
 
-  String get _hintText => switch (stage) {
-        _ScanStage.positioning => '티켓을 사각형 안에 맞춰주세요',
-        _ScanStage.aligned => '인식 완료!',
-        _ScanStage.capturing => '스캔 중...',
-      };
+  /// true면 이 환경에서는 자동 정렬 인식이 동작하지 않는다는 안내로 문구를 바꿉니다.
+  final bool autoAlignUnsupported;
+
+  String get _hintText {
+    if (stage == _ScanStage.positioning && autoAlignUnsupported) {
+      return '이 환경에서는 자동 인식이 지원되지 않아요.\n"지금 촬영하기" 버튼을 눌러주세요.';
+    }
+    return switch (stage) {
+      _ScanStage.positioning => '티켓을 사각형 안에 맞춰주세요',
+      _ScanStage.aligned => '인식 완료!',
+      _ScanStage.capturing => '스캔 중...',
+    };
+  }
 
   Color get _borderColor => switch (stage) {
         _ScanStage.positioning => Colors.white70,
@@ -233,7 +277,7 @@ class _ScanGuideOverlay extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final guideWidth = constraints.maxWidth * 0.86;
-        final guideHeight = guideWidth / 2.15; // 콘서트 티켓처럼 가로가 긴 비율
+        final guideHeight = guideWidth * 6 / 14.8; // 14.8:6 비율
         final guideRect = Rect.fromCenter(
           center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2 - 30),
           width: guideWidth,
@@ -245,7 +289,7 @@ class _ScanGuideOverlay extends StatelessWidget {
           children: [
             // 가이드 박스 바깥만 살짝 어둡게(블러 없이, 안쪽은 카메라 화면 그대로)
             ClipPath(
-              clipper: _OutsideGuideClipper(guideRect: guideRect, radius: 18),
+              clipper: _OutsideGuideClipper(guideRect: guideRect, radius: 0),
               child: Container(color: Colors.black.withValues(alpha: 0.35)),
             ),
 
@@ -255,7 +299,6 @@ class _ScanGuideOverlay extends StatelessWidget {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(color: _borderColor, width: 3),
                   boxShadow: stage == _ScanStage.positioning
                       ? null

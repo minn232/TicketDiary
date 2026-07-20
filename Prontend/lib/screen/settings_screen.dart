@@ -5,9 +5,13 @@ import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
 import '../services/kakao_login_controller.dart';
+import '../services/notification_settings_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
+
+/// 아직 백엔드와 연동되지 않은 알림 항목의 라벨 색상(회색 처리용).
+const Color _unconnectedTextColor = Color(0x611A1A1A);
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -18,6 +22,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final AppSettingsStore _appSettings = AppSettingsStore.instance;
+  final NotificationSettingsService _notifSettingsService =
+      NotificationSettingsService();
 
   bool pushExpanded = false;
   bool pushDayBefore = false;
@@ -33,6 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _appSettings.load();
     _appSettings.addListener(_onAppSettingsChanged);
+    _loadNotificationSettings();
   }
 
   @override
@@ -44,6 +51,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _onAppSettingsChanged() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  Future<void> _loadNotificationSettings() async {
+    try {
+      final s = await _notifSettingsService.fetch();
+      if (!mounted) return;
+      setState(() {
+        pushDayBefore = s.beforeConcert;
+        pushOnTheDay = s.beforeConcert;
+        pushTicketDelivery = s.delivery;
+      });
+    } catch (_) {
+      // 조회에 실패하면 기본값(꺼짐)으로 남겨둡니다. 스위치를 직접 켜면
+      // 다시 저장을 시도합니다.
+    }
+  }
+
+  /// "하루전 알림"/"당일날 알림"은 백엔드에 `before_concert` 하나로 묶여
+  /// 있어서, 둘 중 하나만 눌러도 두 스위치를 함께 갱신하고 같은 값을
+  /// 서버에 저장합니다.
+  Future<void> _setBeforeConcert(bool v) async {
+    final prevDayBefore = pushDayBefore;
+    final prevOnTheDay = pushOnTheDay;
+    setState(() {
+      pushDayBefore = v;
+      pushOnTheDay = v;
+    });
+    try {
+      await _notifSettingsService.update(
+        delivery: pushTicketDelivery,
+        beforeConcert: v,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        pushDayBefore = prevDayBefore;
+        pushOnTheDay = prevOnTheDay;
+      });
+      _showSaveError(e);
+    }
+  }
+
+  Future<void> _setDelivery(bool v) async {
+    final prev = pushTicketDelivery;
+    setState(() => pushTicketDelivery = v);
+    try {
+      await _notifSettingsService.update(
+        delivery: v,
+        beforeConcert: pushDayBefore,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => pushTicketDelivery = prev);
+      _showSaveError(e);
+    }
+  }
+
+  void _showSaveError(Object e) {
+    if (!mounted) return;
+    final message = e is ApiException ? e.message : '잠시 후 다시 시도해주세요.';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('알림 설정을 저장하지 못했어요: $message')));
   }
 
   void _openMemberSettingsSheet(BuildContext context) {
@@ -139,22 +209,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _SwitchRow(
                               title: '하루전 알림',
                               value: pushDayBefore,
-                              onChanged: (v) =>
-                                  setState(() => pushDayBefore = v),
+                              onChanged: _setBeforeConcert,
                             ),
                             _divider,
                             _SwitchRow(
                               title: '당일날 알림',
                               value: pushOnTheDay,
-                              onChanged: (v) =>
-                                  setState(() => pushOnTheDay = v),
+                              onChanged: _setBeforeConcert,
                             ),
                             _divider,
                             _SwitchRow(
                               title: '티켓배송일 알림',
                               value: pushTicketDelivery,
-                              onChanged: (v) =>
-                                  setState(() => pushTicketDelivery = v),
+                              onChanged: _setDelivery,
                             ),
                             _divider,
                             _SwitchRow(
@@ -162,6 +229,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               value: pushFavArtistConcert,
                               onChanged: (v) =>
                                   setState(() => pushFavArtistConcert = v),
+                              titleColor: _unconnectedTextColor,
                             ),
                             _divider,
                             _SwitchRow(
@@ -169,6 +237,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               value: pushPinnedConcert,
                               onChanged: (v) =>
                                   setState(() => pushPinnedConcert = v),
+                              titleColor: _unconnectedTextColor,
                             ),
                           ],
                         ),
@@ -207,11 +276,13 @@ class _SwitchRow extends StatelessWidget {
   final String title;
   final bool value;
   final ValueChanged<bool> onChanged;
+  final Color? titleColor;
 
   const _SwitchRow({
     required this.title,
     required this.value,
     required this.onChanged,
+    this.titleColor,
   });
 
   @override
@@ -225,10 +296,10 @@ class _SwitchRow extends StatelessWidget {
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w800,
-                  color: Colors.black87,
+                  color: titleColor ?? Colors.black87,
                 ),
               ),
             ),

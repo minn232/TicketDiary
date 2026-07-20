@@ -44,6 +44,19 @@ class TicketInfo {
   /// 등록되지 않은 티켓은 null입니다.
   final String? concertId;
 
+  /// 백엔드 티켓 UUID. "공연 후" 화면에서 후기/사진을 수정할 때
+  /// `PATCH /tickets/{ticketId}`를 호출하는 데 필요합니다. 로컬 예시 티켓처럼
+  /// 서버에 등록되지 않은 경우 null이며, 이때는 편집 기능을 비활성화합니다.
+  final String? ticketId;
+
+  /// 공연 후기(감상평). `PATCH /tickets/{id}`의 `review` 필드와 대응.
+  final String? review;
+
+  /// 공연 사진 URL 목록. `PATCH /tickets/{id}`의 `concert_photo_urls`와
+  /// 대응. 백엔드가 전체 교체 방식이라, 사진을 추가할 때도 기존 목록에
+  /// 새 URL을 이어붙인 전체 목록을 다시 보내야 합니다.
+  final List<String>? concertPhotoUrls;
+
   const TicketInfo({
     this.concertName = '',
     this.venueName = '',
@@ -57,6 +70,9 @@ class TicketInfo {
     this.deliveryDate,
     this.vendorName,
     this.concertId,
+    this.ticketId,
+    this.review,
+    this.concertPhotoUrls,
   });
 
   TicketInfo copyWith({
@@ -72,6 +88,9 @@ class TicketInfo {
     DateTime? deliveryDate,
     String? vendorName,
     String? concertId,
+    String? ticketId,
+    String? review,
+    List<String>? concertPhotoUrls,
   }) {
     return TicketInfo(
       concertName: concertName ?? this.concertName,
@@ -86,6 +105,9 @@ class TicketInfo {
       deliveryDate: deliveryDate ?? this.deliveryDate,
       vendorName: vendorName ?? this.vendorName,
       concertId: concertId ?? this.concertId,
+      ticketId: ticketId ?? this.ticketId,
+      review: review ?? this.review,
+      concertPhotoUrls: concertPhotoUrls ?? this.concertPhotoUrls,
     );
   }
 
