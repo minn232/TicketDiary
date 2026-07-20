@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'api_client.dart';
+import 'kakao_login_debug_log.dart';
 
 /// 로그인 성공(게스트/카카오/마이그레이션) 후 서버가 내려주는 토큰 세트.
 @immutable
@@ -159,7 +160,11 @@ class AuthService extends ChangeNotifier {
   /// 카카오 로그인 URL(웹 브라우저로 열 주소)을 서버에서 받아옵니다.
   Future<String> fetchKakaoLoginUrl() async {
     final json = await _client.get('/auth/kakao/url');
-    return json['url'] as String;
+    final url = json['url'] as String;
+    KakaoLoginDebugLog.add('[1] GET /auth/kakao/url -> $url');
+    final redirectUri = Uri.tryParse(url)?.queryParameters['redirect_uri'];
+    KakaoLoginDebugLog.add('[1] 인가 요청에 실린 redirect_uri = $redirectUri');
+    return url;
   }
 
   /// 카카오 인가코드로 로그인을 완료합니다.
@@ -172,11 +177,18 @@ class AuthService extends ChangeNotifier {
   /// 케이스라, UI에서 마이그레이션 버튼을 게스트에게만 노출하는 한 발생하지 않습니다.)
   Future<void> completeKakaoLogin(String code, {required bool migrateFromGuest}) async {
     final path = migrateFromGuest ? '/auth/migrate' : '/auth/kakao';
+    KakaoLoginDebugLog.add(
+      '[5] POST $path 호출, code=${KakaoLoginDebugLog.mask(code)}',
+    );
     try {
       final json = await _client.post(path, body: {'code': code});
       await _saveTokens(AuthTokens.fromJson(json));
       await refreshCurrentUser();
+      KakaoLoginDebugLog.add('[5] 로그인 성공. user_id=$_userId, role=$_role');
     } on ApiException catch (e) {
+      KakaoLoginDebugLog.add(
+        '[5] 실패: statusCode=${e.statusCode}, message=${e.message}',
+      );
       if (migrateFromGuest && e.statusCode == 409) {
         throw const AlreadyKakaoUserException();
       }

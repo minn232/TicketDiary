@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'favorite_pinned_settings_screen.dart';
+import 'kakao_login_debug_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
@@ -255,6 +256,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               builder: (context) =>
                                   const FavoritePinnedSettingsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      _divider,
+                      // TODO: 카카오 로그인 원인 파악 후 이 메뉴는 제거합니다.
+                      _MenuRow(
+                        title: '카카오 로그인 디버그 로그 (임시)',
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const KakaoLoginDebugScreen(),
                             ),
                           );
                         },
