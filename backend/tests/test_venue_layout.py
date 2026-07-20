@@ -330,3 +330,93 @@ async def test_crawl_result_invalid_ticketing_date_ignored():
 
     assert response.status_code == 200
     assert "ticketing_date" not in response.json()["updated"]
+
+
+# delivery_date 수신 → Concert.delivery_date 저장 + "delivery_date" in updated
+@pytest.mark.asyncio
+async def test_crawl_result_delivery_date_saved():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_CR_DD_001")
+
+    body = {"delivery_date": "2030-04-20"}
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "delivery_date" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+
+    assert concert.delivery_date is not None
+    assert concert.delivery_date.year == 2030
+    assert concert.delivery_date.month == 4
+    assert concert.delivery_date.day == 20
+
+
+# 잘못된 delivery_date 형식은 400이 아닌 updated에서 누락
+@pytest.mark.asyncio
+async def test_crawl_result_invalid_delivery_date_ignored():
+    concert_id = await _create_concert("PF_CR_DD_INVALID_001")
+
+    body = {"delivery_date": "not-a-date"}
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "delivery_date" not in response.json()["updated"]
+
+
+# delivery_date 수신 시, 이미 등록됐지만 자체 delivery_date가 없는 티켓에 백필되고
+# DELIVERY_DAY 알림이 생성되는지 테스트 (찜/티켓등록 시점엔 몰랐던 배송일을 크롤링이 나중에 채워주는 시나리오)
+@pytest.mark.asyncio
+async def test_crawl_result_delivery_date_backfills_existing_ticket():
+    # 매 실행마다 겹치지 않는 kopis_id 사용 (로컬 DB는 테스트 간 rollback되지 않고 실제로
+    # upsert된 채 남으므로, 고정 ID를 쓰면 이전 실행의 delivery_date 잔여 데이터와 충돌함)
+    concert_id = await _create_concert(f"PF_CR_DD_BACKFILL_{uuid.uuid4().hex[:10]}")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id},  # delivery_date 없이 등록(OCR로 못 뽑은 경우)
+            headers=headers,
+        )
+    assert ticket_res.json()["delivery_date"] is None
+
+    body = {"delivery_date": "2030-05-10"}
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_get = await ac.get(f"/api/v1/tickets/{ticket_res.json()['id']}", headers=headers)
+        notif_res = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert ticket_get.json()["delivery_date"][:10] == "2030-05-10"
+    assert any(n["type"] == "delivery_day" for n in notif_res.json())

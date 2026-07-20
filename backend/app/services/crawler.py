@@ -1,6 +1,8 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
+from uuid import UUID
 
 import httpx
 from playwright.async_api import async_playwright
@@ -10,6 +12,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
+from app.models.social import ConcertFollow
 from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
 
@@ -51,6 +54,34 @@ async def _make_page(pw):
     return browser, page
 
 
+# 아직 정보가 없거나(티켓팅 오픈 전) 상품이 없는 페이지 감지용 키워드.
+# ticketing_links의 direct_url로 바로 들어갔을 때, KOPIS엔 이미 등록됐지만 해당 사이트에
+# 아직 실제 판매 페이지가 없는 경우("오픈 예정" 안내만 있거나 검색결과가 비어있음)를 걸러내기 위함
+# - 사이트마다 실제 문구가 다르고 바뀔 수 있어 완벽하지 않음, 실제 크롤링 결과 보면서 조정 필요
+_UNAVAILABLE_PAGE_KEYWORDS = [
+    "검색결과가 없습니다",
+    "검색 결과가 없습니다",
+    "상품이 존재하지 않습니다",
+    "판매중인 상품이 없습니다",
+    "요청하신 페이지를 찾을 수 없습니다",
+    "페이지를 찾을 수 없습니다",
+    "오픈 예정",
+    "오픈예정",
+    "준비중입니다",
+    "준비 중입니다",
+    "등록된 공연이 없습니다",
+]
+
+
+# 현재 페이지가 "아직 정보 없음/오픈 전" 상태로 보이는지 본문 텍스트로 추정 (실패해도 예외 없이 False)
+async def _is_unavailable_page(page) -> bool:
+    try:
+        text = await page.inner_text("body")
+    except Exception:
+        return False
+    return any(keyword in text for keyword in _UNAVAILABLE_PAGE_KEYWORDS)
+
+
 # 스크린샷 S3 업로드 후 URL 반환 (실패 시 None)
 async def _upload_screenshot(image_bytes: bytes, concert_id, site: str) -> str | None:
     key = f"crawls/{concert_id}/{site}.png"
@@ -71,6 +102,9 @@ async def crawl_interpark(concert: Concert, direct_url: str | None = None) -> by
                 if direct_url:
                     await page.goto(direct_url, wait_until="domcontentloaded", timeout=30_000)
                     await page.wait_for_timeout(2_000)
+                    if await _is_unavailable_page(page):
+                        logger.info(f"인터파크 아직 정보 없음/오픈 전으로 추정: {concert.name}")
+                        return None
                     return await page.screenshot(full_page=True, type="png")
 
                 keyword = quote(concert.name)
@@ -114,6 +148,9 @@ async def crawl_yes24(concert: Concert, direct_url: str | None = None) -> bytes 
                 if direct_url:
                     await page.goto(direct_url, wait_until="domcontentloaded", timeout=30_000)
                     await page.wait_for_timeout(2_000)
+                    if await _is_unavailable_page(page):
+                        logger.info(f"YES24 아직 정보 없음/오픈 전으로 추정: {concert.name}")
+                        return None
                 else:
                     keyword = quote(concert.name)
                     search_url = f"https://ticket.yes24.com/New/Search/Search.aspx?q={keyword}"
@@ -146,6 +183,9 @@ async def crawl_melon(concert: Concert, direct_url: str | None = None) -> bytes 
                     await page.wait_for_timeout(2_000)
                     if "accounts.kakao.com" in page.url or "auth.kakao.com" in page.url:
                         logger.info(f"멜론티켓 봇 차단 감지 (Kakao 리다이렉트): {concert.name}")
+                        return None
+                    if await _is_unavailable_page(page):
+                        logger.info(f"멜론티켓 아직 정보 없음/오픈 전으로 추정: {concert.name}")
                         return None
                 else:
                     keyword = quote(concert.name)
@@ -242,13 +282,16 @@ _UNSUPPORTED_SITES = {"TICKETLINK", "티켓링크"}
 # 크롤링할 사이트와 직접 URL을 결정 (ticketing_links에 지원 사이트가 있으면 YES24 > INTERPARK > MELON
 # 순 우선 선택, 없으면 ticketing_site가 지원 사이트인 경우에만 이름 검색 방식으로 진행,
 # 티켓링크만 있거나 ticketing_site가 티켓링크면 (None, None) 반환)
+# ticketing_site는 찜(follow) 트리거처럼 유저가 아직 티켓을 등록하지 않은 경우 None일 수 있음
 def _pick_crawl_target(
-    ticketing_site: str, ticketing_links: dict[str, str] | None
+    ticketing_site: str | None, ticketing_links: dict[str, str] | None
 ) -> tuple[str | None, str | None]:
     links = ticketing_links or {}
     for site in _PREFERRED_SITES:
         if site in links:
             return site, links[site]
+    if not ticketing_site:
+        return None, None
     site_key = normalize_site_key(ticketing_site)
     if site_key in _UNSUPPORTED_SITES:
         return None, None
@@ -261,14 +304,24 @@ _KNOWN_SITE_KEYS: frozenset[str] = frozenset(
 )
 
 
-# 티켓 등록 백그라운드 태스크: 크롤링 후 Concert.crawl_screenshot_url 갱신
-async def crawl_and_save(concert_id, ticketing_site: str | None) -> None:
-    if not ticketing_site:
-        return
+# 크롤링 재시도 간 최소 간격. ticketing_date를 아직 못 얻은 공연은 "완료"로 보지 않고 계속
+# 재시도 대상이 되므로, 찜/티켓등록이 반복될 때마다 매번 크롤링하지 않도록 쿨다운을 둠
+_CRAWL_RETRY_COOLDOWN = timedelta(hours=24)
 
-    if normalize_site_key(ticketing_site) not in _KNOWN_SITE_KEYS:
+
+# 티켓 등록 또는 공연 찜(follow) 시 백그라운드 태스크로 호출: 크롤링 후 Concert.crawl_screenshot_url 갱신
+# ticketing_site는 티켓 등록 경로에서만 값이 있고, 찜 경로에서는 아직 아무도 티켓을 안 샀을 수 있어
+# None으로 넘어옴 - 이 경우 concert.ticketing_links(KOPIS 상세조회로 이미 채워져 있음)만으로 크롤링을
+# 시도하므로, ticketing_site 유효성 검사를 DB 조회(및 ticketing_links 확인)보다 먼저 하지 않는다
+#
+# "크롤링 완료"는 스크린샷 존재 여부가 아니라 ticketing_date를 실제로 얻었는지로 판단한다.
+# KOPIS는 티켓팅 오픈 전에도 공연을 먼저 등록하는 경우가 흔해서, 그 시점에 예매 사이트 페이지를
+# 크롤링하면 "오픈 예정" 같은 빈 페이지만 찍힐 수 있는데, 예전엔 스크린샷이 한 번이라도 찍히면
+# 영구히 재크롤링을 안 해서 나중에 진짜 정보가 채워져도 절대 못 얻어오는 문제가 있었음
+async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
+    if ticketing_site and normalize_site_key(ticketing_site) not in _KNOWN_SITE_KEYS:
         logger.info(f"크롤링 미지원 사이트: {ticketing_site}")
-        return
+        ticketing_site = None
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.id == concert_id))
@@ -276,9 +329,26 @@ async def crawl_and_save(concert_id, ticketing_site: str | None) -> None:
         if concert is None:
             return
 
-        if concert.crawl_screenshot_url is not None:
-            logger.info(f"이미 크롤링된 공연, 스킵: {concert.name}")
+        now = datetime.now(timezone.utc)
+
+        # 이미 필요한 정보(티켓팅 오픈일)를 얻었으면 더 크롤링할 필요 없음
+        if concert.ticketing_date is not None:
             return
+
+        # 공연이 이미 끝났으면 더 이상 의미 없음
+        if concert.end_date is not None and concert.end_date <= now:
+            return
+
+        # 최근에 이미 시도했으면(성공/실패 무관) 너무 자주 재시도하지 않도록 쿨다운
+        if concert.crawl_attempted_at is not None and now - concert.crawl_attempted_at < _CRAWL_RETRY_COOLDOWN:
+            return
+
+        if not ticketing_site and not concert.ticketing_links:
+            logger.info(f"크롤링 대상 사이트 정보 없음, 스킵: {concert.name}")
+            return
+
+        concert.crawl_attempted_at = now
+        await db.commit()
 
         site_key, direct_url = _pick_crawl_target(ticketing_site, concert.ticketing_links)
         if site_key is None:
@@ -312,7 +382,6 @@ async def send_screenshots_to_llm() -> None:
         logger.info("LLM_CRAWL_URL 미설정, 전송 건너뜀")
         return
 
-    from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
 
     async with AsyncSessionLocal() as db:
@@ -348,3 +417,37 @@ async def send_screenshots_to_llm() -> None:
         logger.info(f"LLM팀 스크린샷 전송 완료: {len(concerts)}건")
     except Exception as e:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
+
+
+# 자정 배치: 찜한 유저가 있는데 아직 ticketing_date를 못 얻은 공연들에 크롤링 재시도
+# (crawl_and_save는 follow/티켓등록 시점에도 불리지만, 그 이후로 아무도 다시 찜/등록을 안 하면
+# 재시도할 기회 자체가 없으므로 이 배치가 그 역할을 대신함. 쿨다운/완료판단은 crawl_and_save가 함)
+async def retry_pending_crawls() -> None:
+    async with AsyncSessionLocal() as db:
+        follows_result = await db.execute(select(ConcertFollow))
+        followed_ids: set[str] = set()
+        for follow in follows_result.scalars().all():
+            for entry in follow.concerts or []:
+                cid = entry.get("concert_id")
+                if cid:
+                    followed_ids.add(cid)
+
+        if not followed_ids:
+            return
+
+        now = datetime.now(timezone.utc)
+        result = await db.execute(
+            select(Concert.id).where(
+                Concert.id.in_([UUID(cid) for cid in followed_ids]),
+                Concert.ticketing_date.is_(None),
+                Concert.end_date > now,
+            )
+        )
+        concert_ids = [row[0] for row in result.all()]
+
+    if not concert_ids:
+        return
+
+    logger.info(f"크롤링 재시도 대상 {len(concert_ids)}건")
+    for concert_id in concert_ids:
+        await crawl_and_save(concert_id)

@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -191,6 +192,27 @@ async def test_update_concert_follow_success():
     data = res.json()
     assert len(data["concerts"]) == 1
     assert data["concerts"][0]["concert_id"] == concert_id
+
+
+# 찜 등록 시 티켓팅 오픈일을 미리 알아낼 수 있도록 백그라운드로 크롤링이 트리거되는지 테스트
+# (아직 아무도 티켓을 등록 안 한 공연이라도 KOPIS 상세조회로 이미 채워진 ticketing_links로 시도됨)
+@pytest.mark.asyncio
+async def test_update_concert_follow_triggers_crawl():
+    token = await _get_token()
+    kopis_id = f"PF_CFOLLOW_CRAWL_{uuid.uuid4().hex[:8]}"
+    concert_id = await _fetch_concert(kopis_id, "테스트아티스트", token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with patch("app.api.v1.endpoints.social.crawl_and_save", new=AsyncMock()) as mock_crawl:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.patch(
+                "/api/v1/social/concerts",
+                json={"concerts": [{"concert_id": concert_id}]},
+                headers=headers,
+            )
+
+    mock_crawl.assert_awaited_once()
+    assert str(mock_crawl.call_args.args[0]) == concert_id
 
 
 # 수정 후 재조회 시 반영 확인 테스트

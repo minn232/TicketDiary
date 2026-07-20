@@ -28,6 +28,7 @@ class ConcertResponse(BaseModel):
     price: list[PriceEntry] | None
     event_type: str
     ticketing_date: datetime | None
+    delivery_date: datetime | None
 
 
 class TicketScanExtracted(BaseModel):

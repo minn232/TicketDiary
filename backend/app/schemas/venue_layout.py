@@ -22,6 +22,7 @@ class CrawlResultRequest(BaseModel):
     prices: list[dict] | None = None
     venue_layout: VenueLayoutInput | None = None
     ticketing_date: str | None = None  # YYYY-MM-DD
+    delivery_date: str | None = None  # YYYY-MM-DD, 예매 사이트에 공지된 배송 예정일
 
 
 class CrawlResultResponse(BaseModel):

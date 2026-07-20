@@ -11,6 +11,7 @@ from app.core.deps import verify_llm_api_key
 from app.models.concert import Concert
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.services.notification import schedule_ticketing_day_notifications
+from app.services.ticket import backfill_delivery_date_from_concert
 from app.services.timetable import upsert_timetable
 from app.services.venue_layout import upsert_venue_layout
 
@@ -60,12 +61,26 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 ticketing_date 형식: {body.ticketing_date}")
 
+    delivery_date: datetime | None = None
+    if body.delivery_date is not None:
+        try:
+            dd = date.fromisoformat(body.delivery_date)
+            delivery_date = datetime(dd.year, dd.month, dd.day, tzinfo=timezone.utc)
+            concert.delivery_date = delivery_date
+            updated.append("delivery_date")
+        except ValueError:
+            logger.warning(f"잘못된 delivery_date 형식: {body.delivery_date}")
+
     if updated:
         await db.commit()
 
     # 티켓팅 날 알림은 commit 확정 후 처리 (중복 방지 + 유저 조회 포함)
     if "ticketing_date" in updated:
         await schedule_ticketing_day_notifications(db, concert_id)
+
+    # 이미 등록된 티켓 중 자체 delivery_date가 없는 것들에 백필 + DELIVERY_DAY 알림 재스케줄
+    if "delivery_date" in updated:
+        await backfill_delivery_date_from_concert(db, concert_id, delivery_date)
 
     logger.info(f"크롤링 결과 수신 concert_id={concert_id} updated={updated}")
     return CrawlResultResponse(updated=updated)

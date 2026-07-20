@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -14,6 +14,7 @@ from app.schemas.social import (
     NewsFeedResponse,
 )
 from app.services import social as social_service
+from app.services.crawler import crawl_and_save
 
 router = APIRouter()
 
@@ -47,13 +48,20 @@ async def get_concert_follow(
 
 
 # 찜 공연 수정 (전체 교체)
+# 찜 목록의 공연들은 아직 아무도 티켓을 등록하지 않았을 수 있어 티켓팅 오픈일이 영영 안 채워질
+# 수 있으므로, 여기서도 크롤링을 트리거함(ticketing_site 없이 concert.ticketing_links만으로 시도).
+# 이미 크롤링된 공연은 crawl_and_save가 자체적으로 스킵하므로 매번 전체 목록에 걸어도 무해함
 @router.patch("/concerts", response_model=ConcertFollowResponse)
 async def update_concert_follow(
     body: ConcertFollowUpdate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await social_service.update_concert_follow(db, current_user.id, body.concerts)
+    result = await social_service.update_concert_follow(db, current_user.id, body.concerts)
+    for entry in body.concerts:
+        background_tasks.add_task(crawl_and_save, entry.concert_id)
+    return result
 
 
 # 뉴스 피드 조회

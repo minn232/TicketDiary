@@ -200,6 +200,62 @@ async def test_create_ticket_seat_type_unchanged_when_no_confident_match():
     assert response.json()["seat_type"] == "스탠딩석"
 
 
+# 배송일 OCR 값이 없으면 크롤링으로 채워진 concert.delivery_date로 폴백되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_falls_back_to_concert_delivery_date():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    from datetime import datetime, timezone as tz
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_T_DELIVERY_001")
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+        concert.delivery_date = datetime(2030, 5, 10, tzinfo=tz.utc)
+        await db.commit()
+
+    token = await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["delivery_date"][:10] == "2030-05-10"
+
+
+# 배송일 OCR 값이 있으면 크롤링 값(concert.delivery_date)보다 우선하는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_prefers_ocr_delivery_date_over_concert():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    from datetime import datetime, timezone as tz
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_T_DELIVERY_002")
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+        concert.delivery_date = datetime(2030, 5, 10, tzinfo=tz.utc)
+        await db.commit()
+
+    token = await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "delivery_date": "2030-05-15T00:00:00Z"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["delivery_date"][:10] == "2030-05-15"
+
+
 # 존재하지 않는 concert_id로 등록 404 테스트
 @pytest.mark.asyncio
 async def test_create_ticket_concert_not_found_404():

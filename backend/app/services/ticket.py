@@ -122,11 +122,17 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     elif concert.start_time is None:
         concert.start_time = start_time
 
+    # 배송일은 예매 사이트 공지(크롤링)가 실물 티켓 OCR보다 신뢰도가 높다고 보고,
+    # OCR/유저 입력이 없을 때만 크롤링된 concert.delivery_date로 채움 (seat_type과 같은 방향)
+    delivery_date = body.delivery_date
+    if delivery_date is None:
+        delivery_date = concert.delivery_date
+
     ticket = Ticket(
         user_id=user.id,
         concert_id=concert.id,
         status=_initial_status(concert),
-        delivery_date=body.delivery_date,
+        delivery_date=delivery_date,
         start_time=start_time,
         ticketing_site=body.ticketing_site,
         price=body.price,
@@ -289,6 +295,29 @@ async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket, user: 
         db.add(notif)
 
     await db.commit()
+
+
+# 크롤링으로 concert.delivery_date가 새로 채워졌을 때(crawl-result 웹훅에서 호출), 이미 등록된
+# 티켓 중 자체 delivery_date가 없는 것들(OCR로 못 뽑았거나 안 넣은 경우)에 백필하고
+# DELIVERY_DAY 등 알림을 재스케줄. 이미 자체 값이 있는 티켓은 건드리지 않음(OCR 값 우선순위 유지)
+async def backfill_delivery_date_from_concert(
+    db: AsyncSession, concert_id: UUID, delivery_date: datetime
+) -> None:
+    result = await db.execute(
+        select(Ticket)
+        .options(selectinload(Ticket.concert), selectinload(Ticket.user))
+        .where(Ticket.concert_id == concert_id, Ticket.delivery_date.is_(None))
+    )
+    tickets = result.scalars().all()
+    if not tickets:
+        return
+
+    for ticket in tickets:
+        ticket.delivery_date = delivery_date
+    await db.commit()
+
+    for ticket in tickets:
+        await schedule_ticket_notifications(db, ticket, ticket.user)
 
 
 # BEFORE_CONCERT 티켓 중 공연이 끝난 것을 AFTER_CONCERT로 자동 전환
