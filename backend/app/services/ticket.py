@@ -1,6 +1,8 @@
 from uuid import UUID
 from datetime import datetime, timezone, timedelta
+import difflib
 import logging
+import re
 
 from fastapi import HTTPException
 from sqlalchemy import case, func, select, delete
@@ -33,6 +35,47 @@ def _at_9am_kst(dt: datetime) -> datetime:
         dt = dt.replace(tzinfo=KST)
     d = dt.astimezone(KST).replace(hour=9, minute=0, second=0, microsecond=0)
     return d.astimezone(timezone.utc)
+
+
+# seat_type 문자열에서 좌석 등급 부분만 추출 ("R석 A구역 12열 15번" -> "R석")
+_SEAT_GRADE_TOKEN_RE = re.compile(r"[A-Z가-힣]{1,5}석")
+
+
+# OCR/사용자가 입력한 seat_type의 등급 부분을 concert.price(크롤링으로 받은 실제 가격표
+# 등급명 목록)와 대조해서 다르면 크롤링 값으로 교정. 사진 OCR은 화질/각도 때문에 글자가
+# 깨지기 쉬운 반면(예: "지정석"이 "아지정석"으로 잘못 인식) 크롤링은 예매 사이트 가격표를
+# 그대로 읽으므로 등급명 표기가 더 정확하다고 보고 크롤링 쪽을 신뢰함
+# (반대로 start_time은 OCR을 신뢰함 - 실물 티켓이 실제 회차를 증명하는 자료이기 때문.
+# 필드 성격이 달라 신뢰 방향도 반대)
+def _correct_seat_type(seat_type: str | None, concert: Concert) -> str | None:
+    if not seat_type or not concert.price:
+        return seat_type
+
+    known_grades = [p.get("seat_type") for p in concert.price if p.get("seat_type")]
+    if not known_grades:
+        return seat_type
+
+    m = _SEAT_GRADE_TOKEN_RE.search(seat_type)
+    if not m:
+        return seat_type
+    token = m.group(0)
+
+    if token in known_grades:
+        return seat_type
+
+    # 부분 포함부터 확인 (예: OCR이 "아지정석"처럼 앞글자를 잘못 붙인 경우)
+    corrected = next((g for g in known_grades if g in token or token in g), None)
+    if corrected is None:
+        matches = difflib.get_close_matches(token, known_grades, n=1, cutoff=0.6)
+        corrected = matches[0] if matches else None
+
+    if corrected is None or corrected == token:
+        return seat_type
+
+    logger.warning(
+        f"티켓 좌석등급 불일치 (concert_id={concert.id}): OCR={token!r} 크롤링={corrected!r} -> 크롤링 값 사용"
+    )
+    return seat_type[: m.start()] + corrected + seat_type[m.end():]
 
 
 # concert_id로 공연 조회
@@ -87,7 +130,7 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
         start_time=start_time,
         ticketing_site=body.ticketing_site,
         price=body.price,
-        seat_type=body.seat_type,
+        seat_type=_correct_seat_type(body.seat_type, concert),
     )
     try:
         db.add(ticket)

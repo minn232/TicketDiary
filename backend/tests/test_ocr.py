@@ -246,6 +246,22 @@ def test_extract_seat_regex():
     assert result is not None and "VIP석" in result
 
 
+# 등급명 바로 앞 글자가 공백 없이 붙어있어도(예: 줄바꿈 없이 이어진 라벨) 그 글자까지
+# 등급명으로 잘못 끌려들어가지 않는지 테스트 ("아지정석"처럼 엉뚱하게 나오던 버그)
+def test_extract_seat_does_not_bleed_preceding_character():
+    assert _extract_seat("공연장 안내사항\n지정석 A구역 3열") == "지정석 A구역 3열"
+
+
+def test_extract_seat_regex_no_space_before_grade():
+    # 앞 단어와 등급명 사이에 공백이 전혀 없는 경우(예: 라벨 없이 값만 붙어 인쇄된 경우)
+    assert _extract_seat("가나다라마아지정석") is None
+
+
+# "좌석"은 등급명이 아니라 일반 단어이므로("좌석 안내" 등) 매칭에서 건너뛰고 실제 등급을 찾는지 테스트
+def test_extract_seat_skips_generic_seat_word():
+    assert _extract_seat("좌석 안내\nR석 A구역 12열") == "R석 A구역 12열"
+
+
 def test_extract_platform_interpark():
     assert _extract_platform("인터파크 티켓") == "INTERPARK"
 

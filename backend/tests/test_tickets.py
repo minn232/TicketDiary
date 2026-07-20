@@ -147,6 +147,59 @@ async def test_create_ticket_falls_back_to_concert_start_time():
     assert response.json()["start_time"] == "19:30"
 
 
+# OCR 좌석등급이 깨져서(예: "아지정석") 크롤링 가격표(concert.price)의 등급명과 다르면
+# 크롤링 값으로 교정해서 저장하는지 테스트 (구역/열/번 등 나머지 디테일은 그대로 보존)
+@pytest.mark.asyncio
+async def test_create_ticket_corrects_seat_type_from_crawled_price():
+    concert_id = await _create_concert("PF_T_SEAT_001")  # pcseguidance="R석 110,000원" -> price=[{"seat_type": "R석", ...}]
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "seat_type": "이R석 A구역 12열 15번"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["seat_type"] == "R석 A구역 12열 15번"
+
+
+# OCR 좌석등급이 크롤링 가격표와 이미 일치하면 그대로 저장(불필요한 교정 없음) 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_keeps_seat_type_when_already_matching():
+    concert_id = await _create_concert("PF_T_SEAT_002")  # price=[{"seat_type": "R석", ...}]
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "seat_type": "R석 A구역 12열 15번"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["seat_type"] == "R석 A구역 12열 15번"
+
+
+# 크롤링 가격표 등급명과 확실히 다른(유사도가 너무 낮은) OCR 값은 잘못 덮어쓰지 않고
+# 그대로 두는지 테스트 (억지 교정으로 오히려 정확도를 해치지 않기 위한 안전장치)
+@pytest.mark.asyncio
+async def test_create_ticket_seat_type_unchanged_when_no_confident_match():
+    concert_id = await _create_concert("PF_T_SEAT_003")  # price=[{"seat_type": "R석", ...}]
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "seat_type": "스탠딩석"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["seat_type"] == "스탠딩석"
+
+
 # 존재하지 않는 concert_id로 등록 404 테스트
 @pytest.mark.asyncio
 async def test_create_ticket_concert_not_found_404():

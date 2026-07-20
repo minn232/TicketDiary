@@ -32,12 +32,15 @@ _TIME_RE = re.compile(
 # N,NNN원 가격 패턴
 _PRICE_RE = re.compile(r"([\d,]{4,})\s*원")
 
-# 좌석 등급·구역·열·번 패턴
+# 좌석 등급·구역·열·번 패턴. 앞에 공백/줄바꿈/구분자가 와야만 매칭 시작 가능하도록 제한
+# (그렇지 않으면 "...구역아지정석"처럼 바로 앞 단어의 마지막 글자를 등급명에 끌고 들어와
+# "아지정석"처럼 엉뚱하게 잘리는 문제가 생김 - 등급명은 항상 별도 줄/라벨로 인쇄되므로 안전한 제약)
 _SEAT_RE = re.compile(
-    r"([A-Z가-힣]{1,5}석)"
+    r"(?:^|(?<=[\s:：,·\-]))([A-Z가-힣]{1,5}석)"
     r"(?:\s*[A-Za-z0-9가-힣]+\s*구역)?"
     r"(?:\s*\d+\s*열)?"
-    r"(?:\s*\d+\s*번)?"
+    r"(?:\s*\d+\s*번)?",
+    re.MULTILINE,
 )
 
 # 플랫폼 키워드 → 정규화 이름
@@ -313,8 +316,12 @@ def _extract_seat(text: str) -> str | None:
     if m:
         return m.group(1).strip()
 
-    sm = _SEAT_RE.search(text)
-    return sm.group(0).strip() if sm else None
+    # "좌석"은 등급명이 아니라 일반 단어("좌석 안내" 등)라서 매칭돼도 건너뛰고 다음 후보를 찾음
+    for sm in _SEAT_RE.finditer(text):
+        if sm.group(1) == "좌석":
+            continue
+        return sm.group(0).strip()
+    return None
 
 
 # 티켓팅 플랫폼 추출
