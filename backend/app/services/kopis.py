@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.concert import Concert
 from app.models.social import ArtistFollow, NewsFeed
+from app.services.notification import schedule_new_concert_notifications
 from app.services.site_aliases import find_site_key
 from app.services.text_utils import min_len_ok
 
@@ -200,7 +201,9 @@ async def _search_concerts_once(
     return await _fetch_and_upsert_concerts(
         db,
         {
-            "stdate": (start_date or today - timedelta(days=365)).strftime("%Y%m%d"),
+            # start_date 미지정 시 오늘부터로 제한 -> 종료된 공연은 검색되지 않음(찜 대상은 항상 예정 공연)
+            # OCR 스캔 매칭(search_concerts_multi)은 항상 명시적 start_date를 넘기므로 이 기본값의 영향을 받지 않음
+            "stdate": (start_date or today).strftime("%Y%m%d"),
             "eddate": (end_date or today + timedelta(days=365)).strftime("%Y%m%d"),
             "shprfnm": keyword,
         },
@@ -479,11 +482,13 @@ async def _build_follow_index(db: AsyncSession) -> dict[str, list[tuple]]:
 
 # concert.artist_name 기반으로 팔로우 유저들에게 뉴스피드 생성 (중복 제외)
 # follow_index를 넘기면 재조회 없이 재사용, 없으면 단발 호출로 간주해 직접 구축
+# 매칭된 (user_id, artist_name) 목록을 반환함 - 호출부에서 NEW_CONCERT 알림 생성 시
+# 아티스트 매칭을 다시 계산하지 않고 재사용하기 위함(신규 공연 배치 루프에서만 사용)
 async def _create_news_feeds_for_concert(
     db: AsyncSession, concert: Concert, follow_index: dict[str, list[tuple]] | None = None
-) -> None:
+) -> list[tuple]:
     if not concert.artist_name:
-        return
+        return []
 
     if follow_index is None:
         follow_index = await _build_follow_index(db)
@@ -494,7 +499,7 @@ async def _create_news_feeds_for_concert(
         matched.extend(follow_index.get(artist.lower(), []))
 
     if not matched:
-        return
+        return []
 
     # 이미 존재하는 뉴스피드 일괄 조회 (N+1 방지)
     matched_user_ids = [uid for uid, _ in matched]
@@ -509,6 +514,8 @@ async def _create_news_feeds_for_concert(
     for user_id, artist_name in matched:
         if user_id not in existing_user_ids:
             db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
+
+    return matched
 
 
 # 배치 1회당 최대 조회 페이지 수 (무한 루프 방지용 안전장치, rows=100 기준 최대 20000건)
@@ -654,7 +661,10 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
             if data is None:
                 continue
             concert = await _upsert_concert(db, data)
-            await _create_news_feeds_for_concert(db, concert, follow_index)
+            matched = await _create_news_feeds_for_concert(db, concert, follow_index)
+            # NEW_CONCERT 알림은 여기(진짜 신규 공연)에서만 생성 - 아래 기존 공연
+            # 백필 루프나 온디맨드 상세조회에서는 생성하지 않음(schedule_new_concert_notifications 문서 참고)
+            await schedule_new_concert_notifications(db, concert, matched)
             await db.commit()
 
     for kopis_id in kopis_ids:
@@ -715,6 +725,7 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
         "price": _parse_price(pcseguidance),
         "event_type": _classify_event_type(name),
         "ticketing_links": ticketing_links or None,
+        "kopis_detail_synced_at": datetime.now(timezone.utc),
     }
 
 

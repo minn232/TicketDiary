@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -377,6 +378,47 @@ async def test_get_concert_detail_db_cache():
     assert res1.status_code == 200
     assert res2.status_code == 200
     assert res1.json()["id"] == res2.json()["id"]
+
+
+# 목록 검색(/search)으로 먼저 캐시된 공연(artist_name 비어있음)을 상세 조회하면
+# KOPIS 상세 API를 다시 불러 아티스트 등 상세 정보를 채워주는지 테스트 (캐시를 그대로
+# 반환해버리면 상세보기 화면에서 아티스트가 영영 비어보이는 회귀 방지용)
+@pytest.mark.asyncio
+async def test_get_concert_detail_backfills_after_search_cache():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    # 매 실행마다 겹치지 않는 kopis_id 사용 (로컬 DB는 테스트 간 rollback되지 않고
+    # 실제로 upsert된 채 남으므로, 고정 ID를 쓰면 이전 실행의 잔여 데이터와 충돌함)
+    kopis_id = f"PF_BACKFILL_{uuid.uuid4().hex[:10]}"
+    list_xml = _make_kopis_xml(kopis_id, "백필 테스트 콘서트", "2030.11.01", "2030.11.30")
+    detail_xml = _make_kopis_xml(
+        kopis_id, "백필 테스트 콘서트", "2030.11.01", "2030.11.30", artist="백필아티스트"
+    )
+
+    # 검색으로 먼저 upsert (list API에는 출연진 정보가 없어 artist_name이 빈 배열로 저장됨)
+    with kopis_mock(list_xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            search_res = await ac.get(
+                "/api/v1/concerts/search",
+                params={"keyword": "백필"},
+                headers=headers,
+            )
+    assert search_res.json()[0]["artist_name"] == []
+
+    # 상세 조회: DB에 이미 있어도 상세 미조회 상태라 KOPIS 상세 API를 다시 불러야 함
+    with kopis_mock(detail_xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            detail_res = await ac.get(f"/api/v1/concerts/{kopis_id}", headers=headers)
+
+    assert detail_res.status_code == 200
+    assert "백필아티스트" in detail_res.json()["artist_name"]
+
+    # 이후 재조회는 캐시를 써서 KOPIS를 다시 부르지 않아야 함
+    with kopis_mock(b"", status_code=500):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            cached_res = await ac.get(f"/api/v1/concerts/{kopis_id}", headers=headers)
+    assert cached_res.status_code == 200
+    assert "백필아티스트" in cached_res.json()["artist_name"]
 
 
 # 존재하지 않는 공연 404 테스트

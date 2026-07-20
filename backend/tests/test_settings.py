@@ -21,6 +21,8 @@ async def test_get_settings_default():
     assert data["show_predicted_setlist"] is True
     assert data["notification_settings"]["delivery"] is True
     assert data["notification_settings"]["before_concert"] is True
+    assert data["notification_settings"]["ticketing"] is True
+    assert data["notification_settings"]["new_concert"] is True
 
 
 # 미인증 요청 401 테스트
@@ -68,6 +70,40 @@ async def test_update_settings_notification_settings():
     data = res.json()
     assert data["notification_settings"]["delivery"] is False
     assert data["notification_settings"]["before_concert"] is True
+
+
+# ticketing 알림 설정 수정 성공 테스트
+@pytest.mark.asyncio
+async def test_update_settings_ticketing():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"ticketing": False}},
+            headers=headers,
+        )
+
+    assert res.status_code == 200
+    assert res.json()["notification_settings"]["ticketing"] is False
+
+
+# new_concert 알림 설정 수정 성공 테스트
+@pytest.mark.asyncio
+async def test_update_settings_new_concert():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"new_concert": False}},
+            headers=headers,
+        )
+
+    assert res.status_code == 200
+    assert res.json()["notification_settings"]["new_concert"] is False
 
 
 # 부분 수정 시 나머지 설정 유지 테스트

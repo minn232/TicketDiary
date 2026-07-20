@@ -7,6 +7,8 @@ class NotificationSettings(BaseModel):
     # 알림 설정 항목
     delivery: bool = True
     before_concert: bool = True
+    ticketing: bool = True
+    new_concert: bool = True
 
 
 class UserSettingsResponse(BaseModel):
@@ -21,7 +23,7 @@ class UserSettingsResponse(BaseModel):
     @classmethod
     def _parse_notification_settings(cls, v):
         if v is None:
-            return {"delivery": True, "before_concert": True}
+            return {"delivery": True, "before_concert": True, "ticketing": True, "new_concert": True}
         if isinstance(v, str):
             return json.loads(v)
         return v

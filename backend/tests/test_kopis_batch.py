@@ -1,6 +1,6 @@
 import uuid
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -399,6 +399,111 @@ async def test_sync_no_newsfeed_for_non_followed_artist():
 
     assert res.status_code == 200
     assert res.json() == []
+
+
+# 신규 공연 + 팔로우 아티스트 일치 시 NEW_CONCERT 알림도 생성되고, 발송 예약 시각이
+# 그날 오전 9시(KST)로 잡히는지 테스트 (자정 배치 직후 바로 발송하지 않도록)
+@pytest.mark.asyncio
+async def test_sync_creates_new_concert_notification_for_followed_artist():
+    artist_name = f"배치알림아티스트_{uuid.uuid4().hex[:6]}"
+    kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    list_xml = _make_list_xml([kopis_id])
+    detail_xml = _make_detail_xml(kopis_id, artist_name)
+
+    with _batch_kopis_mock(list_xml, detail_xml), patch("asyncio.sleep"):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert res.status_code == 200
+    new_concert_notifs = [n for n in res.json() if n["type"] == "new_concert"]
+    assert len(new_concert_notifs) == 1
+    assert artist_name in new_concert_notifs[0]["body"]
+
+    kst = timezone(timedelta(hours=9))
+    scheduled_kst = datetime.fromisoformat(new_concert_notifs[0]["scheduled_at"]).astimezone(kst)
+    assert (scheduled_kst.hour, scheduled_kst.minute) == (9, 0)
+
+
+# notification_settings.new_concert를 꺼두면 팔로우 아티스트 신규 공연이어도
+# NEW_CONCERT 알림이 생성되지 않는지 테스트 (뉴스피드는 설정과 무관하게 그대로 생성됨)
+@pytest.mark.asyncio
+async def test_sync_no_new_concert_notification_when_setting_off():
+    artist_name = f"배치설정끔아티스트_{uuid.uuid4().hex[:6]}"
+    kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+        await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"new_concert": False}},
+            headers=headers,
+        )
+
+    list_xml = _make_list_xml([kopis_id])
+    detail_xml = _make_detail_xml(kopis_id, artist_name)
+
+    with _batch_kopis_mock(list_xml, detail_xml), patch("asyncio.sleep"):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        notif_res = await ac.get("/api/v1/notifications", headers=headers)
+        feed_res = await ac.get("/api/v1/social/feed", headers=headers)
+
+    assert [n for n in notif_res.json() if n["type"] == "new_concert"] == []
+    assert any(f["artist_name"] == artist_name for f in feed_res.json())
+
+
+# 기존 공연(artist_name 뒤늦게 채워짐)에 뉴스피드는 생성되지만, "진짜 신규" 발견이 아니므로
+# NEW_CONCERT 알림은 생성되지 않는지 테스트 (온디맨드 상세조회로 먼저 생긴 공연 시나리오)
+@pytest.mark.asyncio
+async def test_sync_no_new_concert_notification_for_existing_concert_backfill():
+    artist_name = f"배치백필아티스트_{uuid.uuid4().hex[:6]}"
+    kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 공연을 온디맨드 상세조회로 먼저 생성 (배치가 돌기 전에 이미 DB에 있는 상태)
+    detail_xml = _make_detail_xml(kopis_id, artist_name)
+    with kopis_mock(detail_xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.get(f"/api/v1/concerts/{kopis_id}", headers=headers)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    with _batch_kopis_mock(_make_list_xml([kopis_id]), detail_xml), patch("asyncio.sleep"):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert res.status_code == 200
+    assert [n for n in res.json() if n["type"] == "new_concert"] == []
 
 
 # 기존 공연 (artist_name 있음) -> 상세 API 재호출 없이 뉴스피드만 생성 테스트

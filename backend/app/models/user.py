@@ -27,8 +27,10 @@ class User(Base):
     notification_settings = Column(
         JSONB,
         nullable=False,
-        server_default=text('\'{"delivery": true, "before_concert": true}\'::jsonb'),
-        default=lambda: {"delivery": True, "before_concert": True},
+        server_default=text(
+            '\'{"delivery": true, "before_concert": true, "ticketing": true, "new_concert": true}\'::jsonb'
+        ),
+        default=lambda: {"delivery": True, "before_concert": True, "ticketing": True, "new_concert": True},
     )
     tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")
     artist_follow = relationship("ArtistFollow", backref="user", uselist=False, cascade="all, delete")

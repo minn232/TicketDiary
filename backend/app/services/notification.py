@@ -152,6 +152,48 @@ async def schedule_ticketing_day_notifications(db: AsyncSession, concert_id: UUI
     logger.info(f"티켓팅 알림 생성: {concert.name} ({len(rows)}명)")
 
 
+# 팔로우한 아티스트의 신규 공연에 대해 NEW_CONCERT 알림 생성
+# (KOPIS 일별 배치가 "진짜 신규" 공연을 발견했을 때만 호출 - 이미 알던 공연에 아티스트 정보가
+# 뒤늦게 채워지는 경우나 검색/상세조회 같은 온디맨드 경로에서는 호출하지 않음. 그래야 알림이
+# "오늘 새로 뜬 공연"에 대해서만 가고, 무관한 유저의 조회 행위로 뜻하지 않게 발송되지 않음)
+# matched는 kopis.py에서 이미 계산해둔 (팔로워 user_id, 매칭된 아티스트명) 목록을 그대로 받음
+# (뉴스피드용으로 이미 아티스트 매칭을 한 번 계산해뒀으므로 여기서 다시 계산하지 않음)
+async def schedule_new_concert_notifications(
+    db: AsyncSession, concert: Concert, matched: list[tuple[UUID, str]]
+) -> None:
+    if not matched:
+        return
+
+    # 팔로우 아티스트 여러 명이 같은 공연(페스티벌 등)에 겹쳐도 유저당 알림은 한 번만
+    # (먼저 매칭된 아티스트명으로 문구를 만듦)
+    artist_by_user: dict[UUID, str] = {}
+    for user_id, artist_name in matched:
+        artist_by_user.setdefault(user_id, artist_name)
+
+    result = await db.execute(select(User).where(User.id.in_(artist_by_user.keys())))
+    users = result.scalars().all()
+    if not users:
+        return
+
+    # 자정 배치 직후 바로 보내면 새벽에 푸시가 뜨므로 그날 오전 9시로 예약
+    scheduled = _at_9am_kst(datetime.now(timezone.utc))
+
+    for user in users:
+        notif_settings = user.notification_settings or {}
+        if not notif_settings.get("new_concert", True):
+            continue
+        db.add(Notification(
+            user_id=user.id,
+            concert_id=concert.id,
+            type=NotificationType.NEW_CONCERT,
+            title=concert.name,
+            body=f"{artist_by_user[user.id]}의 새 공연이 등록됐어요!",
+            scheduled_at=scheduled,
+        ))
+
+    logger.info(f"신규 공연 알림 생성: {concert.name} ({len(users)}명)")
+
+
 # 동시에 발송할 FCM 요청 수 상한 (스레드풀 기본 워커 수를 넘지 않도록 제한)
 _FCM_SEND_CONCURRENCY = 10
 

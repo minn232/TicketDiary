@@ -117,7 +117,9 @@ async def get_concert(
     result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
     concert = result.scalar_one_or_none()
 
-    if concert is not None:
+    # 목록 검색(/search)으로만 upsert된 공연은 KOPIS 상세 API를 아직 한 번도 안 불러서
+    # artist_name/price/description 등이 비어있으므로, 이 경우엔 캐시를 쓰지 않고 상세 조회함
+    if concert is not None and concert.kopis_detail_synced_at is not None:
         return concert
 
     # KOPIS API

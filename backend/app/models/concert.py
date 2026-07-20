@@ -36,6 +36,10 @@ class Concert(Base):
     crawl_screenshot_url = Column(String, nullable=True)
     ticketing_date = Column(DateTime(timezone=True), nullable=True)
     ticketing_links = Column(JSONB, nullable=True)
+    # KOPIS 상세 API(/pblprfr/{id})로 아티스트/가격 등을 채운 시점. 검색(목록 API) 경유로만
+    # 생성된 공연은 이 값이 None이라 artist_name이 비어 있어도 "진짜 출연진 없음"과 구분 못하므로,
+    # 상세 조회 시 이 값 유무로 재조회 필요 여부를 판단함 (None이면 아직 상세 미조회)
+    kopis_detail_synced_at = Column(DateTime(timezone=True), nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)
