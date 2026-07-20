@@ -167,7 +167,9 @@ class AuthService extends ChangeNotifier {
   /// [migrateFromGuest]가 true면 "현재 게스트 세션을 이 카카오 계정으로
   /// 승격"([/auth/migrate])하고, false면 완전히 새로운 카카오 로그인
   /// ([/auth/kakao])으로 취급합니다. 이미 다른 사용자로 가입된 카카오
-  /// 계정을 마이그레이션하려 하면 [AlreadyKakaoUserException]을 던집니다.
+  /// 계정을 마이그레이션하려 하면(백엔드가 409로 응답) [AlreadyKakaoUserException]을
+  /// 던집니다. (403은 "게스트가 아닌 유저가 마이그레이션을 시도"하는 별개의
+  /// 케이스라, UI에서 마이그레이션 버튼을 게스트에게만 노출하는 한 발생하지 않습니다.)
   Future<void> completeKakaoLogin(String code, {required bool migrateFromGuest}) async {
     final path = migrateFromGuest ? '/auth/migrate' : '/auth/kakao';
     try {
@@ -175,7 +177,7 @@ class AuthService extends ChangeNotifier {
       await _saveTokens(AuthTokens.fromJson(json));
       await refreshCurrentUser();
     } on ApiException catch (e) {
-      if (migrateFromGuest && e.statusCode == 403) {
+      if (migrateFromGuest && e.statusCode == 409) {
         throw const AlreadyKakaoUserException();
       }
       rethrow;

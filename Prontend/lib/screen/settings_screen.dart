@@ -461,11 +461,10 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     } on AlreadyKakaoUserException {
       await _showAlertDialog('로그인 실패', '이미 다른 계정으로 가입된 카카오 계정이에요.');
     } on KakaoLoginCancelledException {
-      // 카카오 계정 연결 중 비정상적으로 종료된 경우(브라우저를 그냥 닫는 등):
-      // 알림창으로 알리고, 상태 변화가 없으므로(토큰 미저장) 자동으로 원상복귀됩니다.
-      await _showAlertDialog('로그인이 완료되지 않았어요', '카카오 로그인이 중간에 중단됐어요. 다시 시도해주세요.');
-    } on KakaoLoginTimeoutException {
-      await _showAlertDialog('로그인 시간 초과', '로그인 시간이 초과됐어요. 다시 시도해주세요.');
+      // 사용자가 웹뷰를 닫거나 카카오 로그인 자체를 취소한 경우: 상태
+      // 변화가 없으므로(토큰 미저장) 별도 알림 없이 조용히 원래 화면으로 복귀합니다.
+    } on KakaoLoginUnsupportedOnWebException {
+      await _showAlertDialog('아직 지원하지 않아요', '카카오 로그인은 현재 모바일 앱에서만 이용할 수 있어요.');
     } on ApiException catch (e) {
       await _showAlertDialog('요청에 실패했어요', e.message);
     } catch (_) {
@@ -505,6 +504,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   void _loginWithKakao() {
     _runGuarded(
       () => KakaoLoginController.instance.login(
+        context: context,
         migrateFromGuest: _auth.isGuest,
       ),
       successMessage: '로그인됐어요.',

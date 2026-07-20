@@ -30,19 +30,6 @@
 	<string>티켓을 스캔하려면 카메라 접근 권한이 필요합니다.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>티켓 사진을 불러오려면 사진 라이브러리 접근 권한이 필요합니다.</string>
-	<!-- 카카오 로그인 콜백 딥링크(ticketdiary://auth/kakao/callback).
-	     카카오 개발자 콘솔의 Redirect URI에도 이 값을 그대로 등록해야 합니다. -->
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>com.ticketdiary.auth</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>ticketdiary</string>
-			</array>
-		</dict>
-	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

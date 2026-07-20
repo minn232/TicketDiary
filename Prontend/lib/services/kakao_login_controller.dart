@@ -1,94 +1,71 @@
-import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 
-import 'package:app_links/app_links.dart';
-import 'package:url_launcher/url_launcher.dart';
-
+import '../screen/kakao_login_webview_screen.dart';
 import 'auth_service.dart';
 
-/// 카카오 로그인 콜백을 받는 커스텀 스킴 딥링크.
-///
-/// 카카오 개발자 콘솔의 "Redirect URI"에 아래와 정확히 같은 값을 등록해야
-/// 합니다: `ticketdiary://auth/kakao/callback`
-/// (Android/iOS 쪽 스킴 등록은 AndroidManifest.xml / Info.plist에 이미 해둔
-/// 상태이고, 서버의 `/auth/kakao/url` 응답도 이 redirect_uri로 카카오에
-/// 요청되도록 백엔드에 맞춰져 있어야 합니다.)
-const String kakaoRedirectUri = 'ticketdiary://auth/kakao/callback';
-
-/// 딥링크 콜백이 제한 시간 안에 오지 않았을 때(사용자가 브라우저만 닫고
-/// 돌아오지 않은 경우 등).
-class KakaoLoginTimeoutException implements Exception {
-  const KakaoLoginTimeoutException();
-}
-
-/// 사용자가 카카오 로그인 자체를 취소/실패한 경우.
+/// 사용자가 카카오 로그인 웹뷰를 닫거나(뒤로가기), 콜백에 code 없이
+/// error 파라미터만 온 경우(카카오 쪽 로그인 취소).
 class KakaoLoginCancelledException implements Exception {
   const KakaoLoginCancelledException();
 }
 
-/// "외부 브라우저에서 카카오 로그인 → 딥링크로 앱에 복귀" 흐름을 담당합니다.
+/// `webview_flutter`가 Flutter Web을 지원하지 않아, 웹에서는 이 로그인
+/// 흐름을 아예 시작할 수 없을 때 던집니다. 웹은 별도의(팝업+콜백 중계)
+/// 방식이 필요합니다.
+class KakaoLoginUnsupportedOnWebException implements Exception {
+  const KakaoLoginUnsupportedOnWebException();
+}
+
+/// "인앱 웹뷰로 카카오 로그인 화면을 띄우고, 콜백 URL로 이동을 시도하는
+/// 순간을 가로채 인가 코드를 뽑아 로그인을 완료" 하는 흐름을 담당합니다.
 ///
-/// 웹(Flutter Web)에서는 커스텀 스킴 딥링크가 동작하지 않으므로, 카카오
-/// 콘솔에 배포 도메인의 실제 콜백 URL(예: `https://<도메인>/auth/kakao/callback`)을
-/// 별도로 등록하고 그 경로를 앱에서 라우팅해 처리해야 합니다. 이 클래스는
-/// 지금은 모바일(딥링크) 경로만 구현되어 있습니다.
+/// 카카오 개발자 콘솔에 등록된 리다이렉트 URI(`.../auth/kakao/callback`)는
+/// 실제로 응답하는 백엔드 API가 아닙니다 — [KakaoLoginWebViewScreen]이
+/// 그 URL로의 이동 시도 자체를 웹뷰 레벨에서 막아서 실제 요청이 나가지
+/// 않게 하고, 그 자리에서 code만 꺼내 씁니다.
+///
+/// 이 방식은 네이티브 웹뷰(Android/iOS)가 제공하는 "이동 시도 가로채기"
+/// 기능에 의존하므로, `webview_flutter`가 지원하지 않는 Flutter Web에서는
+/// 동작하지 않습니다(웹은 별도 설계가 필요).
 class KakaoLoginController {
   KakaoLoginController._();
 
   static final KakaoLoginController instance = KakaoLoginController._();
 
-  final AppLinks _appLinks = AppLinks();
-
-  /// 카카오 로그인 URL을 외부 브라우저로 열고, 딥링크로 돌아오는 인가코드를
-  /// 받아 로그인/마이그레이션까지 완료합니다.
+  /// 카카오 로그인 웹뷰를 열고, 인가코드를 받아 로그인/마이그레이션까지 완료합니다.
   ///
   /// [migrateFromGuest]가 true면 현재 게스트 세션을 카카오 계정으로 승격
   /// (`/auth/migrate`)하고, false면 새 카카오 로그인(`/auth/kakao`)으로
   /// 처리합니다.
   Future<void> login({
+    required BuildContext context,
     required bool migrateFromGuest,
-    Duration timeout = const Duration(minutes: 3),
   }) async {
+    // 인앱 웹뷰 가로채기 방식은 네이티브(Android/iOS) 전용입니다. 웹에서
+    // 그대로 진행하면 WebViewController가 플랫폼 구현체를 못 찾아 화면이
+    // 먹통이 되므로, 시작 전에 명확히 막습니다.
+    if (kIsWeb) {
+      throw const KakaoLoginUnsupportedOnWebException();
+    }
+
     final loginUrl = await AuthService.instance.fetchKakaoLoginUrl();
+    if (!context.mounted) return;
 
-    final launched = await launchUrl(
-      Uri.parse(loginUrl),
-      mode: LaunchMode.externalApplication,
+    final code = await Navigator.of(context).push<String?>(
+      MaterialPageRoute(
+        builder: (_) => KakaoLoginWebViewScreen(loginUrl: loginUrl),
+        fullscreenDialog: true,
+      ),
     );
-    if (!launched) throw const KakaoLoginCancelledException();
 
-    final code = await _waitForCode(timeout);
+    if (code == null || code.isEmpty) {
+      throw const KakaoLoginCancelledException();
+    }
+
     await AuthService.instance.completeKakaoLogin(
       code,
       migrateFromGuest: migrateFromGuest,
     );
-  }
-
-  Future<String> _waitForCode(Duration timeout) async {
-    final completer = Completer<String>();
-    late final StreamSubscription<Uri> sub;
-
-    sub = _appLinks.uriLinkStream.listen((uri) {
-      final code = _extractCode(uri);
-      if (code == null) return;
-      if (!completer.isCompleted) completer.complete(code);
-      sub.cancel();
-    });
-
-    try {
-      return await completer.future.timeout(
-        timeout,
-        onTimeout: () => throw const KakaoLoginTimeoutException(),
-      );
-    } finally {
-      await sub.cancel();
-    }
-  }
-
-  String? _extractCode(Uri uri) {
-    final matchesRedirect =
-        uri.scheme == 'ticketdiary' &&
-        '${uri.host}${uri.path}' == 'auth/kakao/callback';
-    if (!matchesRedirect) return null;
-    return uri.queryParameters['code'];
   }
 }
