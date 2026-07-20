@@ -152,6 +152,18 @@ async def schedule_ticketing_day_notifications(db: AsyncSession, concert_id: UUI
     logger.info(f"티켓팅 알림 생성: {concert.name} ({len(rows)}명)")
 
 
+# 동시에 발송할 FCM 요청 수 상한 (스레드풀 기본 워커 수를 넘지 않도록 제한)
+_FCM_SEND_CONCURRENCY = 10
+
+
+# 세마포어로 동시성 제한하며 FCM 발송
+async def _send_fcm_limited(
+    loop: asyncio.AbstractEventLoop, semaphore: asyncio.Semaphore, token: str, title: str, body: str
+) -> bool:
+    async with semaphore:
+        return await loop.run_in_executor(None, _send_fcm, token, title, body)
+
+
 # 미발송 알림 처리 및 FCM 발송 (스케줄러 호출용)
 async def process_pending_notifications(db: AsyncSession) -> None:
     # 현재 시각 기준으로 발송되지 않은 알림 조회
@@ -167,13 +179,17 @@ async def process_pending_notifications(db: AsyncSession) -> None:
         )
     )
     rows = result.all()
+    if not rows:
+        return
 
-    # 각 알림에 대해 FCM 발송 시도 -> 성공 시 is_sent=True
+    # 알림 발송이 특정 시각(예: 매일 09시)에 몰리므로 순차 발송 대신 동시성 제한을 두고 병렬 발송
     loop = asyncio.get_running_loop()
-    for notif, fcm_token in rows:
-        success = await loop.run_in_executor(None, _send_fcm, fcm_token, notif.title, notif.body)
+    semaphore = asyncio.Semaphore(_FCM_SEND_CONCURRENCY)
+    results = await asyncio.gather(
+        *(_send_fcm_limited(loop, semaphore, fcm_token, notif.title, notif.body) for notif, fcm_token in rows)
+    )
+    for (notif, _), success in zip(rows, results):
         if success:
             notif.is_sent = True
 
-    if rows:
-        await db.commit()
+    await db.commit()

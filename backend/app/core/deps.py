@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,5 +66,5 @@ async def verify_llm_api_key(
 ) -> None:
     if not settings.LLM_EXTRACT_API_KEY:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM API 키가 설정되지 않았습니다.")
-    if credentials is None or credentials.credentials != settings.LLM_EXTRACT_API_KEY:
+    if credentials is None or not secrets.compare_digest(credentials.credentials, settings.LLM_EXTRACT_API_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 API 키입니다.")

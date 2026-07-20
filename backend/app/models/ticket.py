@@ -26,6 +26,8 @@ class Ticket(Base):
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id"), nullable=True, index=True)
     status = Column(SAEnum(TicketStatus, values_callable=lambda x: [e.value for e in x]), default=TicketStatus.BEFORE_DELIVERY)
     delivery_date = Column(DateTime(timezone=True), nullable=True)
+    # 티켓 등록 시 OCR로 추출한 실제 회차 시작시간 ("HH:MM"), 없으면 concert.start_time으로 폴백
+    start_time = Column(String, nullable=True)
     ticketing_site = Column(String, nullable=True)
     price = Column(Integer, nullable=True)
     seat_type = Column(String, nullable=True)

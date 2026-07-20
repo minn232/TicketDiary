@@ -11,6 +11,7 @@ from app.services.ocr import (
     _extract_raw_text,
     _parse_ticket_fields,
     _extract_title,
+    _extract_title_candidates,
     _extract_concert_date,
     _extract_shipping_date,
     _extract_time,
@@ -322,6 +323,64 @@ def test_extract_title_skips_booking_labels():
     assert _extract_title(text) == "BTS 콘서트"
 
 
+# 인터파크/NOL 로고 텍스트만 있는 줄은 공연명이 아니므로 제외
+def test_extract_title_skips_platform_brand_line():
+    assert _extract_title("INTERPARK\nBTS 콘서트\n2030.06.01") == "BTS 콘서트"
+    assert _extract_title("NOL Ticket\nBTS 콘서트") == "BTS 콘서트"
+
+
+# 전화번호 라벨 줄은 공연명이 아니므로 제외
+def test_extract_title_skips_phone_number_line():
+    text = "전화번호 : 010-1234-5678\nBTS 콘서트"
+    assert _extract_title(text) == "BTS 콘서트"
+
+
+# 금액/결제/수량 라벨 줄은 공연명이 아니므로 제외
+def test_extract_title_skips_amount_line():
+    text = "금액: 110,000원 (일반)\nBTS 콘서트"
+    assert _extract_title(text) == "BTS 콘서트"
+
+
+# 판매일자/구매일자/발권일자 라벨 줄은 공연명이 아니므로 제외
+def test_extract_title_skips_sale_date_line():
+    text = "판매일자: 2025-08-07\nBTS 콘서트"
+    assert _extract_title(text) == "BTS 콘서트"
+
+
+# "2024 HA HYUN SANG CONCERT"처럼 연도로 시작하는 줄은 숫자-스킵 규칙에 걸리지 않고 제목으로 채택
+def test_extract_title_allows_year_prefixed_line():
+    assert _extract_title("2025 렛츠락 페스티벌\n일시: 2025년 09월 06일") == "2025 렛츠락 페스티벌"
+    assert _extract_title("2024 HA HYUN SANG CONCERT\n일시: 2024년 12월 01일") == "2024 HA HYUN SANG CONCERT"
+
+
+# 연도로 시작하지 않는 숫자 줄(예매번호/좌석코드 등)은 계속 제외되는지 확인 (회귀 방지)
+def test_extract_title_still_skips_non_year_digit_lines():
+    text = "20241201(2)\n2층 41구역 54번\nBTS 콘서트"
+    assert _extract_title(text) == "BTS 콘서트"
+
+
+# 제목 후보 목록은 첫 줄이 실제로는 부제였을 때를 대비해 뒤쪽의 다른 유효 줄도 순서대로 포함해야 함
+def test_extract_title_candidates_includes_later_lines():
+    text = "빨래는 오늘을 살아가는\n우리들의 이야기다\nR석\nMUSICAL\n빨래"
+    candidates = _extract_title_candidates(text)
+    assert candidates[0] == "빨래는 오늘을 살아가는"
+    assert "빨래" in candidates
+    assert "우리들의 이야기다" in candidates
+
+
+# 라벨(공연명:)이 있으면 그 값이 맨 앞 후보로 오고, 이어서 본문의 다른 후보 줄도 포함
+def test_extract_title_candidates_label_first():
+    text = "공연명 : BTS WORLD TOUR\n부제: Encore\nR석"
+    candidates = _extract_title_candidates(text)
+    assert candidates[0] == "BTS WORLD TOUR"
+
+
+# 라벨 없이 좌석 등급만 단독으로 적힌 줄(비지정석 등)은 공연명이 아니므로 제외
+def test_extract_title_skips_bare_seat_grade_line():
+    assert _extract_title("비지정석\nBTS 콘서트") == "BTS 콘서트"
+    assert _extract_title("VIP석\nBTS 콘서트") == "BTS 콘서트"
+
+
 # /scan 엔드포인트 통합 테스트
 
 @pytest.mark.asyncio
@@ -342,6 +401,173 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
     assert data["extracted"]["seat"] == "R석 A구역 12열 15번"
     assert len(data["candidates"]) == 1
     assert data["candidates"][0]["kopis_id"] == "PF_OCR_001"
+
+
+# title 후보 중 앞쪽이 날짜가 안 맞는 흔한 구절로 결과를 내면 건너뛰고,
+# 날짜가 실제로 겹치는 뒤쪽 후보(title_candidates)를 채택하는지 테스트
+# (예: "우리들의 이야기다"는 무관한 공연을 걸지만 날짜가 안 맞음 -> "빨래"로 재시도해 정확한 결과를 얻음)
+@pytest.mark.asyncio
+async def test_scan_uses_confident_later_candidate(get_auth_token):
+    extracted = {
+        **_SAMPLE_EXTRACTED,
+        "title": "우리들의 이야기다",
+        "title_candidates": ["우리들의 이야기다", "빨래"],
+        "date": "2024-07-17",
+        "location": None,  # 이 테스트는 날짜 확신 로직만 검증 (장소 교차검증과 무관하게)
+    }
+
+    def _xml(kopis_id, name, start, end):
+        return (
+            f'<?xml version="1.0" encoding="UTF-8"?><dbs><db>'
+            f"<mt20id>{kopis_id}</mt20id><prfnm>{name}</prfnm>"
+            f"<prfpdfrom>{start}</prfpdfrom><prfpdto>{end}</prfpdto>"
+            f"<fcltynm>테스트공연장</fcltynm><genrenm>대중음악</genrenm>"
+            f"</db></dbs>"
+        ).encode("utf-8")
+
+    unconfident_xml = _xml("PF_WRONG_001", "우리들의 학창시절", "2024.09.14", "2024.09.14")
+    confident_xml = _xml("PF_RIGHT_001", "빨래 [대학로]", "2024.06.07", "2025.03.02")
+
+    async def _mock_get(url, params=None, **kwargs):
+        keyword = (params or {}).get("shprfnm", "")
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = confident_xml if keyword.strip() == "빨래" else unconfident_xml
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = _mock_get
+
+    with (
+        _ocr_mock(extracted),
+        patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers={"Authorization": f"Bearer {get_auth_token}"},
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["candidates"]) == 1
+    assert data["candidates"][0]["kopis_id"] == "PF_RIGHT_001"
+
+
+# title 후보를 전부 시도해도 확신 가능한 결과가 없으면 공연장+날짜 검색으로 대체하는지 테스트
+# (제목이 KOPIS 등록명과 완전히 어긋나는 케이스의 최후 수단)
+@pytest.mark.asyncio
+async def test_scan_falls_back_to_venue_search(get_auth_token):
+    extracted = {
+        **_SAMPLE_EXTRACTED,
+        "title": "전혀 다른 제목",
+        "title_candidates": ["전혀 다른 제목"],
+        "date": "2024-07-17",
+        "location": "인터파크 유니플렉스 2관",
+    }
+
+    facility_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?><dbs>'
+        '<db><fcltynm>유니플렉스</fcltynm><mt10id>FC001233</mt10id></db>'
+        '</dbs>'
+    ).encode("utf-8")
+    venue_performance_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?><dbs><db>'
+        "<mt20id>PF_BYVENUE_001</mt20id><prfnm>빨래 [대학로]</prfnm>"
+        "<prfpdfrom>2024.06.07</prfpdfrom><prfpdto>2025.03.02</prfpdto>"
+        "<fcltynm>유니플렉스</fcltynm><genrenm>대중음악</genrenm>"
+        "</db></dbs>"
+    ).encode("utf-8")
+
+    async def _mock_get(url, params=None, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        if url.endswith("/prfplc"):
+            mock_response.content = facility_xml
+        elif (params or {}).get("prfplccd"):
+            mock_response.content = venue_performance_xml
+        else:
+            mock_response.content = b'<?xml version="1.0" encoding="UTF-8"?><dbs/>'
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = _mock_get
+
+    with (
+        _ocr_mock(extracted),
+        patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers={"Authorization": f"Bearer {get_auth_token}"},
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["candidates"]) == 1
+    assert data["candidates"][0]["kopis_id"] == "PF_BYVENUE_001"
+
+
+# 제목 후보와 장소 검색 모두 확신 가능한(날짜 일치) 결과를 못 찾으면, 날짜가 안 맞는 무관한 결과를
+# 성공으로 오인해 반환하지 않고 빈 후보 목록을 반환하는지 테스트
+# (예: "스탠딩"이 "스탠딩에그"에 우연히 부분일치해도 날짜가 다르면 그 결과를 쓰지 않아야 함)
+@pytest.mark.asyncio
+async def test_scan_returns_empty_when_no_confident_match(get_auth_token):
+    extracted = {
+        **_SAMPLE_EXTRACTED,
+        "title": "REJOICE ASIA TOUR 2024",
+        "title_candidates": ["REJOICE ASIA TOUR 2024", "스탠딩"],
+        "date": "2024-11-30",
+        "location": "일산 킨텍스 제1전시장 5홀",
+    }
+
+    # "스탠딩"만 날짜가 전혀 다른 무관한 공연을 반환, 나머지(및 장소 검색)는 전부 빈 결과
+    unrelated_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?><dbs><db>'
+        "<mt20id>PF_UNRELATED_001</mt20id><prfnm>스탠딩에그 콘서트</prfnm>"
+        "<prfpdfrom>2024.12.14</prfpdfrom><prfpdto>2024.12.14</prfpdto>"
+        "<fcltynm>테스트공연장</fcltynm><genrenm>대중음악</genrenm>"
+        "</db></dbs>"
+    ).encode("utf-8")
+    empty_xml = b'<?xml version="1.0" encoding="UTF-8"?><dbs/>'
+    empty_facility_xml = b'<?xml version="1.0" encoding="UTF-8"?><dbs/>'
+
+    async def _mock_get(url, params=None, **kwargs):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        if url.endswith("/prfplc"):
+            mock_response.content = empty_facility_xml
+        elif (params or {}).get("shprfnm", "").strip() == "스탠딩":
+            mock_response.content = unrelated_xml
+        else:
+            mock_response.content = empty_xml
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = _mock_get
+
+    with (
+        _ocr_mock(extracted),
+        patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers={"Authorization": f"Bearer {get_auth_token}"},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["candidates"] == []
 
 
 @pytest.mark.asyncio

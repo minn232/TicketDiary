@@ -26,6 +26,8 @@ class Concert(Base):
     venue = Column(String, nullable=True)
     start_date = Column(DateTime(timezone=True), nullable=False)
     end_date = Column(DateTime(timezone=True), nullable=False)
+    # KOPIS dtguidance 파싱 결과 ("HH:MM"). 요일/회차별로 시간이 여러 개면 대표값을 정할 수 없으므로 None
+    start_time = Column(String, nullable=True)
     genre = Column(ARRAY(String), nullable=True)
     poster_url = Column(String, nullable=True)
     description = Column(Text, nullable=True)

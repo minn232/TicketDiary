@@ -47,10 +47,11 @@ async def _run_ticket_status_sync() -> None:
 
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
-    scheduler.add_job(_run_daily_kopis_sync, "cron", hour=4, minute=0, id="daily_kopis_sync", max_instances=1)
     # KST 자정(00:00) = UTC 15:00
-    scheduler.add_job(_run_crawl_send, "cron", hour=15, minute=0, id="midnight_crawl_send", max_instances=1)
-    scheduler.add_job(_run_ticket_status_sync, "cron", hour=15, minute=5, id="ticket_status_sync", max_instances=1)
+    scheduler.add_job(_run_daily_kopis_sync, "cron", hour=15, minute=0, id="daily_kopis_sync", max_instances=1)
+    # KOPIS 동기화와 부하가 겹치지 않도록 5분 뒤로 미룸 (KST 00:05)
+    scheduler.add_job(_run_crawl_send, "cron", hour=15, minute=5, id="midnight_crawl_send", max_instances=1)
+    scheduler.add_job(_run_ticket_status_sync, "cron", hour=15, minute=10, id="ticket_status_sync", max_instances=1)
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

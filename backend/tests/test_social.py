@@ -21,7 +21,7 @@ def _make_detail_xml(kopis_id: str, artist: str) -> bytes:
         f"<fcltynm>테스트공연장</fcltynm>"
         f'<poster>https://example.com/poster.jpg</poster>'
         f"<genrenm>팝</genrenm>"
-        f"<prfcrew>출연: {artist}</prfcrew>"
+        f"<prfcast>{artist}</prfcast>"
         f"<pcseguidance>R석 110,000원</pcseguidance>"
         f"<sty>공연 소개</sty>"
         f"</db></dbs>"
@@ -323,6 +323,68 @@ async def test_news_feed_no_duplicate():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             await ac.get(f"/api/v1/concerts/{kopis_id}", headers=headers)
             await ac.get(f"/api/v1/concerts/{kopis_id}", headers=headers)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+
+    assert res.status_code == 200
+    assert len(res.json()) == 1
+
+
+# 이미 존재하는 공연의 아티스트를 나중에 팔로우하면 즉시 뉴스피드 생성 테스트
+@pytest.mark.asyncio
+async def test_news_feed_created_immediately_on_follow_for_existing_concert():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    artist_name = f"뒤늦은팔로우아티스트_{uuid.uuid4().hex[:6]}"
+    kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
+
+    # 공연을 먼저 생성 (아직 팔로우 안 한 상태)
+    await _fetch_concert(kopis_id, artist_name, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+    assert res.json() == []
+
+    # 이후에 해당 아티스트를 팔로우 -> 배치를 기다리지 않고 바로 반영돼야 함
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+
+    assert res.status_code == 200
+    feed = res.json()
+    assert len(feed) == 1
+    assert feed[0]["artist_name"] == artist_name
+
+
+# 이미 팔로우 중인 아티스트를 재저장(중복 포함)해도 뉴스피드 중복 생성 안 됨 테스트
+@pytest.mark.asyncio
+async def test_news_feed_no_duplicate_on_refollow_same_artist():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    artist_name = f"재팔로우아티스트_{uuid.uuid4().hex[:6]}"
+    kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
+
+    await _fetch_concert(kopis_id, artist_name, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+        # 동일 아티스트로 다시 PATCH (전체 교체지만 내용은 그대로)
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/v1/social/feed", headers=headers)

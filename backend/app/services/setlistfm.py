@@ -67,33 +67,34 @@ async def search_setlists(artist_name: str, event_date: date) -> list[dict]:
 
 
 # 아티스트의 과거 공연 셋리스트를 여러 페이지에 걸쳐 가져옴
+# (클라이언트를 루프 밖에서 하나만 만들어 페이지마다 재사용, 매번 새 TCP/TLS 핸드셰이크 방지)
 async def search_setlists_by_artist(artist_name: str, pages: int = 3) -> list[dict]:
     all_setlists = []
-    for page in range(1, pages + 1):
-        if page > 1:
-            await asyncio.sleep(0.5)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for page in range(1, pages + 1):
+            if page > 1:
+                await asyncio.sleep(0.5)
 
-        params = {"artistName": artist_name, "p": page}
-        async with httpx.AsyncClient(timeout=10.0) as client:
+            params = {"artistName": artist_name, "p": page}
             response = await client.get(
                 f"{settings.SETLISTFM_BASE_URL}/search/setlists",
                 headers=_HEADERS,
                 params=params,
             )
 
-        if response.status_code == 404:
-            break
-        if response.status_code != 200:
-            raise HTTPException(status_code=502, detail="Setlist.fm API 호출에 실패했습니다.")
+            if response.status_code == 404:
+                break
+            if response.status_code != 200:
+                raise HTTPException(status_code=502, detail="Setlist.fm API 호출에 실패했습니다.")
 
-        data = response.json()
-        setlists = data.get("setlist", [])
-        all_setlists.extend(setlists)
+            data = response.json()
+            setlists = data.get("setlist", [])
+            all_setlists.extend(setlists)
 
-        total = data.get("total", 0)
-        items_per_page = data.get("itemsPerPage", 20)
-        if page * items_per_page >= total:
-            break
+            total = data.get("total", 0)
+            items_per_page = data.get("itemsPerPage", 20)
+            if page * items_per_page >= total:
+                break
 
     return all_setlists
 
