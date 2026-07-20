@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     KAKAO_REST_API_KEY: str = ""
     KAKAO_REDIRECT_URI: str = ""
+    KAKAO_CLIENT_SECRET: str = ""
     KOPIS_API_KEY: str = ""
     KOPIS_BASE_URL: str = "http://www.kopis.or.kr/openApi/restful"
     SETLISTFM_API_KEY: str = ""

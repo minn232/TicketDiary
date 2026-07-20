@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from uuid import UUID
 
 import httpx
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.user import User, UserRole
+
+logger = logging.getLogger(__name__)
 
 _KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 _KAKAO_USER_INFO_URL = "https://kapi.kakao.com/v2/user/me"
@@ -40,18 +43,25 @@ async def guest_login(db: AsyncSession, device_id: str) -> User:
 
 # 카카오 인증 코드로 액세스 토큰 교환
 async def _exchange_kakao_code(code: str) -> str:
+    data = {
+        "grant_type": "authorization_code",
+        "client_id": settings.KAKAO_REST_API_KEY,
+        "redirect_uri": settings.KAKAO_REDIRECT_URI,
+        "code": code,
+    }
+    # 카카오 콘솔에서 Client Secret을 활성화한 경우 필수 (안 보내면 코드와 무관하게
+    # invalid_client(KOE010)로 거부됨) - 비활성화 상태면 KAKAO_CLIENT_SECRET이 비어있어 생략됨
+    if settings.KAKAO_CLIENT_SECRET:
+        data["client_secret"] = settings.KAKAO_CLIENT_SECRET
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             _KAKAO_TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "client_id": settings.KAKAO_REST_API_KEY,
-                "redirect_uri": settings.KAKAO_REDIRECT_URI,
-                "code": code,
-            },
+            data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if response.status_code != 200:
+        logger.warning(f"카카오 토큰 교환 실패: {response.status_code} {response.text}")
         raise HTTPException(status_code=400, detail="유효하지 않은 카카오 인증 코드입니다.")
     return response.json()["access_token"]
 
