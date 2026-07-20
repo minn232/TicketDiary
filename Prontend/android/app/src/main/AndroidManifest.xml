@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- debug/profile 매니페스트에는 자동으로 있지만 release엔 없어서,
+         API 통신(dio)이 release 빌드에서만 전부 실패하지 않도록 명시합니다. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="ticketdiary"
         android:name="${applicationName}"

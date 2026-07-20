@@ -24,6 +24,9 @@ class PosterBackground extends StatelessWidget {
       child: Image.network(
         url,
         fit: BoxFit.cover,
+        // KOPIS 등 CORS 헤더가 없는 이미지 서버는 웹에서 일반 로드가
+        // 실패하므로, 실패 시 <img> 태그로 대신 렌더링합니다(웹 전용).
+        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
         loadingBuilder: (context, child, progress) {
           if (progress == null) return child;
           return const PosterGradientPlaceholder();

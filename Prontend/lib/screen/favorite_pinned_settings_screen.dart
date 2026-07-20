@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:ticketdiary/models/artist_model.dart';
@@ -10,10 +12,11 @@ import 'package:ticketdiary/widgets/diary_tabs.dart';
 
 /// 설정 > 선호 아티스트 / 찜 공연 설정 화면
 ///
-/// - 검색창에 타이핑하면(별도 검색 버튼 없이) 매 입력마다 자동으로 아티스트/공연을
-///   검색해서 아래에 연관성 높은 순으로 보여줍니다.
-/// - 결과 카드를 누르면 찜 토글되며, 이 찜 목록은 [FavoritesStore]에 저장되어
-///   소식 탭에서 "찜한 아티스트/공연 소식만" 불러오는 데 사용됩니다.
+/// - 검색창에 타이핑하면(별도 검색 버튼 없이) 잠깐 멈출 때마다 자동으로
+///   백엔드(KOPIS 실시간 검색)에서 아티스트/공연을 찾아 아래에 보여줍니다.
+/// - 결과 카드를 누르면 찜 토글되며, 이 찜 목록은 [FavoritesStore]를 통해
+///   기기 로컬과 서버(`/social/artists`, `/social/concerts`) 양쪽에 저장되어
+///   소식 탭 피드 생성에 사용됩니다.
 /// - 상단 "관리" 버튼으로 현재 찜한 아티스트/공연을 한눈에 보고 해제할 수 있습니다.
 class FavoritePinnedSettingsScreen extends StatefulWidget {
   const FavoritePinnedSettingsScreen({super.key});
@@ -25,22 +28,33 @@ class FavoritePinnedSettingsScreen extends StatefulWidget {
 
 class _FavoritePinnedSettingsScreenState
     extends State<FavoritePinnedSettingsScreen> {
-  final ArtistSearchService _artistSearchService =
-      const MockArtistSearchService();
+  final ArtistSearchService _artistSearchService = BackendArtistSearchService();
   final ConcertSearchService _concertSearchService =
-      const MockConcertSearchService();
+      BackendConcertSearchService();
   final FavoritesStore _favorites = FavoritesStore.instance;
 
   final TextEditingController _artistQueryController = TextEditingController();
   final TextEditingController _concertQueryController = TextEditingController();
 
+  /// 매 키 입력마다 KOPIS 실시간 검색을 부르지 않도록, 타이핑이 잠깐
+  /// 멈춘 뒤에 검색을 실행합니다.
+  static const _debounce = Duration(milliseconds: 450);
+  Timer? _artistDebounce;
+  Timer? _concertDebounce;
+
   List<ArtistModel> _artistResults = const [];
   List<ConcertModel> _concertResults = const [];
+  bool _artistSearching = false;
+  bool _concertSearching = false;
+  bool _artistSearchFailed = false;
+  bool _concertSearchFailed = false;
 
   @override
   void initState() {
     super.initState();
     _favorites.load();
+    // 다른 기기/이전 세션에서 서버에 저장해둔 찜도 불러와 합칩니다.
+    unawaited(_favorites.syncFromServer());
     _favorites.addListener(_onFavoritesChanged);
     _artistQueryController.addListener(_onArtistQueryChanged);
     _concertQueryController.addListener(_onConcertQueryChanged);
@@ -48,6 +62,8 @@ class _FavoritePinnedSettingsScreenState
 
   @override
   void dispose() {
+    _artistDebounce?.cancel();
+    _concertDebounce?.cancel();
     _favorites.removeListener(_onFavoritesChanged);
     _artistQueryController.dispose();
     _concertQueryController.dispose();
@@ -59,18 +75,85 @@ class _FavoritePinnedSettingsScreenState
     setState(() {});
   }
 
-  Future<void> _onArtistQueryChanged() async {
+  void _onArtistQueryChanged() {
+    _artistDebounce?.cancel();
     final query = _artistQueryController.text;
-    final results = await _artistSearchService.search(query);
-    if (!mounted || _artistQueryController.text != query) return;
-    setState(() => _artistResults = results);
+    if (query.trim().isEmpty) {
+      setState(() {
+        _artistResults = const [];
+        _artistSearching = false;
+        _artistSearchFailed = false;
+      });
+      return;
+    }
+    setState(() => _artistSearching = true);
+    _artistDebounce = Timer(_debounce, () => _runArtistSearch(query));
   }
 
-  Future<void> _onConcertQueryChanged() async {
+  Future<void> _runArtistSearch(String query) async {
+    try {
+      final results = await _artistSearchService.search(query);
+      if (!mounted || _artistQueryController.text != query) return;
+      setState(() {
+        _artistResults = results;
+        _artistSearching = false;
+        _artistSearchFailed = false;
+      });
+    } catch (_) {
+      if (!mounted || _artistQueryController.text != query) return;
+      setState(() {
+        _artistResults = const [];
+        _artistSearching = false;
+        _artistSearchFailed = true;
+      });
+    }
+  }
+
+  void _onConcertQueryChanged() {
+    _concertDebounce?.cancel();
     final query = _concertQueryController.text;
-    final results = await _concertSearchService.search(query);
-    if (!mounted || _concertQueryController.text != query) return;
-    setState(() => _concertResults = results);
+    if (query.trim().isEmpty) {
+      setState(() {
+        _concertResults = const [];
+        _concertSearching = false;
+        _concertSearchFailed = false;
+      });
+      return;
+    }
+    setState(() => _concertSearching = true);
+    _concertDebounce = Timer(_debounce, () => _runConcertSearch(query));
+  }
+
+  Future<void> _runConcertSearch(String query) async {
+    try {
+      final results = await _concertSearchService.search(query);
+      if (!mounted || _concertQueryController.text != query) return;
+      setState(() {
+        _concertResults = results;
+        _concertSearching = false;
+        _concertSearchFailed = false;
+      });
+    } catch (_) {
+      if (!mounted || _concertQueryController.text != query) return;
+      setState(() {
+        _concertResults = const [];
+        _concertSearching = false;
+        _concertSearchFailed = true;
+      });
+    }
+  }
+
+  /// 결과가 비어 있을 때 결과 영역에 보여줄 안내 문구.
+  String get _artistStatusText {
+    if (_artistSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
+    if (_artistQueryController.text.trim().isEmpty) return '검색어를 입력해보세요.';
+    return '검색 결과가 없습니다.';
+  }
+
+  String get _concertStatusText {
+    if (_concertSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
+    if (_concertQueryController.text.trim().isEmpty) return '검색어를 입력해보세요.';
+    return '검색 결과가 없습니다.';
   }
 
   void _openManageSheet() {
@@ -162,8 +245,13 @@ class _FavoritePinnedSettingsScreenState
                         const SizedBox(height: 14),
                         _SearchResultsRow<ArtistModel>(
                           items: _artistResults,
+                          searching: _artistSearching,
+                          statusText: _artistStatusText,
                           nameOf: (a) => a.name,
                           imageUrlOf: (a) => a.profileImageUrl,
+                          // 아티스트 프로필 사진은 백엔드에 소스가 없어
+                          // 사람 아이콘 플레이스홀더를 보여줍니다.
+                          placeholderIcon: Icons.person_outline,
                           isFavoritedOf: (a) =>
                               _favorites.isArtistFavorited(a.name),
                           onTap: (a) => _favorites.toggleArtist(a),
@@ -179,6 +267,8 @@ class _FavoritePinnedSettingsScreenState
                         const SizedBox(height: 14),
                         _SearchResultsRow<ConcertModel>(
                           items: _concertResults,
+                          searching: _concertSearching,
+                          statusText: _concertStatusText,
                           nameOf: (c) => c.name,
                           imageUrlOf: (c) => c.posterImageUrl,
                           isFavoritedOf: (c) =>
@@ -324,15 +414,29 @@ class _SearchField extends StatelessWidget {
 /// 그보다 많으면 가로 스크롤이 가능합니다(카드 크기는 항상 동일하게 유지).
 class _SearchResultsRow<T> extends StatelessWidget {
   final List<T> items;
+
+  /// true면 결과 대신 로딩 스피너를 보여줍니다(검색 요청 진행 중).
+  final bool searching;
+
+  /// 결과가 비어 있을 때 보여줄 안내 문구(미입력/결과 없음/검색 실패).
+  final String statusText;
+
   final String Function(T) nameOf;
   final String Function(T) imageUrlOf;
+
+  /// 이미지가 없거나 로드에 실패했을 때 보여줄 아이콘.
+  final IconData placeholderIcon;
+
   final bool Function(T) isFavoritedOf;
   final ValueChanged<T> onTap;
 
   const _SearchResultsRow({
     required this.items,
+    required this.searching,
+    required this.statusText,
     required this.nameOf,
     required this.imageUrlOf,
+    this.placeholderIcon = Icons.broken_image_outlined,
     required this.isFavoritedOf,
     required this.onTap,
   });
@@ -349,12 +453,28 @@ class _SearchResultsRow<T> extends StatelessWidget {
             _visibleCount;
         final rowHeight = cardWidth + 34;
 
+        if (searching) {
+          return SizedBox(
+            height: rowHeight,
+            child: const Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Colors.brown,
+                ),
+              ),
+            ),
+          );
+        }
+
         if (items.isEmpty) {
           return SizedBox(
             height: rowHeight,
             child: Center(
               child: Text(
-                '검색어를 입력해보세요.',
+                statusText,
                 style: TextStyle(
                   fontSize: 12,
                   color: Colors.black.withValues(alpha: 0.3),
@@ -379,6 +499,7 @@ class _SearchResultsRow<T> extends StatelessWidget {
                 child: _ThumbCard(
                   label: nameOf(item),
                   imageUrl: imageUrlOf(item),
+                  placeholderIcon: placeholderIcon,
                   favorited: isFavoritedOf(item),
                   onTap: () => onTap(item),
                 ),
@@ -394,12 +515,14 @@ class _SearchResultsRow<T> extends StatelessWidget {
 class _ThumbCard extends StatelessWidget {
   final String label;
   final String imageUrl;
+  final IconData placeholderIcon;
   final bool favorited;
   final VoidCallback onTap;
 
   const _ThumbCard({
     required this.label,
     required this.imageUrl,
+    this.placeholderIcon = Icons.broken_image_outlined,
     required this.favorited,
     required this.onTap,
   });
@@ -429,12 +552,18 @@ class _ThumbCard extends StatelessWidget {
                       ),
                     ),
                     child: imageUrl.isEmpty
-                        ? const _ThumbBrokenImage()
+                        ? _ThumbPlaceholder(icon: placeholderIcon)
                         : Image.network(
                             imageUrl,
                             fit: BoxFit.cover,
+                            // KOPIS 포스터 서버는 CORS 헤더를 주지 않아 웹에서
+                            // 일반 로드가 실패합니다. 실패 시 <img> 태그로
+                            // 대신 렌더링해 포스터가 보이게 합니다(웹 전용,
+                            // 모바일에는 영향 없음).
+                            webHtmlElementStrategy:
+                                WebHtmlElementStrategy.fallback,
                             errorBuilder: (context, error, stackTrace) =>
-                                const _ThumbBrokenImage(),
+                                _ThumbPlaceholder(icon: placeholderIcon),
                           ),
                   ),
                 ),
@@ -476,16 +605,19 @@ class _ThumbCard extends StatelessWidget {
   }
 }
 
-/// 백엔드 이미지가 아직 없을 때(더미 데이터) 보여주는 깨진 이미지 placeholder.
-class _ThumbBrokenImage extends StatelessWidget {
-  const _ThumbBrokenImage();
+/// 이미지가 없거나 로드에 실패했을 때 보여주는 placeholder.
+/// 아티스트는 사람 아이콘, 공연은 깨진 이미지 아이콘을 씁니다.
+class _ThumbPlaceholder extends StatelessWidget {
+  final IconData icon;
+
+  const _ThumbPlaceholder({this.icon = Icons.broken_image_outlined});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: Colors.grey.shade200,
       alignment: Alignment.center,
-      child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+      child: Icon(icon, size: 30, color: Colors.grey),
     );
   }
 }
@@ -542,6 +674,7 @@ class _ManageFavoritesSheet extends StatelessWidget {
                             (a) => _ManageListTile(
                               label: a.name,
                               imageUrl: a.profileImageUrl,
+                              placeholderIcon: Icons.person_outline,
                               onRemove: () => favorites.removeArtist(a.name),
                             ),
                           ),
@@ -581,11 +714,13 @@ class _ManageFavoritesSheet extends StatelessWidget {
 class _ManageListTile extends StatelessWidget {
   final String label;
   final String imageUrl;
+  final IconData placeholderIcon;
   final VoidCallback onRemove;
 
   const _ManageListTile({
     required this.label,
     required this.imageUrl,
+    this.placeholderIcon = Icons.broken_image_outlined,
     required this.onRemove,
   });
 
@@ -601,12 +736,13 @@ class _ManageListTile extends StatelessWidget {
               width: 40,
               height: 40,
               child: imageUrl.isEmpty
-                  ? const _ThumbBrokenImage()
+                  ? _ThumbPlaceholder(icon: placeholderIcon)
                   : Image.network(
                       imageUrl,
                       fit: BoxFit.cover,
+                      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
                       errorBuilder: (context, error, stackTrace) =>
-                          const _ThumbBrokenImage(),
+                          _ThumbPlaceholder(icon: placeholderIcon),
                     ),
             ),
           ),

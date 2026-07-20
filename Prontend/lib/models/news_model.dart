@@ -1,20 +1,35 @@
-/// [준비 1] 소식 데이터 모델 클래스.
-/// 백엔드 JSON 데이터 구조가 확정되면 factory NewsModel.fromJson 부분을 수정하면 됩니다.
+import 'concert_model.dart';
+
+/// 소식(뉴스 피드) 데이터 모델.
+///
+/// 백엔드 `GET /social/feed`의 `NewsFeedResponse`(schemas/social.py)를 그대로
+/// 받아 화면용 필드로 변환합니다. 백엔드 피드는 "팔로우한 아티스트의 새 공연이
+/// 등록됐다"는 알림 수준의 데이터(공연명/포스터/기간/공연장)만 담고 있어서,
+/// 카드 요약([description])과 상세 본문([content])은 그 정보를 조합해 프론트에서
+/// 만들어 채웁니다.
 class NewsModel {
+  /// 피드 항목 UUID(백엔드 `id`). 읽음 처리(`PATCH /social/feed/{id}/read`)에
+  /// 사용합니다. 백엔드 연동 없이 만든 폴백 카드는 null입니다.
+  final String? id;
+
+  /// 연결된 공연 UUID(백엔드 `concert_id`).
+  final String? concertId;
+
+  /// 읽음 여부. 상세를 열어본 순간 로컬에서 먼저 true로 바꾸고 서버에도
+  /// 반영하므로 mutable로 둡니다.
+  bool isRead;
+
   final String artist;
   final String concert;
   final String imageUrl;
 
-  /// 소식 한 줄 요약(폴라로이드 카드에 노출). 백엔드에서 조회해 채워집니다.
+  /// 소식 한 줄 요약(폴라로이드 카드에 노출).
   final String description;
 
-  /// 소식 상세(카드를 눌렀을 때 확장되는 화면)에 보여줄 줄글 형태의 기사 본문.
-  /// 백엔드에서 조회해 채워지며, 아직 없으면 빈 문자열로 둡니다.
+  /// 소식 상세(카드를 눌렀을 때 확장되는 화면)에 보여줄 줄글 본문.
   final String content;
 
-  /// 소식 상세 화면에서 아티스트 이름과 기사 본문 사이에 들어갈 이미지.
-  /// 폴라로이드 카드의 [imageUrl](포스터/썸네일)과는 별개로, 백엔드에서 조회해
-  /// 채워집니다. 아직 없으면 빈 문자열로 두면 깨진 이미지 아이콘이 표시됩니다.
+  /// 소식 상세 화면에서 아티스트 이름과 본문 사이에 들어갈 이미지.
   final String articleImageUrl;
 
   NewsModel({
@@ -24,17 +39,122 @@ class NewsModel {
     required this.description,
     this.content = '',
     this.articleImageUrl = '',
+    this.id,
+    this.concertId,
+    this.isRead = true,
   });
 
-  // 나중에 백엔드 JSON 필드명에 맞춰 여기만 고치면 됩니다.
-  factory NewsModel.fromJson(Map<String, dynamic> json) {
-    return NewsModel(
-      artist: json['artist_name'] ?? 'Unknown Artist',
-      concert: json['concert_title'] ?? 'Untitled Concert',
-      imageUrl: json['image_url'] ?? '',
-      description: json['short_desc'] ?? '',
-      content: json['content'] ?? '',
-      articleImageUrl: json['article_image_url'] ?? '',
+  /// 백엔드 `NewsFeedResponse` JSON으로부터 생성합니다.
+  ///
+  /// ```json
+  /// {
+  ///   "id": "...", "user_id": "...", "concert_id": "...",
+  ///   "artist_name": "IU", "is_read": false,
+  ///   "concert": {
+  ///     "id": "...", "name": "...", "poster_url": null,
+  ///     "start_date": "...", "end_date": "...", "venue": "..."
+  ///   }
+  /// }
+  /// ```
+  factory NewsModel.fromFeedJson(Map<String, dynamic> json) {
+    final artistName = json['artist_name'] as String? ?? '알 수 없는 아티스트';
+    final concertJson = json['concert'] as Map<String, dynamic>?;
+
+    final concertName = concertJson?['name'] as String? ?? '알 수 없는 공연';
+    final posterUrl = concertJson?['poster_url'] as String? ?? '';
+    final venue = concertJson?['venue'] as String?;
+    final period = _formatPeriod(
+      concertJson?['start_date'] as String?,
+      concertJson?['end_date'] as String?,
     );
+
+    final descriptionParts = <String>['새 공연이 등록됐어요!', ?period];
+
+    final contentLines = <String>[
+      '$artistName의 새 공연 <$concertName>이(가) 등록되었습니다.',
+      '',
+      if (period != null) '공연 기간  $period',
+      '공연장  ${venue ?? '미정'}',
+      '',
+      '예매 일정과 상세 정보는 예매처에서 확인해주세요.',
+    ];
+
+    return NewsModel(
+      id: json['id'] as String?,
+      concertId: json['concert_id'] as String?,
+      isRead: json['is_read'] as bool? ?? true,
+      artist: artistName,
+      concert: concertName,
+      imageUrl: posterUrl,
+      description: descriptionParts.join(' '),
+      content: contentLines.join('\n'),
+      articleImageUrl: posterUrl,
+    );
+  }
+
+  /// 찜한 공연([ConcertModel])을 그대로 카드로 보여주기 위해 생성합니다.
+  /// 백엔드 소식 피드(아티스트 매칭)와 달리 순수 로컬 표시용이라 [id]가 없어
+  /// 읽음 처리 대상이 아니고, 그래서 [isRead]도 항상 true(NEW 배지 없음)로 둡니다.
+  ///
+  /// 카드 요약([description])은 제목 아래에 티케팅(예매) 오픈일까지 남은
+  /// 일수를 D-day로 보여줍니다. 상세 본문([content])에는 아티스트/공연
+  /// 기간/공연장/티케팅 상태를 모두 채워 넣습니다.
+  factory NewsModel.fromFavoritedConcert(ConcertModel concert) {
+    final period = _formatPeriod(
+      concert.startDate?.toIso8601String(),
+      concert.endDate?.toIso8601String(),
+    );
+    final dDay = _ticketingDDay(concert.ticketingDate);
+    final artists = concert.artistName.isNotEmpty
+        ? concert.artistName.join(', ')
+        : null;
+
+    final contentLines = <String>[
+      '찜한 공연 <${concert.name}>의 정보입니다.',
+      '',
+      if (artists != null) '아티스트  $artists',
+      if (period != null) '공연 기간  $period',
+      '공연장  ${concert.venue ?? '미정'}',
+      '티케팅  $dDay',
+    ];
+
+    return NewsModel(
+      concertId: concert.id.isNotEmpty ? concert.id : null,
+      isRead: true,
+      artist: '찜한 공연',
+      concert: concert.name,
+      imageUrl: concert.posterImageUrl,
+      description: '티케팅 $dDay',
+      content: contentLines.join('\n'),
+      articleImageUrl: concert.posterImageUrl,
+    );
+  }
+
+  /// 티케팅(예매) 오픈일까지 남은 일수. 크롤러가 아직 수집 못 한 공연은
+  /// 값이 없어 "미정"으로 표시됩니다.
+  static String _ticketingDDay(DateTime? date) {
+    if (date == null) return '미정';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+    final diff = target.difference(today).inDays;
+    if (diff > 0) return 'D-$diff';
+    if (diff == 0) return 'D-DAY';
+    return '예매 중';
+  }
+
+  /// ISO 날짜 문자열 두 개를 "2026.07.21" 또는 "2026.07.21 ~ 2026.07.23"
+  /// 형태로 만듭니다. 파싱에 실패하면 null.
+  static String? _formatPeriod(String? startRaw, String? endRaw) {
+    final start = startRaw != null ? DateTime.tryParse(startRaw) : null;
+    final end = endRaw != null ? DateTime.tryParse(endRaw) : null;
+    if (start == null) return null;
+
+    String fmt(DateTime d) =>
+        '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
+
+    final startText = fmt(start);
+    if (end == null || fmt(end) == startText) return startText;
+    return '$startText ~ ${fmt(end)}';
   }
 }
