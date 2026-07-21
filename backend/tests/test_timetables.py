@@ -43,9 +43,9 @@ async def _create_concert(kopis_id: str) -> str:
 
 
 _SAMPLE_CONTENTS = [
-    {"time": "17:00", "description": "입장"},
-    {"time": "18:00", "description": "공연 시작"},
-    {"time": "20:00", "description": "공연 종료"},
+    {"date": "2030-06-01", "time": "17:00", "stage": None, "event": "입장"},
+    {"date": "2030-06-01", "time": "18:00", "stage": None, "event": "공연 시작"},
+    {"date": "2030-06-01", "time": "20:00", "stage": None, "event": "공연 종료"},
 ]
 
 
@@ -68,7 +68,7 @@ async def test_upsert_timetable_create():
     data = response.json()
     assert data["concert_id"] == concert_id
     assert len(data["contents"]) == 3
-    assert data["contents"][0] == {"time": "17:00", "description": "입장"}
+    assert data["contents"][0] == _SAMPLE_CONTENTS[0]
 
 
 # 타임테이블 덮어쓰기(업데이트) 테스트
@@ -85,7 +85,7 @@ async def test_upsert_timetable_update():
             headers=headers,
         )
 
-    updated_contents = [{"time": "16:30", "description": "사전 입장"}]
+    updated_contents = [{"date": "2030-06-01", "time": "16:30", "stage": None, "event": "사전 입장"}]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res2 = await ac.put(
             f"/api/v1/concerts/{concert_id}/timetable",

@@ -6,7 +6,7 @@ from app.core.database import Base
 
 
 """
-contents JSON 형식: [{"time": "17:00", "description": "입장"}, ...]
+contents JSON 형식: [{"date": "2023-09-07", "time": null, "stage": "TOUCH", "event": "N.Flying 16:20 - 17:20 (60)"}, ...]
 """
 class TimeTable(Base):
     __tablename__ = "timetables"

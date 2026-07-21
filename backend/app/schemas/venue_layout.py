@@ -2,6 +2,8 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.schemas.timetable import TimeTableEntry
+
 
 class VenueLayoutInput(BaseModel):
     image_url: str | None = None
@@ -18,7 +20,7 @@ class VenueLayoutResponse(BaseModel):
 
 
 class CrawlResultRequest(BaseModel):
-    timetable: list[dict] | None = None
+    timetable: list[TimeTableEntry] | None = None
     prices: list[dict] | None = None
     venue_layout: VenueLayoutInput | None = None
     ticketing_date: str | None = None  # YYYY-MM-DD

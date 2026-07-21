@@ -125,8 +125,8 @@ async def test_crawl_result_timetable_only():
 
     body = {
         "timetable": [
-            {"time": "17:00", "description": "입장"},
-            {"time": "18:00", "description": "공연 시작"},
+            {"date": "2030-06-01", "time": None, "stage": "TOUCH", "event": "아티스트A 17:00 - 17:40 (40)"},
+            {"date": "2030-06-01", "time": None, "stage": "TOUCH", "event": "아티스트B 18:00 - 18:50 (50)"},
         ]
     }
 
@@ -174,7 +174,7 @@ async def test_crawl_result_all_fields():
     concert_id = await _create_concert("PF_CR_ALL_001")
 
     body = {
-        "timetable": [{"time": "18:00", "description": "공연 시작"}],
+        "timetable": [{"date": "2030-06-01", "time": None, "stage": None, "event": "공연 시작"}],
         "prices": [{"seat_type": "VIP석", "price": 150000}],
         "venue_layout": {
             "image_url": "https://s3.example.com/layout-all.png",

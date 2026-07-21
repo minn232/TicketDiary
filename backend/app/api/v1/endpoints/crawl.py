@@ -36,7 +36,8 @@ async def receive_crawl_result(
     updated: list[str] = []
 
     if body.timetable is not None:
-        await upsert_timetable(db, concert_id, body.timetable, commit=False)
+        contents = [entry.model_dump() for entry in body.timetable]
+        await upsert_timetable(db, concert_id, contents, commit=False)
         updated.append("timetable")
 
     if body.prices is not None:
