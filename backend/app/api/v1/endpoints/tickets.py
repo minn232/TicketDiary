@@ -1,16 +1,18 @@
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, rate_limit_diary_generation
+from app.core.deps import get_current_user, rate_limit_diary_generation, verify_llm_api_key
+from app.models.ticket import Ticket
 from app.models.user import User
+from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.crawler import crawl_and_save
 from app.services.ticket import (
     create_ticket,
-    generate_and_save_diary,
     get_sorted_tickets,
     get_ticket,
     request_ticket_diary,
@@ -68,19 +70,34 @@ async def modify_ticket(
     return await update_ticket(db, current_user, ticket_id, body)
 
 
-# 한줄평을 VLM팀에 보내 공연 일기로 가공 요청 (백그라운드 처리 - 즉시 반환되며, 클라이언트는
-# GET /tickets/{id}를 폴링해 diary가 채워지는 걸 확인해야 함)
+# 한줄평 기반 공연 일기 생성 요청 (diary_requested_at만 찍어두고 즉시 반환 - 실제 LLM팀 전송은
+# 자정 배치가 처리하므로, 클라이언트는 GET /tickets/{id}를 폴링해 diary가 채워지는 걸 확인해야 함)
 @router.post("/{ticket_id}/diary", response_model=TicketWithConcert, status_code=status.HTTP_202_ACCEPTED)
 async def create_ticket_diary(
     ticket_id: UUID,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(rate_limit_diary_generation),
 ):
-    ticket = await request_ticket_diary(db, current_user.id, ticket_id)
-    background_tasks.add_task(generate_and_save_diary, ticket_id, current_user.id)
-    return ticket
+    return await request_ticket_diary(db, current_user.id, ticket_id)
+
+
+# LLM팀이 자정 배치로 처리한 공연 일기 결과를 전송하는 웹훅 엔드포인트
+@router.post("/{ticket_id}/diary-result", response_model=DiaryResultResponse)
+async def receive_diary_result(
+    ticket_id: UUID,
+    body: DiaryResultRequest,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_llm_api_key),
+):
+    result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
+    ticket = result.scalar_one_or_none()
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
+
+    ticket.diary = body.diary
+    await db.commit()
+    return DiaryResultResponse(diary=ticket.diary)
 
 
 # 티켓 삭제

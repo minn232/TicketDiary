@@ -10,13 +10,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.notification import Notification, NotificationType
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
-from app.services.diary import generate_diary
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -197,8 +195,8 @@ async def get_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Ticket
 
 
 # 한줄평(review) 존재 여부만 확인하고 diary_requested_at을 찍어 "생성 중" 상태로 전환.
-# 실제 VLM팀 호출은 30초까지 걸릴 수 있어 요청을 블로킹하지 않도록 백그라운드로 넘기고
-# (generate_and_save_diary), 여기선 즉시 반환. 클라이언트는 diary가 채워질 때까지 폴링함
+# 실제 LLM팀 전송은 자정 배치(send_diary_requests_to_llm)가 KST 00시~01시 사이 LLM팀 서버가
+# 떠있는 시간대에 한 번에 처리하고, 결과는 /diary-result 웹훅으로 나중에 수신됨
 async def request_ticket_diary(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Ticket:
     ticket = await get_ticket(db, user_id, ticket_id)
     if not ticket.review:
@@ -207,20 +205,6 @@ async def request_ticket_diary(db: AsyncSession, user_id: UUID, ticket_id: UUID)
     ticket.diary_requested_at = datetime.now(timezone.utc)
     await db.commit()
     return ticket
-
-
-# 백그라운드 태스크로 실행 - BackgroundTasks는 응답이 나간 뒤(요청의 db 세션이 이미 닫힌 뒤)
-# 실행되므로 crawl_and_save와 동일하게 자체 DB 세션을 새로 연다
-async def generate_and_save_diary(ticket_id: UUID, user_id: UUID) -> None:
-    async with AsyncSessionLocal() as db:
-        try:
-            ticket = await get_ticket(db, user_id, ticket_id)
-            if not ticket.review:
-                return
-            ticket.diary = await generate_diary(ticket.review, ticket.concert)
-            await db.commit()
-        except HTTPException as e:
-            logger.error(f"일기 생성 실패 (ticket_id={ticket_id}): {e.detail}")
 
 
 # 티켓 수정

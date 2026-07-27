@@ -1,26 +1,48 @@
 import logging
 
 import httpx
-from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.models.concert import Concert
+from app.core.database import AsyncSessionLocal
+from app.models.ticket import Ticket
 
 logger = logging.getLogger(__name__)
 
 
-# 유저의 한줄평 + 공연 정보를 VLM팀에 보내 일기 형식의 장문 텍스트로 가공해 받아옴 (동기 호출)
-async def generate_diary(review: str, concert: Concert | None) -> str:
+# 자정 배치: 일기 생성 요청된(diary_requested_at is not null) 아직 미완료(diary is null) 티켓들을
+# LLM팀 웹훅으로 전송. LLM팀 서버가 KST 00시~01시 사이 한정된 시간에만 떠있어서, 요청 즉시
+# 동기 호출하던 이전 방식(30초 타임아웃) 대신 크롤링/아티스트 추출과 동일하게 배치+웹훅 방식으로 전환함.
+# 결과는 POST /tickets/{ticket_id}/diary-result 웹훅으로 나중에 수신
+async def send_diary_requests_to_llm() -> None:
     if not settings.LLM_DIARY_URL:
-        raise HTTPException(status_code=503, detail="일기 생성 기능이 아직 설정되지 않았습니다.")
+        logger.info("LLM_DIARY_URL 미설정, 전송 건너뜀")
+        return
 
-    payload = {
-        "review": review,
-        "concert_name": concert.name if concert else None,
-        "artist_name": concert.artist_name if concert else [],
-        "venue": concert.venue if concert else None,
-        "concert_date": concert.start_date.date().isoformat() if concert else None,
-    }
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Ticket)
+            .options(selectinload(Ticket.concert))
+            .where(Ticket.diary_requested_at.isnot(None), Ticket.diary.is_(None))
+        )
+        tickets = list(result.scalars().all())
+
+    if not tickets:
+        logger.info("전송할 일기 생성 요청 없음")
+        return
+
+    payload = [
+        {
+            "ticket_id": str(t.id),
+            "review": t.review,
+            "concert_name": t.concert.name if t.concert else None,
+            "artist_name": t.concert.artist_name if t.concert else [],
+            "venue": t.concert.venue if t.concert else None,
+            "concert_date": t.concert.start_date.date().isoformat() if t.concert else None,
+        }
+        for t in tickets
+    ]
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -29,15 +51,7 @@ async def generate_diary(review: str, concert: Concert | None) -> str:
                 json=payload,
                 headers={"Authorization": f"Bearer {settings.LLM_EXTRACT_API_KEY}"},
             )
-    except httpx.HTTPError as e:
-        logger.error(f"VLM팀 일기 생성 요청 실패: {e}")
-        raise HTTPException(status_code=502, detail="일기 생성 요청에 실패했습니다.")
-
-    if response.status_code != 200:
-        logger.error(f"VLM팀 일기 생성 응답 오류: {response.status_code}")
-        raise HTTPException(status_code=502, detail="일기 생성에 실패했습니다.")
-
-    diary_text = (response.json().get("diary") or "").strip()
-    if not diary_text:
-        raise HTTPException(status_code=502, detail="일기 생성 결과가 비어있습니다.")
-    return diary_text
+            response.raise_for_status()
+        logger.info(f"LLM팀 일기 생성 요청 전송 완료: {len(tickets)}건")
+    except Exception as e:
+        logger.error(f"LLM팀 일기 생성 요청 전송 실패: {e}")
