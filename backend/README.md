@@ -228,7 +228,8 @@ Authorization: Bearer <token>
   "delivery_date": "2030-05-15", // 배송 예정일 (선택)
   "ticketing_site": "YES24",     // 예매처 (선택)
   "price": 150000,               // 가격 (선택)
-  "seat_type": "VIP석"           // 좌석 (선택)
+  "seat_type": "VIP석",          // 좌석 (선택)
+  "attended_date": "2030-05-20"  // OCR로 추출한 실제 관람일 (선택)
 }
 
 // Response: 201 Created
@@ -243,6 +244,7 @@ Authorization: Bearer <token>
   "ticket_image_url": null,
   "review": null,
   "concert_photo_urls": null,
+  "attended_date": "2030-05-20T00:00:00Z",
   "is_first_day": null,
   "is_last_day": null,
   "concert": { ...ConcertResponse }
@@ -250,6 +252,9 @@ Authorization: Bearer <token>
 ```
 - `status` 자동 결정: 공연 종료 후 등록이면 `after_concert`, 아니면 `before_concert`
 - 등록 성공 시 배송일/공연전날/공연당일 알림 자동 생성
+- `is_first_day`/`is_last_day` 자동 판정: `attended_date`가 있고, 공연이 `event_type=SOLO`이며,
+  `concert.start_date`와 `end_date`가 다른 날(여러 날짜 공연)일 때만 자동 계산됨. 그 외(관람일 모름/
+  페스티벌/하루짜리 공연)엔 `null`로 남고, PATCH로 수동 지정 가능
 
 ### 내 티켓 목록 조회
 ```
@@ -281,7 +286,8 @@ Authorization: Bearer <token>
   "price": 110000,
   "review": "너무 좋았어요",
   "concert_photo_urls": ["https://s3.../photo1.jpg"],
-  "is_first_day": true,
+  "attended_date": "2030-05-20", // 이것만 보내면 is_first_day/is_last_day는 서버가 재판정
+  "is_first_day": true,          // is_first_day/is_last_day를 같이 보내면 수동 override(재판정 안 함)
   "is_last_day": false,
   "status": "after_concert",
   "ticket_image_url": "https://s3.../ticket.jpg"

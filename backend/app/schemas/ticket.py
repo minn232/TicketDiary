@@ -14,6 +14,8 @@ class TicketCreate(BaseModel):
     ticketing_site: str | None = None
     price: int | None = None
     seat_type: str | None = None
+    # OCR로 추출한 실제 관람 날짜. 있으면 등록 시점에 is_first_day/is_last_day를 자동 판정하는 데 쓰임
+    attended_date: datetime | None = None
 
     @model_validator(mode="after")
     def check_concert_provided(self) -> "TicketCreate":
@@ -33,6 +35,9 @@ class TicketUpdate(BaseModel):
     # 일기 생성 LLM 프롬프트에 그대로 들어가므로 과도한 길이로 토큰 비용이 늘지 않도록 제한
     review: str | None = Field(default=None, max_length=2000)
     concert_photo_urls: list[str] | None = None
+    # 이 필드를 같이 보내면 자동 판정 대신 이 값을 그대로 씀(수동 override).
+    # attended_date만 보내고 이 필드들은 안 보내면 서버가 새 attended_date 기준으로 재판정함
+    attended_date: datetime | None = None
     is_first_day: bool | None = None
     is_last_day: bool | None = None
 
@@ -54,6 +59,7 @@ class TicketResponse(BaseModel):
     # diary가 null인데 이 값이 있으면 "생성 중"(백그라운드 처리 중), 둘 다 null이면 "미요청"
     diary_requested_at: datetime | None
     concert_photo_urls: list[str] | None
+    attended_date: datetime | None
     is_first_day: bool | None
     is_last_day: bool | None
 

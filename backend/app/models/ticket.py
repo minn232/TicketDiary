@@ -41,6 +41,10 @@ class Ticket(Base):
     # 있으면 "생성 중"으로, 둘 다 null이면 "아직 요청 안 함"으로 구분해서 폴링에 활용)
     diary_requested_at = Column(DateTime(timezone=True), nullable=True)
     concert_photo_urls = Column(JSONB, nullable=True)
+    # 실제 관람 날짜 (OCR로 티켓에서 추출, "YYYY-MM-DD"). is_first_day/is_last_day 자동 판정에
+    # 쓰임 - concert.start_date/end_date와 비교해 등록 시점에 한 번 계산해서 저장(services/ticket.py
+    # 참고). OCR 없이 등록됐거나 날짜를 못 읽었으면 None이라 자동 판정도 안 됨(수동 PATCH로만 채워짐)
+    attended_date = Column(DateTime(timezone=True), nullable=True)
     is_first_day = Column(Boolean, nullable=True)
     is_last_day = Column(Boolean, nullable=True)
 

@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.models.notification import Notification, NotificationType
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
@@ -27,6 +27,21 @@ def _initial_status(concert: Concert) -> TicketStatus:
     if concert.end_date + timedelta(hours=15) < now:
         return TicketStatus.AFTER_CONCERT
     return TicketStatus.BEFORE_CONCERT
+
+
+# 관람일(attended_date)과 concert.start_date/end_date를 비교해 첫콘/막콘 자동 판정.
+# 판정 불가능한 경우(관람일 모름/페스티벌/하루짜리 공연)는 (None, None) -
+# 페스티벌은 날짜별 라인업이 달라 "첫콘/막콘" 개념이 안 맞고, 하루짜리 공연은 구분 자체가 무의미함
+def _detect_first_last_day(
+    concert: Concert, attended_date: datetime | None
+) -> tuple[bool | None, bool | None]:
+    if attended_date is None or concert.event_type != EventType.SOLO.value:
+        return None, None
+    if concert.start_date.date() == concert.end_date.date():
+        return None, None
+
+    attended = attended_date.date()
+    return attended == concert.start_date.date(), attended == concert.end_date.date()
 
 
 # KST 기준 해당 날짜 오전 9시 UTC 반환
@@ -132,6 +147,8 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
         delivery_date = concert.delivery_date
         delivery_date_synced = delivery_date is not None
 
+    is_first_day, is_last_day = _detect_first_last_day(concert, body.attended_date)
+
     ticket = Ticket(
         user_id=user.id,
         concert_id=concert.id,
@@ -142,6 +159,9 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
         ticketing_site=body.ticketing_site,
         price=body.price,
         seat_type=_correct_seat_type(body.seat_type, concert),
+        attended_date=body.attended_date,
+        is_first_day=is_first_day,
+        is_last_day=is_last_day,
     )
     # 이미 위에서 로드해둔 concert를 그대로 연결 -> 커밋 후 재조회 불필요
     # (AsyncSessionLocal이 expire_on_commit=False라 커밋해도 이 관계가 만료되지 않음)
@@ -220,11 +240,23 @@ async def update_ticket(
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
-    for field, value in body.model_dump(exclude_unset=True).items():
+    fields = body.model_dump(exclude_unset=True)
+    for field, value in fields.items():
         setattr(ticket, field, value)
         # 유저가 직접 delivery_date를 수정하면 더 이상 크롤링 값과 동기화된 상태가 아님
         if field == "delivery_date":
             ticket.delivery_date_synced = False
+
+    # attended_date만 새로 왔고 is_first_day/is_last_day는 이번 요청에 없으면(=유저가 수동으로
+    # 직접 지정한 게 아니면) 새 attended_date 기준으로 재판정. 유저가 is_first_day/is_last_day를
+    # 명시적으로 같이 보냈으면 그 값(수동 override)을 그대로 두고 재판정하지 않음
+    if (
+        "attended_date" in fields
+        and "is_first_day" not in fields
+        and "is_last_day" not in fields
+        and ticket.concert is not None
+    ):
+        ticket.is_first_day, ticket.is_last_day = _detect_first_last_day(ticket.concert, ticket.attended_date)
 
     await db.commit()
     # 위 select에서 이미 concert를 eager-load 했고 expire_on_commit=False라

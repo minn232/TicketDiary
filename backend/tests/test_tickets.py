@@ -256,6 +256,131 @@ async def test_create_ticket_prefers_ocr_delivery_date_over_concert():
     assert response.json()["delivery_date"][:10] == "2030-05-15"
 
 
+# 첫콘/막콘 자동 판정 테스트
+
+# attended_date가 concert.start_date와 같으면 첫콘으로 자동 판정되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_detects_first_day():
+    concert_id = await _create_concert("PF_T_FIRSTDAY_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-01"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_first_day"] is True
+    assert data["is_last_day"] is False
+
+
+# attended_date가 concert.end_date와 같으면 막콘으로 자동 판정되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_detects_last_day():
+    concert_id = await _create_concert("PF_T_LASTDAY_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-03"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_first_day"] is False
+    assert data["is_last_day"] is True
+
+
+# 첫날도 막날도 아닌 중간 날짜면 둘 다 False 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_middle_day_is_neither_first_nor_last():
+    concert_id = await _create_concert("PF_T_MIDDAY_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-02"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_first_day"] is False
+    assert data["is_last_day"] is False
+
+
+# attended_date를 안 보내면(OCR로 날짜를 못 뽑은 경우 등) 판정 자체를 안 하고 None으로 남는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_without_attended_date_leaves_first_last_day_none():
+    concert_id = await _create_concert("PF_T_NODATE_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_first_day"] is None
+    assert data["is_last_day"] is None
+
+
+# 하루짜리 공연(start_date == end_date)은 attended_date가 있어도 구분이 무의미해서 None 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_single_day_concert_leaves_first_last_day_none():
+    concert_id = await _create_concert("PF_T_ONEDAY_001", start="2030.06.01", end="2030.06.01")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-01"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_first_day"] is None
+    assert data["is_last_day"] is None
+
+
+# 페스티벌은 날짜별 라인업이 달라 첫콘/막콘 개념이 안 맞으므로, 여러 날짜라도 자동 판정 안 함 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_festival_leaves_first_last_day_none():
+    kopis_id = "PF_T_FEST_001"
+    token = await _get_token()
+    xml = _make_kopis_xml(kopis_id, "테스트 뮤직페스티벌", "2030.06.01", "2030.06.03")
+    with kopis_mock(xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            concert_res = await ac.get(
+                f"/api/v1/concerts/{kopis_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert concert_res.json()["event_type"] == "FESTIVAL"
+    concert_id = concert_res.json()["id"]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-01"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["is_first_day"] is None
+    assert data["is_last_day"] is None
+
+
 # 존재하지 않는 concert_id로 등록 404 테스트
 @pytest.mark.asyncio
 async def test_create_ticket_concert_not_found_404():
@@ -470,6 +595,55 @@ async def test_update_ticket_fields():
     assert data["review"] == "공연공연"
     assert data["concert_photo_urls"] == ["https://example.com/photo1.jpg"]
     assert data["is_first_day"] is True
+
+
+# attended_date만 PATCH로 새로 보내면(is_first_day/is_last_day는 안 보냄) 서버가 재판정하는지 테스트
+@pytest.mark.asyncio
+async def test_update_ticket_attended_date_recomputes_first_last_day():
+    concert_id = await _create_concert("PF_UPDATE_ATTDATE_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        assert create_res.json()["is_first_day"] is None  # attended_date 없이 등록 -> 미판정
+
+        response = await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"attended_date": "2030-06-03"},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_first_day"] is False
+    assert data["is_last_day"] is True
+
+
+# attended_date와 is_first_day/is_last_day를 같이 보내면 자동 재판정 없이 보낸 값 그대로(수동 override) 테스트
+@pytest.mark.asyncio
+async def test_update_ticket_manual_first_last_day_overrides_auto_detection():
+    concert_id = await _create_concert("PF_UPDATE_MANUAL_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+
+        # attended_date는 첫날(2030-06-01)이라 자동 판정이면 is_last_day=False가 나와야 하지만,
+        # is_last_day를 명시적으로 True로 같이 보냈으니 그 값을 그대로 존중해야 함
+        response = await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"attended_date": "2030-06-01", "is_first_day": True, "is_last_day": True},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_first_day"] is True
+    assert data["is_last_day"] is True
 
 
 # 티켓 삭제 테스트
