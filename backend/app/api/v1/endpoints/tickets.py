@@ -11,6 +11,7 @@ from app.models.user import User
 from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.crawler import crawl_and_save
+from app.services.lastfm import ensure_artist_genres_cached
 from app.services.ticket import (
     create_ticket,
     get_sorted_tickets,
@@ -34,6 +35,10 @@ async def register_ticket(
     ticket = await create_ticket(db, current_user, body)
     if ticket.ticketing_site:
         background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
+    if ticket.concert and ticket.concert.artist_name:
+        # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
+        # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
+        background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
     return ticket
 
 

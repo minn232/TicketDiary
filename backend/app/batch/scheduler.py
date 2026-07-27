@@ -8,7 +8,7 @@ from app.services.kopis import sync_daily_concerts
 from app.services.crawler import retry_pending_crawls, send_posters_for_artist_extraction, send_screenshots_to_llm
 from app.services.diary import send_diary_requests_to_llm
 from app.services.ticket import sync_ticket_statuses
-from app.services.lastfm import sync_artist_similarities
+from app.services.lastfm import sync_artist_similarities, sync_artist_genres
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,13 @@ async def _run_artist_similarity_sync() -> None:
         logger.error(f"Last.fm 아티스트 유사도 동기화 오류: {e}")
 
 
+async def _run_artist_genre_sync() -> None:
+    try:
+        await sync_artist_genres()
+    except Exception as e:
+        logger.error(f"Last.fm 아티스트 장르 동기화 오류: {e}")
+
+
 async def _run_artist_extraction_send() -> None:
     try:
         await send_posters_for_artist_extraction()
@@ -86,6 +93,8 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_crawl_retry, "cron", hour=15, minute=15, id="crawl_retry", max_instances=1)
     # 신규 아티스트 Last.fm 유사 아티스트 캐싱 (KST 00:20)
     scheduler.add_job(_run_artist_similarity_sync, "cron", hour=15, minute=20, id="artist_similarity_sync", max_instances=1)
+    # 신규 아티스트 Last.fm 장르 태그 캐싱 (결산 "선호 장르"용, KST 00:22)
+    scheduler.add_job(_run_artist_genre_sync, "cron", hour=15, minute=22, id="artist_genre_sync", max_instances=1)
     # 아티스트 정보 없는 신규 공연의 포스터를 VLM팀에 아티스트 추출 요청으로 전송 (KST 00:25)
     scheduler.add_job(_run_artist_extraction_send, "cron", hour=15, minute=25, id="artist_extraction_send", max_instances=1)
     # 요청된 일기 생성 건을 LLM팀에 전송 (LLM팀 서버가 KST 00~01시 사이에만 떠있어 그 시간대로 맞춤, 00:30)

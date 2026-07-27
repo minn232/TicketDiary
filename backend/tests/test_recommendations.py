@@ -7,6 +7,7 @@ from httpx import AsyncClient, ASGITransport
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_similarity import ArtistSimilarity
+from app.models.artist_genre import ArtistGenre
 from app.models.ticket import Ticket
 from conftest import _get_token, kopis_mock
 
@@ -184,6 +185,196 @@ async def test_sync_artist_similarities_continues_after_one_artist_fails():
             select(ArtistSimilarity).where(ArtistSimilarity.artist_name == artist_ok)
         )
         assert result.scalars().first() is not None
+
+
+# resolve_genres 화이트리스트 매칭 테스트
+
+# count 내림차순으로 이미 정렬된 태그 목록에서 화이트리스트에 걸리는 태그를 순위 순서대로 전부 채택 테스트
+def test_resolve_genres_picks_all_whitelisted_tags_by_rank_order():
+    from app.services.lastfm import resolve_genres
+
+    # "bts"/"Korean"은 화이트리스트에 없어서 건너뛰고, 대소문자 무관하게 "k-pop"/"pop" 둘 다 매칭
+    assert resolve_genres(["bts", "K-Pop", "Korean", "pop"]) == ["K-pop", "팝"]
+
+
+# 서로 다른 태그가 같은 라벨로 매핑되면(동의어) 중복 없이 한 번만 포함되는지 테스트
+def test_resolve_genres_dedupes_synonyms_to_same_label():
+    from app.services.lastfm import resolve_genres
+
+    assert resolve_genres(["rap", "hip-hop", "pop"]) == ["힙합", "팝"]
+
+
+# 동의어 태그(hip-hop/rap 등)도 같은 라벨로 정규화되는지 테스트
+def test_resolve_genres_normalizes_synonyms():
+    from app.services.lastfm import resolve_genres
+
+    assert resolve_genres(["rap"]) == ["힙합"]
+    assert resolve_genres(["hip-hop"]) == ["힙합"]
+
+
+# 화이트리스트에 하나도 안 걸리면 빈 리스트 테스트
+def test_resolve_genres_returns_empty_when_no_match():
+    from app.services.lastfm import resolve_genres
+
+    assert resolve_genres(["seen live", "female vocalists", "awesome"]) == []
+
+
+# fetch_top_tags 테스트
+
+@pytest.mark.asyncio
+async def test_fetch_top_tags_sorts_by_count_desc():
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "toptags": {
+            "tag": [
+                {"name": "bts", "count": 58},
+                {"name": "k-pop", "count": 100},
+                {"name": "pop", "count": 17},
+            ]
+        }
+    }
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("app.services.lastfm.settings.LASTFM_API_KEY", "test-key"), \
+         patch("app.services.lastfm.httpx.AsyncClient", return_value=mock_client):
+        from app.services.lastfm import fetch_top_tags
+
+        result = await fetch_top_tags("BTS")
+
+    assert result == ["k-pop", "bts", "pop"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_top_tags_no_api_key_returns_empty():
+    with patch("app.services.lastfm.settings.LASTFM_API_KEY", ""):
+        from app.services.lastfm import fetch_top_tags
+
+        result = await fetch_top_tags("아티스트A")
+
+    assert result == []
+
+
+# sync_artist_genres 테스트
+
+@pytest.mark.asyncio
+async def test_sync_artist_genres_skips_already_cached():
+    token = await _get_token()
+    kopis_a = f"PF_LFG_A_{uuid.uuid4().hex[:6]}"
+    kopis_b = f"PF_LFG_B_{uuid.uuid4().hex[:6]}"
+    artist_a = f"신규장르아티스트_{uuid.uuid4().hex[:6]}"
+    artist_b = f"기존장르아티스트_{uuid.uuid4().hex[:6]}"
+
+    await _create_concert(kopis_a, artist_a, token)
+    await _create_concert(kopis_b, artist_b, token)
+
+    async with AsyncSessionLocal() as db:
+        db.add(ArtistGenre(artist_name=artist_b, genres=["K-pop"]))
+        await db.commit()
+
+    mock_fetch = AsyncMock(return_value=["pop"])
+    with patch("app.services.lastfm.fetch_top_tags", mock_fetch):
+        from app.services.lastfm import sync_artist_genres
+
+        await sync_artist_genres()
+
+    called_names = {call.args[0] for call in mock_fetch.await_args_list}
+    assert artist_a in called_names
+    assert artist_b not in called_names
+
+
+# 화이트리스트에 안 걸리는 태그만 왔을 때 genre=None으로 캐싱되는지(=다음 배치에서 재조회 안 함) 테스트
+@pytest.mark.asyncio
+async def test_sync_artist_genres_caches_none_when_no_whitelisted_tag():
+    token = await _get_token()
+    kopis_id = f"PF_LFG_NOMATCH_{uuid.uuid4().hex[:6]}"
+    artist = f"매칭안되는아티스트_{uuid.uuid4().hex[:6]}"
+    await _create_concert(kopis_id, artist, token)
+
+    with patch("app.services.lastfm.fetch_top_tags", AsyncMock(return_value=["seen live", "awesome"])):
+        from app.services.lastfm import sync_artist_genres
+
+        await sync_artist_genres()
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(select(ArtistGenre).where(ArtistGenre.artist_name == artist))
+        row = result.scalars().first()
+
+    assert row is not None
+    assert row.genres is None
+
+
+# 아티스트 하나가 여러 장르 태그를 가지면(예: 힙합+K-pop) 전부 배열로 캐싱되는지 테스트
+@pytest.mark.asyncio
+async def test_sync_artist_genres_stores_multiple_genres():
+    token = await _get_token()
+    kopis_id = f"PF_LFG_MULTI_{uuid.uuid4().hex[:6]}"
+    artist = f"복합장르아티스트_{uuid.uuid4().hex[:6]}"
+    await _create_concert(kopis_id, artist, token)
+
+    with patch("app.services.lastfm.fetch_top_tags", AsyncMock(return_value=["k-pop", "rap", "seen live"])):
+        from app.services.lastfm import sync_artist_genres
+
+        await sync_artist_genres()
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(select(ArtistGenre).where(ArtistGenre.artist_name == artist))
+        row = result.scalars().first()
+
+    assert row is not None
+    assert row.genres == ["K-pop", "힙합"]
+
+
+# ensure_artist_genres_cached 테스트 (배치를 기다리지 않고 즉시 캐싱)
+
+@pytest.mark.asyncio
+async def test_ensure_artist_genres_cached_skips_already_cached():
+    artist_new = f"즉시캐싱신규_{uuid.uuid4().hex[:6]}"
+    artist_cached = f"즉시캐싱기존_{uuid.uuid4().hex[:6]}"
+
+    async with AsyncSessionLocal() as db:
+        db.add(ArtistGenre(artist_name=artist_cached, genres=["K-pop"]))
+        await db.commit()
+
+    mock_fetch = AsyncMock(return_value=["pop"])
+    with patch("app.services.lastfm.fetch_top_tags", mock_fetch):
+        from app.services.lastfm import ensure_artist_genres_cached
+
+        await ensure_artist_genres_cached([artist_new, artist_cached])
+
+    called_names = {call.args[0] for call in mock_fetch.await_args_list}
+    assert artist_new in called_names
+    assert artist_cached not in called_names
+
+
+# 티켓 등록 시 그 공연 아티스트의 장르가 배치를 기다리지 않고 바로 캐싱되는지(백그라운드 태스크) 테스트
+@pytest.mark.asyncio
+async def test_register_ticket_triggers_immediate_genre_caching():
+    token = await _get_token()
+    artist = f"즉시등록아티스트_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_TICKET_GENRE_{uuid.uuid4().hex[:6]}", artist, token)
+
+    with patch("app.services.lastfm.fetch_top_tags", AsyncMock(return_value=["k-pop"])):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                "/api/v1/tickets",
+                json={"concert_id": concert_id},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert res.status_code == 201
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        result = await db.execute(select(ArtistGenre).where(ArtistGenre.artist_name == artist))
+        row = result.scalars().first()
+
+    assert row is not None
+    assert row.genres == ["K-pop"]
 
 
 # GET /recommendations/artists 테스트

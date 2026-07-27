@@ -1,12 +1,22 @@
+import uuid
 from datetime import date, timedelta, datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_genre import ArtistGenre
 from app.services.summary import _is_standing, _period_start
 from conftest import _get_token, kopis_mock
+
+
+# 아티스트 장르 캐시 직접 삽입 (Last.fm 배치/즉시 캐싱이 이미 채워둔 상태를 시뮬레이션)
+async def _insert_artist_genre(artist_name: str, genres: list[str] | None) -> None:
+    async with AsyncSessionLocal() as db:
+        db.add(ArtistGenre(artist_name=artist_name, genres=genres))
+        await db.commit()
 
 
 # 헬퍼
@@ -177,12 +187,12 @@ async def test_summary_only_after_concert_counts():
     assert res.json()["concert_count"] == 0
 
 
-# 공연 수·소비 금액·장르·아티스트 중복 제거·첫콘/막콘 집계 테스트
+# 공연 수·소비 금액·아티스트 중복 제거·첫콘/막콘 집계 테스트
 @pytest.mark.asyncio
 async def test_summary_basic_stats():
-    concert_id1 = await _create_concert("PF_SUM_BASIC_001", genre="팝", artists="아티스트A")
-    concert_id2 = await _create_concert("PF_SUM_BASIC_002", genre="팝", artists="아티스트B")
-    concert_id3 = await _create_concert("PF_SUM_BASIC_003", genre="록", artists="아티스트A")  # 아티스트A 중복
+    concert_id1 = await _create_concert("PF_SUM_BASIC_001", artists="아티스트A")
+    concert_id2 = await _create_concert("PF_SUM_BASIC_002", artists="아티스트B")
+    concert_id3 = await _create_concert("PF_SUM_BASIC_003", artists="아티스트A")  # 아티스트A 중복
     token = await _get_token()
 
     await _create_attended_ticket(concert_id1, token, price=110000, is_first_day=True)
@@ -196,10 +206,75 @@ async def test_summary_basic_stats():
     data = res.json()
     assert data["concert_count"] == 3
     assert data["total_spent"] == 280000
-    assert data["top_genre"] == "팝"                               # 팝 2회 vs 록 1회
     assert set(data["artists"]) == {"아티스트A", "아티스트B"}      # 아티스트A 중복 제거
     assert data["first_day_count"] == 1
     assert data["last_day_count"] == 1
+
+
+# 선호 장르: KOPIS 장르(Concert.genre)가 아니라 Last.fm 태그 캐시(ArtistGenre) 기준으로
+# 집계되는지 테스트 - 아티스트A가 2번, 아티스트B가 1번 관람됐으니 아티스트A의 장르가 우세해야 함
+@pytest.mark.asyncio
+async def test_summary_top_genre_from_artist_genre_cache():
+    artist_a = f"장르아티스트A_{uuid.uuid4().hex[:6]}"
+    artist_b = f"장르아티스트B_{uuid.uuid4().hex[:6]}"
+    concert_id1 = await _create_concert(f"PF_SUM_GENRE_{uuid.uuid4().hex[:6]}", artists=artist_a)
+    concert_id2 = await _create_concert(f"PF_SUM_GENRE_{uuid.uuid4().hex[:6]}", artists=artist_b)
+    concert_id3 = await _create_concert(f"PF_SUM_GENRE_{uuid.uuid4().hex[:6]}", artists=artist_a)
+    token = await _get_token()
+
+    await _insert_artist_genre(artist_a, ["K-pop"])
+    await _insert_artist_genre(artist_b, ["록/밴드"])
+
+    await _create_attended_ticket(concert_id1, token)
+    await _create_attended_ticket(concert_id2, token)
+    await _create_attended_ticket(concert_id3, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 200
+    assert res.json()["top_genre"] == "K-pop"
+
+
+# 관람한 아티스트가 전부 장르 캐시에 없거나(genre=None 포함) 캐시 자체가 없으면 None
+@pytest.mark.asyncio
+async def test_summary_top_genre_none_when_no_matching_genre():
+    artist_c = f"장르아티스트C_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_SUM_GENRE_NONE_{uuid.uuid4().hex[:6]}", artists=artist_c)
+    token = await _get_token()
+
+    await _insert_artist_genre(artist_c, None)  # 태그는 받아왔지만 화이트리스트에 안 걸린 경우
+    await _create_attended_ticket(concert_id, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 200
+    assert res.json()["top_genre"] is None
+
+
+# 아티스트 한 명이 여러 장르에 걸리면(예: 힙합+K-pop), 그 아티스트를 본 티켓 하나가 두 장르
+# 모두에게 표를 주는지 테스트 - artist_multi(힙합+K-pop) 1회 + artist_single(K-pop) 1회면
+# K-pop이 2표(둘 다 기여), 힙합은 1표(artist_multi만 기여)라 K-pop이 우세해야 함
+@pytest.mark.asyncio
+async def test_summary_top_genre_counts_each_genre_of_multi_genre_artist():
+    artist_multi = f"복합장르아티스트_{uuid.uuid4().hex[:6]}"
+    artist_single = f"단일장르아티스트_{uuid.uuid4().hex[:6]}"
+    concert_id1 = await _create_concert(f"PF_SUM_MULTI_{uuid.uuid4().hex[:6]}", artists=artist_multi)
+    concert_id2 = await _create_concert(f"PF_SUM_MULTI_{uuid.uuid4().hex[:6]}", artists=artist_single)
+    token = await _get_token()
+
+    await _insert_artist_genre(artist_multi, ["힙합", "K-pop"])
+    await _insert_artist_genre(artist_single, ["K-pop"])
+
+    await _create_attended_ticket(concert_id1, token)
+    await _create_attended_ticket(concert_id2, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 200
+    assert res.json()["top_genre"] == "K-pop"
 
 
 # 스탠딩 / 좌석 / 미집계 카운트 테스트

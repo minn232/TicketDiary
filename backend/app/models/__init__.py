@@ -8,6 +8,7 @@ from app.models.social import ArtistFollow, ConcertFollow, NewsFeed
 from app.models.notification import Notification, NotificationType
 from app.models.refresh_token import RefreshToken
 from app.models.artist_similarity import ArtistSimilarity
+from app.models.artist_genre import ArtistGenre
 
 __all__ = [
     "User", "UserRole",
@@ -20,4 +21,5 @@ __all__ = [
     "Notification", "NotificationType",
     "RefreshToken",
     "ArtistSimilarity",
+    "ArtistGenre",
 ]

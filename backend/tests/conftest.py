@@ -35,6 +35,18 @@ def _reset_rate_limits():
     yield
 
 
+# 티켓 등록(POST /tickets)이 백그라운드로 Last.fm 장르 즉시 캐싱(ensure_artist_genres_cached)을
+# 트리거하는데, 이걸 기본으로 막아두지 않으면 티켓을 만드는 모든 테스트가 로컬 .env의 진짜
+# LASTFM_API_KEY로 실제 네트워크 호출을 하게 됨(느려지고, 테스트용 아티스트명이 실제 캐시
+# 테이블에 쌓임). fetch_top_tags 자체를 patch하지 않고 API 키만 빈 값으로 덮어써서, 이 함수의
+# "키 없으면 빈 리스트" 동작(정상 동작)을 그대로 타게 함 - fetch_top_tags 내부 로직을 직접
+# 테스트하는 케이스는 거기서 다시 settings.LASTFM_API_KEY를 patch해서 오버라이드하면 됨
+@pytest.fixture(autouse=True)
+def _stub_lastfm_genre_fetch():
+    with patch("app.services.lastfm.settings.LASTFM_API_KEY", ""):
+        yield
+
+
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처
 @pytest_asyncio.fixture
 async def get_auth_token():
