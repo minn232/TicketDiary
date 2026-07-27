@@ -124,6 +124,32 @@ async def test_update_settings_new_concert():
     assert res.json()["notification_settings"]["new_concert"] is False
 
 
+# notification_settings 필드 하나만 보내도 이전에 꺼둔 다른 필드가 리셋되지 않는지 테스트
+@pytest.mark.asyncio
+async def test_update_settings_notification_settings_partial_keeps_others():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"day_before": False}},
+            headers=headers,
+        )
+        res = await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"ticketing": False}},
+            headers=headers,
+        )
+
+    data = res.json()["notification_settings"]
+    assert data["day_before"] is False
+    assert data["ticketing"] is False
+    assert data["delivery"] is True
+    assert data["concert_day"] is True
+    assert data["new_concert"] is True
+
+
 # 부분 수정 시 나머지 설정 유지 테스트
 @pytest.mark.asyncio
 async def test_update_settings_partial_keeps_others():

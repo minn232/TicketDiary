@@ -30,7 +30,10 @@ async def update_user_settings(db: AsyncSession, user: User, body: UserSettingsU
 
     if body.notification_settings is not None:
         old_settings = user.notification_settings or {}
-        new_settings = body.notification_settings.model_dump(mode="json")
+        # 보낸 필드만 반영 (model_dump 그대로 대입하면 안 보낸 필드가 pydantic 기본값으로
+        # 덮어써져서 기존에 꺼둔 다른 알림 설정이 조용히 리셋되는 문제가 있었음)
+        partial = body.notification_settings.model_dump(mode="json", exclude_none=True)
+        new_settings = {**old_settings, **partial}
         user.notification_settings = new_settings
 
         # 유저가 지금 막 끈 알림 유형은, 이미 예약돼있던 미발송 알림도 같이 취소.

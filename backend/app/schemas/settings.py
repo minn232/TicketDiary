@@ -12,6 +12,15 @@ class NotificationSettings(BaseModel):
     new_concert: bool = True
 
 
+class NotificationSettingsUpdate(BaseModel):
+    # 알림 설정 부분 수정 요청 (보낸 필드만 반영, 나머지는 기존값 유지)
+    delivery: bool | None = None
+    day_before: bool | None = None
+    concert_day: bool | None = None
+    ticketing: bool | None = None
+    new_concert: bool | None = None
+
+
 class UserSettingsResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -44,4 +53,4 @@ class FcmTokenUpdate(BaseModel):
 class UserSettingsUpdate(BaseModel):
     # 유저 설정 수정 요청
     show_predicted_setlist: bool | None = None
-    notification_settings: NotificationSettings | None = None
+    notification_settings: NotificationSettingsUpdate | None = None
