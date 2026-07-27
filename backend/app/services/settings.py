@@ -8,7 +8,8 @@ from app.schemas.settings import UserSettingsUpdate
 # 알림 설정 키 -> 이미 예약된 알림을 취소할 때 지울 NotificationType 목록
 _NOTIF_TYPES_BY_SETTING: dict[str, list[NotificationType]] = {
     "delivery": [NotificationType.DELIVERY_DAY],
-    "before_concert": [NotificationType.DAY_BEFORE, NotificationType.CONCERT_DAY],
+    "day_before": [NotificationType.DAY_BEFORE],
+    "concert_day": [NotificationType.CONCERT_DAY],
     "ticketing": [NotificationType.TICKETING_DAY],
     "new_concert": [NotificationType.NEW_CONCERT],
 }

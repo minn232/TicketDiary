@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
+from conftest import _get_token
 
 
 # 헬퍼
@@ -203,3 +204,76 @@ async def test_logout_is_idempotent():
         response = await ac.post("/api/v1/auth/logout", json={"refresh_token": "unknown-token"})
 
     assert response.status_code == 204
+
+
+# 회원 프로필 수정 테스트
+
+# 닉네임 수정 성공 테스트
+@pytest.mark.asyncio
+async def test_update_profile_nickname():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch("/api/v1/auth/me", json={"nickname": "새닉네임"}, headers=headers)
+
+    assert res.status_code == 200
+    assert res.json()["nickname"] == "새닉네임"
+
+
+# 프로필 이미지 수정 성공 테스트
+@pytest.mark.asyncio
+async def test_update_profile_image_url():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch(
+            "/api/v1/auth/me",
+            json={"profile_image_url": "https://example.com/new.jpg"},
+            headers=headers,
+        )
+
+    assert res.status_code == 200
+    assert res.json()["profile_image_url"] == "https://example.com/new.jpg"
+
+
+# 부분 수정 시 나머지 필드 유지 테스트
+@pytest.mark.asyncio
+async def test_update_profile_partial_keeps_others():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/auth/me",
+            json={"nickname": "닉네임A", "profile_image_url": "https://example.com/a.jpg"},
+            headers=headers,
+        )
+        res = await ac.patch("/api/v1/auth/me", json={"nickname": "닉네임B"}, headers=headers)
+
+    data = res.json()
+    assert data["nickname"] == "닉네임B"
+    assert data["profile_image_url"] == "https://example.com/a.jpg"
+
+
+# 수정 후 재조회 시 반영 확인 테스트
+@pytest.mark.asyncio
+async def test_update_profile_persisted():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/auth/me", json={"nickname": "지속닉네임"}, headers=headers)
+        res = await ac.get("/api/v1/auth/me", headers=headers)
+
+    assert res.json()["nickname"] == "지속닉네임"
+
+
+# 미인증 요청 401 테스트
+@pytest.mark.asyncio
+async def test_update_profile_no_auth_401():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch("/api/v1/auth/me", json={"nickname": "닉네임"})
+
+    assert res.status_code == 401

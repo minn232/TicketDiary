@@ -20,7 +20,8 @@ async def test_get_settings_default():
     assert data["fcm_token"] is None
     assert data["show_predicted_setlist"] is True
     assert data["notification_settings"]["delivery"] is True
-    assert data["notification_settings"]["before_concert"] is True
+    assert data["notification_settings"]["day_before"] is True
+    assert data["notification_settings"]["concert_day"] is True
     assert data["notification_settings"]["ticketing"] is True
     assert data["notification_settings"]["new_concert"] is True
 
@@ -62,14 +63,31 @@ async def test_update_settings_notification_settings():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.patch(
             "/api/v1/settings",
-            json={"notification_settings": {"delivery": False, "before_concert": True}},
+            json={"notification_settings": {"delivery": False, "day_before": True}},
             headers=headers,
         )
 
     assert res.status_code == 200
     data = res.json()
     assert data["notification_settings"]["delivery"] is False
-    assert data["notification_settings"]["before_concert"] is True
+    assert data["notification_settings"]["day_before"] is True
+
+
+# concert_day 알림 설정 수정 성공 테스트
+@pytest.mark.asyncio
+async def test_update_settings_concert_day():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"concert_day": False}},
+            headers=headers,
+        )
+
+    assert res.status_code == 200
+    assert res.json()["notification_settings"]["concert_day"] is False
 
 
 # ticketing 알림 설정 수정 성공 테스트
@@ -119,7 +137,7 @@ async def test_update_settings_partial_keeps_others():
     data = res.json()
     assert data["show_predicted_setlist"] is False
     assert data["notification_settings"]["delivery"] is True
-    assert data["notification_settings"]["before_concert"] is True
+    assert data["notification_settings"]["day_before"] is True
 
 
 # 수정 후 재조회 시 반영 확인 테스트
@@ -133,7 +151,7 @@ async def test_update_settings_persisted():
             "/api/v1/settings",
             json={
                 "show_predicted_setlist": False,
-                "notification_settings": {"delivery": False, "before_concert": False},
+                "notification_settings": {"delivery": False, "day_before": False},
             },
             headers=headers,
         )
@@ -142,7 +160,7 @@ async def test_update_settings_persisted():
     data = res.json()
     assert data["show_predicted_setlist"] is False
     assert data["notification_settings"]["delivery"] is False
-    assert data["notification_settings"]["before_concert"] is False
+    assert data["notification_settings"]["day_before"] is False
 
 
 # 미인증 요청 401 테스트

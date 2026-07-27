@@ -28,9 +28,16 @@ class User(Base):
         JSONB,
         nullable=False,
         server_default=text(
-            '\'{"delivery": true, "before_concert": true, "ticketing": true, "new_concert": true}\'::jsonb'
+            '\'{"delivery": true, "day_before": true, "concert_day": true, '
+            '"ticketing": true, "new_concert": true}\'::jsonb'
         ),
-        default=lambda: {"delivery": True, "before_concert": True, "ticketing": True, "new_concert": True},
+        default=lambda: {
+            "delivery": True,
+            "day_before": True,
+            "concert_day": True,
+            "ticketing": True,
+            "new_concert": True,
+        },
     )
     tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")
     artist_follow = relationship("ArtistFollow", backref="user", uselist=False, cascade="all, delete")

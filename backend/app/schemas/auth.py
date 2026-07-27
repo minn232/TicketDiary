@@ -32,6 +32,12 @@ class KakaoAuthUrlResponse(BaseModel):
     url: str
 
 
+class UserProfileUpdate(BaseModel):
+    # 회원 프로필 수정 요청 (수정할 필드만 전달)
+    nickname: str | None = None
+    profile_image_url: str | None = None
+
+
 class UserResponse(BaseModel):
     # 사용자 정보 응답
     model_config = {"from_attributes": True}

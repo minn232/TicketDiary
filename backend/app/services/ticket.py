@@ -262,15 +262,19 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     await db.commit()
 
 
-# 유저 알림 설정에서 delivery/before_concert 활성화 여부 반환
-def _get_notif_flags(user: User) -> tuple[bool, bool]:
+# 유저 알림 설정에서 delivery/day_before/concert_day 활성화 여부 반환
+def _get_notif_flags(user: User) -> tuple[bool, bool, bool]:
     settings = user.notification_settings
     if isinstance(settings, str):
         import json
         settings = json.loads(settings)
     if not isinstance(settings, dict):
-        return True, True
-    return settings.get("delivery", True), settings.get("before_concert", True)
+        return True, True, True
+    return (
+        settings.get("delivery", True),
+        settings.get("day_before", True),
+        settings.get("concert_day", True),
+    )
 
 
 # ticket 하나에 대해 생성할 Notification 객체들을 계산만 함 (DB에 add/commit은 호출부 책임)
@@ -279,7 +283,7 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
     if concert is None:
         return []
 
-    delivery_on, before_concert_on = _get_notif_flags(user)
+    delivery_on, day_before_on, concert_day_on = _get_notif_flags(user)
     now = datetime.now(timezone.utc)
     to_add: list[Notification] = []
 
@@ -296,8 +300,8 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
                 scheduled_at=scheduled,
             ))
 
-    # 공연 하루 전 알림 (before_concert 설정 on, 공연 전날 오전 9시)
-    if before_concert_on:
+    # 공연 하루 전 알림 (day_before 설정 on, 공연 전날 오전 9시)
+    if day_before_on:
         day_before = _at_9am_kst(concert.start_date - timedelta(days=1))
         if day_before > now:
             to_add.append(Notification(
@@ -309,8 +313,8 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
                 scheduled_at=day_before,
             ))
 
-    # 공연 당일 알림 (before_concert 설정 on, 공연일 오전 9시)
-    if before_concert_on:
+    # 공연 당일 알림 (concert_day 설정 on, 공연일 오전 9시)
+    if concert_day_on:
         concert_day = _at_9am_kst(concert.start_date)
         if concert_day > now:
             to_add.append(Notification(

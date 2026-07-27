@@ -576,7 +576,8 @@ Authorization: Bearer <token>
   "show_predicted_setlist": true,
   "notification_settings": {
     "delivery": true,
-    "before_concert": true
+    "day_before": true,
+    "concert_day": true
   }
 }
 ```
@@ -592,7 +593,8 @@ Authorization: Bearer <token>
   "show_predicted_setlist": false,
   "notification_settings": {
     "delivery": false,
-    "before_concert": true
+    "day_before": true,
+    "concert_day": true
   }
 }
 ```

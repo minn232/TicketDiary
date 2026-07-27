@@ -138,3 +138,17 @@ async def migrate_to_kakao(db: AsyncSession, current_user: User, code: str) -> U
 async def get_user_by_id(db: AsyncSession, user_id: str | UUID) -> User | None:
     result = await db.execute(select(User).where(User.id == user_id))
     return result.scalar_one_or_none()
+
+
+# 회원 프로필(닉네임/프로필 이미지) 수정
+async def update_profile(
+    db: AsyncSession, user: User, nickname: str | None, profile_image_url: str | None
+) -> User:
+    if nickname is not None:
+        user.nickname = nickname
+    if profile_image_url is not None:
+        user.profile_image_url = profile_image_url
+
+    await db.commit()
+    await db.refresh(user)
+    return user
