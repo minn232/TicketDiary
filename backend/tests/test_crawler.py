@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -240,6 +241,50 @@ def test_pick_crawl_target_nol_prefers_direct_interpark_link():
     assert direct_url == "https://tickets.interpark.com/goods/12345"
 
 
+# _make_page 테스트
+
+# browser.new_context 단계에서 실패해도 이미 launch된 browser가 닫히는지 테스트
+# (반환 전에 예외가 나면 호출부의 try/finally가 걸리지 못해 브라우저 프로세스가 누수되던 버그 회귀 방지)
+@pytest.mark.asyncio
+async def test_make_page_closes_browser_on_context_creation_failure():
+    from app.services.crawler import _make_page
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(side_effect=RuntimeError("컨텍스트 생성 실패"))
+    mock_browser.close = AsyncMock()
+
+    mock_pw = AsyncMock()
+    mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    with pytest.raises(RuntimeError):
+        await _make_page(mock_pw)
+
+    mock_browser.close.assert_awaited_once()
+
+
+# stealth 적용 단계에서 실패해도 이미 launch된 browser가 닫히는지 테스트
+@pytest.mark.asyncio
+async def test_make_page_closes_browser_on_stealth_failure():
+    from app.services.crawler import _make_page
+
+    mock_context = AsyncMock()
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_browser.close = AsyncMock()
+
+    mock_pw = AsyncMock()
+    mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+
+    with patch(
+        "app.services.crawler._STEALTH.apply_stealth_async",
+        AsyncMock(side_effect=RuntimeError("stealth 실패")),
+    ):
+        with pytest.raises(RuntimeError):
+            await _make_page(mock_pw)
+
+    mock_browser.close.assert_awaited_once()
+
+
 # crawl_and_save 테스트
 
 # NOL ticket으로 등록된 티켓도 INTERPARK 크롤러로 처리되는지 확인
@@ -249,6 +294,7 @@ async def test_crawl_and_save_nol_ticket_uses_interpark_crawler():
     fake_url = "https://s3.example.com/crawls/screenshot.png"
 
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.ticketing_links = None
@@ -283,6 +329,7 @@ async def test_crawl_and_save_interpark_updates_concert():
     fake_url = "https://s3.example.com/crawls/screenshot.png"
 
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -314,6 +361,7 @@ async def test_crawl_and_save_interpark_updates_concert():
 async def test_crawl_and_save_unsupported_site_skips():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -338,6 +386,7 @@ async def test_crawl_and_save_unsupported_site_skips():
 async def test_crawl_and_save_none_ticketing_site_and_no_links_skips():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -365,6 +414,7 @@ async def test_crawl_and_save_none_ticketing_site_uses_ticketing_links():
     fake_url = "https://s3.example.com/crawls/screenshot.png"
 
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -396,6 +446,7 @@ async def test_crawl_and_save_none_ticketing_site_uses_ticketing_links():
 async def test_crawl_and_save_skips_when_ticketing_date_known():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = "https://s3.example.com/crawls/existing.png"
@@ -425,6 +476,7 @@ async def test_crawl_and_save_skips_when_ticketing_date_known():
 async def test_crawl_and_save_skips_when_concert_ended():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -455,6 +507,7 @@ async def test_crawl_and_save_skips_when_concert_ended():
 async def test_crawl_and_save_skips_within_cooldown():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = "https://s3.example.com/crawls/placeholder.png"
@@ -488,6 +541,7 @@ async def test_crawl_and_save_retries_after_cooldown_when_still_no_ticketing_dat
     concert_id = uuid.uuid4()
     fake_url = "https://s3.example.com/crawls/updated.png"
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = "https://s3.example.com/crawls/placeholder.png"
@@ -513,11 +567,44 @@ async def test_crawl_and_save_retries_after_cooldown_when_still_no_ticketing_dat
     assert mock_concert.crawl_screenshot_url == fake_url
 
 
+# 누적 시도 횟수가 상한(_MAX_CRAWL_ATTEMPTS)에 도달하면, 쿨다운이 지났어도 더 이상 재시도하지
+# 않고 포기하는지 테스트 (영구 실패 공연에 축제 기간 내내 매일 재시도하며 낭비되던 버그 회귀 방지)
+@pytest.mark.asyncio
+async def test_crawl_and_save_gives_up_after_max_attempts():
+    from app.services.crawler import _MAX_CRAWL_ATTEMPTS
+
+    concert_id = uuid.uuid4()
+    mock_concert = MagicMock()
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+    mock_concert.ticketing_date = None
+    mock_concert.end_date = None
+    mock_concert.crawl_attempted_at = datetime.now(timezone.utc) - timedelta(hours=25)  # 쿨다운 지남
+    mock_concert.crawl_attempt_count = _MAX_CRAWL_ATTEMPTS  # 이미 상한 도달
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    mock_crawler = AsyncMock(return_value=b"bytes")
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+    ):
+        await crawl_and_save(concert_id, "INTERPARK")
+
+    mock_crawler.assert_not_called()
+    mock_db.commit.assert_not_awaited()
+
+
 # 크롤링 결과 None이면 S3 업로드 없이 종료
 @pytest.mark.asyncio
 async def test_crawl_and_save_crawler_returns_none_skips_upload():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -611,6 +698,7 @@ async def test_crawl_and_save_ticketlink_falls_back_to_kopis():
     fake_url = "https://s3.example.com/crawls/kopis.png"
 
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.kopis_id = "PF291361"
@@ -642,6 +730,7 @@ async def test_crawl_and_save_ticketlink_no_kopis_id_skips():
     concert_id = uuid.uuid4()
 
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.kopis_id = None
@@ -672,6 +761,7 @@ async def test_crawl_and_save_ticketlink_no_kopis_id_skips():
 async def test_crawl_and_save_melon_bot_block_skips():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
@@ -740,6 +830,44 @@ async def test_retry_pending_crawls_calls_crawl_and_save_for_pending_concerts():
         await retry_pending_crawls()
 
     mock_crawl.assert_awaited_once_with(concert_id)
+
+
+# 재시도 대상이 여러 건이어도 동시 실행 개수가 상한(_RETRY_CRAWL_CONCURRENCY)을 넘지 않는지,
+# 그리고 전부 처리되는지 테스트 (완전 순차 처리로 배치가 오래 걸리던 문제의 병렬화 회귀 방지)
+@pytest.mark.asyncio
+async def test_retry_pending_crawls_bounds_concurrency():
+    from app.services.crawler import _RETRY_CRAWL_CONCURRENCY
+
+    concert_ids = [uuid.uuid4() for _ in range(_RETRY_CRAWL_CONCURRENCY * 3)]
+    mock_follow = MagicMock()
+    mock_follow.concerts = [{"concert_id": str(cid)} for cid in concert_ids]
+
+    follows_result = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[mock_follow]))))
+    concerts_result = MagicMock(all=MagicMock(return_value=[(cid,) for cid in concert_ids]))
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[follows_result, concerts_result])
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def _fake_crawl(concert_id):
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler.crawl_and_save", new=AsyncMock(side_effect=_fake_crawl)) as mock_crawl,
+    ):
+        await retry_pending_crawls()
+
+    assert mock_crawl.await_count == len(concert_ids)
+    assert max_in_flight == _RETRY_CRAWL_CONCURRENCY
 
 
 # send_screenshots_to_llm 테스트

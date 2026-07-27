@@ -1,4 +1,6 @@
 import secrets
+import time
+from collections import defaultdict
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -68,3 +70,33 @@ async def verify_llm_api_key(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM API 키가 설정되지 않았습니다.")
     if credentials is None or not secrets.compare_digest(credentials.credentials, settings.LLM_EXTRACT_API_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 API 키입니다.")
+
+
+# 유저별 요청 시각 기록 (인메모리 sliding window). 서버를 여러 인스턴스로 수평 확장하게 되면
+# 인스턴스마다 따로 카운트되어 실효 한도가 늘어나므로, 그땐 Redis 등 공유 저장소로 옮겨야 함.
+# 지금은 단일 EC2 인스턴스 배포라 인메모리로 충분
+_rate_limit_hits: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
+    now = time.monotonic()
+    hits = _rate_limit_hits[key]
+    cutoff = now - period_seconds
+    while hits and hits[0] < cutoff:
+        hits.pop(0)
+    if len(hits) >= max_calls:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
+        )
+    hits.append(now)
+
+
+# 티켓 스캔(Vision OCR + LLM 호출, 비용 발생) 남용 방지: 유저당 시간당 10회
+async def rate_limit_ticket_scan(current_user: User = Depends(get_current_user)) -> None:
+    _check_rate_limit(f"scan:{current_user.id}", max_calls=10, period_seconds=3600)
+
+
+# 일기 생성(LLM 호출, 비용 발생) 남용 방지: 유저당 시간당 10회
+async def rate_limit_diary_generation(current_user: User = Depends(get_current_user)) -> None:
+    _check_rate_limit(f"diary:{current_user.id}", max_calls=10, period_seconds=3600)

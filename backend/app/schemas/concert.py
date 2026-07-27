@@ -31,6 +31,26 @@ class ConcertResponse(BaseModel):
     delivery_date: datetime | None
 
 
+class ConcertSummary(BaseModel):
+    model_config = {"from_attributes": True}
+
+    # 티켓 목록처럼 여러 건을 한 번에 내려주는 화면용 - 상세 화면에서만 쓰는
+    # description/price(가격표)는 빼서 응답 크기를 줄임
+    id: UUID
+    kopis_id: str | None
+    name: str
+    artist_name: list[str]
+    venue: str | None
+    start_date: datetime
+    start_time: str | None
+    end_date: datetime
+    genre: list[str] | None
+    poster_url: str | None
+    event_type: str
+    ticketing_date: datetime | None
+    delivery_date: datetime | None
+
+
 class TicketScanExtracted(BaseModel):
     # OCR + LLM으로 추출된 티켓 정보
     title: str | None = None

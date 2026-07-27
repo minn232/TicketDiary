@@ -419,6 +419,25 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
     assert data["candidates"][0]["kopis_id"] == "PF_OCR_001"
 
 
+# 유저당 시간당 요청 상한 초과 시 429 테스트 (Vision/LLM 호출 비용 남용 방지)
+@pytest.mark.asyncio
+async def test_scan_rate_limited_after_10_calls_per_hour(get_auth_token):
+    headers = {"Authorization": f"Bearer {get_auth_token}"}
+    statuses = []
+    with _ocr_mock(_SAMPLE_EXTRACTED), kopis_mock(_make_kopis_xml("PF_OCR_RATE", "테스트 공연")):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            for _ in range(11):
+                response = await ac.post(
+                    "/api/v1/concerts/scan",
+                    files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                    headers=headers,
+                )
+                statuses.append(response.status_code)
+
+    assert statuses[:10] == [200] * 10
+    assert statuses[10] == 429
+
+
 # title 후보 중 앞쪽이 날짜가 안 맞는 흔한 구절로 결과를 내면 건너뛰고,
 # 날짜가 실제로 겹치는 뒤쪽 후보(title_candidates)를 채택하는지 테스트
 # (예: "우리들의 이야기다"는 무관한 공연을 걸지만 날짜가 안 맞음 -> "빨래"로 재시도해 정확한 결과를 얻음)

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, rate_limit_ticket_scan
 from app.models.concert import Concert
 from app.models.user import User
 from app.schemas.concert import ConcertResponse, TicketScanExtracted, TicketScanResponse
@@ -29,6 +29,7 @@ async def scan_ticket(
     image: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(rate_limit_ticket_scan),
 ):
     # Content-Length 헤더로 다운로드 전 사전 거절
     content_length = request.headers.get("content-length")

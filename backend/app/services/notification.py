@@ -175,6 +175,16 @@ async def schedule_new_concert_notifications(
     if not users:
         return
 
+    # 기존 미발송 NEW_CONCERT 알림 삭제 (같은 공연이 배치에서 두 번 "신규"로 감지돼도 중복 발송 방지)
+    await db.execute(
+        delete(Notification).where(
+            Notification.user_id.in_([u.id for u in users]),
+            Notification.concert_id == concert.id,
+            Notification.type == NotificationType.NEW_CONCERT,
+            Notification.is_sent == False,  # noqa: E712
+        )
+    )
+
     # 자정 배치 직후 바로 보내면 새벽에 푸시가 뜨므로 그날 오전 9시로 예약
     scheduled = _at_9am_kst(datetime.now(timezone.utc))
 

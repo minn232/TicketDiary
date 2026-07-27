@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.concert import Concert
 from app.models.social import ArtistFollow, NewsFeed
+from app.services.artist_matching import get_known_artist_names, normalize_artist_names
 from app.services.notification import schedule_new_concert_notifications
 from app.services.site_aliases import find_site_key
 from app.services.text_utils import min_len_ok
@@ -102,7 +103,14 @@ def _parse_artists(prfcast: str) -> list[str]:
 
 
 # concert 정보 DB upsert
-async def _upsert_concert(db: AsyncSession, data: dict) -> Concert:
+async def _upsert_concert(
+    db: AsyncSession, data: dict, known_artist_names: set[str] | None = None
+) -> Concert:
+    if data.get("artist_name"):
+        if known_artist_names is None:
+            known_artist_names = await get_known_artist_names(db)
+        data["artist_name"] = normalize_artist_names(data["artist_name"], known_artist_names)
+
     result = await db.execute(
         select(Concert).where(Concert.kopis_id == data["kopis_id"])
     )
@@ -560,13 +568,24 @@ async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date:
             "cpage": cpage,
         }
         await _throttle_kopis_request()
-        response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+        try:
+            response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+        except httpx.HTTPError as e:
+            logger.warning(f"KOPIS 배치 목록 조회 실패 (cpage={cpage}): {e}")
+            break
 
         if response.status_code != 200:
             logger.warning(f"KOPIS 배치 목록 조회 실패 (cpage={cpage})")
             break
 
-        root = ET.fromstring(response.content)
+        # 응답이 200이어도 몸체가 깨져있으면(순간 오류 등) 그 페이지만 포기하고 지금까지
+        # 모은 kopis_id는 반환 -> 한 페이지 파싱 실패로 그날 배치 전체가 죽는 것을 방지
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as e:
+            logger.warning(f"KOPIS 배치 목록 응답 파싱 실패 (cpage={cpage}): {e}")
+            break
+
         entries = root.findall("db")
         page_ids = [
             elem.findtext("mt20id", "").strip()
@@ -656,11 +675,15 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
                 *(_fetch_new_concert_data(client, kid, semaphore) for kid in new_kopis_ids)
             )
 
+        # 아티스트명 정규화용 기존 아티스트 집합도 배치 1회당 한 번만 구축해 재사용
+        # (건마다 재조회하면 신규 공연이 많은 초기 백필에서 DB 왕복이 크게 늘어남)
+        known_artist_names = await get_known_artist_names(db)
+
         # DB upsert + 뉴스피드 생성은 세션이 공유되므로 순차 처리
         for data in results:
             if data is None:
                 continue
-            concert = await _upsert_concert(db, data)
+            concert = await _upsert_concert(db, data, known_artist_names)
             matched = await _create_news_feeds_for_concert(db, concert, follow_index)
             # NEW_CONCERT 알림은 여기(진짜 신규 공연)에서만 생성 - 아래 기존 공연
             # 백필 루프나 온디맨드 상세조회에서는 생성하지 않음(schedule_new_concert_notifications 문서 참고)

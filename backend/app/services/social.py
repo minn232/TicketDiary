@@ -111,12 +111,20 @@ async def update_concert_follow(
 
 
 # 뉴스 피드 목록 조회 (안 읽은 항목 먼저)
-async def get_news_feed(db: AsyncSession, user_id: UUID) -> list[NewsFeed]:
+# 유저별 뉴스피드가 무제한으로 쌓이므로 응답이 계속 커지지 않도록 기본 상한을 둠
+_DEFAULT_NEWS_FEED_LIMIT = 200
+
+
+async def get_news_feed(
+    db: AsyncSession, user_id: UUID, limit: int = _DEFAULT_NEWS_FEED_LIMIT, offset: int = 0
+) -> list[NewsFeed]:
     result = await db.execute(
         select(NewsFeed)
         .options(selectinload(NewsFeed.concert))
         .where(NewsFeed.user_id == user_id)
         .order_by(NewsFeed.is_read.asc(), NewsFeed.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
 

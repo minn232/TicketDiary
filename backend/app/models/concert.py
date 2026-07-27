@@ -1,7 +1,7 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, DateTime, Text
+from sqlalchemy import Column, String, DateTime, Text, Integer, text
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 
@@ -37,6 +37,9 @@ class Concert(Base):
     # 가장 최근 크롤링 시도 시각(성공/실패 무관). ticketing_date를 아직 못 얻었으면 크롤링을
     # "완료"로 보지 않고 재시도하되, 너무 자주 재시도하지 않도록 쿨다운 판단에 씀
     crawl_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    # 크롤링 시도 누적 횟수. 영영 ticketing_date를 못 얻는 공연(검색 실패 등)에 매일 무한정
+    # 재시도하지 않도록 _MAX_CRAWL_ATTEMPTS(crawler.py)와 비교해 포기 시점을 판단하는 데 씀
+    crawl_attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     ticketing_date = Column(DateTime(timezone=True), nullable=True)
     # 예매 사이트 크롤링 결과로 채워지는 배송 예정일 공지 (사이트 공통 공지라 티켓별이 아닌 공연 단위)
     delivery_date = Column(DateTime(timezone=True), nullable=True)
@@ -45,6 +48,9 @@ class Concert(Base):
     # 생성된 공연은 이 값이 None이라 artist_name이 비어 있어도 "진짜 출연진 없음"과 구분 못하므로,
     # 상세 조회 시 이 값 유무로 재조회 필요 여부를 판단함 (None이면 아직 상세 미조회)
     kopis_detail_synced_at = Column(DateTime(timezone=True), nullable=True)
+    # 포스터를 VLM팀에 아티스트 추출 요청으로 보낸 시점(성공/실패 무관). 포스터 내용은 시간이 지나도
+    # 안 바뀌므로 크롤링과 달리 재시도 개념 없이 한 번만 보내고 다시 보내지 않기 위한 플래그
+    artist_extraction_attempted_at = Column(DateTime(timezone=True), nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)

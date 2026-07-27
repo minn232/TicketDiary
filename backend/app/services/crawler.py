@@ -7,7 +7,7 @@ from uuid import UUID
 import httpx
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -39,18 +39,25 @@ _STEALTH = Stealth(
 
 
 # Playwright 브라우저 + 페이지 생성 (playwright-stealth로 봇 감지 우회)
+# context/stealth/new_page 단계에서 실패하면 이미 launch된 browser를 여기서 직접 닫아야 함
+# (호출부의 try/finally는 이 함수가 정상 반환된 뒤에야 browser를 참조할 수 있어서, 반환 전에
+# 예외가 나면 그 finally가 걸리지 못해 브라우저 프로세스가 누수됨)
 async def _make_page(pw):
     browser = await pw.chromium.launch(
         headless=True,
         args=["--disable-blink-features=AutomationControlled"],
     )
-    context = await browser.new_context(
-        user_agent=_UA,
-        viewport={"width": 1280, "height": 900},
-        extra_http_headers=_EXTRA_HEADERS,
-    )
-    await _STEALTH.apply_stealth_async(context)
-    page = await context.new_page()
+    try:
+        context = await browser.new_context(
+            user_agent=_UA,
+            viewport={"width": 1280, "height": 900},
+            extra_http_headers=_EXTRA_HEADERS,
+        )
+        await _STEALTH.apply_stealth_async(context)
+        page = await context.new_page()
+    except Exception:
+        await browser.close()
+        raise
     return browser, page
 
 
@@ -308,6 +315,11 @@ _KNOWN_SITE_KEYS: frozenset[str] = frozenset(
 # 재시도 대상이 되므로, 찜/티켓등록이 반복될 때마다 매번 크롤링하지 않도록 쿨다운을 둠
 _CRAWL_RETRY_COOLDOWN = timedelta(hours=24)
 
+# 재시도를 포기하는 최대 누적 시도 횟수 (쿨다운 24h 기준 최대 한 달 정도). 검색 자체가 계속
+# 실패하는 등 구조적으로 안 되는 공연에 축제처럼 긴 상영 기간 내내 매일 재시도하며 리소스를
+# 낭비하지 않기 위한 상한. 찜/티켓등록으로 즉시 재트리거되는 경우도 이 카운트에 포함됨
+_MAX_CRAWL_ATTEMPTS = 30
+
 
 # 티켓 등록 또는 공연 찜(follow) 시 백그라운드 태스크로 호출: 크롤링 후 Concert.crawl_screenshot_url 갱신
 # ticketing_site는 티켓 등록 경로에서만 값이 있고, 찜 경로에서는 아직 아무도 티켓을 안 샀을 수 있어
@@ -324,7 +336,12 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         ticketing_site = None
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Concert).where(Concert.id == concert_id))
+        # 티켓등록/찜/야간배치 세 경로가 동시에 같은 공연을 크롤링 시도할 수 있어 row lock으로 직렬화.
+        # 먼저 들어온 트랜잭션이 crawl_attempted_at을 갱신하고 커밋(=잠금 해제)하면, 대기하던
+        # 트랜잭션은 그 갱신된 값을 보고 쿨다운에 걸려 정상적으로 중복 크롤링을 건너뜀
+        result = await db.execute(
+            select(Concert).where(Concert.id == concert_id).with_for_update()
+        )
         concert = result.scalar_one_or_none()
         if concert is None:
             return
@@ -343,11 +360,16 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         if concert.crawl_attempted_at is not None and now - concert.crawl_attempted_at < _CRAWL_RETRY_COOLDOWN:
             return
 
+        if concert.crawl_attempt_count >= _MAX_CRAWL_ATTEMPTS:
+            logger.info(f"크롤링 재시도 횟수 초과, 포기: {concert.name} ({concert.crawl_attempt_count}회)")
+            return
+
         if not ticketing_site and not concert.ticketing_links:
             logger.info(f"크롤링 대상 사이트 정보 없음, 스킵: {concert.name}")
             return
 
         concert.crawl_attempted_at = now
+        concert.crawl_attempt_count += 1
         await db.commit()
 
         site_key, direct_url = _pick_crawl_target(ticketing_site, concert.ticketing_links)
@@ -419,6 +441,65 @@ async def send_screenshots_to_llm() -> None:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
 
+# 자정 배치: 아티스트 정보 없는 공연의 포스터를 VLM팀에 보내 아티스트 추출 요청
+# (포스터 내용은 시간이 지나도 안 바뀌므로 크롤링과 달리 쿨다운/재시도 없이 한 번만 시도함 -
+# 전송 자체가 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에서 다시 시도됨)
+async def send_posters_for_artist_extraction() -> None:
+    if not settings.LLM_ARTIST_URL:
+        logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
+        return
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Concert).where(
+                Concert.artist_name == [],
+                Concert.poster_url.isnot(None),
+                Concert.artist_extraction_attempted_at.is_(None),
+            )
+        )
+        concerts = list(result.scalars().all())
+
+    if not concerts:
+        logger.info("아티스트 추출 대상 공연 없음")
+        return
+
+    payload = [
+        {"concert_id": str(c.id), "concert_name": c.name, "poster_url": c.poster_url}
+        for c in concerts
+    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                settings.LLM_ARTIST_URL,
+                json=payload,
+                headers={"Authorization": f"Bearer {settings.LLM_EXTRACT_API_KEY}"},
+            )
+            response.raise_for_status()
+    except Exception as e:
+        logger.error(f"LLM팀 포스터 전송 실패: {e}")
+        return
+
+    now = datetime.now(timezone.utc)
+    concert_ids = [c.id for c in concerts]
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id.in_(concert_ids)).values(artist_extraction_attempted_at=now)
+        )
+        await db.commit()
+
+    logger.info(f"LLM팀 포스터 전송 완료: {len(concerts)}건")
+
+
+# 재시도 배치에서 동시에 띄우는 브라우저 프로세스 수 상한 (무제한 병렬은 메모리/CPU 부담이 큼)
+_RETRY_CRAWL_CONCURRENCY = 4
+
+
+async def _crawl_and_save_limited(semaphore: asyncio.Semaphore, concert_id) -> None:
+    async with semaphore:
+        await crawl_and_save(concert_id)
+
+
 # 자정 배치: 찜한 유저가 있는데 아직 ticketing_date를 못 얻은 공연들에 크롤링 재시도
 # (crawl_and_save는 follow/티켓등록 시점에도 불리지만, 그 이후로 아무도 다시 찜/등록을 안 하면
 # 재시도할 기회 자체가 없으므로 이 배치가 그 역할을 대신함. 쿨다운/완료판단은 crawl_and_save가 함)
@@ -449,5 +530,7 @@ async def retry_pending_crawls() -> None:
         return
 
     logger.info(f"크롤링 재시도 대상 {len(concert_ids)}건")
-    for concert_id in concert_ids:
-        await crawl_and_save(concert_id)
+    # 브라우저 launch가 건당 수 초 걸려 완전 순차 처리하면 대상이 많을 때 배치가 오래 걸림.
+    # kopis.py의 상세조회와 동일하게 세마포어로 동시 실행 개수만 제한해 병렬 처리
+    semaphore = asyncio.Semaphore(_RETRY_CRAWL_CONCURRENCY)
+    await asyncio.gather(*(_crawl_and_save_limited(semaphore, cid) for cid in concert_ids))

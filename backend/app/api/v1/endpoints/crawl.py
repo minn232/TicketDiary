@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import verify_llm_api_key
 from app.models.concert import Concert
+from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtractionResponse
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
+from app.services.artist_matching import get_known_artist_names, normalize_artist_names
+from app.services.kopis import _create_news_feeds_for_concert
 from app.services.notification import schedule_ticketing_day_notifications
 from app.services.ticket import backfill_delivery_date_from_concert
 from app.services.timetable import upsert_timetable
@@ -85,3 +88,29 @@ async def receive_crawl_result(
 
     logger.info(f"크롤링 결과 수신 concert_id={concert_id} updated={updated}")
     return CrawlResultResponse(updated=updated)
+
+
+# LLM팀이 공연명+포스터 기반 아티스트 추출 결과를 전송하는 웹훅 엔드포인트
+@router.post("/{concert_id}/artist-result", response_model=ArtistExtractionResponse)
+async def receive_artist_extraction_result(
+    concert_id: UUID,
+    body: ArtistExtractionResult,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_llm_api_key),
+):
+    result = await db.execute(select(Concert).where(Concert.id == concert_id))
+    concert = result.scalar_one_or_none()
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    if body.artist_name:
+        known_artist_names = await get_known_artist_names(db)
+        concert.artist_name = normalize_artist_names(body.artist_name, known_artist_names)
+        await db.commit()
+        await db.refresh(concert)
+        # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
+        await _create_news_feeds_for_concert(db, concert)
+        await db.commit()
+
+    logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
+    return ArtistExtractionResponse(artist_name=concert.artist_name)

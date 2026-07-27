@@ -342,6 +342,58 @@ async def test_list_tickets_sorting():
     assert concert_ids.index(near_id) < concert_ids.index(far_id)
 
 
+# limit/offset 파라미터로 페이지네이션되는지, 생략 시 기본값(최대 200건)이 적용되는지 테스트
+@pytest.mark.asyncio
+async def test_list_tickets_pagination():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    concert_ids = []
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for i in range(5):
+            cid = await _create_concert(f"PF_PAGE_{i}_{uuid.uuid4().hex[:6]}")
+            concert_ids.append(cid)
+            res = await ac.post("/api/v1/tickets", json={"concert_id": cid}, headers=headers)
+            assert res.status_code == 201
+
+        default_res = await ac.get("/api/v1/tickets", headers=headers)
+        limited_res = await ac.get("/api/v1/tickets", params={"limit": 2}, headers=headers)
+        offset_res = await ac.get("/api/v1/tickets", params={"limit": 2, "offset": 2}, headers=headers)
+
+    assert len(default_res.json()) == 5  # 파라미터 생략하면 기본 상한(200) 내에서 전부 반환
+    assert len(limited_res.json()) == 2
+    assert len(offset_res.json()) == 2
+    # offset 적용 시 첫 페이지와 겹치지 않아야 함
+    first_page_ids = {t["id"] for t in limited_res.json()}
+    second_page_ids = {t["id"] for t in offset_res.json()}
+    assert first_page_ids.isdisjoint(second_page_ids)
+
+
+# 목록 조회는 description/price(가격표) 없이 요약 정보만, 상세 조회는 전체 정보를
+# 내려주는지 테스트 (목록 응답 크기를 줄이면서 상세 화면에 필요한 정보는 유지되는지 확인)
+@pytest.mark.asyncio
+async def test_list_tickets_omits_detail_only_concert_fields():
+    concert_id = await _create_concert(f"PF_SLIM_{uuid.uuid4().hex[:6]}")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+
+        list_res = await ac.get("/api/v1/tickets", headers=headers)
+        detail_res = await ac.get(f"/api/v1/tickets/{ticket_id}", headers=headers)
+
+    list_concert = list_res.json()[0]["concert"]
+    detail_concert = detail_res.json()["concert"]
+
+    assert "description" not in list_concert
+    assert "price" not in list_concert
+    assert list_concert["name"] == detail_concert["name"]  # 요약 정보는 그대로 유지
+
+    assert "description" in detail_concert
+    assert "price" in detail_concert
+
+
 # 티켓 상세 조회 테스트
 
 # 티켓 상세 조회 성공 테스트

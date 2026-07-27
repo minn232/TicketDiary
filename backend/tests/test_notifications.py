@@ -313,6 +313,35 @@ async def test_schedule_resets_on_ticket_update():
     assert "delivery_day" in types
 
 
+# 알림 설정을 끄면 이미 예약돼있던 미발송 알림도 취소되는지 테스트
+# (꺼도 그 전에 예약된 알림이 그대로 발송되던 버그 회귀 방지)
+@pytest.mark.asyncio
+async def test_disabling_delivery_setting_cancels_pending_notification():
+    concert_id = await _create_concert("PF_SCHED_TOGGLE_001", _make_future_xml("PF_SCHED_TOGGLE_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "delivery_date": "2030-05-15T00:00:00Z"},
+            headers=headers,
+        )
+        res = await ac.get("/api/v1/notifications", headers=headers)
+    assert "delivery_day" in {n["type"] for n in res.json()}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        settings_res = await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": {"delivery": False}},
+            headers=headers,
+        )
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    assert settings_res.status_code == 200
+    assert "delivery_day" not in {n["type"] for n in res.json()}
+
+
 # process_pending_notifications 단위 테스트
 
 # 기한 도래 + fcm_token 있는 미발송 알림 -> FCM 발송 및 is_sent=True 테스트

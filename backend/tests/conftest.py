@@ -26,6 +26,15 @@ async def _reset_db_pool():
     await engine.dispose()
 
 
+# 테스트마다 인메모리 rate limit 상태 초기화 (get_auth_token 픽스처가 고정 device_id를 써서
+# 여러 테스트가 같은 유저를 공유하므로, 안 지우면 한 테스트의 호출 횟수가 다른 테스트에 새어나감)
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    from app.core.deps import _rate_limit_hits
+    _rate_limit_hits.clear()
+    yield
+
+
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처
 @pytest_asyncio.fixture
 async def get_auth_token():

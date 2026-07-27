@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select
@@ -278,6 +279,42 @@ async def test_fetch_all_kopis_ids_collects_beyond_old_page_cap():
     assert len(ids) == 2550
 
 
+# 특정 페이지 응답이 200이지만 몸체가 깨져있어도(XML 파싱 실패), 그 이전 페이지에서 이미
+# 모은 kopis_id는 잃지 않고 반환되는지 테스트 (한 페이지 파싱 실패로 배치 전체가 죽던 버그 회귀 방지)
+@pytest.mark.asyncio
+async def test_fetch_all_kopis_ids_recovers_from_malformed_page():
+    async def _mock_get(url, **kwargs):
+        cpage = kwargs["params"]["cpage"]
+        if cpage == 1:
+            return MagicMock(status_code=200, content=_make_list_xml(["PF_OK_1", "PF_OK_2"]))
+        # 2페이지는 순간 오류로 몸체가 깨진 채 200으로 응답
+        return MagicMock(status_code=200, content=b"<not-valid-xml")
+
+    mock_client = MagicMock()
+    mock_client.get = _mock_get
+
+    ids = await _fetch_all_kopis_ids(mock_client, date(2030, 1, 1), date(2030, 12, 31))
+
+    assert ids == ["PF_OK_1", "PF_OK_2"]
+
+
+# HTTP 요청 자체가 예외를 던져도(네트워크 오류 등) 그 이전 페이지 결과는 반환되는지 테스트
+@pytest.mark.asyncio
+async def test_fetch_all_kopis_ids_recovers_from_request_error():
+    async def _mock_get(url, **kwargs):
+        cpage = kwargs["params"]["cpage"]
+        if cpage == 1:
+            return MagicMock(status_code=200, content=_make_list_xml(["PF_OK_1"]))
+        raise httpx.ConnectError("connection reset")
+
+    mock_client = MagicMock()
+    mock_client.get = _mock_get
+
+    ids = await _fetch_all_kopis_ids(mock_client, date(2030, 1, 1), date(2030, 12, 31))
+
+    assert ids == ["PF_OK_1"]
+
+
 # sync_daily_concerts 테스트
 
 # 1회 실행당 신규 공연 처리 상한 테스트 - 상한 초과분은 다음 실행에서 이어서 처리됨
@@ -435,6 +472,48 @@ async def test_sync_creates_new_concert_notification_for_followed_artist():
     kst = timezone(timedelta(hours=9))
     scheduled_kst = datetime.fromisoformat(new_concert_notifs[0]["scheduled_at"]).astimezone(kst)
     assert (scheduled_kst.hour, scheduled_kst.minute) == (9, 0)
+
+
+# 같은 공연이 배치에서 두 번 "신규"로 감지돼도(재시도로 인한 중복 호출 등)
+# NEW_CONCERT 알림이 중복 생성되지 않는지 테스트
+@pytest.mark.asyncio
+async def test_schedule_new_concert_notifications_does_not_duplicate():
+    from app.services.notification import schedule_new_concert_notifications
+
+    artist_name = f"배치중복아티스트_{uuid.uuid4().hex[:6]}"
+    kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        me_res = await ac.get("/api/v1/auth/me", headers=headers)
+    user_id = uuid.UUID(me_res.json()["id"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    list_xml = _make_list_xml([kopis_id])
+    detail_xml = _make_detail_xml(kopis_id, artist_name)
+    with _batch_kopis_mock(list_xml, detail_xml), patch("asyncio.sleep"):
+        async with AsyncSessionLocal() as db:
+            await sync_daily_concerts(db)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
+        concert = result.scalar_one()
+
+        # 배치가 같은 공연을 다시 "신규"로 감지해 두 번째로 호출한 상황을 시뮬레이션
+        await schedule_new_concert_notifications(db, concert, [(user_id, artist_name)])
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    new_concert_notifs = [n for n in res.json() if n["type"] == "new_concert"]
+    assert len(new_concert_notifs) == 1
 
 
 # notification_settings.new_concert를 꺼두면 팔로우 아티스트 신규 공연이어도

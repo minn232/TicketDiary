@@ -10,11 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.notification import Notification, NotificationType
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
+from app.services.diary import generate_diary
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -124,20 +126,28 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
 
     # 배송일은 예매 사이트 공지(크롤링)가 실물 티켓 OCR보다 신뢰도가 높다고 보고,
     # OCR/유저 입력이 없을 때만 크롤링된 concert.delivery_date로 채움 (seat_type과 같은 방향)
+    # delivery_date_synced=True로 표시해두면, 이후 크롤링이 delivery_date를 정정할 때
+    # backfill_delivery_date_from_concert가 이 값도 같이 갱신 대상으로 잡을 수 있음
     delivery_date = body.delivery_date
+    delivery_date_synced = False
     if delivery_date is None:
         delivery_date = concert.delivery_date
+        delivery_date_synced = delivery_date is not None
 
     ticket = Ticket(
         user_id=user.id,
         concert_id=concert.id,
         status=_initial_status(concert),
         delivery_date=delivery_date,
+        delivery_date_synced=delivery_date_synced,
         start_time=start_time,
         ticketing_site=body.ticketing_site,
         price=body.price,
         seat_type=_correct_seat_type(body.seat_type, concert),
     )
+    # 이미 위에서 로드해둔 concert를 그대로 연결 -> 커밋 후 재조회 불필요
+    # (AsyncSessionLocal이 expire_on_commit=False라 커밋해도 이 관계가 만료되지 않음)
+    ticket.concert = concert
     try:
         db.add(ticket)
         await db.commit()
@@ -145,17 +155,19 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
         await db.rollback()
         raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
 
-    # concert 관계 포함해서 재조회
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.concert))
-    )
-    ticket = result.scalar_one()
     await schedule_ticket_notifications(db, ticket, user)
     return ticket
 
 
+# 티켓 목록 응답이 매번 유저의 전체 이력을 무제한으로 실어 보내지 않도록 하는 기본 상한.
+# 지금 규모에선 대부분의 유저가 이 안에 들지만, 계속 쌓이는 걸 대비해 상한을 둠
+_DEFAULT_TICKET_LIST_LIMIT = 200
+
+
 # 내 티켓 목록 조회 (공연전 티켓 먼저, 공연일 기준 현재와 가까운 순)
-async def get_sorted_tickets(db: AsyncSession, user_id: UUID) -> list[Ticket]:
+async def get_sorted_tickets(
+    db: AsyncSession, user_id: UUID, limit: int = _DEFAULT_TICKET_LIST_LIMIT, offset: int = 0
+) -> list[Ticket]:
     result = await db.execute(
         select(Ticket)
         .outerjoin(Concert, Ticket.concert_id == Concert.id)
@@ -165,6 +177,8 @@ async def get_sorted_tickets(db: AsyncSession, user_id: UUID) -> list[Ticket]:
             case((Ticket.status == TicketStatus.AFTER_CONCERT, 1), else_=0).asc(),
             func.abs(func.extract("epoch", Concert.start_date - func.now())).asc().nulls_last(),
         )
+        .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
 
@@ -182,6 +196,33 @@ async def get_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Ticket
     return ticket
 
 
+# 한줄평(review) 존재 여부만 확인하고 diary_requested_at을 찍어 "생성 중" 상태로 전환.
+# 실제 VLM팀 호출은 30초까지 걸릴 수 있어 요청을 블로킹하지 않도록 백그라운드로 넘기고
+# (generate_and_save_diary), 여기선 즉시 반환. 클라이언트는 diary가 채워질 때까지 폴링함
+async def request_ticket_diary(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Ticket:
+    ticket = await get_ticket(db, user_id, ticket_id)
+    if not ticket.review:
+        raise HTTPException(status_code=400, detail="한줄평을 먼저 작성해야 일기를 생성할 수 있습니다.")
+
+    ticket.diary_requested_at = datetime.now(timezone.utc)
+    await db.commit()
+    return ticket
+
+
+# 백그라운드 태스크로 실행 - BackgroundTasks는 응답이 나간 뒤(요청의 db 세션이 이미 닫힌 뒤)
+# 실행되므로 crawl_and_save와 동일하게 자체 DB 세션을 새로 연다
+async def generate_and_save_diary(ticket_id: UUID, user_id: UUID) -> None:
+    async with AsyncSessionLocal() as db:
+        try:
+            ticket = await get_ticket(db, user_id, ticket_id)
+            if not ticket.review:
+                return
+            ticket.diary = await generate_diary(ticket.review, ticket.concert)
+            await db.commit()
+        except HTTPException as e:
+            logger.error(f"일기 생성 실패 (ticket_id={ticket_id}): {e.detail}")
+
+
 # 티켓 수정
 async def update_ticket(
     db: AsyncSession, user: User, ticket_id: UUID, body: TicketUpdate
@@ -197,14 +238,13 @@ async def update_ticket(
 
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(ticket, field, value)
+        # 유저가 직접 delivery_date를 수정하면 더 이상 크롤링 값과 동기화된 상태가 아님
+        if field == "delivery_date":
+            ticket.delivery_date_synced = False
 
     await db.commit()
-
-    # concert 관계 포함해서 재조회
-    result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.concert))
-    )
-    ticket = result.scalar_one()
+    # 위 select에서 이미 concert를 eager-load 했고 expire_on_commit=False라
+    # 커밋 후에도 그대로 유효함 -> 재조회 불필요
     await schedule_ticket_notifications(db, ticket, user)
     return ticket
 
@@ -233,22 +273,13 @@ def _get_notif_flags(user: User) -> tuple[bool, bool]:
     return settings.get("delivery", True), settings.get("before_concert", True)
 
 
-# 티켓 알림 스케줄 등록 (기존 미발송 알림 초기화 후 재등록)
-async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket, user: User) -> None:
+# ticket 하나에 대해 생성할 Notification 객체들을 계산만 함 (DB에 add/commit은 호출부 책임)
+def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification]:
     concert = ticket.concert
     if concert is None:
-        return
+        return []
 
     delivery_on, before_concert_on = _get_notif_flags(user)
-
-    # 기존 미발송 알림 제거 후 재생성
-    await db.execute(
-        delete(Notification).where(
-            Notification.ticket_id == ticket.id,
-            Notification.is_sent == False,  # noqa: E712
-        )
-    )
-
     now = datetime.now(timezone.utc)
     to_add: list[Notification] = []
 
@@ -291,22 +322,62 @@ async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket, user: 
                 scheduled_at=concert_day,
             ))
 
-    for notif in to_add:
+    return to_add
+
+
+# 티켓 알림 스케줄 등록 (기존 미발송 알림 초기화 후 재등록)
+async def schedule_ticket_notifications(db: AsyncSession, ticket: Ticket, user: User) -> None:
+    # 기존 미발송 알림 제거 후 재생성
+    await db.execute(
+        delete(Notification).where(
+            Notification.ticket_id == ticket.id,
+            Notification.is_sent == False,  # noqa: E712
+        )
+    )
+
+    for notif in _build_ticket_notifications(ticket, user):
         db.add(notif)
 
     await db.commit()
 
 
-# 크롤링으로 concert.delivery_date가 새로 채워졌을 때(crawl-result 웹훅에서 호출), 이미 등록된
-# 티켓 중 자체 delivery_date가 없는 것들(OCR로 못 뽑았거나 안 넣은 경우)에 백필하고
-# DELIVERY_DAY 등 알림을 재스케줄. 이미 자체 값이 있는 티켓은 건드리지 않음(OCR 값 우선순위 유지)
+# 여러 티켓의 알림을 한 번에 재스케줄 (배치 delete 1번 + commit 1번으로 처리).
+# 티켓마다 schedule_ticket_notifications를 개별 호출하면 delete+commit이 N번 발생하므로,
+# 공연 하나에 티켓 소지자가 많을 때(backfill_delivery_date_from_concert 등)를 위한 배치 버전.
+# ticket.concert/ticket.user가 이미 eager-load 되어 있어야 함
+async def schedule_tickets_notifications_bulk(db: AsyncSession, tickets: list[Ticket]) -> None:
+    if not tickets:
+        return
+
+    ticket_ids = [t.id for t in tickets]
+    await db.execute(
+        delete(Notification).where(
+            Notification.ticket_id.in_(ticket_ids),
+            Notification.is_sent == False,  # noqa: E712
+        )
+    )
+
+    for ticket in tickets:
+        for notif in _build_ticket_notifications(ticket, ticket.user):
+            db.add(notif)
+
+    await db.commit()
+
+
+# 크롤링으로 concert.delivery_date가 새로 채워지거나 정정됐을 때(crawl-result 웹훅에서 호출),
+# 등록된 티켓 중 delivery_date가 없거나(OCR로 못 뽑았거나 안 넣은 경우) 이전에 크롤링 값으로
+# 동기화된(delivery_date_synced=True) 것들을 갱신하고 DELIVERY_DAY 알림을 재스케줄.
+# 유저/OCR이 직접 채운 값(delivery_date_synced=False)은 크롤링이 나중에 바뀌어도 건드리지 않음
 async def backfill_delivery_date_from_concert(
     db: AsyncSession, concert_id: UUID, delivery_date: datetime
 ) -> None:
     result = await db.execute(
         select(Ticket)
         .options(selectinload(Ticket.concert), selectinload(Ticket.user))
-        .where(Ticket.concert_id == concert_id, Ticket.delivery_date.is_(None))
+        .where(
+            Ticket.concert_id == concert_id,
+            (Ticket.delivery_date.is_(None)) | (Ticket.delivery_date_synced.is_(True)),
+        )
     )
     tickets = result.scalars().all()
     if not tickets:
@@ -314,10 +385,11 @@ async def backfill_delivery_date_from_concert(
 
     for ticket in tickets:
         ticket.delivery_date = delivery_date
+        ticket.delivery_date_synced = True
     await db.commit()
 
-    for ticket in tickets:
-        await schedule_ticket_notifications(db, ticket, ticket.user)
+    # 티켓별로 개별 delete+commit 하는 대신 배치로 한 번에 처리
+    await schedule_tickets_notifications_bulk(db, list(tickets))
 
 
 # BEFORE_CONCERT 티켓 중 공연이 끝난 것을 AFTER_CONCERT로 자동 전환

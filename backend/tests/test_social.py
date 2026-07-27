@@ -302,6 +302,36 @@ async def test_news_feed_created_on_artist_concert_detail():
     assert feed[0]["concert"] is not None
 
 
+# limit/offset 파라미터로 페이지네이션되는지, 생략 시 기본값(최대 200건)이 적용되는지 테스트
+@pytest.mark.asyncio
+async def test_news_feed_pagination():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    artist_name = f"피드페이지아티스트_{uuid.uuid4().hex[:6]}"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    for i in range(5):
+        await _fetch_concert(f"PF_FEEDPAGE_{i}_{uuid.uuid4().hex[:8]}", artist_name, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        default_res = await ac.get("/api/v1/social/feed", headers=headers)
+        limited_res = await ac.get("/api/v1/social/feed", params={"limit": 2}, headers=headers)
+        offset_res = await ac.get("/api/v1/social/feed", params={"limit": 2, "offset": 2}, headers=headers)
+
+    assert len(default_res.json()) == 5
+    assert len(limited_res.json()) == 2
+    assert len(offset_res.json()) == 2
+    first_page_ids = {f["id"] for f in limited_res.json()}
+    second_page_ids = {f["id"] for f in offset_res.json()}
+    assert first_page_ids.isdisjoint(second_page_ids)
+
+
 # 미팔로우 아티스트 공연 상세 조회 시 뉴스피드 미생성 테스트
 @pytest.mark.asyncio
 async def test_news_feed_not_created_for_non_followed_artist():
