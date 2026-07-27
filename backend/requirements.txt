@@ -75,6 +75,7 @@ python-jose==3.3.0
 python-multipart==0.0.12
 pytz==2026.1.post1
 PyYAML==6.0.3
+rapidfuzz==3.14.5
 rawpy==0.27.0
 requests==2.33.1
 rsa==4.9.1

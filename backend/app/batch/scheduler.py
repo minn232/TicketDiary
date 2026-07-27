@@ -5,8 +5,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.core.database import AsyncSessionLocal
 from app.services.notification import process_pending_notifications
 from app.services.kopis import sync_daily_concerts
-from app.services.crawler import retry_pending_crawls, send_screenshots_to_llm
+from app.services.crawler import retry_pending_crawls, send_posters_for_artist_extraction, send_screenshots_to_llm
 from app.services.ticket import sync_ticket_statuses
+from app.services.lastfm import sync_artist_similarities
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,20 @@ async def _run_crawl_retry() -> None:
         logger.error(f"크롤링 재시도 오류: {e}")
 
 
+async def _run_artist_similarity_sync() -> None:
+    try:
+        await sync_artist_similarities()
+    except Exception as e:
+        logger.error(f"Last.fm 아티스트 유사도 동기화 오류: {e}")
+
+
+async def _run_artist_extraction_send() -> None:
+    try:
+        await send_posters_for_artist_extraction()
+    except Exception as e:
+        logger.error(f"포스터 아티스트 추출 요청 전송 오류: {e}")
+
+
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
     # KST 자정(00:00) = UTC 15:00
@@ -61,6 +76,10 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_ticket_status_sync, "cron", hour=15, minute=10, id="ticket_status_sync", max_instances=1)
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 (KST 00:15)
     scheduler.add_job(_run_crawl_retry, "cron", hour=15, minute=15, id="crawl_retry", max_instances=1)
+    # 신규 아티스트 Last.fm 유사 아티스트 캐싱 (KST 00:20)
+    scheduler.add_job(_run_artist_similarity_sync, "cron", hour=15, minute=20, id="artist_similarity_sync", max_instances=1)
+    # 아티스트 정보 없는 신규 공연의 포스터를 VLM팀에 아티스트 추출 요청으로 전송 (KST 00:25)
+    scheduler.add_job(_run_artist_extraction_send, "cron", hour=15, minute=25, id="artist_extraction_send", max_instances=1)
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

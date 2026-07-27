@@ -1,8 +1,8 @@
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from uuid import UUID
 from datetime import datetime
 from app.models.ticket import TicketStatus
-from app.schemas.concert import ConcertResponse
+from app.schemas.concert import ConcertResponse, ConcertSummary
 
 
 class TicketCreate(BaseModel):
@@ -30,7 +30,8 @@ class TicketUpdate(BaseModel):
     price: int | None = None
     seat_type: str | None = None
     ticket_image_url: str | None = None
-    review: str | None = None
+    # 일기 생성 LLM 프롬프트에 그대로 들어가므로 과도한 길이로 토큰 비용이 늘지 않도록 제한
+    review: str | None = Field(default=None, max_length=2000)
     concert_photo_urls: list[str] | None = None
     is_first_day: bool | None = None
     is_last_day: bool | None = None
@@ -49,11 +50,19 @@ class TicketResponse(BaseModel):
     seat_type: str | None
     ticket_image_url: str | None
     review: str | None
+    diary: str | None
+    # diary가 null인데 이 값이 있으면 "생성 중"(백그라운드 처리 중), 둘 다 null이면 "미요청"
+    diary_requested_at: datetime | None
     concert_photo_urls: list[str] | None
     is_first_day: bool | None
     is_last_day: bool | None
 
 
 class TicketWithConcert(TicketResponse):
-    # 공연 정보 포함 티켓 응답
+    # 공연 정보 포함 티켓 응답 (상세 조회용 - 전체 공연 정보 포함)
     concert: ConcertResponse | None
+
+
+class TicketListItem(TicketResponse):
+    # 목록 조회용 - description/가격표처럼 상세 화면 전용 필드는 뺀 요약 공연 정보만 포함
+    concert: ConcertSummary | None

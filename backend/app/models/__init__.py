@@ -7,6 +7,7 @@ from app.models.venue_layout import VenueLayout
 from app.models.social import ArtistFollow, ConcertFollow, NewsFeed
 from app.models.notification import Notification, NotificationType
 from app.models.refresh_token import RefreshToken
+from app.models.artist_similarity import ArtistSimilarity
 
 __all__ = [
     "User", "UserRole",
@@ -18,4 +19,5 @@ __all__ = [
     "ArtistFollow", "ConcertFollow", "NewsFeed",
     "Notification", "NotificationType",
     "RefreshToken",
+    "ArtistSimilarity",
 ]
