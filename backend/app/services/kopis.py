@@ -714,6 +714,13 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
     if elem is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
 
+    # 목록/검색 계열 API는 장르를 클라이언트 사이드에서 걸러내지만(_fetch_all_kopis_ids,
+    # _fetch_and_upsert_concerts), 이 상세 조회는 kopis_id 하나만 알면 어디서든(스캔 후보 검색,
+    # 공연장 검색 등을 거치지 않고도) 호출될 수 있어 그 필터를 안 거칠 수 있다. 그래서 여기서도
+    # 한 번 더 확인 - 그래야 대중음악이 아닌 공연(클래식/발레/연극 등)이 이 경로로 새어 들어오지 않음
+    if not _is_allowed_genre(elem.findtext("genrenm") or ""):
+        raise HTTPException(status_code=404, detail="대중음악 공연만 등록할 수 있습니다.")
+
     # 공연 상세 정보 파싱
     start_raw = (elem.findtext("prfpdfrom") or "").strip()
     end_raw = (elem.findtext("prfpdto") or "").strip()

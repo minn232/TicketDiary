@@ -22,7 +22,7 @@ def _make_kopis_xml(kopis_id: str, artist: str = "테스트아티스트") -> byt
         f"<prfpdto>2030.06.01</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f'<poster>https://example.com/poster.jpg</poster>'
-        f"<genrenm>팝</genrenm>"
+        f"<genrenm>대중음악</genrenm>"
         f"<prfstate>공연예정</prfstate>"
         f"{cast}"
         f"<pcseguidance>R석 110,000원</pcseguidance>"

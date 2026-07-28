@@ -21,7 +21,7 @@ def _make_detail_xml(kopis_id: str, artist: str) -> bytes:
         f"<prfpdto>2030.06.30</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f'<poster>https://example.com/poster.jpg</poster>'
-        f"<genrenm>팝</genrenm>"
+        f"<genrenm>대중음악</genrenm>"
         f"<prfcast>{artist}</prfcast>"
         f"<pcseguidance>R석 110,000원</pcseguidance>"
         f"<sty>공연 소개</sty>"

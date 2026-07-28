@@ -3,8 +3,11 @@ from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.concert import Concert
 from conftest import _get_token, kopis_mock
 
 _LLM_API_KEY = "test-llm-key"
@@ -22,7 +25,7 @@ def _make_kopis_xml(kopis_id: str) -> bytes:
         f"<prfpdto>2030.06.01</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f'<poster>https://example.com/poster.jpg</poster>'
-        f"<genrenm>팝</genrenm>"
+        f"<genrenm>대중음악</genrenm>"
         f"<prfstate>공연예정</prfstate>"
         f"<prfcast>테스트아티스트</prfcast>"
         f"<pcseguidance>R석 110,000원</pcseguidance>"

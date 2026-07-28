@@ -30,7 +30,7 @@ def _date_str(days_ago: int) -> str:
 def _make_kopis_xml(
     kopis_id: str,
     start: str,
-    genre: str = "팝",
+    genre: str = "대중음악",
     artists: str = "테스트아티스트",
 ) -> bytes:
     return (
@@ -53,7 +53,7 @@ def _make_kopis_xml(
 async def _create_concert(
     kopis_id: str,
     days_ago: int = 30,
-    genre: str = "팝",
+    genre: str = "대중음악",
     artists: str = "테스트아티스트",
 ) -> str:
     token = await _get_token()

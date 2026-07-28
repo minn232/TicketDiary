@@ -435,6 +435,34 @@ async def test_get_concert_detail_not_found():
     assert response.status_code == 404
 
 
+# 상세 조회 대상이 대중음악이 아니면(예: 발레/클래식) 404로 거절되는지 테스트
+# (목록/검색 API는 _fetch_all_kopis_ids/_fetch_and_upsert_concerts에서 이미 걸러지지만,
+# kopis_id 하나만으로 바로 호출되는 상세 조회는 그 필터를 거치지 않아 별도로 확인해야 함)
+@pytest.mark.asyncio
+async def test_get_concert_detail_rejects_non_pop_genre():
+    token = await _get_token()
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<dbs><db>"
+        "<mt20id>PF_BALLET_001</mt20id>"
+        "<prfnm>발레 공연</prfnm>"
+        "<prfpdfrom>2030.08.01</prfpdfrom>"
+        "<prfpdto>2030.08.02</prfpdto>"
+        "<fcltynm>테스트공연장</fcltynm>"
+        "<genrenm>발레</genrenm>"
+        "<prfstate>공연예정</prfstate>"
+        "</db></dbs>"
+    ).encode("utf-8")
+    with kopis_mock(xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/concerts/PF_BALLET_001",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 404
+
+
 # KOPIS API 오류 시 502 테스트
 @pytest.mark.asyncio
 async def test_get_concert_detail_kopis_502():
