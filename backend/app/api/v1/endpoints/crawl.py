@@ -75,6 +75,15 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 delivery_date 형식: {body.delivery_date}")
 
+    # 포스터 기반 추출(artist-result 웹훅)이 이미 성공했으면 크롤링 결과로 덮어쓰지 않음 -
+    # 페스티벌처럼 포스터만으로는 실패하기 쉬운 경우의 대체 경로일 뿐, 우선순위를 갖진 않음
+    upgraded_to_festival = False
+    if body.artist_name and not concert.artist_name:
+        known_artist_names = await get_known_artist_names(db)
+        concert.artist_name = normalize_artist_names(body.artist_name, known_artist_names)
+        updated.append("artist_name")
+        upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+
     if updated:
         await db.commit()
 

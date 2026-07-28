@@ -25,6 +25,9 @@ class CrawlResultRequest(BaseModel):
     venue_layout: VenueLayoutInput | None = None
     ticketing_date: str | None = None  # YYYY-MM-DD
     delivery_date: str | None = None  # YYYY-MM-DD, 예매 사이트에 공지된 배송 예정일
+    # 예매 사이트 라인업 텍스트에서 추출한 아티스트명. 포스터 기반 추출(artist-result 웹훅)이
+    # 페스티벌처럼 출연진이 많은 공연에서 실패하기 쉬운 걸 보완하는 대체 경로
+    artist_name: list[str] | None = None
 
 
 class CrawlResultResponse(BaseModel):

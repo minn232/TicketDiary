@@ -50,6 +50,39 @@ def _llm_headers():
     return {"Authorization": f"Bearer {_LLM_API_KEY}"}
 
 
+# prfcast를 비워서 출연진 없이 공연 생성 (포스터 추출 실패한 페스티벌 등을 시뮬레이션)
+def _make_kopis_xml_no_artist(kopis_id: str) -> bytes:
+    return (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f"<dbs><db>"
+        f"<mt20id>{kopis_id}</mt20id>"
+        f"<prfnm>{kopis_id} 공연</prfnm>"
+        f"<prfpdfrom>2030.06.01</prfpdfrom>"
+        f"<prfpdto>2030.06.03</prfpdto>"
+        f"<fcltynm>테스트공연장</fcltynm>"
+        f'<poster>https://example.com/poster.jpg</poster>'
+        f"<genrenm>대중음악</genrenm>"
+        f"<prfstate>공연예정</prfstate>"
+        f"<prfcast></prfcast>"
+        f"<pcseguidance>R석 110,000원</pcseguidance>"
+        f"<sty>공연 소개</sty>"
+        f"</db></dbs>"
+    ).encode("utf-8")
+
+
+async def _create_concert_without_artist(kopis_id: str) -> str:
+    token = await _get_token()
+    with kopis_mock(_make_kopis_xml_no_artist(kopis_id)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                f"/api/v1/concerts/{kopis_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.status_code == 200
+    assert response.json()["artist_name"] == []
+    return response.json()["id"]
+
+
 # venue-layout 조회 테스트
 
 # venue-layout 없는 공연 조회 시 404
