@@ -1,6 +1,7 @@
+from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,24 +22,27 @@ from app.services.pre_setlist import get_pre_setlist, generate_pre_setlist, upda
 router = APIRouter()
 
 
-# 저장된 실제 셋리스트 조회
+# 저장된 실제 셋리스트 조회. 여러 날짜에 걸친 공연이면 date 쿼리파라미터 필수
+# (하루짜리 공연은 생략 가능 - 자동으로 그 날짜로 결정됨)
 @router.get("/{concert_id}/setlist", response_model=RealSetlistResponse)
 async def get_real_setlist_endpoint(
     concert_id: UUID,
+    performance_date: date | None = Query(None, alias="date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_real_setlist(db, concert_id)
+    return await get_real_setlist(db, concert_id, performance_date)
 
 
 # concert 아티스트, 공연일 기반 Setlist.fm 후보 검색
 @router.get("/{concert_id}/setlist/search", response_model=list[SetlistFmCandidate])
 async def search_real_setlists(
     concert_id: UUID,
+    performance_date: date | None = Query(None, alias="date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await search_setlists_for_concert(db, concert_id)
+    return await search_setlists_for_concert(db, concert_id, performance_date)
 
 
 # Setlist.fm ID로 셋리스트 가져와 저장
@@ -46,10 +50,11 @@ async def search_real_setlists(
 async def fetch_real_setlist(
     concert_id: UUID,
     body: FetchSetlistRequest,
+    performance_date: date | None = Query(None, alias="date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await fetch_and_save_real_setlist(db, concert_id, body.setlistfm_id)
+    return await fetch_and_save_real_setlist(db, concert_id, body.setlistfm_id, performance_date)
 
 
 # 실제 셋리스트 유저 수정
@@ -57,10 +62,11 @@ async def fetch_real_setlist(
 async def edit_real_setlist(
     concert_id: UUID,
     body: SetlistEditRequest,
+    performance_date: date | None = Query(None, alias="date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await update_real_setlist(db, concert_id, body.songs, current_user.nickname)
+    return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, performance_date)
 
 
 # show_predicted_setlist 설정 체크 (비활성화 시 403)

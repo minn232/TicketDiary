@@ -54,6 +54,8 @@ class Concert(Base):
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)
-    real_setlist = relationship("RealSetlist", back_populates="concert", uselist=False)
+    # 한 공연(concert_id)이 여러 날짜에 걸치면 실제 셋리스트도 날짜별로 다를 수 있어서
+    # (RealSetlist.performance_date), 더 이상 1:1이 아님
+    real_setlists = relationship("RealSetlist", back_populates="concert")
     pre_setlist = relationship("PreSetlist", back_populates="concert", uselist=False)
     venue_layout = relationship("VenueLayout", back_populates="concert", uselist=False)

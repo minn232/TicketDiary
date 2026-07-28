@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from uuid import UUID
+from datetime import date
 
 
 class SongEntry(BaseModel):
@@ -21,6 +22,7 @@ class RealSetlistResponse(BaseModel):
     # 실제 셋리스트 조회 응답
     id: UUID
     concert_id: UUID
+    performance_date: date
     setlistfm_id: str | None
     songs: list[SongEntry]
     is_user_edited: bool
