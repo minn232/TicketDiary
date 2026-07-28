@@ -204,6 +204,115 @@ async def test_crawl_result_prices_only():
     assert response.json()["updated"] == ["prices"]
 
 
+# crawl-result의 artist_name으로 아티스트가 비어있던 공연이 채워지는지 테스트
+# (포스터 기반 추출이 실패하기 쉬운 페스티벌 등의 대체 경로)
+@pytest.mark.asyncio
+async def test_crawl_result_artist_name_fills_when_empty():
+    concert_id = await _create_concert_without_artist(f"PF_CR_ARTIST_{uuid.uuid4().hex[:6]}")
+
+    body = {"artist_name": ["아티스트A", "아티스트B"]}
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "artist_name" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+    assert set(concert.artist_name) == {"아티스트A", "아티스트B"}
+
+
+# 이미 포스터 기반 추출(prfcast/artist-result)로 아티스트가 채워져 있으면 크롤링 결과로 덮어쓰지 않는지 테스트
+@pytest.mark.asyncio
+async def test_crawl_result_artist_name_does_not_override_existing():
+    concert_id = await _create_concert(f"PF_CR_ARTIST_KEEP_{uuid.uuid4().hex[:6]}")  # prfcast="테스트아티스트"로 이미 채워짐
+
+    body = {"artist_name": ["다른아티스트"]}
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "artist_name" not in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+    assert concert.artist_name == ["테스트아티스트"]
+
+
+# 크롤링 결과로 아티스트가 임계치(5명) 이상 채워지면 event_type이 SOLO->FESTIVAL로 승격되고,
+# 이미 등록된 티켓의 첫콘/막콘 값이 재계산(백필)되는지 테스트
+@pytest.mark.asyncio
+async def test_crawl_result_upgrades_event_type_and_backfills_first_last_day():
+    concert_id = await _create_concert_without_artist(f"PF_CR_UPGRADE_{uuid.uuid4().hex[:6]}")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # SOLO로 추측된 상태에서 첫날 관람으로 등록 -> is_first_day=True로 계산됨
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-01"},
+            headers=headers,
+        )
+    assert ticket_res.json()["is_first_day"] is True
+
+    artists = [f"아티스트{uuid.uuid4().hex[:6]}" for _ in range(5)]
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": artists},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+    assert concert.event_type == "FESTIVAL"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_get = await ac.get(f"/api/v1/tickets/{ticket_res.json()['id']}", headers=headers)
+    assert ticket_get.json()["is_first_day"] is None
+    assert ticket_get.json()["is_last_day"] is None
+
+
+# 아티스트가 임계치(5명) 미만이면 event_type이 승격되지 않아야 함(밴드 멤버 등으로 소수만
+# 확인된 상태 - 페스티벌 아닌데 잘못 승격되는 것 방지)
+@pytest.mark.asyncio
+async def test_crawl_result_does_not_upgrade_event_type_below_threshold():
+    concert_id = await _create_concert_without_artist(f"PF_CR_NOUPGRADE_{uuid.uuid4().hex[:6]}")
+
+    artists = [f"아티스트{uuid.uuid4().hex[:6]}" for _ in range(4)]
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": artists},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+    assert concert.event_type == "SOLO"
+
+
 # timetable + prices + venue_layout 모두 포함된 결과 수신
 @pytest.mark.asyncio
 async def test_crawl_result_all_fields():

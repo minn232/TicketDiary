@@ -680,3 +680,25 @@ async def test_delete_ticket_not_found_404():
         )
 
     assert response.status_code == 404
+
+
+# upgrade_event_type_if_multi_artist 단위 테스트 (순수 함수, DB 불필요)
+
+def test_upgrade_event_type_keeps_solo_below_threshold():
+    concert = Concert(event_type=EventType.SOLO.value, artist_name=["A", "B", "C", "D"])
+    assert upgrade_event_type_if_multi_artist(concert) is False
+    assert concert.event_type == EventType.SOLO.value
+
+
+def test_upgrade_event_type_upgrades_at_threshold():
+    concert = Concert(event_type=EventType.SOLO.value, artist_name=["A", "B", "C", "D", "E"])
+    assert upgrade_event_type_if_multi_artist(concert) is True
+    assert concert.event_type == EventType.FESTIVAL.value
+
+
+# 페스티벌 1차 라인업은 소수만 공개되는 경우가 흔해서, 이미 FESTIVAL로 확정된 공연은 낮은
+# 아티스트 수를 근거로 SOLO로 강등하지 않아야 함(2차/3차 발표를 기다려야 하므로)
+def test_upgrade_event_type_does_not_downgrade_existing_festival():
+    concert = Concert(event_type=EventType.FESTIVAL.value, artist_name=["A"])
+    assert upgrade_event_type_if_multi_artist(concert) is False
+    assert concert.event_type == EventType.FESTIVAL.value

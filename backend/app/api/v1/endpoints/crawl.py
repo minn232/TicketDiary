@@ -14,7 +14,11 @@ from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.services.artist_matching import get_known_artist_names, normalize_artist_names
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.notification import schedule_ticketing_day_notifications
-from app.services.ticket import backfill_delivery_date_from_concert
+from app.services.ticket import (
+    backfill_delivery_date_from_concert,
+    backfill_first_last_day_from_concert,
+    upgrade_event_type_if_multi_artist,
+)
 from app.services.timetable import upsert_timetable
 from app.services.venue_layout import upsert_venue_layout
 
@@ -95,6 +99,16 @@ async def receive_crawl_result(
     if "delivery_date" in updated:
         await backfill_delivery_date_from_concert(db, concert_id, delivery_date)
 
+    # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성 (artist-result 웹훅과 동일)
+    if "artist_name" in updated:
+        await db.refresh(concert)
+        await _create_news_feeds_for_concert(db, concert)
+        await db.commit()
+
+    # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
+    if upgraded_to_festival:
+        await backfill_first_last_day_from_concert(db, concert_id)
+
     logger.info(f"크롤링 결과 수신 concert_id={concert_id} updated={updated}")
     return CrawlResultResponse(updated=updated)
 
@@ -115,11 +129,15 @@ async def receive_artist_extraction_result(
     if body.artist_name:
         known_artist_names = await get_known_artist_names(db)
         concert.artist_name = normalize_artist_names(body.artist_name, known_artist_names)
+        upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
         await db.commit()
         await db.refresh(concert)
         # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
         await _create_news_feeds_for_concert(db, concert)
         await db.commit()
+        # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
+        if upgraded_to_festival:
+            await backfill_first_last_day_from_concert(db, concert_id)
 
     logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)

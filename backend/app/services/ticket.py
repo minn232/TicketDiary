@@ -44,6 +44,42 @@ def _detect_first_last_day(
     return attended == concert.start_date.date(), attended == concert.end_date.date()
 
 
+# concert.event_type(SOLO/FESTIVAL) 초기값은 공연명 키워드 추측(kopis.py _classify_event_type)이라
+# 부정확할 수 있음(예: "워터밤"은 실제 다중 아티스트 공연인데 이름에 페스티벌 키워드가 없어 SOLO로 분류됨).
+# 아티스트 추출 결과(포스터 VLM/크롤링 웹훅)로 실제 인원이 확인되면 이 값으로 SOLO->FESTIVAL만 승격.
+# 반대(FESTIVAL->SOLO 강등)는 안 함 - 페스티벌 1차 라인업은 소수만 공개되는 경우가 흔해서 낮은
+# 인원수가 "페스티벌 아님"의 근거가 될 수 없음(2차/3차 발표를 기다려야 함)
+_MULTI_ARTIST_FESTIVAL_THRESHOLD = 5
+
+
+def upgrade_event_type_if_multi_artist(concert: Concert) -> bool:
+    if concert.event_type == EventType.FESTIVAL.value:
+        return False
+    if len(concert.artist_name or []) < _MULTI_ARTIST_FESTIVAL_THRESHOLD:
+        return False
+    concert.event_type = EventType.FESTIVAL.value
+    return True
+
+
+# event_type이 SOLO->FESTIVAL로 승격됐을 때, 그 사이 잘못된 event_type 기준으로 계산되어 있던
+# 기존 티켓들의 첫콘/막콘 값을 다시 계산(upgrade_event_type_if_multi_artist 호출 뒤 사용)
+async def backfill_first_last_day_from_concert(db: AsyncSession, concert_id: UUID) -> None:
+    result = await db.execute(
+        select(Ticket)
+        .options(selectinload(Ticket.concert))
+        .where(Ticket.concert_id == concert_id, Ticket.attended_date.isnot(None))
+    )
+    tickets = result.scalars().all()
+    if not tickets:
+        return
+
+    for ticket in tickets:
+        ticket.is_first_day, ticket.is_last_day = _detect_first_last_day(
+            ticket.concert, ticket.attended_date
+        )
+    await db.commit()
+
+
 # KST 기준 해당 날짜 오전 9시 UTC 반환
 def _at_9am_kst(dt: datetime) -> datetime:
     if dt.tzinfo is None:
