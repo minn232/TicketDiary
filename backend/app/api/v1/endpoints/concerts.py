@@ -5,7 +5,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, rate_limit_ticket_scan
+from app.core.deps import (
+    get_current_user,
+    is_within_scan_cooldown,
+    rate_limit_ticket_scan,
+    record_meaningful_ticket_scan,
+)
 from app.models.concert import Concert
 from app.models.user import User
 from app.schemas.concert import ConcertResponse, TicketScanExtracted, TicketScanResponse
@@ -41,6 +46,11 @@ async def scan_ticket(
     if len(image_bytes) > _MAX_IMAGE_SIZE:
         raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
+    # 카메라 정렬 오인식으로 짧은 간격에 연달아 들어온 요청이면, 유료 Vision 호출 없이
+    # 빈 결과로 바로 응답 (is_within_scan_cooldown 주석 참고)
+    if is_within_scan_cooldown(current_user.id):
+        return TicketScanResponse(extracted=TicketScanExtracted(), candidates=[])
+
     # OCR + LLM으로 티켓 정보 추출
     extracted_raw = await extract_ticket_info(image_bytes, image.content_type or "image/jpeg")
     extracted = TicketScanExtracted(
@@ -54,6 +64,20 @@ async def scan_ticket(
         shipping_date=extracted_raw.get("shipping_date"),
         event_type=extracted_raw.get("event_type"),
     )
+
+    # 티켓이 아닌 사물(카메라 정렬 인식 오탐)을 찍어서 아무 필드도 못 뽑은 스캔은
+    # "진짜 스캔 시도" 한도(record_meaningful_ticket_scan)를 깎지 않음
+    if any(
+        [
+            extracted.title,
+            extracted.date,
+            extracted.location,
+            extracted.seat,
+            extracted.platform,
+            extracted.price,
+        ]
+    ):
+        record_meaningful_ticket_scan(current_user.id)
 
     # 공연명 + 공연일 기준으로 KOPIS 후보 검색
     # title 하나만으로 실패하면 원본 텍스트의 다른 후보 줄들로 순서대로 재시도

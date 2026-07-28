@@ -419,12 +419,19 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
     assert data["candidates"][0]["kopis_id"] == "PF_OCR_001"
 
 
-# 유저당 시간당 요청 상한 초과 시 429 테스트 (Vision/LLM 호출 비용 남용 방지)
+# 실제 티켓 정보가 뽑히는("의미있는") 스캔은 유저당 시간당 10회로 제한되는지 테스트
+# (Vision 호출 비용 남용 방지 - 카메라 오인식 문제와 별개로, 진짜 스캔 시도 자체의 상한)
+# 연달아 호출하는 테스트라 스캔 쿨다운(is_within_scan_cooldown)에 걸리지 않도록 꺼둠 -
+# 쿨다운 자체는 별도 테스트(test_scan_cooldown_skips_vision_call_on_rapid_repeat)에서 검증
 @pytest.mark.asyncio
-async def test_scan_rate_limited_after_10_calls_per_hour(get_auth_token):
+async def test_scan_meaningful_rate_limited_after_10_calls_per_hour(get_auth_token):
     headers = {"Authorization": f"Bearer {get_auth_token}"}
     statuses = []
-    with _ocr_mock(_SAMPLE_EXTRACTED), kopis_mock(_make_kopis_xml("PF_OCR_RATE", "테스트 공연")):
+    with (
+        _ocr_mock(_SAMPLE_EXTRACTED),
+        kopis_mock(_make_kopis_xml("PF_OCR_RATE", "테스트 공연")),
+        patch("app.api.v1.endpoints.concerts.is_within_scan_cooldown", return_value=False),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             for _ in range(11):
                 response = await ac.post(
@@ -436,6 +443,95 @@ async def test_scan_rate_limited_after_10_calls_per_hour(get_auth_token):
 
     assert statuses[:10] == [200] * 10
     assert statuses[10] == 429
+
+
+# 짧은 간격(스캔 쿨다운 이내)으로 연달아 온 두 번째 요청은 Vision을 실제로 호출하지 않고
+# 빈 결과를 바로 반환하는지 테스트 (카메라 오인식 연사 시 Vision 비용 절감용)
+@pytest.mark.asyncio
+async def test_scan_cooldown_skips_vision_call_on_rapid_repeat(get_auth_token):
+    headers = {"Authorization": f"Bearer {get_auth_token}"}
+    with (
+        _ocr_mock(_SAMPLE_EXTRACTED) as mock_extract,
+        kopis_mock(_make_kopis_xml("PF_OCR_COOLDOWN", "테스트 공연")),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            first = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers=headers,
+            )
+            second = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers=headers,
+            )
+
+    assert first.status_code == 200
+    assert first.json()["extracted"]["title"] == "BTS World Tour"
+    assert second.status_code == 200
+    assert second.json()["extracted"]["title"] is None
+    assert mock_extract.call_count == 1
+
+
+# 카메라 정렬 인식이 티켓이 아닌 사물을 오인식해서 아무 필드도 못 뽑은 스캔(전부 None)은
+# "의미있는 스캔" 10회 한도를 깎아먹지 않아야 함 - 10회보다 많이 반복해도 전부 200
+@pytest.mark.asyncio
+async def test_scan_empty_result_does_not_count_toward_meaningful_limit(get_auth_token):
+    headers = {"Authorization": f"Bearer {get_auth_token}"}
+    empty_extracted = {
+        "title": None,
+        "date": None,
+        "time": None,
+        "shipping_date": None,
+        "location": None,
+        "seat": None,
+        "platform": None,
+        "price": None,
+        "event_type": None,
+    }
+    statuses = []
+    with _ocr_mock(empty_extracted):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            for _ in range(15):
+                response = await ac.post(
+                    "/api/v1/concerts/scan",
+                    files={"image": ("junk.jpg", b"fake-image", "image/jpeg")},
+                    headers=headers,
+                )
+                statuses.append(response.status_code)
+
+    assert statuses == [200] * 15
+
+
+# 빈 스캔이 "의미있는 스캔" 한도는 안 깎아도, 순수 어뷰징(요청 자체를 무한 반복) 방지를 위한
+# 하드 상한(30회/시간)은 그대로 적용되는지 테스트
+@pytest.mark.asyncio
+async def test_scan_hard_ceiling_applies_even_to_empty_results(get_auth_token):
+    headers = {"Authorization": f"Bearer {get_auth_token}"}
+    empty_extracted = {
+        "title": None,
+        "date": None,
+        "time": None,
+        "shipping_date": None,
+        "location": None,
+        "seat": None,
+        "platform": None,
+        "price": None,
+        "event_type": None,
+    }
+    statuses = []
+    with _ocr_mock(empty_extracted):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            for _ in range(31):
+                response = await ac.post(
+                    "/api/v1/concerts/scan",
+                    files={"image": ("junk.jpg", b"fake-image", "image/jpeg")},
+                    headers=headers,
+                )
+                statuses.append(response.status_code)
+
+    assert statuses[:30] == [200] * 30
+    assert statuses[30] == 429
 
 
 # title 후보 중 앞쪽이 날짜가 안 맞는 흔한 구절로 결과를 내면 건너뛰고,
