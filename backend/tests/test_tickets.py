@@ -599,6 +599,36 @@ async def test_update_ticket_fields():
     assert data["is_first_day"] is True
 
 
+# "티켓 뜯기" 연출 시각(torn_at) 저장 + 재설정(null로 되돌리는 것 포함) 테스트 -
+# 백엔드는 일회성 제약을 두지 않기로 했으므로 몇 번이든 다시 값을 바꿀 수 있어야 함
+@pytest.mark.asyncio
+async def test_update_ticket_torn_at_can_be_set_and_reset():
+    concert_id = await _create_concert("PF_TORN_001")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        assert create_res.json()["torn_at"] is None
+
+        torn_res = await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"torn_at": "2030-06-02T10:00:00+00:00"},
+            headers=headers,
+        )
+        assert torn_res.json()["torn_at"][:10] == "2030-06-02"
+
+        reset_res = await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"torn_at": None},
+            headers=headers,
+        )
+
+    assert reset_res.status_code == 200
+    assert reset_res.json()["torn_at"] is None
+
+
 # attended_date만 PATCH로 새로 보내면(is_first_day/is_last_day는 안 보냄) 서버가 재판정하는지 테스트
 @pytest.mark.asyncio
 async def test_update_ticket_attended_date_recomputes_first_last_day():

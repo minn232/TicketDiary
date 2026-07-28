@@ -47,5 +47,9 @@ class Ticket(Base):
     attended_date = Column(DateTime(timezone=True), nullable=True)
     is_first_day = Column(Boolean, nullable=True)
     is_last_day = Column(Boolean, nullable=True)
+    # 공연 후 "티켓 뜯기" 연출을 실행한 시각 (프론트 전용 애니메이션 상태 영속화용).
+    # 공연전 여부/일회성 여부는 백엔드에서 강제하지 않음 - 프론트가 뜯은 뒤엔 다시 뜯을
+    # 방법 자체를 UI에서 없애는 방식으로 막고 있어서 백엔드는 그냥 값 저장만 담당
+    torn_at = Column(DateTime(timezone=True), nullable=True)
 
     concert = relationship("Concert", back_populates="tickets")

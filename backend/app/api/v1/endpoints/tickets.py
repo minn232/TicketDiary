@@ -75,6 +75,15 @@ async def modify_ticket(
     return await update_ticket(db, current_user, ticket_id, body)
 
 
+# 티켓 -> (concert_id, 관람일) 추출. 관람일이 없고 공연이 여러 날짜에 걸치면 아래 setlist
+# 서비스 함수들이 400으로 날짜 지정을 요구함(추측해서 엉뚱한 날짜의 셋리스트를 주지 않기 위함)
+def _ticket_concert_and_date(ticket: Ticket):
+    if ticket.concert_id is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+    explicit_date = ticket.attended_date.date() if ticket.attended_date else None
+    return ticket.concert_id, explicit_date
+
+
 # 한줄평 기반 공연 일기 생성 요청 (diary_requested_at만 찍어두고 즉시 반환 - 실제 LLM팀 전송은
 # 자정 배치가 처리하므로, 클라이언트는 GET /tickets/{id}를 폴링해 diary가 채워지는 걸 확인해야 함)
 @router.post("/{ticket_id}/diary", response_model=TicketWithConcert, status_code=status.HTTP_202_ACCEPTED)

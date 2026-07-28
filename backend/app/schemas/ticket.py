@@ -40,6 +40,11 @@ class TicketUpdate(BaseModel):
     attended_date: datetime | None = None
     is_first_day: bool | None = None
     is_last_day: bool | None = None
+    # 공연 후 "티켓 뜯기" 연출 실행 시각. 백엔드는 값 저장만 담당, null로 되돌리는 것도 허용
+    # (한 번 뜯으면 다시 뜯을 방법을 없애는 건 프론트 UI가 알아서 막음)
+    torn_at: datetime | None = None
+
+    _normalize_dates = field_validator("delivery_date", "attended_date", "torn_at", mode="after")(_ensure_utc)
 
 
 class TicketResponse(BaseModel):
@@ -62,6 +67,7 @@ class TicketResponse(BaseModel):
     attended_date: datetime | None
     is_first_day: bool | None
     is_last_day: bool | None
+    torn_at: datetime | None
 
 
 class TicketWithConcert(TicketResponse):
