@@ -1,8 +1,17 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.ticket import TicketStatus
 from app.schemas.concert import ConcertResponse, ConcertSummary
+
+
+# 클라이언트가 "2030-06-02"처럼 시간대 정보 없는 날짜 문자열을 보내면 naive datetime으로 남는데,
+# DB 세션 타임존(Asia/Seoul)이 이를 KST 자정으로 해석해 UTC로 저장하면서 하루가 밀리는 버그가
+# 있었음(예: "2030-06-02" -> 저장값 "2030-06-01T15:00:00Z"). naive면 UTC로 명시해서 방지
+def _ensure_utc(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class TicketCreate(BaseModel):
@@ -16,6 +25,8 @@ class TicketCreate(BaseModel):
     seat_type: str | None = None
     # OCR로 추출한 실제 관람 날짜. 있으면 등록 시점에 is_first_day/is_last_day를 자동 판정하는 데 쓰임
     attended_date: datetime | None = None
+
+    _normalize_dates = field_validator("delivery_date", "attended_date", mode="after")(_ensure_utc)
 
     @model_validator(mode="after")
     def check_concert_provided(self) -> "TicketCreate":

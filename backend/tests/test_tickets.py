@@ -653,6 +653,29 @@ async def test_update_ticket_attended_date_recomputes_first_last_day():
     assert data["is_last_day"] is True
 
 
+# attended_date를 시간대 정보 없는 날짜 문자열("YYYY-MM-DD")로 보내도 DB 저장 후 재조회 시
+# 하루가 밀리지 않는지 테스트 - naive datetime이 DB 세션 타임존(Asia/Seoul) 기준 자정으로
+# 잘못 해석되어 UTC로 저장되면서 하루 밀리던 버그의 회귀 방지 (schemas/ticket.py _ensure_utc)
+@pytest.mark.asyncio
+async def test_ticket_attended_date_survives_db_roundtrip_without_day_shift():
+    concert_id = await _create_concert("PF_T_TZ_001", start="2030.06.01", end="2030.06.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "attended_date": "2030-06-02"},
+            headers=headers,
+        )
+        ticket_id = create_res.json()["id"]
+
+        # 저장 시점 in-memory 값이 아니라 새 요청으로 실제 DB에 저장된 값을 재조회해서 확인
+        get_res = await ac.get(f"/api/v1/tickets/{ticket_id}", headers=headers)
+
+    assert get_res.json()["attended_date"][:10] == "2030-06-02"
+
+
 # attended_date와 is_first_day/is_last_day를 같이 보내면 자동 재판정 없이 보낸 값 그대로(수동 override) 테스트
 @pytest.mark.asyncio
 async def test_update_ticket_manual_first_last_day_overrides_auto_detection():
