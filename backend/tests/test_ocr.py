@@ -322,6 +322,26 @@ def test_extract_concert_date_bare_ilsi():
     assert _extract_concert_date("일시 : 2030.06.01") == "2030-06-01"
 
 
+# 일부 모바일 티켓 앱(NOL ticket 등)은 날짜를 월/일/연도 순서로 한 줄씩 세로로 나열함
+# (한 줄 안에 이어진 형태가 아니라서 기존 _DATE_RE로는 못 잡던 케이스)
+def test_extract_concert_date_stacked_fallback():
+    text = "VAUNDY\n9/19-20\nSEOUL\n09\n20\n2026\n인스파이어 아레나"
+    assert _extract_concert_date(text) == "2026-09-20"
+
+
+# 세로 나열 폴백은 다른 패턴이 다 실패했을 때만 쓰이고, 라벨/일반 날짜가 있으면
+# 그쪽을 우선하는지 확인 (기존 로직을 해치지 않는지 회귀 방지)
+def test_extract_concert_date_stacked_fallback_does_not_override_normal_match():
+    text = "공연일시 : 2030.06.01\n09\n20\n2026"
+    assert _extract_concert_date(text) == "2030-06-01"
+
+
+# 세로 나열 폴백이 범위를 벗어난 값(예: 13월)은 걸러내는지 확인
+def test_extract_concert_date_stacked_fallback_rejects_invalid_month():
+    text = "13\n20\n2026"
+    assert _extract_concert_date(text) is None
+
+
 def test_extract_platform_melon_variants():
     assert _extract_platform("ticket.melon.com에서 구매") == "멜론티켓"
     assert _extract_platform("melon 티켓 예매") == "멜론티켓"

@@ -20,6 +20,12 @@ _DATE_RE = re.compile(
     r"|(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일"
 )
 
+# 일부 모바일 티켓 앱(예: NOL ticket)은 날짜를 한 줄에 이어 쓰지 않고 월/일/연도를
+# 큰 숫자로 한 줄씩 세로로 나열함(예: "09" / "20" / "2026"). _DATE_RE는 한 줄 안에
+# 구분자로 이어진 형태만 잡으므로 이 레이아웃은 못 잡는다 - _extract_concert_date의
+# 최후 폴백으로만 사용(월/일/연도 값 범위는 _parse_date가 검증)
+_STACKED_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*\n\s*(\d{1,2})\s*\n\s*(\d{4})(?!\d)")
+
 # 오후/오전 N시, 오후/오전 H:MM, HH:MM 시간 패턴
 _TIME_RE = re.compile(
     r"오후\s*(\d{1,2})시(?:\s*(\d{2})분)?"      # 그룹 1,2: 오후 N시 (분)
@@ -266,6 +272,12 @@ def _extract_concert_date(text: str) -> str | None:
         if m.group(1):
             return _parse_date(m.group(1), m.group(2), m.group(3))
         return _parse_date(m.group(4), m.group(5), m.group(6))
+
+    # 위 패턴 다 실패하면 세로 나열 폴백 시도 (_STACKED_DATE_RE 주석 참고)
+    sm = _STACKED_DATE_RE.search(text)
+    if sm:
+        return _parse_date(sm.group(3), sm.group(1), sm.group(2))
+
     return None
 
 
