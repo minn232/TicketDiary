@@ -30,6 +30,9 @@ htmlcov/
 # Firebase credentials
 firebase-credentials.json
 
+# LLM 서버 처리완료 ID 장부 (로컬 상태, 커밋 불필요)
+llm_server/*.sqlite3
+
 # IDE
 .vscode/
 .idea/
