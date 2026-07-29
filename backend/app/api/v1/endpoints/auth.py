@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.core.config import settings
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, rate_limit_guest_login
 from app.schemas.auth import (
     GuestLoginRequest,
     KakaoLoginRequest,
@@ -25,7 +25,11 @@ router = APIRouter()
 
 # 게스트 로그인
 @router.post("/guest", response_model=TokenResponse)
-async def login_as_guest(body: GuestLoginRequest, db: AsyncSession = Depends(get_db)):
+async def login_as_guest(
+    body: GuestLoginRequest,
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(rate_limit_guest_login),
+):
     user = await guest_login(db, body.device_id)
     token = create_access_token(str(user.id))
     refresh_token = await issue_refresh_token(db, user.id)

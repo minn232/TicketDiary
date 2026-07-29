@@ -47,6 +47,19 @@ async def test_guest_login_same_login():
     assert res1.json()["user_id"] == res2.json()["user_id"]
 
 
+# IP당 시간당 요청 상한 초과 시 429 테스트 (device_id 브루트포스 방지)
+@pytest.mark.asyncio
+async def test_guest_login_rate_limited_after_20_calls_per_hour():
+    statuses = []
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for i in range(21):
+            res = await ac.post("/api/v1/auth/guest", json={"device_id": f"rate-limit-device-{i}"})
+            statuses.append(res.status_code)
+
+    assert statuses[:20] == [200] * 20
+    assert statuses[20] == 429
+
+
 # 카카오 로그인 테스트
 
 # 카카오 계정 생성 테스트

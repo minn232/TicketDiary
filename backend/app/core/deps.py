@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,6 +91,15 @@ def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
             detail="요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
         )
     hits.append(now)
+
+
+# 게스트 로그인(device_id) 브루트포스 방지: IP당 시간당 20회. 아직 device_id가 프론트에서
+# 진짜 난수가 아니라 타임스탬프+객체해시로 생성되고 있어(추후 uuid로 교체 예정) 값 자체의
+# 추측 난이도가 낮으므로, 서버 쪽에서라도 무제한 시도를 막아야 함. IP 기준이라 여러 IP로
+# 분산하면 우회되지만, 최소한의 완화책 - 근본 해결은 프론트 device_id 생성 방식 교체
+async def rate_limit_guest_login(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(f"guest_login:{client_ip}", max_calls=20, period_seconds=3600)
 
 
 # 티켓 스캔(Vision OCR 호출, 비용 발생) 남용 방지: 유저당 시간당 30회.
