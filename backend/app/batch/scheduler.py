@@ -5,7 +5,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.core.database import AsyncSessionLocal
 from app.services.notification import process_pending_notifications
 from app.services.kopis import sync_daily_concerts
-from app.services.crawler import retry_pending_crawls, send_posters_for_artist_extraction, send_screenshots_to_llm
+from app.services.crawler import (
+    retry_festival_lineup_checks,
+    retry_pending_crawls,
+    send_posters_for_artist_extraction,
+    send_screenshots_to_llm,
+)
 from app.services.diary import send_diary_requests_to_llm
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
@@ -54,6 +59,13 @@ async def _run_crawl_retry() -> None:
         logger.error(f"크롤링 재시도 오류: {e}")
 
 
+async def _run_festival_lineup_check() -> None:
+    try:
+        await retry_festival_lineup_checks()
+    except Exception as e:
+        logger.error(f"페스티벌 라인업 재확인 오류: {e}")
+
+
 async def _run_artist_similarity_sync() -> None:
     try:
         await sync_artist_similarities()
@@ -99,6 +111,8 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_artist_extraction_send, "cron", hour=15, minute=25, id="artist_extraction_send", max_instances=1)
     # 요청된 일기 생성 건을 LLM팀에 전송 (LLM팀 서버가 KST 00~01시 사이에만 떠있어 그 시간대로 맞춤, 00:30)
     scheduler.add_job(_run_diary_send, "cron", hour=15, minute=30, id="diary_send", max_instances=1)
+    # event_type=FESTIVAL 공연들의 라인업(출연진) 변경 여부를 매일 재확인 (KST 00:35)
+    scheduler.add_job(_run_festival_lineup_check, "cron", hour=15, minute=35, id="festival_lineup_check", max_instances=1)
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

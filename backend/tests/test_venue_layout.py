@@ -229,10 +229,11 @@ async def test_crawl_result_artist_name_fills_when_empty():
     assert set(concert.artist_name) == {"아티스트A", "아티스트B"}
 
 
-# 이미 포스터 기반 추출(prfcast/artist-result)로 아티스트가 채워져 있으면 크롤링 결과로 덮어쓰지 않는지 테스트
+# 이미 포스터 기반 추출(prfcast/artist-result)로 아티스트가 채워져 있어도 크롤링 결과로 온 새
+# 아티스트는 합집합으로 병합되는지 테스트 (페스티벌 1차/2차/3차 라인업처럼 시간차를 두고 늘어나는 경우 대응)
 @pytest.mark.asyncio
-async def test_crawl_result_artist_name_does_not_override_existing():
-    concert_id = await _create_concert(f"PF_CR_ARTIST_KEEP_{uuid.uuid4().hex[:6]}")  # prfcast="테스트아티스트"로 이미 채워짐
+async def test_crawl_result_artist_name_merges_with_existing():
+    concert_id = await _create_concert(f"PF_CR_ARTIST_MERGE_{uuid.uuid4().hex[:6]}")  # prfcast="테스트아티스트"로 이미 채워짐
 
     body = {"artist_name": ["다른아티스트"]}
     with patch("app.core.deps.settings") as mock_settings:
@@ -245,12 +246,31 @@ async def test_crawl_result_artist_name_does_not_override_existing():
             )
 
     assert response.status_code == 200
-    assert "artist_name" not in response.json()["updated"]
+    assert "artist_name" in response.json()["updated"]
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
         concert = result.scalar_one()
-    assert concert.artist_name == ["테스트아티스트"]
+    assert set(concert.artist_name) == {"테스트아티스트", "다른아티스트"}
+
+
+# 크롤링 결과로 온 아티스트가 기존과 완전히 동일하면(병합 결과가 안 바뀌면) updated에 안 잡히는지 테스트
+@pytest.mark.asyncio
+async def test_crawl_result_artist_name_no_change_when_already_merged():
+    concert_id = await _create_concert(f"PF_CR_ARTIST_SAME_{uuid.uuid4().hex[:6]}")  # prfcast="테스트아티스트"로 이미 채워짐
+
+    body = {"artist_name": ["테스트아티스트"]}
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "artist_name" not in response.json()["updated"]
 
 
 # 크롤링 결과로 아티스트가 임계치(5명) 이상 채워지면 event_type이 SOLO->FESTIVAL로 승격되고,

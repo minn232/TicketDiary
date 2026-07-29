@@ -11,7 +11,7 @@ from app.core.deps import verify_llm_api_key
 from app.models.concert import Concert
 from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtractionResponse
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
-from app.services.artist_matching import get_known_artist_names, normalize_artist_names
+from app.services.artist_matching import get_known_artist_names, merge_artist_names
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.notification import schedule_ticketing_day_notifications
 from app.services.ticket import (
@@ -79,14 +79,16 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 delivery_date 형식: {body.delivery_date}")
 
-    # 포스터 기반 추출(artist-result 웹훅)이 이미 성공했으면 크롤링 결과로 덮어쓰지 않음 -
-    # 페스티벌처럼 포스터만으로는 실패하기 쉬운 경우의 대체 경로일 뿐, 우선순위를 갖진 않음
+    # 크롤링 결과와 포스터 기반 추출(artist-result 웹훅) 양쪽에서 아티스트가 들어올 수 있고,
+    # 페스티벌은 1차/2차/3차로 시간차를 두고 라인업이 늘어나므로 덮어쓰지 않고 합집합으로 병합
     upgraded_to_festival = False
-    if body.artist_name and not concert.artist_name:
+    if body.artist_name:
         known_artist_names = await get_known_artist_names(db)
-        concert.artist_name = normalize_artist_names(body.artist_name, known_artist_names)
-        updated.append("artist_name")
-        upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        if merged != (concert.artist_name or []):
+            concert.artist_name = merged
+            updated.append("artist_name")
+            upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
 
     if updated:
         await db.commit()
@@ -128,16 +130,18 @@ async def receive_artist_extraction_result(
 
     if body.artist_name:
         known_artist_names = await get_known_artist_names(db)
-        concert.artist_name = normalize_artist_names(body.artist_name, known_artist_names)
-        upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
-        await db.commit()
-        await db.refresh(concert)
-        # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
-        await _create_news_feeds_for_concert(db, concert)
-        await db.commit()
-        # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
-        if upgraded_to_festival:
-            await backfill_first_last_day_from_concert(db, concert_id)
+        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        if merged != (concert.artist_name or []):
+            concert.artist_name = merged
+            upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+            await db.commit()
+            await db.refresh(concert)
+            # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
+            await _create_news_feeds_for_concert(db, concert)
+            await db.commit()
+            # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
+            if upgraded_to_festival:
+                await backfill_first_last_day_from_concert(db, concert_id)
 
     logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)

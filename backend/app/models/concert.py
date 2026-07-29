@@ -51,6 +51,13 @@ class Concert(Base):
     # 포스터를 VLM팀에 아티스트 추출 요청으로 보낸 시점(성공/실패 무관). 포스터 내용은 시간이 지나도
     # 안 바뀌므로 크롤링과 달리 재시도 개념 없이 한 번만 보내고 다시 보내지 않기 위한 플래그
     artist_extraction_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    # 페스티벌 라인업 변경 감지용 직전 스냅샷(조회수/광고 등 노이즈 제거된 본문 해시 + 이미지 경로 목록).
+    # crawl_attempted_at/ticketing_date와는 목적이 달라 별도 필드로 분리 - 저건 "티켓팅일 확보" 완료
+    # 판단용, 이건 "라인업이 직전과 달라졌는가" 비교용
+    lineup_snapshot_hash = Column(String, nullable=True)
+    lineup_snapshot_img_srcs = Column(ARRAY(String), nullable=True)
+    # 라인업 재크롤링 마지막 시도 시각 (재시도 쿨다운 판단용, crawl_attempted_at과 별개 시계)
+    lineup_check_attempted_at = Column(DateTime(timezone=True), nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)

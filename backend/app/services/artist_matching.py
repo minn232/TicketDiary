@@ -50,3 +50,13 @@ def normalize_artist_names(names: list[str], known_names: set[str] | None = None
 
         normalized.append(canonical)
     return normalized
+
+
+# 기존 아티스트명에 새로 확인된 이름들을 합집합으로 병합 (덮어쓰지 않음). 크롤링/포스터 추출 두
+# 경로가 서로 다른 시점에 아티스트를 채울 수 있고, 페스티벌은 1차/2차/3차로 시간차를 두고
+# 라인업이 늘어나므로 먼저 채워진 이름을 지우지 않고 새 이름만 더하는 방식이 맞음
+def merge_artist_names(
+    existing: list[str] | None, incoming: list[str], known_names: set[str] | None = None
+) -> list[str]:
+    normalized_incoming = normalize_artist_names(incoming, known_names)
+    return sorted(set(existing or []) | set(normalized_incoming))

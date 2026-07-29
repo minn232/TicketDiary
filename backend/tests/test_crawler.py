@@ -27,7 +27,9 @@ def mock_concert():
     return concert
 
 
-def _make_pw_mock(screenshot: bytes, link_href: str | None = None, body_text: str = ""):
+def _make_pw_mock(
+    screenshot: bytes, link_href: str | None = None, body_text: str = "", img_srcs: list[str] | None = None
+):
     mock_link = None
     if link_href:
         mock_link = AsyncMock()
@@ -39,6 +41,7 @@ def _make_pw_mock(screenshot: bytes, link_href: str | None = None, body_text: st
     mock_page.query_selector = AsyncMock(return_value=mock_link)
     mock_page.screenshot = AsyncMock(return_value=screenshot)
     mock_page.inner_text = AsyncMock(return_value=body_text)
+    mock_page.eval_on_selector_all = AsyncMock(return_value=img_srcs or [])
 
     mock_context = AsyncMock()
     mock_context.new_page = AsyncMock(return_value=mock_page)
@@ -179,6 +182,22 @@ async def test_crawl_interpark_direct_url_unavailable_returns_none(mock_concert)
     with patch("app.services.crawler.async_playwright", return_value=pw_mock):
         result = await crawl_interpark(mock_concert, direct_url="https://tickets.interpark.com/goods/12345")
     assert result is None
+
+
+# 인터파크 상단 내비게이션에 항상 있는 "오픈예정"(공백 없음) 카테고리 링크 때문에, 정상적으로
+# 공연 정보가 있는 페이지까지 "오픈 전"으로 오판되던 회귀 방지 테스트 (실제 크롤링으로 발견,
+# 2026-07-29 - scripts/test_lineup_diff.py로 https://tickets.interpark.com/goods/26009383 확인)
+@pytest.mark.asyncio
+async def test_crawl_interpark_direct_url_nav_menu_open_pending_link_not_false_positive(mock_concert):
+    expected = b"interpark-direct-png"
+    body_text = (
+        "홈 투어 티켓 로그인 내 예약 뮤지컬 콘서트 스포츠 전시/행사 클래식/무용 아동/가족 연극 "
+        "레저/캠핑 토핑 MD shop 랭킹 오픈예정 지역별 공연장\n2026 Asia Top Artist Festival\n캐스팅"
+    )
+    pw_mock = _make_pw_mock(expected, body_text=body_text)
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_interpark(mock_concert, direct_url="https://tickets.interpark.com/goods/26009383")
+    assert result == expected
 
 
 # crawl_yes24 테스트
@@ -632,7 +651,12 @@ async def test_crawl_and_save_crawler_returns_none_skips_upload():
 
 # crawl_melon 테스트
 
-def _make_melon_pw_mock(screenshot: bytes, current_url: str = "https://ticket.melon.com/search", link_href: str | None = None):
+def _make_melon_pw_mock(
+    screenshot: bytes,
+    current_url: str = "https://ticket.melon.com/search",
+    link_href: str | None = None,
+    img_srcs: list[str] | None = None,
+):
     """멜론 mock: page.url 속성 지원 포함"""
     mock_link = None
     if link_href:
@@ -644,6 +668,8 @@ def _make_melon_pw_mock(screenshot: bytes, current_url: str = "https://ticket.me
     mock_page.wait_for_timeout = AsyncMock()
     mock_page.query_selector = AsyncMock(return_value=mock_link)
     mock_page.screenshot = AsyncMock(return_value=screenshot)
+    mock_page.inner_text = AsyncMock(return_value="")
+    mock_page.eval_on_selector_all = AsyncMock(return_value=img_srcs or [])
     type(mock_page).url = current_url
 
     mock_context = AsyncMock()
@@ -921,3 +947,287 @@ async def test_send_screenshots_posts_to_llm():
     payload = call_args[1]["json"]
     assert len(payload) == 1
     assert payload[0]["concert_name"] == "테스트"
+
+
+# 라인업 변경 감지 정규화 테스트
+
+def test_normalize_lineup_img_srcs_filters_ads_and_ignores_query_strings():
+    from app.services.crawler import _normalize_lineup_img_srcs
+
+    srcs = [
+        "https://img.example.com/poster.jpg?t=1",
+        "https://img.example.com/poster.jpg?t=2",  # 쿼리스트링만 다름 - 같은 이미지로 취급
+        "https://ad.doubleclick.net/banner.png",
+        "",
+    ]
+    assert _normalize_lineup_img_srcs(srcs) == ["https://img.example.com/poster.jpg"]
+
+
+def test_hash_lineup_text_ignores_digit_noise():
+    from app.services.crawler import _hash_lineup_text
+
+    assert _hash_lineup_text("좋아요 123개") == _hash_lineup_text("좋아요 456개")
+    assert _hash_lineup_text("라인업: 가수A") != _hash_lineup_text("라인업: 가수B")
+
+
+# 인터파크 "캐스팅" 섹션의 "{아티스트명} 더 알아보기" 한 줄이 방문마다 로테이션되는 실측 노이즈를
+# 무시하는지 테스트 (실제 라인업 목록 자체는 동일한데 이 줄만 달랐던 실측 사례, 2026-07-29)
+def test_hash_lineup_text_ignores_rotating_learn_more_line():
+    from app.services.crawler import _hash_lineup_text
+
+    text_a = "캐스팅\n\n루시 더 알아보기\n\n09.19(토)\n김수영\n09.19(토)\n루시"
+    text_b = "캐스팅\n\n김수영 더 알아보기\n\n09.19(토)\n김수영\n09.19(토)\n루시"
+    assert _hash_lineup_text(text_a) == _hash_lineup_text(text_b)
+
+
+# capture_lineup_snapshot=True 시 (screenshot, text_hash, img_srcs) 튜플 반환 테스트
+
+@pytest.mark.asyncio
+async def test_crawl_interpark_capture_lineup_snapshot_returns_tuple(mock_concert):
+    expected_screenshot = b"interpark-direct-png"
+    pw_mock = _make_pw_mock(
+        expected_screenshot, body_text="라인업 텍스트", img_srcs=["https://img.example.com/poster.jpg"]
+    )
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_interpark(
+            mock_concert, direct_url="https://tickets.interpark.com/goods/12345", capture_lineup_snapshot=True
+        )
+    screenshot, _text, text_hash, img_srcs = result
+    assert screenshot == expected_screenshot
+    assert isinstance(text_hash, str) and text_hash
+    assert img_srcs == ["https://img.example.com/poster.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_crawl_yes24_capture_lineup_snapshot_returns_tuple(mock_concert):
+    expected_screenshot = b"yes24-png"
+    pw_mock = _make_pw_mock(
+        expected_screenshot, body_text="라인업 텍스트", img_srcs=["https://img.example.com/poster.jpg"]
+    )
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_yes24(mock_concert, capture_lineup_snapshot=True)
+    screenshot, _text, text_hash, img_srcs = result
+    assert screenshot == expected_screenshot
+    assert isinstance(text_hash, str) and text_hash
+    assert img_srcs == ["https://img.example.com/poster.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_crawl_melon_capture_lineup_snapshot_returns_tuple(mock_concert):
+    expected_screenshot = b"melon-png"
+    pw_mock = _make_melon_pw_mock(expected_screenshot, img_srcs=["https://img.example.com/poster.jpg"])
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_melon(mock_concert, capture_lineup_snapshot=True)
+    screenshot, _text, text_hash, img_srcs = result
+    assert screenshot == expected_screenshot
+    assert isinstance(text_hash, str) and text_hash
+    assert img_srcs == ["https://img.example.com/poster.jpg"]
+
+
+# _check_festival_lineup 테스트
+
+def _make_festival_concert(concert_id, **overrides):
+    concert = MagicMock()
+    concert.id = concert_id
+    concert.name = "테스트 페스티벌"
+    concert.end_date = None
+    concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/1"}
+    concert.lineup_check_attempted_at = None
+    concert.lineup_snapshot_hash = None
+    concert.lineup_snapshot_img_srcs = None
+    for key, value in overrides.items():
+        setattr(concert, key, value)
+    return concert
+
+
+def _make_db_mock(concert):
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+    return mock_db
+
+
+# 최초 방문(직전 스냅샷 없음)이면 무조건 스크린샷을 업로드하고 스냅샷을 저장하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_first_visit_uploads_and_saves_snapshot():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(concert_id)
+    mock_db = _make_db_mock(concert)
+
+    mock_crawler = AsyncMock(return_value=(b"png", "raw text a", "hash-a", ["https://img.example.com/a.jpg"]))
+    fake_url = "https://s3.example.com/crawls/versioned.png"
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    assert mock_crawler.call_args.kwargs["capture_lineup_snapshot"] is True
+    assert concert.crawl_screenshot_url == fake_url
+    assert concert.lineup_snapshot_hash == "hash-a"
+    assert concert.lineup_snapshot_img_srcs == ["https://img.example.com/a.jpg"]
+
+
+# 직전과 스냅샷이 동일하면(라인업 안 바뀜) 업로드 없이 스킵하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_unchanged_skips_upload():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(
+        concert_id,
+        lineup_snapshot_hash="hash-a",
+        lineup_snapshot_img_srcs=["https://img.example.com/a.jpg"],
+        crawl_screenshot_url="https://s3.example.com/crawls/old.png",
+    )
+    mock_db = _make_db_mock(concert)
+
+    mock_crawler = AsyncMock(return_value=(b"png", "raw text a", "hash-a", ["https://img.example.com/a.jpg"]))
+    mock_upload = AsyncMock()
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=mock_upload),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    mock_upload.assert_not_called()
+    assert concert.crawl_screenshot_url == "https://s3.example.com/crawls/old.png"
+
+
+# 직전과 스냅샷이 다르면(라인업 바뀜) 새 버전 키로 업로드하고 스냅샷을 갱신하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_changed_uploads_new_version():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(
+        concert_id,
+        lineup_snapshot_hash="hash-a",
+        lineup_snapshot_img_srcs=["https://img.example.com/a.jpg"],
+    )
+    mock_db = _make_db_mock(concert)
+
+    mock_crawler = AsyncMock(return_value=(b"png", "raw text b", "hash-b", ["https://img.example.com/b.jpg"]))
+    fake_url = "https://s3.example.com/crawls/new-version.png"
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    assert concert.crawl_screenshot_url == fake_url
+    assert concert.lineup_snapshot_hash == "hash-b"
+    assert concert.lineup_snapshot_img_srcs == ["https://img.example.com/b.jpg"]
+
+
+# 쿨다운 이내면 크롤러 호출 없이 종료하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_skips_within_cooldown():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(
+        concert_id, lineup_check_attempted_at=datetime.now(timezone.utc) - timedelta(hours=1)
+    )
+    mock_db = _make_db_mock(concert)
+
+    mock_crawler = AsyncMock()
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    mock_crawler.assert_not_called()
+
+
+# 크롤링 대상 사이트를 못 고르면(ticketing_links 없음) 업로드 없이 종료하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_skips_when_no_site_resolvable():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(concert_id, ticketing_links=None)
+    mock_db = _make_db_mock(concert)
+
+    mock_upload = AsyncMock()
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler._upload_screenshot", new=mock_upload),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    mock_upload.assert_not_called()
+
+
+# 공연이 이미 끝났으면 크롤러 호출 없이 종료하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_skips_when_concert_ended():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(concert_id, end_date=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    mock_db = _make_db_mock(concert)
+
+    mock_crawler = AsyncMock()
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    mock_crawler.assert_not_called()
+
+
+# retry_festival_lineup_checks 테스트
+
+# event_type=FESTIVAL 대상만 _check_festival_lineup 호출로 이어지는지 테스트
+@pytest.mark.asyncio
+async def test_retry_festival_lineup_checks_calls_check_for_each_target():
+    from app.services.crawler import retry_festival_lineup_checks
+
+    concert_id = uuid.uuid4()
+    concerts_result = MagicMock(all=MagicMock(return_value=[(concert_id,)]))
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=concerts_result)
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler._check_festival_lineup", new=AsyncMock()) as mock_check,
+    ):
+        await retry_festival_lineup_checks()
+
+    mock_check.assert_awaited_once_with(concert_id)
+
+
+# 대상이 없으면 아무것도 안 하는지 테스트
+@pytest.mark.asyncio
+async def test_retry_festival_lineup_checks_no_targets_does_nothing():
+    from app.services.crawler import retry_festival_lineup_checks
+
+    concerts_result = MagicMock(all=MagicMock(return_value=[]))
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=concerts_result)
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler._check_festival_lineup", new=AsyncMock()) as mock_check,
+    ):
+        await retry_festival_lineup_checks()
+
+    mock_check.assert_not_called()

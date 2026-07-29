@@ -25,14 +25,18 @@ async def _run_sync(func, item):
 
 async def _process_crawl_batch(items: list[CrawlAnalyzeItem]) -> None:
     for item in items:
-        if is_processed("crawl", item.concert_id):
+        # concert_id만으로 dedup하면 페스티벌 라인업이 바뀌어 백엔드가 새 스크린샷을 보내도 "이미
+        # 처리한 concert_id"로 보고 영구히 스킵하게 됨. screenshot_url을 키에 포함시켜, 백엔드가
+        # 라인업 변경 감지 시 새 URL(버전별 S3 키)로 보내는 걸 자연스럽게 새 작업으로 인식하게 함
+        dedup_key = f"{item.concert_id}:{item.screenshot_url}"
+        if is_processed("crawl", dedup_key):
             logger.info(f"[crawl] 이미 처리 완료, 스킵: {item.concert_id}")
             continue
         try:
             raw = await _run_sync(inference.analyze_crawl_screenshot, item)
             body = normalize_crawl_result(raw)
             await send_crawl_result(item.concert_id, body)
-            mark_processed("crawl", item.concert_id)
+            mark_processed("crawl", dedup_key)
         except Exception:
             logger.exception(f"[crawl] 처리 실패, 다음날 배치에서 재시도됨: {item.concert_id}")
 

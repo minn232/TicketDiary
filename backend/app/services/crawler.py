@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from uuid import UUID
@@ -11,7 +13,7 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.models.social import ConcertFollow
 from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
@@ -73,7 +75,9 @@ _UNAVAILABLE_PAGE_KEYWORDS = [
     "요청하신 페이지를 찾을 수 없습니다",
     "페이지를 찾을 수 없습니다",
     "오픈 예정",
-    "오픈예정",
+    # "오픈예정"(공백 없음)은 넣지 않음 - 인터파크 상단 내비게이션의 카테고리 링크로 모든
+    # 페이지에 항상 존재해서(실측 확인, 2026-07-29), 실제 공연 정보가 정상적으로 있는
+    # 페이지도 전부 "오픈 전"으로 오판시키는 false positive였음
     "준비중입니다",
     "준비 중입니다",
     "등록된 공연이 없습니다",
@@ -89,6 +93,51 @@ async def _is_unavailable_page(page) -> bool:
     return any(keyword in text for keyword in _UNAVAILABLE_PAGE_KEYWORDS)
 
 
+# 라인업 변경 감지에서 조회수/좋아요수 등 실시간으로 계속 바뀌는 숫자 노이즈를 없애기 위한 정규화.
+# 완벽하진 않음(날짜처럼 진짜 의미있는 숫자도 같이 지워짐) - 라인업 변경 판단 목적으론 괜찮은 트레이드오프
+_DIGIT_RE = re.compile(r"\d+")
+
+# 인터파크 상세 페이지의 "캐스팅" 섹션 바로 아래에 붙는 "{아티스트명} 더 알아보기" 한 줄이
+# 방문할 때마다 라인업 중 무작위 한 명으로 로테이션되는 걸 실측으로 확인함(2026-07-29,
+# scripts/test_lineup_diff.py로 goods/26009383을 8초 간격 두 번 방문 - 실제 라인업 목록
+# 자체는 완전히 동일했는데 이 줄 하나 때문에 해시가 달라짐). 숫자가 아닌 노이즈라 위 digit
+# 제거만으론 못 잡아서 별도로 걸러냄
+_LEARN_MORE_LINE_RE = re.compile(r"^.*더\s*알아보기.*$", re.MULTILINE)
+
+
+def _hash_lineup_text(text: str) -> str:
+    text = _LEARN_MORE_LINE_RE.sub("", text)
+    return hashlib.sha256(_DIGIT_RE.sub("", text).encode()).hexdigest()
+
+
+# 광고/추천 캐러셀에 흔히 쓰이는 이미지 CDN 키워드 - 라인업과 무관한 노이즈라 비교 대상에서 제외.
+# 1차 버전이라 대략적인 키워드 목록만 두고, 실제 오탐 데이터가 쌓이면 사이트별로 더 좁힐 것
+_AD_IMG_KEYWORDS = ("doubleclick", "googlesyndication", "criteo", "banner", "recommend", "/ad/", "ad.")
+
+
+# 이미지 src 목록에서 광고 추정 URL을 제외하고, 캐시버스팅 쿼리스트링을 제거한 뒤 정렬된 목록으로 반환
+def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
+    normalized = set()
+    for src in srcs:
+        if not src:
+            continue
+        lowered = src.lower()
+        if any(keyword in lowered for keyword in _AD_IMG_KEYWORDS):
+            continue
+        normalized.add(src.split("?", 1)[0])
+    return sorted(normalized)
+
+
+# 라인업 변경 감지용 스냅샷(원본 텍스트 + 해시 + 이미지 경로 목록) 캡처. 스크린샷과 같은 페이지
+# 방문에서 함께 뽑아야 브라우저를 두 번 띄우지 않아도 됨. 원본 텍스트는 실제 배치 로직(정규화된
+# 해시만 비교)에선 안 쓰이지만, scripts/test_lineup_diff.py에서 광고/카운터 노이즈를 눈으로
+# 직접 비교해볼 수 있게 그대로 반환해둠
+async def _capture_lineup_snapshot(page) -> tuple[str, str, list[str]]:
+    text = await page.inner_text("body")
+    img_srcs = await page.eval_on_selector_all("img", "els => els.map(e => e.src)")
+    return text, _hash_lineup_text(text), _normalize_lineup_img_srcs(img_srcs)
+
+
 # 스크린샷 S3 업로드 후 URL 반환 (실패 시 None)
 async def _upload_screenshot(image_bytes: bytes, concert_id, site: str) -> str | None:
     key = f"crawls/{concert_id}/{site}.png"
@@ -101,7 +150,10 @@ async def _upload_screenshot(image_bytes: bytes, concert_id, site: str) -> str |
 
 
 # 인터파크 공연 검색 → 상세 페이지 전체 스크린샷
-async def crawl_interpark(concert: Concert, direct_url: str | None = None) -> bytes | None:
+# capture_lineup_snapshot=True면 (screenshot, text, text_hash, img_srcs) 튜플을 반환 (라인업 재크롤링 배치용)
+async def crawl_interpark(
+    concert: Concert, direct_url: str | None = None, capture_lineup_snapshot: bool = False
+) -> bytes | tuple[bytes, str, str, list[str]] | None:
     try:
         async with async_playwright() as pw:
             browser, page = await _make_page(pw)
@@ -112,7 +164,11 @@ async def crawl_interpark(concert: Concert, direct_url: str | None = None) -> by
                     if await _is_unavailable_page(page):
                         logger.info(f"인터파크 아직 정보 없음/오픈 전으로 추정: {concert.name}")
                         return None
-                    return await page.screenshot(full_page=True, type="png")
+                    screenshot = await page.screenshot(full_page=True, type="png")
+                    if capture_lineup_snapshot:
+                        text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                        return screenshot, text, text_hash, img_srcs
+                    return screenshot
 
                 keyword = quote(concert.name)
                 # 기본 /search 경로는 "판매중/판매예정"만 검색해 이미 끝난 공연은 결과가 0건이 되므로
@@ -138,7 +194,11 @@ async def crawl_interpark(concert: Concert, direct_url: str | None = None) -> by
                 detail_page = await new_page_info.value
                 await detail_page.wait_for_load_state("domcontentloaded")
                 await detail_page.wait_for_timeout(2_000)
-                return await detail_page.screenshot(full_page=True, type="png")
+                screenshot = await detail_page.screenshot(full_page=True, type="png")
+                if capture_lineup_snapshot:
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(detail_page)
+                    return screenshot, text, text_hash, img_srcs
+                return screenshot
             finally:
                 await browser.close()
     except Exception as e:
@@ -147,7 +207,10 @@ async def crawl_interpark(concert: Concert, direct_url: str | None = None) -> by
 
 
 # YES24 공연 검색 → 상세 페이지 전체 스크린샷
-async def crawl_yes24(concert: Concert, direct_url: str | None = None) -> bytes | None:
+# capture_lineup_snapshot=True면 (screenshot, text, text_hash, img_srcs) 튜플을 반환 (라인업 재크롤링 배치용)
+async def crawl_yes24(
+    concert: Concert, direct_url: str | None = None, capture_lineup_snapshot: bool = False
+) -> bytes | tuple[bytes, str, str, list[str]] | None:
     try:
         async with async_playwright() as pw:
             browser, page = await _make_page(pw)
@@ -171,7 +234,11 @@ async def crawl_yes24(concert: Concert, direct_url: str | None = None) -> bytes 
                         await page.goto(href, wait_until="domcontentloaded", timeout=30_000)
                         await page.wait_for_timeout(2_000)
 
-                return await page.screenshot(full_page=True, type="png")
+                screenshot = await page.screenshot(full_page=True, type="png")
+                if capture_lineup_snapshot:
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    return screenshot, text, text_hash, img_srcs
+                return screenshot
             finally:
                 await browser.close()
     except Exception as e:
@@ -180,7 +247,10 @@ async def crawl_yes24(concert: Concert, direct_url: str | None = None) -> bytes 
 
 
 # 멜론티켓 공연 검색 → 상세 페이지 전체 스크린샷 (봇 차단 시 graceful skip)
-async def crawl_melon(concert: Concert, direct_url: str | None = None) -> bytes | None:
+# capture_lineup_snapshot=True면 (screenshot, text, text_hash, img_srcs) 튜플을 반환 (라인업 재크롤링 배치용)
+async def crawl_melon(
+    concert: Concert, direct_url: str | None = None, capture_lineup_snapshot: bool = False
+) -> bytes | tuple[bytes, str, str, list[str]] | None:
     try:
         async with async_playwright() as pw:
             browser, page = await _make_page(pw)
@@ -215,7 +285,11 @@ async def crawl_melon(concert: Concert, direct_url: str | None = None) -> bytes 
                             logger.info(f"멜론티켓 봇 차단 감지 (상세 페이지): {concert.name}")
                             return None
 
-                return await page.screenshot(full_page=True, type="png")
+                screenshot = await page.screenshot(full_page=True, type="png")
+                if capture_lineup_snapshot:
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    return screenshot, text, text_hash, img_srcs
+                return screenshot
             finally:
                 await browser.close()
     except Exception as e:
@@ -534,3 +608,99 @@ async def retry_pending_crawls() -> None:
     # kopis.py의 상세조회와 동일하게 세마포어로 동시 실행 개수만 제한해 병렬 처리
     semaphore = asyncio.Semaphore(_RETRY_CRAWL_CONCURRENCY)
     await asyncio.gather(*(_crawl_and_save_limited(semaphore, cid) for cid in concert_ids))
+
+
+# 페스티벌 라인업 재확인 쿨다운. 진행예정 FESTIVAL이 (2026-07-29 기준 실측) 100여 건 수준이라
+# 매일 돌아도 처리 시간 자체는 부담 없음 - 다만 같은 사이트를 매일 반복 방문하는 거라 봇 차단
+# 빈도가 늘면 그때 늘리는 식으로 조정할 것
+_FESTIVAL_LINEUP_CHECK_COOLDOWN = timedelta(hours=24)
+
+
+# event_type=FESTIVAL 공연 하나의 라인업이 직전 방문과 달라졌는지 확인하고, 달라졌으면(최초 방문
+# 포함) 새 스크린샷을 버전별 키로 업로드해 crawl_screenshot_url을 갱신한다.
+# ticketing_date 유무를 안 보는 게 crawl_and_save와의 핵심 차이 - 페스티벌은 1차 라인업 공개 직후
+# ticketing_date가 바로 채워지는 경우가 많아, 그 기준으로 완료 판단하면 정작 봐야 할 시점부터
+# 재크롤링 대상에서 영영 빠짐
+async def _check_festival_lineup(concert_id) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == concert_id))
+        concert = result.scalar_one_or_none()
+        if concert is None:
+            return
+
+        now = datetime.now(timezone.utc)
+
+        if concert.end_date is not None and concert.end_date <= now:
+            return
+
+        if (
+            concert.lineup_check_attempted_at is not None
+            and now - concert.lineup_check_attempted_at < _FESTIVAL_LINEUP_CHECK_COOLDOWN
+        ):
+            return
+
+        # 찜/티켓등록 트리거와 달리 특정 사이트에 안 묶인 주기 배치라 ticketing_site 없이
+        # concert.ticketing_links만으로 대상 사이트를 고름 (social.py의 찜 갱신 경로와 동일 패턴)
+        site_key, direct_url = _pick_crawl_target(None, concert.ticketing_links)
+        if site_key is None:
+            return
+
+        crawler = _CRAWLERS.get(site_key)
+        if crawler is None:
+            return
+
+        # 실제 크롤링 전에 먼저 시각을 찍고 커밋 - crawl_and_save와 동일하게, 크롤링 도중 배치가
+        # 죽어도 다음 사이클에 무한정 재시도하지 않도록 함
+        concert.lineup_check_attempted_at = now
+        await db.commit()
+
+        capture = await crawler(concert, direct_url=direct_url, capture_lineup_snapshot=True)
+        if capture is None:
+            return
+
+        screenshot, _raw_text, text_hash, img_srcs = capture
+        changed = concert.lineup_snapshot_hash is None or text_hash != concert.lineup_snapshot_hash or img_srcs != (
+            concert.lineup_snapshot_img_srcs or []
+        )
+        if not changed:
+            return
+
+        # 매번 같은 키를 덮어쓰지 않고 시각을 붙여 버전별로 쌓음 - 1차/2차/3차 라인업 공개 시점의
+        # 스크린샷을 나중에 비교/추적할 수 있게, 그리고 llm_server의 dedup이 screenshot_url 단위로
+        # 처리 여부를 판단하므로 새 URL이어야 재추출이 실제로 트리거됨
+        upload_key = f"{site_key.lower()}_{int(now.timestamp())}"
+        url = await _upload_screenshot(screenshot, concert_id, upload_key)
+        if url is None:
+            return
+
+        concert.crawl_screenshot_url = url
+        concert.lineup_snapshot_hash = text_hash
+        concert.lineup_snapshot_img_srcs = img_srcs
+        await db.commit()
+        logger.info(f"페스티벌 라인업 변경 감지, 스크린샷 갱신: {concert.name} → {url}")
+
+
+async def _check_festival_lineup_limited(semaphore: asyncio.Semaphore, concert_id) -> None:
+    async with semaphore:
+        await _check_festival_lineup(concert_id)
+
+
+# 자정 배치: event_type=FESTIVAL로 확정된 진행예정 공연들의 라인업이 직전과 달라졌는지 매일 재확인.
+# ticketing_date 유무와 무관하게 계속 대상이 되는 게 retry_pending_crawls와의 차이 (위 설명 참고)
+async def retry_festival_lineup_checks() -> None:
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Concert.id).where(
+                Concert.event_type == EventType.FESTIVAL.value,
+                Concert.end_date > now,
+            )
+        )
+        concert_ids = [row[0] for row in result.all()]
+
+    if not concert_ids:
+        return
+
+    logger.info(f"페스티벌 라인업 재확인 대상 {len(concert_ids)}건")
+    semaphore = asyncio.Semaphore(_RETRY_CRAWL_CONCURRENCY)
+    await asyncio.gather(*(_check_festival_lineup_limited(semaphore, cid) for cid in concert_ids))
