@@ -14,6 +14,8 @@ class PriceEntry {
       price: json['price'] as int,
     );
   }
+
+  Map<String, dynamic> toJson() => {'seat_type': seatType, 'price': price};
 }
 
 /// 공연 정보(= KOPIS 매칭 후보 1건). 백엔드 `ConcertResponse`와 대응.
@@ -72,6 +74,24 @@ class ConcertResponse {
           : null,
     );
   }
+
+  /// [LocalTicketStore]가 게스트 티켓과 함께 저장할 공연 정보 스냅샷을
+  /// 만드는 데 씁니다(백엔드로 보내는 요청 body가 아니라 로컬 직렬화 용도).
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'kopis_id': kopisId,
+    'name': name,
+    'artist_name': artistName,
+    'venue': venue,
+    'start_date': startDate.toIso8601String(),
+    'end_date': endDate.toIso8601String(),
+    'genre': genre,
+    'poster_url': posterUrl,
+    'description': description,
+    'price': price?.map((e) => e.toJson()).toList(),
+    'event_type': eventType,
+    'ticketing_date': ticketingDate?.toIso8601String(),
+  };
 }
 
 /// OCR(Vision API) + 정규식 파싱으로 추출된 티켓 정보.

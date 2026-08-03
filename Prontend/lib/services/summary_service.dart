@@ -51,9 +51,9 @@ class SummaryService {
 
   final ApiClient _client;
 
-  /// 결산 조회. 기간 선택 UI가 없으므로 항상 전체 기간(`all`)을 조회합니다.
-  Future<SummaryModel> fetchSummary() async {
-    final json = await _client.get('/summary?period=all');
+  /// 결산 조회. [period]는 백엔드가 받는 값 그대로(`6m`/`1y`/`all`) 넘깁니다.
+  Future<SummaryModel> fetchSummary({String period = 'all'}) async {
+    final json = await _client.get('/summary?period=$period');
     return SummaryModel.fromJson(json);
   }
 }

@@ -38,6 +38,8 @@ dependencies:
   # 로컬에 간단한 bool/문자열 등을 저장(티켓 뜯김 상태 영구화)
   shared_preferences: ^2.2.3
   image_picker: ^1.0.7
+  # 게스트 로그인 상태의 티켓/사진을 앱 문서 디렉토리에 저장(앱 삭제 시 함께 삭제됨)
+  path_provider: ^2.1.5
   camera: ^0.12.0+1
   dio: ^5.10.0
   flutter_secure_storage: ^10.3.1
@@ -53,6 +55,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -78,22 +81,12 @@ flutter:
   # For details regarding adding assets from package dependencies, see
   # https://flutter.dev/to/asset-from-package
 
-  # To add custom fonts to your application, add a fonts section here,
-  # in this "flutter" section. Each entry in this list should have a
-  # "family" key with the font family name, and a "fonts" key with a
-  # list giving the asset and other descriptors for the font. For
-  # example:
-  # fonts:
-  #   - family: Schyler
-  #     fonts:
-  #       - asset: fonts/Schyler-Regular.ttf
-  #       - asset: fonts/Schyler-Italic.ttf
-  #         style: italic
-  #   - family: Trajan Pro
-  #     fonts:
-  #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
-  #         weight: 700
-  #
-  # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+
+# flutter_launcher_icons 설정: 앱 아이콘을 assets/icon/app_icon.png(가죽
+# 다이어리 + 빨간 티켓 스텁 디자인, 앱 안 색상 그대로)으로 생성합니다.
+# `dart run flutter_launcher_icons`로 실행합니다.
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  ios: true
+  android: false
+  remove_alpha_ios: true

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import '../screen/kakao_login_webview_screen.dart';
 import 'auth_service.dart';
-import 'kakao_login_debug_log.dart';
 
 /// 사용자가 카카오 로그인 웹뷰를 닫거나(뒤로가기), 콜백에 code 없이
 /// error 파라미터만 온 경우(카카오 쪽 로그인 취소).
@@ -34,28 +33,19 @@ class KakaoLoginController {
 
   static final KakaoLoginController instance = KakaoLoginController._();
 
-  /// 카카오 로그인 웹뷰를 열고, 인가코드를 받아 로그인/마이그레이션까지 완료합니다.
-  ///
-  /// [migrateFromGuest]가 true면 현재 게스트 세션을 카카오 계정으로 승격
-  /// (`/auth/migrate`)하고, false면 새 카카오 로그인(`/auth/kakao`)으로
-  /// 처리합니다.
-  Future<void> login({
-    required BuildContext context,
-    required bool migrateFromGuest,
-  }) async {
-    KakaoLoginDebugLog.clear();
-    KakaoLoginDebugLog.add('[0] login() 시작. migrateFromGuest=$migrateFromGuest');
-
+  /// 카카오 로그인 웹뷰를 열어 인가코드만 받아옵니다(로그인/마이그레이션
+  /// 완료는 하지 않음). [migrateGuestDataToKakao] 같이 코드를 받은 뒤
+  /// 추가 작업(로컬 데이터 업로드 등)이 필요한 흐름에서 씁니다.
+  Future<String> fetchAuthorizationCode({required BuildContext context}) async {
     // 인앱 웹뷰 가로채기 방식은 네이티브(Android/iOS) 전용입니다. 웹에서
     // 그대로 진행하면 WebViewController가 플랫폼 구현체를 못 찾아 화면이
     // 먹통이 되므로, 시작 전에 명확히 막습니다.
     if (kIsWeb) {
-      KakaoLoginDebugLog.add('[0] kIsWeb=true라 웹에서 중단');
       throw const KakaoLoginUnsupportedOnWebException();
     }
 
     final loginUrl = await AuthService.instance.fetchKakaoLoginUrl();
-    if (!context.mounted) return;
+    if (!context.mounted) throw const KakaoLoginCancelledException();
 
     final code = await Navigator.of(context).push<String?>(
       MaterialPageRoute(
@@ -65,10 +55,21 @@ class KakaoLoginController {
     );
 
     if (code == null || code.isEmpty) {
-      KakaoLoginDebugLog.add('[4] 웹뷰가 code 없이 닫힘(취소 처리)');
       throw const KakaoLoginCancelledException();
     }
+    return code;
+  }
 
+  /// 카카오 로그인 웹뷰를 열고, 인가코드를 받아 로그인/마이그레이션까지 완료합니다.
+  ///
+  /// [migrateFromGuest]가 true면 현재 게스트 세션을 카카오 계정으로 승격
+  /// (`/auth/migrate`)하고, false면 새 카카오 로그인(`/auth/kakao`)으로
+  /// 처리합니다.
+  Future<void> login({
+    required BuildContext context,
+    required bool migrateFromGuest,
+  }) async {
+    final code = await fetchAuthorizationCode(context: context);
     await AuthService.instance.completeKakaoLogin(
       code,
       migrateFromGuest: migrateFromGuest,

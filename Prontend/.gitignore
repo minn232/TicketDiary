@@ -24,6 +24,8 @@ migrate_working_dir/
 #.vscode/
 
 # Flutter/Dart/Pub related
+# 로컬 전용 --dart-define-from-file 값 (API_BASE_URL 등). env.example.json 참고.
+env.local.json
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/

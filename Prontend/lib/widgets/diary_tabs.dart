@@ -59,35 +59,41 @@ List<DiarySideTabSpec> buildDiarySideTabs(
     );
   }
 
+  // right 값: 모든 탭을 다이어리 탭과 같은 x축 위치(4)로 통일합니다.
+  // 비활성 탭도 이 위치에서 글씨가 전부 보이고 탭 전체가 눌리는 영역이 됩니다.
+  //
+  // top 값: 다이어리~소식~결산 사이의 간격을 17.5에서 50% 줄인 8.75로
+  // 좁혔습니다. 설정 탭 위치(315)는 그대로 유지합니다.
+  const tabRight = 4.0;
   return [
     spec(
       tab: DiaryTab.diary,
-      right: 4,
-      top: 80,
+      right: tabRight,
+      top: 56, // = 80 * 0.7 (변경 없음, 나머지 탭의 기준점)
       color: const Color(0xFFE8AE75),
       text: '다이어리',
       routeName: DiaryRoutes.diary,
     ),
     spec(
       tab: DiaryTab.news,
-      right: 7,
-      top: 175,
+      right: tabRight,
+      top: 127.75, // 다이어리 바로 아래(56+63) + 간격 8.75
       color: const Color(0xFF9CB8A7),
       text: '소식',
       routeName: DiaryRoutes.news,
     ),
     spec(
       tab: DiaryTab.summary,
-      right: 10,
-      top: 270,
+      right: tabRight,
+      top: 199.5, // 소식 바로 아래(127.75+63) + 간격 8.75
       color: const Color(0xFFD3A39B),
       text: '결산',
       routeName: DiaryRoutes.summary,
     ),
     spec(
       tab: DiaryTab.settings,
-      right: 13,
-      top: 450,
+      right: tabRight,
+      top: 450 * 0.7, // 변경 없음(요청대로 위치 유지)
       color: const Color(0xFFB0B0B0),
       text: '설정',
       routeName: DiaryRoutes.settings,

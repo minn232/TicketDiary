@@ -63,4 +63,51 @@ class TicketWithConcert {
           : null,
     );
   }
+
+  /// [LocalTicketStore]가 게스트 티켓을 shared_preferences에 직렬화해
+  /// 저장하는 데 씁니다(백엔드로 보내는 요청 body가 아니라 로컬 저장 용도).
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'concert_id': concertId,
+    'status': status,
+    'delivery_date': deliveryDate?.toIso8601String(),
+    'ticketing_site': ticketingSite,
+    'price': price,
+    'seat_type': seatType,
+    'ticket_image_url': ticketImageUrl,
+    'review': review,
+    'concert_photo_urls': concertPhotoUrls,
+    'is_first_day': isFirstDay,
+    'is_last_day': isLastDay,
+    'concert': concert?.toJson(),
+  };
+
+  TicketWithConcert copyWith({
+    String? status,
+    DateTime? deliveryDate,
+    String? ticketingSite,
+    int? price,
+    String? seatType,
+    String? ticketImageUrl,
+    String? review,
+    List<String>? concertPhotoUrls,
+    bool? isFirstDay,
+    bool? isLastDay,
+  }) {
+    return TicketWithConcert(
+      id: id,
+      concertId: concertId,
+      status: status ?? this.status,
+      deliveryDate: deliveryDate ?? this.deliveryDate,
+      ticketingSite: ticketingSite ?? this.ticketingSite,
+      price: price ?? this.price,
+      seatType: seatType ?? this.seatType,
+      ticketImageUrl: ticketImageUrl ?? this.ticketImageUrl,
+      review: review ?? this.review,
+      concertPhotoUrls: concertPhotoUrls ?? this.concertPhotoUrls,
+      isFirstDay: isFirstDay ?? this.isFirstDay,
+      isLastDay: isLastDay ?? this.isLastDay,
+      concert: concert,
+    );
+  }
 }
