@@ -49,6 +49,54 @@ _SEAT_RE = re.compile(
     re.MULTILINE,
 )
 
+# 예매내역 캡처(라벨-값 격자 UI)의 행 라벨 → 스키마 필드 매핑. 사이트별 사전 없이
+# 실샘플(티켓링크/인터파크/멜론티켓/YES24 추정)에서 관찰된 라벨 변형을 하나로 통합
+_ROW_LABEL_FIELD = {
+    "관람일시": "datetime",
+    "관람일": "datetime",
+    "일시": "datetime",
+    "장소": "location",
+    "공연장소": "location",
+    "공연장": "location",
+    "좌석": "seat",
+    "예매채널": "platform",
+    "예매경로": "platform",
+    "티켓금액": "price",
+    "구매금액": "price",
+    "가격": "price",
+    "금액": "price",
+}
+
+# "좌석(1)"처럼 라벨 뒤에 붙는 개수 표기 제거
+_ROW_LABEL_SUFFIX_RE = re.compile(r"\s*\(\d+\)\s*$")
+
+# 격자 구조 채택 최소 기준 (라벨 인식 개수). datetime 포함 최소 2개 필드가 매칭돼야
+# "예매내역 캡처" 레이아웃으로 판단 - 모바일 티켓처럼 이 격자 자체가 없는 이미지는
+# 애초에 라벨 매칭이 거의/전혀 안 되므로 자연스럽게 기존 regex 경로로 폴백됨
+_MIN_LAYOUT_FIELD_MATCHES = 2
+
+# 예매내역 캡처의 헤더 영역(격자 시작 전)에서 실제 공연명이 아닌 화면 UI 텍스트를
+# 걸러내기 위한 스킵 목록 (네비게이션 타이틀/섹션 헤더/상태뱃지/카테고리 태그)
+# 뒤로가기 화살표(< 등)가 OCR로 같이 잡혀서 라벨 앞에 붙는 경우가 있어 선행 기호는 무시
+_LAYOUT_TITLE_SKIP = re.compile(
+    r"^[<>‹›«»\s]*(상세내역|예매내역|지난\s*관람상세내역|관람상세내역|MY\s*티켓|마이\s*티켓|티켓\s*예매\s*상세내역"
+    r"|카테고리|관람내역|예매정보|결제내역|구매\s*내역|티켓\s*수령방법|본인정보"
+    r"|배송완료|예매완료|취소완료|주문완료|결제완료|SOLD\s*OUT"
+    r"|단독|콘서트|뮤지컬|연극|페스티벌|공연)$",
+    re.IGNORECASE,
+)
+
+# 헤더 영역 맨 위엔 화면 상태표시줄(시계/배터리/신호)이 찍혀있는 경우가 많은데, OCR이
+# 이걸 별도 텍스트 블록으로 인식해서 라벨-값 매칭엔 안 걸리지만 제목 후보에는 그대로
+# 남는 문제가 실사용 캡처로 확인됨 - 상태표시줄 특유의 짧은 시각/아이콘 패턴만 제외
+# ("2:37" 같은 시계, "l (41)"/"ull 41" 같은 신호·배터리 아이콘 오인식)
+_STATUS_BAR_RE = re.compile(r"^\d{1,2}:\d{2}$|^[a-zA-Z]{0,4}\s*\(?\d{1,3}\)?$")
+
+# 진짜 공연명이라면 한글 또는 2자 이상 이어진 영문이 있어야 함 - 햄버거 메뉴/뒤로가기
+# 아이콘이 "< =" 같은 기호 조각으로 오인식된 경우를 걸러내기 위함 (실사용 캡처로 확인)
+_HAS_REAL_CONTENT_RE = re.compile(r"[가-힣]|[A-Za-z]{2,}")
+
+
 # 플랫폼 키워드 → 정규화 이름
 _PLATFORMS = [
     ("인터파크", "INTERPARK"),
@@ -160,8 +208,11 @@ def _to_jpeg(image_bytes: bytes, content_type: str) -> bytes:
     return buf.getvalue()
 
 
-# Google Vision API로 이미지에서 텍스트 추출 (fullTextAnnotation.text만 반환)
-async def _extract_raw_text(image_bytes: bytes) -> str:
+# Google Vision API 호출, 첫 번째 response 원본(annotation) 반환
+# fullTextAnnotation.text(줄글)뿐 아니라 pages/blocks/paragraphs의 좌표(bbox)도
+# 같은 응답에 포함돼 있어서, 좌표 기반 레이아웃 파싱을 위해 API를 한 번 더 부르지 않고
+# 이 원본 응답을 그대로 재활용한다
+async def _call_vision(image_bytes: bytes) -> dict:
     payload = {
         "requests": [
             {
@@ -181,13 +232,331 @@ async def _extract_raw_text(image_bytes: bytes) -> str:
     if response.status_code != 200:
         raise HTTPException(status_code=502, detail="Google Vision API 호출에 실패했습니다.")
 
-    annotation = response.json().get("responses", [{}])[0]
-    full_text = annotation.get("fullTextAnnotation", {}).get("text", "")
+    return response.json().get("responses", [{}])[0]
 
+
+# annotation에서 줄글 텍스트만 추출 (없으면 422)
+def _full_text_from_annotation(annotation: dict) -> str:
+    full_text = annotation.get("fullTextAnnotation", {}).get("text", "")
     if not full_text:
         raise HTTPException(status_code=422, detail="이미지에서 텍스트를 인식할 수 없습니다.")
-
     return full_text
+
+
+# Google Vision API로 이미지에서 텍스트 추출 (fullTextAnnotation.text만 반환)
+async def _extract_raw_text(image_bytes: bytes) -> str:
+    annotation = await _call_vision(image_bytes)
+    return _full_text_from_annotation(annotation)
+
+
+# 실제 공백(SPACE/SURE_SPACE/EOL_SURE_SPACE)일 때만 단어 사이 공백을 넣음
+_SPACE_BREAK_TYPES = {"SPACE", "SURE_SPACE", "EOL_SURE_SPACE"}
+
+
+# 문단(paragraph) 안의 단어(symbols)를 이어붙여 하나의 문자열로 합침.
+# Vision은 "관람일시"처럼 공백 없는 한글 단어도 시각적 줄바꿈(LINE_BREAK)이 있으면
+# 별도 word로 쪼개서 반환하는데, 이걸 무조건 공백으로 이어붙이면 "관람일 시"처럼
+# 라벨 사전과 안 맞는 문자열이 됨 - detectedBreak 타입을 봐서 진짜 공백일 때만 삽입
+def _paragraph_text(paragraph: dict) -> str:
+    words = paragraph.get("words", [])
+    parts = []
+    for i, word in enumerate(words):
+        symbols = word.get("symbols", [])
+        parts.append("".join(s.get("text", "") for s in symbols))
+        if i == len(words) - 1:
+            continue
+        break_type = None
+        if symbols:
+            break_type = symbols[-1].get("property", {}).get("detectedBreak", {}).get("type")
+        if break_type in _SPACE_BREAK_TYPES:
+            parts.append(" ")
+    return "".join(parts).strip()
+
+
+# Vision boundingBox(vertices 4점) -> (x0, y0, x1, y1)
+def _bounding_box(bbox: dict) -> tuple[float, float, float, float]:
+    vertices = bbox.get("vertices") or bbox.get("normalizedVertices") or []
+    xs = [v.get("x", 0) for v in vertices]
+    ys = [v.get("y", 0) for v in vertices]
+    if not xs or not ys:
+        return (0.0, 0.0, 0.0, 0.0)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+# 문단 하나가 실제로는 여러 줄을 담고 있는지 판단하는 기준 배수 (문단 높이가 평균 단어
+# 높이의 이 배수를 넘으면 여러 줄이 뭉친 것으로 판단)
+_MULTI_LINE_HEIGHT_RATIO = 1.6
+
+
+# 문단(paragraph) 하나가 실제로는 세로로 여러 줄(예: 관람일/공연장소/매수처럼 서로 다른
+# 값이 각각 다른 줄인데 Vision이 한 덩어리로 묶어버린 경우)을 담고 있으면, 그 문단의
+# word bbox들을 Y좌표로 재클러스터링해서 줄 단위로 쪼갠다. 대부분의 문단(한 줄짜리)은
+# 평균 단어 높이 대비 문단 높이가 크지 않아 이 함수를 그대로 통과하므로, 정상 케이스엔
+# 영향이 없고 실제로 여러 줄이 뭉친 비정상 케이스만 국소적으로 보정된다
+def _split_multiline_paragraph(paragraph: dict) -> list[dict]:
+    words = paragraph.get("words", [])
+    if len(words) < 2:
+        return [paragraph]
+
+    word_items = []
+    for word in words:
+        x0, y0, x1, y1 = _bounding_box(word.get("boundingBox", {}))
+        word_items.append({"x0": x0, "y0": y0, "x1": x1, "y1": y1, "word": word})
+
+    heights = [w["y1"] - w["y0"] for w in word_items]
+    avg_height = sum(heights) / len(heights) if heights else 0
+    _, para_y0, _, para_y1 = _bounding_box(paragraph.get("boundingBox", {}))
+    para_height = para_y1 - para_y0
+
+    if avg_height <= 0 or para_height <= avg_height * _MULTI_LINE_HEIGHT_RATIO:
+        return [paragraph]
+
+    # word bbox를 Y좌표로 줄 단위 클러스터링 (_group_rows와 동일한 방식)
+    ordered = sorted(word_items, key=lambda w: (w["y0"] + w["y1"]) / 2)
+    lines: list[list[dict]] = [[ordered[0]]]
+    line_center = (ordered[0]["y0"] + ordered[0]["y1"]) / 2
+    for w in ordered[1:]:
+        height = (w["y1"] - w["y0"]) or 1
+        center = (w["y0"] + w["y1"]) / 2
+        if abs(center - line_center) <= height * 0.6:
+            lines[-1].append(w)
+        else:
+            lines.append([w])
+        line_center = sum((x["y0"] + x["y1"]) / 2 for x in lines[-1]) / len(lines[-1])
+
+    if len(lines) < 2:
+        return [paragraph]
+
+    result = []
+    for line in lines:
+        line.sort(key=lambda w: w["x0"])
+        xs0 = [w["x0"] for w in line]
+        ys0 = [w["y0"] for w in line]
+        xs1 = [w["x1"] for w in line]
+        ys1 = [w["y1"] for w in line]
+        result.append({
+            "words": [w["word"] for w in line],
+            "boundingBox": {"vertices": [
+                {"x": min(xs0), "y": min(ys0)}, {"x": max(xs1), "y": min(ys0)},
+                {"x": max(xs1), "y": max(ys1)}, {"x": min(xs0), "y": max(ys1)},
+            ]},
+        })
+    return result
+
+
+# annotation의 문단 계층을 (텍스트, bbox) 평면 리스트로 변환
+def _flatten_paragraphs(annotation: dict) -> list[dict]:
+    blocks = []
+    pages = annotation.get("fullTextAnnotation", {}).get("pages", [])
+    for page in pages:
+        for block in page.get("blocks", []):
+            for paragraph in block.get("paragraphs", []):
+                for sub_paragraph in _split_multiline_paragraph(paragraph):
+                    text = _paragraph_text(sub_paragraph)
+                    if not text:
+                        continue
+                    x0, y0, x1, y1 = _bounding_box(sub_paragraph.get("boundingBox", {}))
+                    blocks.append({"text": text, "x0": x0, "y0": y0, "x1": x1, "y1": y1})
+    return blocks
+
+
+# bbox 리스트를 Y좌표로 같은 행끼리 묶고(중심 Y가 블록 높이의 60% 이내면 같은 행),
+# 각 행 안에서는 X좌표로 정렬 (라벨이 왼쪽, 값이 오른쪽에 오도록) - 사이트별 좌표를
+# 저장하지 않고 이미지마다 새로 계산하므로 화면비율/기기/사이트 리뉴얼에 영향받지 않음
+def _group_rows(blocks: list[dict]) -> list[list[dict]]:
+    if not blocks:
+        return []
+
+    ordered = sorted(blocks, key=lambda b: (b["y0"] + b["y1"]) / 2)
+    rows: list[list[dict]] = [[ordered[0]]]
+    row_center = (ordered[0]["y0"] + ordered[0]["y1"]) / 2
+
+    for b in ordered[1:]:
+        height = (b["y1"] - b["y0"]) or 1
+        center = (b["y0"] + b["y1"]) / 2
+        if abs(center - row_center) <= height * 0.6:
+            rows[-1].append(b)
+        else:
+            rows.append([b])
+        row_center = sum((x["y0"] + x["y1"]) / 2 for x in rows[-1]) / len(rows[-1])
+
+    for row in rows:
+        row.sort(key=lambda b: b["x0"])
+    return rows
+
+
+# "좌석(1)"처럼 붙는 개수 표기 제거 후 라벨 텍스트 정규화
+def _normalize_row_label(text: str) -> str:
+    return _ROW_LABEL_SUFFIX_RE.sub("", text).strip()
+
+
+# 행 리스트에서 라벨 사전에 매칭되는 행만 골라 {필드: 값} 딕셔너리로 변환. 라벨은
+# 행의 첫 블록만 보지 않고 위치 무관하게 찾음 - 포스터 썸네일 텍스트 등 무관한 블록이
+# 라벨보다 왼쪽(먼저)에 섞여 들어와도(실사용 캡처로 확인된 케이스) 인식이 깨지지 않게
+# 하기 위함. 매칭된 라벨 뒤(오른쪽)의 블록들을 값으로 채택.
+# 같은 필드가 여러 행에 매칭되면 문서 순서상 먼저 나온 값을 채택(기존 _extract_price의
+# "첫 번째 값 채택" 관례와 동일). 격자가 시작된 첫 행 인덱스도 함께 반환(제목 탐색 범위 한정용)
+def _extract_fields_from_rows(rows: list[list[dict]]) -> tuple[dict, int | None]:
+    fields: dict = {}
+    grid_start_row_index = None
+    for i, row in enumerate(rows):
+        if len(row) < 2:
+            continue
+        label_pos, field = None, None
+        for j, block in enumerate(row[:-1]):
+            candidate = _ROW_LABEL_FIELD.get(_normalize_row_label(block["text"]))
+            if candidate:
+                label_pos, field = j, candidate
+                break
+        if field is None:
+            continue
+        row = row[label_pos:]
+        if grid_start_row_index is None:
+            grid_start_row_index = i
+        if field not in fields:
+            fields[field] = " ".join(b["text"] for b in row[1:]).strip()
+    return fields, grid_start_row_index
+
+
+# "관람일시"/"관람일" 행의 값에서 날짜/시간 분리 추출
+def _parse_datetime_value(value: str) -> tuple[str | None, str | None]:
+    dm = _DATE_RE.search(value)
+    date = None
+    if dm:
+        if dm.group(1):
+            date = _parse_date(dm.group(1), dm.group(2), dm.group(3))
+        else:
+            date = _parse_date(dm.group(4), dm.group(5), dm.group(6))
+    return date, _extract_time(value)
+
+
+# 실제 공연명은 화면 가로폭의 상당 부분을 차지하는 경향이 있는 반면(실사용 4샘플
+# 실측 70~96%), 포스터 썸네일/로고 텍스트는 훨씬 좁음(실측 2~35%) - 이미지에서 관측된
+# 최대 가로폭(페이지 폭 근사치) 대비 이 비율 미만인 블록은 제목 후보에서 제외
+_MIN_TITLE_WIDTH_RATIO = 0.5
+
+
+# 제목이 화면 폭 제약으로 2줄에 걸쳐 줄바꿈되는 경우, 바로 다음 행이 제목 행과 좌측
+# 정렬이 비슷하고 폭도 어느 정도 있으면 줄바꿈 연속으로 보고 이어붙인 후보를 만든다.
+# 줄바꿈이 항상 단어 경계에서 일어나는 게 아니라서(실사용 샘플에서 "...HORO" I" +
+# "N SEOUL" -> "...HORO" IN SEOUL"처럼 단어 중간에 끊긴 경우가 확인됨) 공백 포함/미포함
+# 두 버전 다 만들어서 title_candidates에 넘기고, 어느 쪽이 맞는지는 KOPIS 부분검색+
+# 날짜 교차검증(기존 재시도 메커니즘)에 맡긴다 - 원본 title 자체는 바꾸지 않고 보강만 함
+_WRAP_X_TOLERANCE = 60
+_WRAP_MIN_WIDTH_RATIO = 0.15
+
+
+def _title_wrap_variants(
+    rows: list[list[dict]], title_row_index: int, title_block: dict, page_width: float
+) -> list[str]:
+    if title_row_index + 1 >= len(rows):
+        return []
+    next_row = rows[title_row_index + 1]
+    if not next_row:
+        return []
+    next_block = next_row[0]
+    text = next_block["text"].strip()
+    if not text or not min_len_ok(text):
+        return []
+    if _LAYOUT_TITLE_SKIP.match(text) or _STATUS_BAR_RE.match(text):
+        return []
+    if abs(next_block["x0"] - title_block["x0"]) > _WRAP_X_TOLERANCE:
+        return []
+    if (next_block["x1"] - next_block["x0"]) / page_width < _WRAP_MIN_WIDTH_RATIO:
+        return []
+    base = title_block["text"].strip()
+    return [base + text, f"{base} {text}"]
+
+
+# 격자 시작 전(헤더 영역) 행에서 라벨-값 매칭이 안 되는 공연명을 별도로 탐색.
+# 라벨:값 방식이 아니라 상단 텍스트 블록 중 UI 뱃지/섹션헤더/카테고리 태그/아이콘
+# 오인식이 아니고, 화면 폭 대비 충분히 넓은 첫 블록을 채택
+# (읽기 순서상 가장 위, 같은 행이면 왼쪽 우선). 줄바꿈 연속 후보도 함께 반환
+def _extract_title_from_layout(
+    rows: list[list[dict]], grid_start_row_index: int | None
+) -> tuple[str | None, list[str]]:
+    all_blocks = [b for row in rows for b in row]
+    if not all_blocks:
+        return None, []
+    page_width = max(b["x1"] for b in all_blocks) or 1
+
+    limit = grid_start_row_index if grid_start_row_index is not None else len(rows)
+    for i, row in enumerate(rows[:limit]):
+        for block in row:
+            text = block["text"].strip()
+            if not text or not min_len_ok(text):
+                continue
+            if _LAYOUT_TITLE_SKIP.match(text) or _STATUS_BAR_RE.match(text):
+                continue
+            if not _HAS_REAL_CONTENT_RE.search(text):
+                continue
+            if _DATE_RE.match(text) or _PRICE_RE.match(text):
+                continue
+            if (block["x1"] - block["x0"]) / page_width < _MIN_TITLE_WIDTH_RATIO:
+                continue
+            return text, _title_wrap_variants(rows, i, block, page_width)
+    return None, []
+
+
+# 예매내역 사이트가 제목이 길면 화면에서 "…"로 줄여 보여주는 경우가 있음 - 잘린 부분
+# 자체는 화면에 없으니 복원할 수 없지만, 말줄임표를 검색어에 그대로 남기면 KOPIS
+# 검색만 방해되므로 제거. 잘려서 못 찾으면 title_candidates의 다른(더 짧은) 후보로
+# 재시도하는 기존 메커니즘에 맡긴다
+_TRAILING_ELLIPSIS_RE = re.compile(r"\s*(?:\.{3,}|…)\s*$")
+
+
+def _strip_trailing_ellipsis(text: str) -> str:
+    return _TRAILING_ELLIPSIS_RE.sub("", text).strip()
+
+
+# 좌표 기반 격자(라벨:값) 레이아웃 파싱 시도. 격자로 판단할 만큼 라벨이 충분히
+# 매칭되지 않으면 None을 반환해서 호출부가 기존 regex 파이프라인으로 폴백하게 함
+def _parse_ticket_fields_from_layout(annotation: dict, raw_text: str) -> dict | None:
+    rows = _group_rows(_flatten_paragraphs(annotation))
+    fields, grid_start_row_index = _extract_fields_from_rows(rows)
+
+    if "datetime" not in fields or len(fields) < _MIN_LAYOUT_FIELD_MATCHES:
+        return None
+
+    date, time = _parse_datetime_value(fields.get("datetime", ""))
+    title, title_wrap_variants = _extract_title_from_layout(rows, grid_start_row_index)
+    title = title or _extract_title(raw_text)
+    if title:
+        title = _strip_trailing_ellipsis(title)
+    else:
+        title_wrap_variants = []
+
+    platform = _extract_platform(fields.get("platform", "")) if "platform" in fields else None
+    if platform is None:
+        platform = _extract_platform(raw_text)
+
+    price = None
+    if "price" in fields:
+        pm = _PRICE_RE.search(fields["price"])
+        if pm:
+            raw = pm.group(1).replace(",", "")
+            if raw.isdigit() and int(raw) >= 1000:
+                price = int(raw)
+    if price is None:
+        price = _extract_price(raw_text)
+
+    title_candidates = ([title] if title else []) + title_wrap_variants + [
+        c for c in _extract_title_candidates(raw_text)
+        if c != title and c not in title_wrap_variants
+    ]
+
+    return {
+        "title": title,
+        "title_candidates": title_candidates,
+        "date": date,
+        "time": time,
+        "shipping_date": _extract_shipping_date(raw_text),
+        "location": fields.get("location"),
+        "seat": fields.get("seat"),
+        "platform": platform,
+        "price": price,
+        "event_type": _classify_event_type(f"{title or ''}\n{raw_text}"),
+    }
 
 
 # 날짜 그룹 (y, m, d) → "YYYY-MM-DD" 변환 (범위 외 None)
@@ -382,9 +751,15 @@ def _parse_ticket_fields(raw_text: str) -> dict:
     }
 
 
-# 이미지 -> JPEG 변환 -> Vision OCR -> 로컬 파싱
+# 이미지 -> JPEG 변환 -> Vision OCR -> 좌표 기반 격자 파싱 시도 -> 실패 시 로컬 regex 파싱
 async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     loop = asyncio.get_running_loop()
     jpeg_bytes = await loop.run_in_executor(None, _to_jpeg, image_bytes, content_type)
-    raw_text = await _extract_raw_text(jpeg_bytes)
+    annotation = await _call_vision(jpeg_bytes)
+    raw_text = _full_text_from_annotation(annotation)
+
+    layout_fields = _parse_ticket_fields_from_layout(annotation, raw_text)
+    if layout_fields is not None:
+        return layout_fields
+
     return _parse_ticket_fields(raw_text)

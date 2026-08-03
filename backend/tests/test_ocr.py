@@ -20,6 +20,14 @@ from app.services.ocr import (
     _extract_platform,
     _extract_price,
     _classify_event_type,
+    extract_ticket_info,
+    _group_rows,
+    _extract_fields_from_rows,
+    _extract_title_from_layout,
+    _parse_ticket_fields_from_layout,
+    _paragraph_text,
+    _flatten_paragraphs,
+    _strip_trailing_ellipsis,
 )
 from conftest import kopis_mock
 
@@ -39,6 +47,53 @@ def _httpx_post_mock(status_code: int = 200, json_body: dict | None = None):
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.post = AsyncMock(return_value=mock_response)
     return patch("app.services.ocr.httpx.AsyncClient", return_value=mock_client)
+
+
+# 예매내역 캡처 레이아웃 파싱 테스트용 - Vision 응답의 words/symbols 계층을 직접 만들지
+# 않고, 문단(paragraph) 텍스트 + bbox만으로 annotation을 구성하는 헬퍼.
+# 실제 Vision은 단어 사이 진짜 공백일 때만 detectedBreak=SPACE를 붙이므로(그 외엔
+# 시각적 줄바꿈으로 취급돼 공백이 안 들어감 - _paragraph_text 참고), 여기서도 각 단어
+# 끝에 SPACE break를 명시해야 재구성 시 원래 텍스트대로 공백이 살아남는다
+def _paragraph(text: str, x0: int, y0: int, x1: int, y1: int) -> dict:
+    words = text.split(" ")
+    word_objs = []
+    for i, word in enumerate(words):
+        symbols = [{"text": ch} for ch in word]
+        if i < len(words) - 1 and symbols:
+            symbols[-1]["property"] = {"detectedBreak": {"type": "SPACE"}}
+        word_objs.append({"symbols": symbols})
+    return {
+        "words": word_objs,
+        "boundingBox": {"vertices": [
+            {"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1}, {"x": x0, "y": y1},
+        ]},
+    }
+
+
+def _annotation(paragraphs: list[dict], full_text: str) -> dict:
+    return {
+        "fullTextAnnotation": {
+            "text": full_text,
+            "pages": [{"blocks": [{"paragraphs": paragraphs}]}],
+        }
+    }
+
+
+# 실샘플(이미지1, 티켓링크 추정)과 같은 구조: 헤더 제목 + "라벨(왼쪽)/값(오른쪽)" 격자 3행
+_BOOKING_HISTORY_PARAGRAPHS = [
+    _paragraph("상세내역", 40, 40, 200, 70),
+    _paragraph("YUURI ARENA LIVE 2025 at SEOUL", 40, 100, 600, 140),
+    _paragraph("관람일시", 40, 300, 160, 320),
+    _paragraph("2025.05.04(일) 17:00", 300, 300, 560, 320),
+    _paragraph("장소", 40, 340, 160, 360),
+    _paragraph("KSPO DOME", 300, 340, 500, 360),
+    _paragraph("예매채널", 40, 380, 160, 400),
+    _paragraph("티켓링크웹", 300, 380, 480, 400),
+]
+_BOOKING_HISTORY_FULL_TEXT = (
+    "상세내역\nYUURI ARENA LIVE 2025 at SEOUL\n관람일시\n2025.05.04(일) 17:00\n"
+    "장소\nKSPO DOME\n예매채널\n티켓링크웹"
+)
 
 
 def _ocr_mock(extracted: dict):
@@ -184,6 +239,286 @@ def test_parse_ticket_fields_missing_fields_return_none():
     assert result["date"] is None
     assert result["time"] is None
     assert result["price"] is None
+
+
+# 예매내역 캡처 레이아웃(좌표 기반 격자) 파싱 테스트
+
+# 실제 Vision API 응답으로 검증됨: "관람일시"처럼 공백 없는 한글 라벨도 시각적 줄바꿈
+# 때문에 별도 word로 쪼개져서 오는데, 그 사이 break가 LINE_BREAK(진짜 공백 아님)이면
+# 공백을 넣으면 안 됨 - 넣으면 "관람일 시"가 돼서 라벨 사전과 안 맞아 격자 인식 자체가
+# 실패하는 회귀가 있었음(실사용 이미지로 직접 재현 후 수정)
+def test_paragraph_text_no_space_on_line_break():
+    paragraph = {
+        "words": [
+            {"symbols": [
+                {"text": "관"}, {"text": "람"},
+                {"text": "일", "property": {"detectedBreak": {"type": "LINE_BREAK"}}},
+            ]},
+            {"symbols": [{"text": "시"}]},
+        ]
+    }
+    assert _paragraph_text(paragraph) == "관람일시"
+
+
+# 진짜 공백(SPACE)일 때는 정상적으로 공백이 들어가는지 확인 (위 테스트와의 대조)
+def test_paragraph_text_inserts_space_on_space_break():
+    paragraph = {
+        "words": [
+            {"symbols": [
+                {"text": "K"}, {"text": "S"}, {"text": "P"},
+                {"text": "O", "property": {"detectedBreak": {"type": "SPACE"}}},
+            ]},
+            {"symbols": [{"text": "D"}, {"text": "O"}, {"text": "M"}, {"text": "E"}]},
+        ]
+    }
+    assert _paragraph_text(paragraph) == "KSPO DOME"
+
+
+def _word_with_bbox(text: str, x0: int, y0: int, x1: int, y1: int) -> dict:
+    return {
+        "symbols": [{"text": ch} for ch in text],
+        "boundingBox": {"vertices": [
+            {"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1}, {"x": x0, "y": y1},
+        ]},
+    }
+
+
+# 실사용 캡처(멜론)로 확인된 회귀: Vision이 관람일/장소/매수처럼 서로 다른 값을 담은
+# 여러 줄을 하나의 문단으로 합쳐서 반환하는 경우, 그 문단의 word bbox를 다시 Y좌표로
+# 재클러스터링해서 줄 단위로 쪼개는지 확인
+def test_flatten_paragraphs_splits_merged_multiline_paragraph():
+    merged_paragraph = {
+        "words": [
+            _word_with_bbox("2026.03.14", 550, 700, 750, 735),
+            _word_with_bbox("1매", 550, 820, 590, 855),
+        ],
+        "boundingBox": {"vertices": [
+            {"x": 550, "y": 700}, {"x": 750, "y": 700}, {"x": 750, "y": 855}, {"x": 550, "y": 855},
+        ]},
+    }
+    annotation = _annotation([merged_paragraph], "2026.03.14\n1매")
+    blocks = _flatten_paragraphs(annotation)
+    assert [b["text"] for b in blocks] == ["2026.03.14", "1매"]
+
+
+# 한 줄짜리 정상 문단은 (단어 높이 대비 문단 높이가 크지 않으므로) 쪼개지지 않아야 함
+def test_flatten_paragraphs_does_not_split_single_line_paragraph():
+    words = [
+        _word_with_bbox("KSPO", 300, 340, 400, 360),
+        _word_with_bbox("DOME", 410, 341, 500, 361),
+    ]
+    words[0]["symbols"][-1]["property"] = {"detectedBreak": {"type": "SPACE"}}
+    paragraph = {
+        "words": words,
+        "boundingBox": {"vertices": [
+            {"x": 300, "y": 340}, {"x": 500, "y": 340}, {"x": 500, "y": 361}, {"x": 300, "y": 361},
+        ]},
+    }
+    annotation = _annotation([paragraph], "KSPO DOME")
+    blocks = _flatten_paragraphs(annotation)
+    assert len(blocks) == 1
+    assert blocks[0]["text"] == "KSPO DOME"
+
+
+# 실사용 캡처로 확인된 회귀: 포스터 썸네일 텍스트 등 무관한 블록이 라벨보다 왼쪽에
+# 섞여 들어와도(행의 첫 블록이 아니어도) 라벨을 찾아 값을 채택하는지 확인
+def test_extract_fields_from_rows_finds_label_not_at_first_position():
+    rows = [[
+        {"text": "POSTER NOISE", "x0": 10, "y0": 100, "x1": 100, "y1": 130},
+        {"text": "공연장소", "x0": 300, "y0": 100, "x1": 400, "y1": 130},
+        {"text": "고려대학교 화정체육관", "x0": 550, "y0": 100, "x1": 800, "y1": 130},
+    ]]
+    fields, grid_start = _extract_fields_from_rows(rows)
+    assert fields == {"location": "고려대학교 화정체육관"}
+    assert grid_start == 0
+
+
+# 실사용 캡처로 확인된 회귀: 햄버거 메뉴/뒤로가기 아이콘이 "< ="처럼 기호로만 오인식된
+# 블록은 제목 후보에서 제외되고, 실제 글자가 있는 다음 후보를 채택하는지 확인
+def test_extract_title_from_layout_skips_symbol_only_garbage():
+    rows = _group_rows([
+        {"text": "< =", "x0": 40, "y0": 240, "x1": 100, "y1": 300},
+        {"text": "예매내역", "x0": 500, "y0": 239, "x1": 600, "y1": 293},
+        {"text": "ZUTOMAYO INTENSE II", "x0": 48, "y0": 404, "x1": 400, "y1": 446},
+    ])
+    assert _extract_title_from_layout(rows, None)[0] == "ZUTOMAYO INTENSE II"
+
+
+# 실사용 캡처(Vaundy 예매내역)로 확인된 회귀: 포스터 썸네일의 작은 텍스트 조각("ASIA")이
+# 화면 폭 대부분을 차지하는 진짜 제목보다 먼저(위) 나와도, 폭이 좁으면 후보에서 제외하고
+# 폭이 충분히 넓은 진짜 제목을 채택하는지 확인
+def test_extract_title_from_layout_skips_narrow_poster_fragment():
+    rows = _group_rows([
+        {"text": "ASIA", "x0": 141, "y0": 425, "x1": 160, "y1": 433},
+        {"text": "Vaundy ASIA ARENA TOUR 2026", "x0": 293, "y0": 474, "x1": 1125, "y1": 508},
+    ])
+    assert _extract_title_from_layout(rows, None)[0] == "Vaundy ASIA ARENA TOUR 2026"
+
+
+# 실사용 캡처(Vaundy 예매내역)로 확인된 케이스: 제목이 화면 폭 제약으로 2줄에 걸쳐
+# 줄바꿈되면("...HORO" I" + "N SEOUL", 단어 중간에서 끊김) 원본 title은 첫 줄 그대로
+# 두되, 이어붙인 후보(공백 포함/미포함)를 함께 반환하는지 확인
+def test_extract_title_from_layout_returns_wrap_continuation_variants():
+    rows = _group_rows([
+        {"text": "Vaundy ASIA ARENA TOUR 2026 \"HORO\" I", "x0": 293, "y0": 474, "x1": 1125, "y1": 508},
+        {"text": "N SEOUL", "x0": 295, "y0": 529, "x1": 472, "y1": 558},
+    ])
+    title, wrap_variants = _extract_title_from_layout(rows, None)
+    assert title == "Vaundy ASIA ARENA TOUR 2026 \"HORO\" I"
+    assert "Vaundy ASIA ARENA TOUR 2026 \"HORO\" IN SEOUL" in wrap_variants
+    assert "Vaundy ASIA ARENA TOUR 2026 \"HORO\" I N SEOUL" in wrap_variants
+
+
+# 다음 행이 제목 행과 좌측 정렬이 크게 다르거나(줄바꿈 연속이 아니라 무관한 값 행일
+# 가능성) 폭이 너무 좁으면 이어붙이기 후보를 만들지 않아야 함
+def test_extract_title_from_layout_no_wrap_variants_when_next_row_misaligned():
+    rows = _group_rows([
+        {"text": "YUURI ARENA LIVE 2025 at SEOUL", "x0": 61, "y0": 518, "x1": 939, "y1": 560},
+        {"text": "관람일시", "x0": 700, "y0": 700, "x1": 800, "y1": 730},
+    ])
+    title, wrap_variants = _extract_title_from_layout(rows, None)
+    assert title == "YUURI ARENA LIVE 2025 at SEOUL"
+    assert wrap_variants == []
+
+
+# 화면 UI가 긴 제목을 "…"로 줄여서 보여주는 경우, 검색어를 오염시키지 않도록 제거
+def test_strip_trailing_ellipsis_real_char():
+    assert _strip_trailing_ellipsis("BTS WORLD TOUR…") == "BTS WORLD TOUR"
+
+
+def test_strip_trailing_ellipsis_three_dots():
+    assert _strip_trailing_ellipsis("BTS WORLD TOUR...") == "BTS WORLD TOUR"
+
+
+# 진짜 마침표(문장부호)까지 지워버리면 안 되므로, 점 1~2개는 그대로 둠
+def test_strip_trailing_ellipsis_does_not_touch_single_dot():
+    assert _strip_trailing_ellipsis("BTS WORLD TOUR.") == "BTS WORLD TOUR."
+
+
+def test_group_rows_clusters_by_y_and_sorts_by_x():
+    a = {"text": "A", "x0": 100, "y0": 0, "y1": 20, "x1": 150}
+    b = {"text": "B", "x0": 10, "y0": 5, "y1": 25, "x1": 60}
+    c = {"text": "C", "x0": 10, "y0": 100, "y1": 120, "x1": 60}
+    rows = _group_rows([a, b, c])
+    assert [blk["text"] for blk in rows[0]] == ["B", "A"]
+    assert [blk["text"] for blk in rows[1]] == ["C"]
+
+
+def test_group_rows_empty():
+    assert _group_rows([]) == []
+
+
+# "라벨:값" 격자로 인식되면 title/date/time/location/platform이 좌표 기반으로 채워지는지 확인
+def test_parse_ticket_fields_from_layout_full():
+    annotation = _annotation(_BOOKING_HISTORY_PARAGRAPHS, _BOOKING_HISTORY_FULL_TEXT)
+    result = _parse_ticket_fields_from_layout(annotation, _BOOKING_HISTORY_FULL_TEXT)
+    assert result is not None
+    assert result["title"] == "YUURI ARENA LIVE 2025 at SEOUL"
+    assert result["date"] == "2025-05-04"
+    assert result["time"] == "17:00"
+    assert result["location"] == "KSPO DOME"
+    assert result["platform"] == "티켓링크"
+    assert result["seat"] is None
+    assert result["event_type"] == "SOLO"
+
+
+# "좌석(1)"처럼 라벨에 개수가 붙어도 정규화돼서 매칭되는지 확인
+def test_parse_ticket_fields_from_layout_normalizes_seat_label_suffix():
+    paragraphs = [
+        _paragraph("관람일시", 40, 100, 160, 120),
+        _paragraph("2026.04.19(일) 19:30", 300, 100, 560, 120),
+        _paragraph("좌석(1)", 40, 140, 160, 160),
+        _paragraph("일반석 1층 스탠딩B구역 입장번호065번", 300, 140, 650, 160),
+    ]
+    full_text = "관람일시\n2026.04.19(일) 19:30\n좌석(1)\n일반석 1층 스탠딩B구역 입장번호065번"
+    result = _parse_ticket_fields_from_layout(_annotation(paragraphs, full_text), full_text)
+    assert result is not None
+    assert result["date"] == "2026-04-19"
+    assert result["time"] == "19:30"
+    assert result["seat"] == "일반석 1층 스탠딩B구역 입장번호065번"
+
+
+# 매칭된 라벨이 datetime 하나뿐이면(최소 기준 미달) 격자로 판단하지 않고 None 반환
+def test_parse_ticket_fields_from_layout_below_threshold_returns_none():
+    paragraphs = [
+        _paragraph("관람일시", 40, 100, 160, 120),
+        _paragraph("2025.05.04(일) 17:00", 300, 100, 560, 120),
+    ]
+    full_text = "관람일시\n2025.05.04(일) 17:00"
+    assert _parse_ticket_fields_from_layout(_annotation(paragraphs, full_text), full_text) is None
+
+
+# 모바일 티켓처럼 "라벨 : 값"이 한 줄(한 문단)에 같이 인쇄된 경우엔 열이 안 나뉘어서
+# 격자로 인식되지 않고 None을 반환하는지 확인 (기존 regex 경로로 폴백돼야 하는 케이스)
+def test_parse_ticket_fields_from_layout_returns_none_for_single_column_lines():
+    paragraphs = [
+        _paragraph("인터파크 티켓", 40, 40, 300, 60),
+        _paragraph("공연명 : BTS WORLD TOUR 2030", 40, 80, 500, 100),
+        _paragraph("공연일시 : 2030.06.01 (토) 오후 6시", 40, 120, 500, 140),
+        _paragraph("공연장소 : 잠실올림픽주경기장", 40, 160, 500, 180),
+        _paragraph("좌석 : R석 A구역 12열 15번", 40, 200, 500, 220),
+        _paragraph("결제금액 : 110,000원", 40, 240, 500, 260),
+        _paragraph("발송예정일 : 2030.05.20", 40, 280, 500, 300),
+    ]
+    result = _parse_ticket_fields_from_layout(
+        _annotation(paragraphs, _INTERPARK_TICKET), _INTERPARK_TICKET
+    )
+    assert result is None
+
+
+# 헤더 영역의 네비게이션 타이틀/뱃지는 건너뛰고 실제 공연명을 채택하는지 확인
+def test_extract_title_from_layout_skips_chrome_text():
+    rows = _group_rows([
+        {"text": "상세내역", "x0": 40, "y0": 40, "x1": 200, "y1": 70},
+        {"text": "배송완료", "x0": 40, "y0": 80, "x1": 160, "y1": 100},
+        {"text": "YUURI ARENA LIVE 2025 at SEOUL", "x0": 40, "y0": 120, "x1": 600, "y1": 160},
+    ])
+    assert _extract_title_from_layout(rows, None)[0] == "YUURI ARENA LIVE 2025 at SEOUL"
+
+
+# 실사용 캡처(2026-08-03)로 확인된 회귀: 헤더 맨 위 화면 상태표시줄(시계 "2:37", 신호/배터리
+# 아이콘 오인식 "l (41)")이 제목 후보로 잘못 채택되던 문제. 상태표시줄은 걸러내고
+# 그 아래의 진짜 공연명을 채택해야 함
+def test_extract_title_from_layout_skips_status_bar():
+    rows = _group_rows([
+        {"text": "2:37", "x0": 170, "y0": 81, "x1": 273, "y1": 115},
+        {"text": "l (41)", "x0": 862, "y0": 80, "x1": 1102, "y1": 119},
+        {"text": "<상세내역", "x0": 67, "y0": 247, "x1": 327, "y1": 301},
+        {"text": "배송완료", "x0": 90, "y0": 424, "x1": 203, "y1": 453},
+        {"text": "YUURI ARENA LIVE 2025 at SEOUL", "x0": 61, "y0": 518, "x1": 939, "y1": 560},
+    ])
+    assert _extract_title_from_layout(rows, None)[0] == "YUURI ARENA LIVE 2025 at SEOUL"
+
+
+# _extract_ticket_info 통합 테스트 (Vision 응답 1회 안에서 격자 파싱과 폴백이 갈리는지)
+
+@pytest.mark.asyncio
+async def test_extract_ticket_info_uses_layout_when_grid_detected():
+    annotation = _annotation(_BOOKING_HISTORY_PARAGRAPHS, _BOOKING_HISTORY_FULL_TEXT)
+    with _httpx_post_mock(200, {"responses": [annotation]}):
+        result = await extract_ticket_info(b"fake-image", "image/jpeg")
+    assert result["title"] == "YUURI ARENA LIVE 2025 at SEOUL"
+    assert result["date"] == "2025-05-04"
+    assert result["platform"] == "티켓링크"
+
+
+# 격자가 인식 안 되는 이미지는 extract_ticket_info가 기존 regex 파이프라인 결과와
+# 동일한 값을 돌려주는지 확인 (Vision을 두 번 호출하지 않고, 같은 응답을 재활용해서 판단)
+@pytest.mark.asyncio
+async def test_extract_ticket_info_falls_back_to_regex_pipeline():
+    paragraphs = [
+        _paragraph("인터파크 티켓", 40, 40, 300, 60),
+        _paragraph("공연명 : BTS WORLD TOUR 2030", 40, 80, 500, 100),
+        _paragraph("공연일시 : 2030.06.01 (토) 오후 6시", 40, 120, 500, 140),
+        _paragraph("공연장소 : 잠실올림픽주경기장", 40, 160, 500, 180),
+        _paragraph("좌석 : R석 A구역 12열 15번", 40, 200, 500, 220),
+        _paragraph("결제금액 : 110,000원", 40, 240, 500, 260),
+        _paragraph("발송예정일 : 2030.05.20", 40, 280, 500, 300),
+    ]
+    annotation = _annotation(paragraphs, _INTERPARK_TICKET)
+    with _httpx_post_mock(200, {"responses": [annotation]}):
+        result = await extract_ticket_info(b"fake-image", "image/jpeg")
+    assert result == _parse_ticket_fields(_INTERPARK_TICKET)
 
 
 # 개별 파서 단위 테스트
