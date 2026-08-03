@@ -3,36 +3,32 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../models/ticket_info.dart';
-import '../widgets/concert_before_page_contents.dart';
+import '../widgets/concert_after_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/poster_background.dart';
 
-/// 다이어리 화면 위에 "공연 전" 상세를 오버레이로 띄우는 위젯.
+/// 다이어리 화면 위에 "공연 후" 상세를 오버레이로 띄우는 위젯.
 ///
-/// 요구사항 요약
-/// - 다이어리 화면 위에 그대로 그려짐(새 페이지로 완전히 전환 X)
-/// - 공연 전 티켓을 누르면, 티켓(시작 Rect)이 전체 화면으로 자연스럽게 확장
-/// - 배경은 공연 포스터 느낌(placeholder)
-/// - 그 위에 "메인 페이지"(흰 종이) + 포스트잇들이 서서히(Fade) 나타남
-/// - 닫기: 포스트잇이 있는 메인 페이지 "바깥"(어두운/불투명 영역)을 눌렀을 때만 닫힘
-///
-/// NOTE
-/// - 포스터 이미지는 [PosterBackground] 위젯이 담당하며, [TicketInfo.posterImageUrl]이
-///   없으면 샘플 그라데이션을 보여줍니다.
-class ConcertBeforeOverlay extends StatefulWidget {
+/// [ConcertBeforeOverlay]와 정확히 같은 등장 로직(같은 지속 시간·곡선,
+/// 같은 시작Rect→화면 확장, 같은 dim/크로스페이드, 같은 "바깥 탭으로만
+/// 닫기")을 그대로 따릅니다. 다른 점은 확장된 콘텐츠뿐입니다 — "공연 전"은
+/// 포스터 배경 위에 흰 카드를 띄우고, "공연 후"는 원래 디자인대로 다이어리
+/// 종이색 카드 위에 [ConcertAfterPageContents](사진/소감/도장/셋리스트
+/// 2x2 카드)를 띄웁니다.
+class ConcertAfterOverlay extends StatefulWidget {
   /// 애니메이션 시작 위치/크기 (다이어리에서 눌린 티켓의 전역 Rect)
   final Rect startRect;
 
   /// 축소된 상태에서 보여줄 티켓 위젯(다이어리 티켓과 동일한 UI를 넘겨주면 더 자연스럽게 보임)
   final Widget collapsedTicket;
 
-  /// 공연 제목(페이지/포스트잇에 노출)
+  /// 공연 제목(헤더에 노출)
   final String concertTitle;
 
-  /// 스캔된 티켓 정보(공연장/날짜/가격/좌석 등). 없으면 placeholder가 표시됩니다.
+  /// 스캔된 티켓 정보(공연장/날짜/사진/소감 등). 없으면 placeholder가 표시됩니다.
   final TicketInfo? ticketInfo;
 
-  const ConcertBeforeOverlay({
+  const ConcertAfterOverlay({
     super.key,
     required this.startRect,
     required this.collapsedTicket,
@@ -51,11 +47,11 @@ class ConcertBeforeOverlay extends StatefulWidget {
     return showGeneralDialog<void>(
       context: context,
       barrierDismissible: false, // 반드시 우리 로직(페이지 밖 탭)으로만 닫히도록
-      barrierLabel: 'concert_before_overlay',
+      barrierLabel: 'concert_after_overlay',
       barrierColor:
           Colors.transparent, // 다이어리 화면이 비치도록 투명. 실제 dim은 내부에서 애니메이션으로 구현
       pageBuilder: (context, animation, secondaryAnimation) {
-        return ConcertBeforeOverlay(
+        return ConcertAfterOverlay(
           startRect: startRect,
           collapsedTicket: collapsedTicket,
           concertTitle: concertTitle,
@@ -66,18 +62,18 @@ class ConcertBeforeOverlay extends StatefulWidget {
   }
 
   @override
-  State<ConcertBeforeOverlay> createState() => _ConcertBeforeOverlayState();
+  State<ConcertAfterOverlay> createState() => _ConcertAfterOverlayState();
 }
 
-class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
+class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _t;
 
-  /// 포스트잇(콘텐츠) 페이드 인
+  /// 2x2 카드(콘텐츠) 페이드 인
   late final Animation<double> _postItOpacity;
 
-  /// 메인 페이지 영역(흰 종이) 바깥 탭으로만 닫기 위한 key
+  /// 카드(다이어리 종이) 바깥 탭으로만 닫기 위한 key
   final GlobalKey _pageKey = GlobalKey();
 
   bool _isClosing = false;
@@ -92,7 +88,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
 
     _t = CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic);
 
-    // 확장이 어느 정도 끝나갈 때(후반)에 포스트잇이 서서히 나타나도록
+    // 확장이 어느 정도 끝나갈 때(후반)에 카드 내용이 서서히 나타나도록
     _postItOpacity = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic),
@@ -107,11 +103,8 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     super.dispose();
   }
 
-  /// [DiaryPageFrame]은 `SafeArea(child: Center(child: AspectRatio(...)))`로
-  /// 프레임을 배치합니다. 여기서도 정확히 같은 기준(SafeArea로 줄어든
-  /// 영역, 그 영역의 중앙)을 써야 다이어리 메인 페이지와 같은 규격·위치로
-  /// 보입니다(예전엔 SafeArea를 빼먹은 화면 전체 크기를 기준으로 계산해서
-  /// 규격이 달랐습니다).
+  /// [ConcertBeforeOverlay._getRectForT]와 동일한 기준(SafeArea로 줄어든
+  /// 영역, diaryAspectRatio, 10% 확대)으로 계산합니다.
   Rect _getRectForT(Size screen, EdgeInsets safePadding, double t) {
     const ratio = DiaryPageFrame.diaryAspectRatio;
     final safeWidth = screen.width - safePadding.left - safePadding.right;
@@ -123,8 +116,6 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
       endHeight = safeHeight;
       endWidth = endHeight * ratio;
     }
-    // 공연 전 페이지 전체 크기를 10% 더 키웁니다(비율은 그대로, 화면
-    // 경계를 살짝 넘어가도 규격을 유지하는 걸 우선합니다).
     endWidth *= 1.1;
     endHeight *= 1.1;
     final safeCenter = Offset(
@@ -140,8 +131,6 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   }
 
   double _getRadiusForT(double t) {
-    // 시작은 티켓 모서리 둥글게(기존 티켓과 비슷)
-    // 끝은 "모달"처럼 보이도록 라운드를 약간 유지
     return lerpDouble(10, 18, t)!;
   }
 
@@ -149,7 +138,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     // 애니메이션 중에는 실수로 닫히지 않도록 어느 정도 진행 이후만 허용
     if (_controller.value < 0.85) return;
 
-    // "메인 페이지(흰 종이)" 안을 눌렀으면 닫히면 안 됨
+    // "카드(다이어리 종이)" 안을 눌렀으면 닫히면 안 됨
     final ctx = _pageKey.currentContext;
     if (ctx != null) {
       final box = ctx.findRenderObject() as RenderBox?;
@@ -200,11 +189,8 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
             final rect = _getRectForT(screenSize, media.padding, t);
             final radius = _getRadiusForT(t);
 
-            // 다이어리 화면 dim(불투명하게)
-            // - 확장 초반에는 더 약하게, 확장 후반에는 더 강하게
             final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
-            // 축소 티켓 -> 확장 콘텐츠로 자연스럽게 전환
             final expandedOpacity = Curves.easeIn.transform(
               ((t - 0.20) / 0.80).clamp(0.0, 1.0),
             );
@@ -212,7 +198,6 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
 
             return Stack(
               children: [
-                // 아래: 다이어리 화면을 어둡게(불투명하게) 만드는 레이어
                 Positioned.fill(
                   child: IgnorePointer(
                     child: Container(
@@ -223,12 +208,12 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
 
                 // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
                 // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
-                // 제스처 경합(arena)에서 카드 안 인터랙티브 요소와 이
+                // 제스처 경합(arena)에서 카드 안 버튼(InkWell 등)과 이
                 // 감지기가 항상 같이 경쟁하게 되어, 곧잘 이 감지기가 이겨서
-                // 카드 안 요소가 눌리지 않는 문제가 있습니다(공연 후
-                // 오버레이에서 실제로 발생). 아래에 두면 카드 안 인터랙티브
-                // 요소가 있는 자리는 그 요소가 먼저 히트되어 이 감지기까지
-                // 도달하지 않고, 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
+                // 카드 안 버튼이 눌리지 않는 문제가 있었습니다. 아래에 두면
+                // 카드 안 인터랙티브 요소가 있는 자리는 그 요소가 먼저
+                // 히트되어 이 감지기까지 도달하지 않고(경합 자체가 없음),
+                // 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
                 Positioned.fill(
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
@@ -255,11 +240,11 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
                           ),
                         ),
 
-                        // (2) 확장 상태의 공연 전 화면(포스터 배경 + 메인 페이지 + 포스트잇)
+                        // (2) 확장 상태의 공연 후 화면(다이어리 종이 카드 + 2x2 카드)
                         Positioned.fill(
                           child: Opacity(
                             opacity: expandedOpacity,
-                            child: _ExpandedConcertBefore(
+                            child: _ExpandedConcertAfter(
                               pageKey: _pageKey,
                               postItOpacity: _postItOpacity,
                               concertTitle: widget.concertTitle,
@@ -280,13 +265,13 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   }
 }
 
-class _ExpandedConcertBefore extends StatelessWidget {
+class _ExpandedConcertAfter extends StatelessWidget {
   final GlobalKey pageKey;
   final Animation<double> postItOpacity;
   final String concertTitle;
   final TicketInfo? ticketInfo;
 
-  const _ExpandedConcertBefore({
+  const _ExpandedConcertAfter({
     required this.pageKey,
     required this.postItOpacity,
     required this.concertTitle,
@@ -295,66 +280,59 @@ class _ExpandedConcertBefore extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 포스터: 가로/세로 여백을 동일하게 두고 안쪽에만 채웁니다(예전엔
-        // Positioned.fill로 여백 없이 꽉 차서 너무 커 보였습니다). 포스터를
-        // 뿌옇게 밝히던 흰색 반투명 레이어("불투명한 페이지")는 제거해서,
-        // 화면 전체는 포스터 배경 + 공연 전 페이지(흰 카드) 이렇게 2개
-        // 레이어만 존재합니다.
-        Positioned.fill(
-          child: Padding(
-            padding: const EdgeInsets.all(26), // 24 * 1.1
-            child: ClipRRect(
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+        child: Center(
+          child: Container(
+            key: pageKey,
+            constraints: const BoxConstraints(maxWidth: 562),
+            // 포스터 배경(아래)이 이 카드의 둥근 모서리 밖으로 삐져나오지
+            // 않도록 clip합니다.
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              // DiaryPageFrame.pageColor 기본값과 동일한 다이어리 종이색.
+              color: const Color(0xFFF4F1E1),
               borderRadius: BorderRadius.circular(14),
-              child: PosterBackground(imageUrl: ticketInfo?.posterImageUrl),
+              border: Border.all(
+                color: Colors.black.withValues(alpha: 0.10),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.22),
+                  blurRadius: 18,
+                  offset: const Offset(0, 10),
+                ),
+              ],
             ),
-          ),
-        ),
-
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20), // 18 * 1.1
-            child: Center(
-              child: FractionallySizedBox(
-                // 내부 메인 페이지(흰 종이)는 원래 배경(포스터 영역)보다
-                // 20% 작았는데(0.8), 세로만 20% 더 키워서(0.8*1.2=0.96)
-                // 배경 세로 길이에 거의 맞닿도록 늘렸습니다. 가로는 그대로.
-                widthFactor: 0.8,
-                heightFactor: 0.96,
-                child: Container(
-                  key: pageKey,
-                  constraints: const BoxConstraints(maxWidth: 562),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.92),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.10),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
-                        blurRadius: 18,
-                        offset: const Offset(0, 10),
+            child: Stack(
+              children: [
+                // 공연 포스터를 카드 배경 전체(카드와 같은 둥근 모서리)에
+                // 살짝 투명하게 겹칩니다.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: 0.4,
+                      child: PosterBackground(
+                        imageUrl: ticketInfo?.posterImageUrl,
                       ),
-                    ],
-                  ),
-                  child: Padding(
-                    // 19 * 1.2 * 1.1 ≈ 25. 카드가 커진 만큼 안쪽 여백도 키웠습니다.
-                    padding: const EdgeInsets.fromLTRB(25, 25, 25, 25),
-                    child: ConcertBeforePageContents(
-                      concertTitle: concertTitle,
-                      ticketInfo: ticketInfo,
-                      postItOpacity: postItOpacity,
                     ),
                   ),
                 ),
-              ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
+                  child: ConcertAfterPageContents(
+                    concertTitle: concertTitle,
+                    ticketInfo: ticketInfo,
+                    postItOpacity: postItOpacity,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }

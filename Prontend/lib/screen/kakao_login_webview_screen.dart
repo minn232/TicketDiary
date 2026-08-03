@@ -33,10 +33,10 @@ class _KakaoLoginWebViewScreenState extends State<KakaoLoginWebViewScreen> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: _handleNavigationRequest,
-          onPageStarted: (_) {
+          onPageStarted: (url) {
             if (mounted) setState(() => _loading = true);
           },
-          onPageFinished: (_) {
+          onPageFinished: (url) {
             if (mounted) setState(() => _loading = false);
           },
         ),

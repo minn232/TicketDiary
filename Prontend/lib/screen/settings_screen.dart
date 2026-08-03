@@ -4,7 +4,9 @@ import 'favorite_pinned_settings_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
+import '../services/guest_migration_service.dart';
 import '../services/kakao_login_controller.dart';
+import '../services/local_ticket_store.dart';
 import '../services/notification_settings_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
@@ -12,6 +14,11 @@ import '../widgets/pressable_scale.dart';
 
 /// 아직 백엔드와 연동되지 않은 알림 항목의 라벨 색상(회색 처리용).
 const Color _unconnectedTextColor = Color(0x611A1A1A);
+
+/// 게스트 데이터가 있는 상태에서 카카오 로그인을 시도할 때, 그 데이터를
+/// 가져올지("migrate") 그대로 두고 새 카카오 계정으로 시작할지
+/// ("startFresh") 사용자가 고르는 선택지.
+enum _MigrationChoice { migrate, startFresh }
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -430,9 +437,6 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   final AuthService _auth = AuthService.instance;
   bool _busy = false;
 
-  // 드래그 핸들 + 프로필 + 버튼만 담을 만큼의 시트 높이(여백 최소화).
-  static const double _sheetHeight = 240;
-
   @override
   void initState() {
     super.initState();
@@ -502,12 +506,94 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   }
 
   void _loginWithKakao() {
-    _runGuarded(
-      () => KakaoLoginController.instance.login(
+    _runGuarded(_loginWithKakaoFlow);
+  }
+
+  /// 카카오 로그인 진입점.
+  ///
+  /// - 카카오 로그인 상태(계정 전환)거나, 활성 게스트 세션 자체가 없으면
+  ///   (로그아웃 등으로 완전히 로그아웃된 상태 포함) 바로 `/auth/kakao`로
+  ///   로그인합니다. `/auth/migrate`는 인증(게스트 세션)이 있어야만 호출할
+  ///   수 있는 엔드포인트라, 세션이 없는데 마이그레이션을 시도하면 401이
+  ///   납니다 — 그래서 [AuthService.isGuest](세션이 없을 때도 기본값 true)가
+  ///   아니라 [AuthService.hasActiveGuestSession]으로 판단합니다.
+  /// - 활성 게스트인데 기기에 옮길 데이터가 없으면 바로 마이그레이션합니다.
+  /// - 활성 게스트인데 기기에 저장해둔 티켓이 있으면, 먼저 그 데이터를
+  ///   카카오 계정으로 가져올지 물어봅니다("가져오기"/"새로 시작"/"취소").
+  Future<void> _loginWithKakaoFlow() async {
+    if (!_auth.hasActiveGuestSession) {
+      await KakaoLoginController.instance.login(
         context: context,
-        migrateFromGuest: _auth.isGuest,
+        migrateFromGuest: false,
+      );
+      _showMessage('로그인됐어요.');
+      return;
+    }
+
+    final hasLocalData = await LocalTicketStore.instance.hasAnyTickets();
+    if (!hasLocalData) {
+      if (!mounted) return;
+      await KakaoLoginController.instance.login(
+        context: context,
+        migrateFromGuest: true,
+      );
+      _showMessage('로그인됐어요.');
+      return;
+    }
+
+    if (!mounted) return;
+    final choice = await _showMigrationChoiceDialog();
+    if (choice == null || !mounted) return; // 취소
+
+    final code = await KakaoLoginController.instance.fetchAuthorizationCode(
+      context: context,
+    );
+
+    if (choice == _MigrationChoice.startFresh) {
+      await AuthService.instance.completeKakaoLogin(
+        code,
+        migrateFromGuest: false,
+      );
+      _showMessage('로그인됐어요. 게스트 데이터는 기기에 그대로 남아있어요.');
+      return;
+    }
+
+    final result = await GuestMigrationService.instance
+        .migrateGuestDataToKakao(code);
+    _showMessage(
+      result.hasFailures
+          ? '${result.migratedCount}개를 옮겼어요. ${result.failedCount}개는 옮기지 못해 기기에 남아있어요.'
+          : '게스트로 남긴 티켓 ${result.migratedCount}개를 카카오 계정으로 옮겼어요.',
+    );
+  }
+
+  /// 게스트로 저장해둔 데이터를 카카오 계정으로 가져올지 물어보는 확인창.
+  Future<_MigrationChoice?> _showMigrationChoiceDialog() {
+    return showDialog<_MigrationChoice>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('게스트 데이터를 옮길까요?'),
+        content: const Text(
+          '게스트로 이용하며 추가한 티켓이 기기에 저장되어 있어요.\n'
+          '카카오 계정으로 로그인하면서 이 데이터를 그대로 가져올까요?\n\n'
+          '가져오지 않으면 게스트 데이터는 이 기기에 그대로 남고, 카카오 계정은 새로 시작해요.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(context, _MigrationChoice.startFresh),
+            child: const Text('새로 시작'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, _MigrationChoice.migrate),
+            child: const Text('가져오기'),
+          ),
+        ],
       ),
-      successMessage: '로그인됐어요.',
     );
   }
 
@@ -520,42 +606,40 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     final isGuest = _auth.isGuest;
     final currentUser = _auth.currentUser;
 
-    return SizedBox(
-      height: _sheetHeight,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-          child: Column(
-            children: [
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 18),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(2),
-                ),
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 18),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(2),
               ),
-              _ProfileRow(
-                isGuest: isGuest,
-                nickname: currentUser?.nickname,
-                profileImageUrl: currentUser?.profileImageUrl,
-              ),
-              const SizedBox(height: 28),
-              SizedBox(
-                width: double.infinity,
-                child: isGuest
-                    ? _KakaoLoginButton(
-                        onTap: _busy ? null : _loginWithKakao,
-                        busy: _busy,
-                      )
-                    : _LogoutButton(
-                        onTap: _busy ? null : _logout,
-                        busy: _busy,
-                      ),
-              ),
-            ],
-          ),
+            ),
+            _ProfileRow(
+              isGuest: isGuest,
+              nickname: currentUser?.nickname,
+              profileImageUrl: currentUser?.profileImageUrl,
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: isGuest
+                  ? _KakaoLoginButton(
+                      onTap: _busy ? null : _loginWithKakao,
+                      busy: _busy,
+                    )
+                  : _LogoutButton(
+                      onTap: _busy ? null : _logout,
+                      busy: _busy,
+                    ),
+            ),
+          ],
         ),
       ),
     );

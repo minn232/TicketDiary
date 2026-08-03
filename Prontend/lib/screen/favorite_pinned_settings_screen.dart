@@ -225,58 +225,83 @@ class _FavoritePinnedSettingsScreenState
             child: Column(
               children: [
                 _TopBar(
-                  title: '선호 아티스트 / 찜 공연 설정',
+                  title: '아티스트 / 찜 공연',
                   onBack: () => Navigator.pop(context),
                   onManage: _openManageSheet,
                 ),
                 const Divider(height: 1, thickness: 1),
                 Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const _SectionTitle('선호 아티스트'),
-                        const SizedBox(height: 10),
-                        _SearchField(
-                          controller: _artistQueryController,
-                          hintText: '아티스트 이름 검색',
+                  child: LayoutBuilder(
+                    builder: (context, viewport) {
+                      const padding = 16.0;
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.all(padding),
+                        child: ConstrainedBox(
+                          // 내용이 화면보다 짧을 때, 아래에만 여백이 몰리는
+                          // 대신 두 섹션 사이/앞뒤로 균등하게 나뉘도록
+                          // 최소 높이를 뷰포트 전체로 잡습니다. 내용이 더
+                          // 길어지면(검색 결과 등) 자연스럽게 스크롤됩니다.
+                          constraints: BoxConstraints(
+                            minHeight: viewport.maxHeight - padding * 2,
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const _SectionTitle('선호 아티스트'),
+                                  const SizedBox(height: 10),
+                                  _SearchField(
+                                    controller: _artistQueryController,
+                                    hintText: '아티스트 이름 검색',
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _SearchResultsRow<ArtistModel>(
+                                    items: _artistResults,
+                                    searching: _artistSearching,
+                                    statusText: _artistStatusText,
+                                    nameOf: (a) => a.name,
+                                    imageUrlOf: (a) => a.profileImageUrl,
+                                    // 아티스트 프로필 사진은 백엔드에 소스가 없어
+                                    // 사람 아이콘 플레이스홀더를 보여줍니다.
+                                    placeholderIcon: Icons.person_outline,
+                                    isFavoritedOf: (a) =>
+                                        _favorites.isArtistFavorited(a.name),
+                                    onTap: (a) => _favorites.toggleArtist(a),
+                                  ),
+                                ],
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const _SectionTitle('찜 공연'),
+                                  const SizedBox(height: 10),
+                                  _SearchField(
+                                    controller: _concertQueryController,
+                                    hintText: '공연 이름 검색',
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _SearchResultsRow<ConcertModel>(
+                                    items: _concertResults,
+                                    searching: _concertSearching,
+                                    statusText: _concertStatusText,
+                                    nameOf: (c) => c.name,
+                                    imageUrlOf: (c) => c.posterImageUrl,
+                                    isFavoritedOf: (c) =>
+                                        _favorites.isConcertFavorited(c.name),
+                                    onTap: (c) => _favorites.toggleConcert(c),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(height: 14),
-                        _SearchResultsRow<ArtistModel>(
-                          items: _artistResults,
-                          searching: _artistSearching,
-                          statusText: _artistStatusText,
-                          nameOf: (a) => a.name,
-                          imageUrlOf: (a) => a.profileImageUrl,
-                          // 아티스트 프로필 사진은 백엔드에 소스가 없어
-                          // 사람 아이콘 플레이스홀더를 보여줍니다.
-                          placeholderIcon: Icons.person_outline,
-                          isFavoritedOf: (a) =>
-                              _favorites.isArtistFavorited(a.name),
-                          onTap: (a) => _favorites.toggleArtist(a),
-                        ),
-                        const SizedBox(height: 22),
-
-                        const _SectionTitle('찜 공연'),
-                        const SizedBox(height: 10),
-                        _SearchField(
-                          controller: _concertQueryController,
-                          hintText: '공연 이름 검색',
-                        ),
-                        const SizedBox(height: 14),
-                        _SearchResultsRow<ConcertModel>(
-                          items: _concertResults,
-                          searching: _concertSearching,
-                          statusText: _concertStatusText,
-                          nameOf: (c) => c.name,
-                          imageUrlOf: (c) => c.posterImageUrl,
-                          isFavoritedOf: (c) =>
-                              _favorites.isConcertFavorited(c.name),
-                          onTap: (c) => _favorites.toggleConcert(c),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -302,7 +327,7 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 10, 10, 10),
+      padding: const EdgeInsets.all(10),
       child: Row(
         children: [
           IconButton(
@@ -645,7 +670,7 @@ class _ManageFavoritesSheet extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 8, 8),
+                  padding: EdgeInsets.fromLTRB(20, 16, 20, 16),
                   child: Text(
                     '찜 관리',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
@@ -654,7 +679,7 @@ class _ManageFavoritesSheet extends StatelessWidget {
                 const Divider(height: 1, thickness: 1),
                 Expanded(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [

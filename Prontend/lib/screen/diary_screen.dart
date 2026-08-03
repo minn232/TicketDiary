@@ -1,8 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
-import 'concert_after_screen.dart';
+import 'concert_after_overlay.dart';
 import 'concert_before_overlay.dart';
 import 'package:ticketdiary/models/ticket_info.dart';
 import 'package:ticketdiary/models/ticket_response.dart';
@@ -10,8 +11,10 @@ import 'package:ticketdiary/models/ticket_scan.dart';
 import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
+import 'package:ticketdiary/services/ticket_refresh_bus.dart';
 import 'package:ticketdiary/services/ticket_scan_service.dart';
 import 'package:ticketdiary/services/ticket_service.dart';
+import 'package:ticketdiary/services/torn_ticket_store.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/add_ticket_option.dart';
@@ -33,6 +36,11 @@ class TicketData {
   /// 여러 티켓이 동시에 화면(앞/뒷 페이지)에 존재할 수 있으므로 티켓마다 별도로 가져야 합니다.
   final GlobalKey overlayKey;
 
+  /// "공연 후" 티켓의 포스터(왼쪽) 영역 전용 key. [ConcertAfterOverlay]가
+  /// 이 자리에서 시작해 확장되도록, [overlayKey](오른쪽 "뜯긴 뒤" 영역)와는
+  /// 별도로 관리합니다.
+  final GlobalKey posterOverlayKey;
+
   /// 티켓의 고유 식별자. 공연 전 -> 공연 후로 상태가 바뀔 때 title이 함께
   /// 바뀔 수도 있으므로(예: 예시 티켓), title과 무관하게 같은 티켓임을
   /// 추적하기 위해 씁니다. 상태 전환 시 [_promoteDueTickets]가 그대로 물려줍니다.
@@ -52,11 +60,14 @@ class TicketData {
     String? id,
     this.tornRevealed = false,
   }) : overlayKey = GlobalKey(),
+       posterOverlayKey = GlobalKey(),
        id = id ?? 'ticket_${_nextId++}';
 
-  /// 백엔드에 실제로 등록된 티켓([TicketWithConcert])으로부터 화면에 쓸
-  /// [TicketData]를 만듭니다. `id`는 백엔드가 발급한 실제 티켓 UUID를
-  /// 그대로 씁니다(이후 수정/삭제 API 연동 시 이 id를 그대로 쓸 수 있도록).
+  /// 실제로 등록된 티켓([TicketWithConcert])으로부터 화면에 쓸
+  /// [TicketData]를 만듭니다. `id`는 티켓의 실제 식별자를 그대로 씁니다
+  /// (카카오 로그인이면 백엔드 발급 UUID, 게스트면 [LocalTicketStore]가
+  /// 발급한 로컬 id — 이후 수정/삭제 시 [TicketService]가 그대로 이 id로
+  /// 알맞은 쪽에 위임합니다).
   ///
   /// [scanExtracted]는 방금 스캔해서 만든 티켓일 때만 넘겨주면 됩니다
   /// (`GET /tickets`로 불러온 기존 티켓엔 없음). `time`(공연 시각)은
@@ -103,6 +114,10 @@ class TicketData {
         concertPhotoUrls: ticket.concertPhotoUrls,
       ),
       id: ticket.id,
+      // 이전에 이 기기에서 이미 입장 티켓을 뜯어봤다면 그 상태를 이어받습니다
+      // (TornTicketStore.ensureLoaded가 끝난 뒤에 호출된다는 전제 —
+      // _loadTicketsFromBackend가 보장합니다).
+      tornRevealed: TornTicketStore.instance.isTorn(ticket.id),
     );
   }
 }
@@ -161,9 +176,23 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 다중 페이지 상태
   int _currentPageIndex = 0;
 
-  /// 첫 페이지는 티켓추가 버튼 + 티켓 3개, 이후 페이지부터는 티켓 4개씩 채웁니다.
+  /// 페이지 넘김 애니메이션 진행 여부. [DiaryPageFlipper]가 갱신하고,
+  /// [DiaryPageFrame]이 구독해 바인더 링을 넘어가는 페이지보다 앞/뒤로
+  /// 전환하는 데 씁니다(넘김 중에만 페이지가 링 위로 오게).
+  final ValueNotifier<bool> _flipAnimating = ValueNotifier(false);
+
+  /// 첫 페이지는 티켓추가 버튼 + 티켓 3개(총 4개, 버튼도 티켓과 같은 높이),
+  /// 이후 페이지부터는 티켓 4개씩 채웁니다. 페이지당 항목 수와 높이를
+  /// 동일하게 맞추기 위해 다이어리 프레임을 A5 규격보다 세로로 더 길게
+  /// 만들었습니다([DiaryPageFrame.diaryAspectRatio] 참고).
   static const int _firstPageTicketCapacity = 3;
   static const int _otherPageTicketCapacity = 4;
+
+  /// 티켓 카드(및 티켓추가 버튼)의 가로:세로 비율.
+  static const double _ticketAspectRatio = 156 / 60;
+
+  /// 항목(카드) 사이 세로 간격.
+  static const double _ticketSpacing = 30; // 50 * 0.6
 
   /// 연속 페이지 넘김 방지
   DateTime _lastFlipTime = DateTime.now();
@@ -216,6 +245,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 티켓 이미지 스캔(OCR + KOPIS 매칭 후보 조회, `POST /concerts/scan`).
   final TicketScanService _scanService = BackendTicketScanService();
 
+  /// 갤러리에서 이미지를 고를 때 씁니다(카메라 촬영과 달리 라이브 프리뷰가
+  /// 필요 없어서 `image_picker`만으로 충분합니다).
+  final ImagePicker _imagePicker = ImagePicker();
+
   /// 티켓 등록(`POST /tickets`).
   final TicketService _ticketService = TicketService();
 
@@ -254,29 +287,48 @@ class _DiaryScreenState extends State<DiaryScreen> {
     // "공연 전" 페이지의 예상 셋 리스트 블러 여부에 쓰이는 설정값을 미리 불러옵니다.
     AppSettingsStore.instance.load();
     AuthService.instance.addListener(_onAuthChanged);
+    TicketRefreshBus.tick.addListener(_onTicketsChangedElsewhere);
     unawaited(_loadTicketsFromBackend());
   }
 
   @override
   void dispose() {
     AuthService.instance.removeListener(_onAuthChanged);
+    TicketRefreshBus.tick.removeListener(_onTicketsChangedElsewhere);
+    _flipAnimating.dispose();
     super.dispose();
+  }
+
+  /// 게스트→카카오 마이그레이션이 로컬 티켓을 서버로 다 옮긴 뒤 보내는
+  /// 알림. 유저 id는 이미 마이그레이션 시작 시점에 바뀌어 [_onAuthChanged]가
+  /// 한 번 지나갔으므로, 여기서는 그 가드와 무관하게 강제로 다시 불러옵니다.
+  void _onTicketsChangedElsewhere() {
+    if (mounted) {
+      setState(() {
+        _tickets.removeWhere((t) => t.info?.ticketId != null);
+      });
+    } else {
+      _tickets.removeWhere((t) => t.info?.ticketId != null);
+    }
+    _backendTicketsLoaded = false;
+    unawaited(_loadTicketsFromBackend());
   }
 
   /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.
   /// 로그인된 유저가 마지막으로 티켓을 불러왔던 유저와 다르면, 이전 유저의
-  /// 서버 기원 티켓(id가 백엔드 UUID인 것)을 화면에서 지우고 새 유저 것으로
-  /// 다시 불러옵니다. 로컬 전용 예시 티켓은 계정과 무관하므로 그대로 둡니다.
+  /// 실제 티켓(백엔드든 게스트 로컬 저장이든, `info.ticketId`가 있는 것)을
+  /// 화면에서 지우고 새 유저 것으로 다시 불러옵니다. 로컬 전용 예시 티켓은
+  /// 계정과 무관하므로 그대로 둡니다.
   void _onAuthChanged() {
     final currentUserId = AuthService.instance.userId;
     if (currentUserId == _loadedForUserId) return;
 
     if (mounted) {
       setState(() {
-        _tickets.removeWhere((t) => _uuidPattern.hasMatch(t.id));
+        _tickets.removeWhere((t) => t.info?.ticketId != null);
       });
     } else {
-      _tickets.removeWhere((t) => _uuidPattern.hasMatch(t.id));
+      _tickets.removeWhere((t) => t.info?.ticketId != null);
     }
     _backendTicketsLoaded = false;
     unawaited(_loadTicketsFromBackend());
@@ -301,6 +353,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (_backendTicketsLoaded) return;
     _backendTicketsLoaded = true;
     try {
+      // TicketData.fromBackend가 동기적으로 TornTicketStore를 읽으므로,
+      // 티켓 목록을 변환하기 전에 먼저 다 불러와둡니다.
+      await TornTicketStore.instance.ensureLoaded();
       final tickets = await _ticketService.listTickets();
       if (!mounted) return;
       setState(() {
@@ -487,12 +542,43 @@ class _DiaryScreenState extends State<DiaryScreen> {
     _showSnack('테스트용 임시 티켓이 추가되었습니다.');
   }
 
-  /// 갤러리 기능은 아직 준비 중입니다.
-  void _pickFromGalleryAndAnalyze() {
+  /// 갤러리에서 고른 이미지로 OCR 스캔 + 공연 매칭을 진행합니다. 카메라로
+  /// 촬영한 사진과 마찬가지로 [TicketScanService.scanTicket]은 이미지
+  /// 출처(카메라/갤러리)를 구분하지 않으므로, 카메라 스캔과 완전히 동일한
+  /// 파이프라인([_registerTicketFromScan])을 그대로 재사용합니다.
+  Future<void> _pickFromGalleryAndAnalyze() async {
     setState(() => _isAddTicketExpanded = false);
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('곧 기능이 추가됩니다!')));
+
+    final XFile? picked = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+    );
+    if (picked == null || !mounted) return; // 선택 취소
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) =>
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+
+    TicketScanResponse result;
+    try {
+      result = await _scanService.scanTicket(picked);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // 로딩 다이얼로그 닫기
+      _showSnack('이미지 인식에 실패했어요: ${e.message}');
+      return;
+    } catch (_) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('스캔 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context); // 로딩 다이얼로그 닫기
+    await _registerTicketFromScan(result);
   }
 
   /// 스캔 결과(OCR 추출 정보 + KOPIS 매칭 후보)를 바탕으로 백엔드에 티켓을
@@ -528,6 +614,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       final extracted = scanResult.extracted;
       final ticket = await _ticketService.createTicket(
         concertId: selected.id,
+        concert: selected,
         deliveryDate: _parseYmd(extracted.shippingDate),
         ticketingSite: extracted.platform,
         price: extracted.price,
@@ -614,18 +701,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// 백엔드가 발급하는 UUID 형식(예: `d87a138e-702a-4bac-8998-b7393266204e`).
-  /// 로컬 예시 티켓의 id(`ticket_0`, `ticket_1`, ...)와 구분하는 데 씁니다.
-  static final RegExp _uuidPattern = RegExp(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-  );
-
   /// 티켓을 길게 누르면 삭제를 확인합니다.
   ///
-  /// - 서버에 저장된 티켓(id가 백엔드 UUID)이면 확인 후 `DELETE
-  ///   /tickets/{id}`를 호출해 실제로 서버에서도 지웁니다. 보내는 데이터는
-  ///   없고(URL 경로에 id만 실림), 받는 데이터도 없습니다(204 No Content).
-  /// - 로컬 예시 티켓(서버에 저장된 적 없는 것)은 화면에서만 지웁니다.
+  /// - 실제로 등록된 티켓(`info.ticketId`가 있는 것 — 백엔드에 저장된
+  ///   카카오 티켓이든, 기기에만 저장된 게스트 티켓이든)이면 확인 후
+  ///   [TicketService.deleteTicket]을 호출해 실제로 지웁니다(카카오는 서버,
+  ///   게스트는 로컬 저장소).
+  /// - 로컬 예시/디버그 티켓(등록된 적 없는 것)은 화면에서만 지웁니다.
   Future<void> _confirmDeleteTicket(TicketData ticket) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -646,8 +728,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
     if (confirmed != true || !mounted) return;
 
-    if (!_uuidPattern.hasMatch(ticket.id)) {
-      // 서버에 저장된 적 없는 로컬 예시 티켓은 로컬에서만 제거합니다.
+    if (ticket.info?.ticketId == null) {
+      // 등록된 적 없는 로컬 예시/디버그 티켓은 화면에서만 제거합니다.
       setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
       return;
     }
@@ -661,11 +743,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     try {
       await _ticketService.deleteTicket(ticket.id);
+      unawaited(TornTicketStore.instance.clear(ticket.id));
       if (!mounted) return;
       Navigator.pop(context);
       setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
       _showSnack('티켓을 삭제했어요.');
     } on TicketNotFoundException {
+      unawaited(TornTicketStore.instance.clear(ticket.id));
       if (!mounted) return;
       Navigator.pop(context);
       setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
@@ -683,7 +767,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final nextPageIndex = (_currentPageIndex + 1) % _totalPages;
+    // 페이지가 1장뿐이면(_totalPages<=1) "다음 페이지"가 존재하지 않으므로
+    // null로 둡니다. 예전엔 (_currentPageIndex+1) % _totalPages가 1장일 때
+    // 자기 자신(0 % 1 = 0)을 가리켜서, backPage가 frontPage와 완전히 같은
+    // 티켓 목록을 같은 GlobalKey로 다시 그리다 충돌(Duplicate GlobalKey)이
+    // 났습니다.
+    final nextPageIndex = _totalPages > 1
+        ? (_currentPageIndex + 1) % _totalPages
+        : null;
     return Stack(
       children: [
         _buildDiaryPageFrameWithFlip(_currentPageIndex, nextPageIndex),
@@ -757,6 +848,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   title: ticket.title,
                   info: ticket.info,
                   overlayKey: GlobalKey(),
+                  posterOverlayKey: GlobalKey(),
                   vibrate: !_transitionSpotlightIds.contains(ticket.id),
                   initiallyRevealed: ticket.tornRevealed,
                 ),
@@ -771,62 +863,135 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Widget _buildDiaryPageFrameWithFlip(int pageIndex, int nextPageIndex) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return DiaryPageFrame(
-          isTabRoot: _currentPageIndex == pageIndex && pageIndex == 0,
-          sideTabs: buildDiarySideTabs(context, active: DiaryTab.diary),
-          animateMainPage: true,
-          overlayMainPage: DiaryPageFlipper(
-            key: ValueKey('flipper_$_currentPageIndex'),
-            frontPage: Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: _paperColor,
-                borderRadius: const BorderRadius.horizontal(
-                  right: Radius.circular(15),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 10,
-                    offset: const Offset(5, 5),
+  /// 플립 애니메이션에 쓰이는 페이지 잎 한 장. 프레임 전체 크기를 받아,
+  /// 페이지 종이(프레임 3번 레이어와 같은 여백/10% 가로 확대)와 [tabs]로
+  /// 넘겨받은 인덱스 탭을 함께 담습니다 — 탭이 종이에 붙어서 페이지와 같이
+  /// 넘어가고, 아래에 깔린 다음/이전 페이지 잎에도 탭이 그대로 있어 넘김
+  /// 내내 인덱스가 두 장 모두에 존재합니다.
+  ///
+  /// 호출부에서 "다이어리" 탭 하나만 넘겨서, 페이지와 함께 넘어가는 인덱스는
+  /// 다이어리뿐이고 소식/결산/설정은 [DiaryPageFrame.sideTabs]로 프레임에
+  /// 고정돼 넘김과 무관하게 제자리를 지킵니다.
+  Widget _buildFlipLeaf(int pageIndex, List<DiarySideTabSpec> tabs) {
+    Widget tabChild(DiarySideTabSpec tab) => tab.onTap == null
+        ? tab.child
+        : PressableScale(
+            onTap: tab.onTap,
+            pressScale: 0.985,
+            tapScale: 1.03,
+            child: tab.child,
+          );
+
+    return Stack(
+      clipBehavior: Clip.none,
+      fit: StackFit.expand,
+      children: [
+        // 비활성 탭(종이 뒤로 살짝 깔림 — 프레임 2번 레이어와 동일 배치).
+        for (final tab in tabs)
+          if (!tab.isActive)
+            Positioned(right: tab.right, top: tab.top, child: tabChild(tab)),
+
+        // 페이지 종이. 여백(10/20/30/45)과 가로 10% 확대는
+        // [DiaryPageFrame]의 기본 페이지 배치와 동일해야 합니다.
+        Positioned(
+          top: 10,
+          bottom: 20,
+          left: 30,
+          right: 45,
+          child: FractionallySizedBox(
+            widthFactor: 1.1,
+            child: LayoutBuilder(
+              builder: (context, constraints) => Container(
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: _paperColor,
+                  borderRadius: const BorderRadius.horizontal(
+                    right: Radius.circular(15),
                   ),
-                ],
-              ),
-              child: _buildPageContent(pageIndex, constraints),
-            ),
-            backPage: Container(
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: _paperColor,
-                borderRadius: const BorderRadius.horizontal(
-                  right: Radius.circular(15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 10,
+                      offset: const Offset(5, 5),
+                    ),
+                  ],
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 10,
-                    offset: const Offset(5, 5),
-                  ),
-                ],
+                child: _buildPageContent(pageIndex, constraints),
               ),
-              child: _buildPageContent(nextPageIndex, constraints),
             ),
-            onFlipForward: _currentPageIndex < _totalPages - 1
-                ? () {
-                    final now = DateTime.now();
-                    if (now.difference(_lastFlipTime) < _flipCooldown) return;
-                    _lastFlipTime = now;
-                    setState(() => _currentPageIndex++);
-                  }
-                : null,
-            flipUpward: false,
           ),
-          child: const SizedBox.shrink(),
-        );
-      },
+        ),
+
+        // 활성 탭(종이 위 — 프레임 6번 레이어와 동일 배치).
+        for (final tab in tabs)
+          if (tab.isActive)
+            Positioned(right: tab.right, top: tab.top, child: tabChild(tab)),
+      ],
+    );
+  }
+
+  Widget _buildDiaryPageFrameWithFlip(int pageIndex, int? nextPageIndex) {
+    final prevPageIndex = pageIndex > 0 ? pageIndex - 1 : null;
+    final allTabs = buildDiarySideTabs(context, active: DiaryTab.diary);
+    // "다이어리" 탭만 페이지 잎에 붙여서 함께 넘어가고, 소식/결산/설정은
+    // 프레임에 고정해 넘김과 무관하게 제자리를 지킵니다.
+    final diaryTab = allTabs.where((t) => t.isActive).toList(growable: false);
+    final fixedTabs = allTabs.where((t) => !t.isActive).toList(growable: false);
+    return DiaryPageFrame(
+      isTabRoot: _currentPageIndex == pageIndex && pageIndex == 0,
+      sideTabs: fixedTabs,
+      animateMainPage: true,
+      // 잎에 다이어리 탭까지 포함하려면 오버레이가 페이지 박스보다 넓은
+      // 프레임 전체를 차지해야 합니다. 회전축(pivotX)은 페이지 종이의
+      // 왼쪽 모서리(= 30 - 가로 10% 확대로 늘어난 절반) 위치입니다.
+      overlayMainPageFullFrame: true,
+      // 넘김 애니메이션이 진행되는 동안에만 오버레이가 바인더 링보다
+      // 앞으로 옵니다(정지 상태에선 원래대로 링이 페이지 위).
+      overlayAnimatingNotifier: _flipAnimating,
+      overlayMainPage: LayoutBuilder(
+        builder: (context, constraints) => DiaryPageFlipper(
+          key: ValueKey('flipper_$_currentPageIndex'),
+          pivotX: 30 - (constraints.maxWidth - 75) * 0.05,
+          // 오른쪽 45(=pageRight)는 프레임에 고정된 소식/결산/설정 탭
+          // 자리라, 스와이프 제스처가 그 탭들의 탭(누름) 이벤트를 가로채지
+          // 않도록 제외합니다.
+          dragExclusionRight: 45,
+          animatingNotifier: _flipAnimating,
+          frontPage: _buildFlipLeaf(pageIndex, diaryTab),
+          // 다음 페이지가 없으면(nextPageIndex==null) frontPage와 같은
+          // 티켓을 같은 GlobalKey로 다시 그리지 않도록 빈 페이지를
+          // 넣습니다. 이 상태에서는 onFlipForward도 null이라 실제로
+          // 넘어가 보이지도 않습니다.
+          backPage: nextPageIndex == null
+              ? const SizedBox.shrink()
+              : _buildFlipLeaf(nextPageIndex, diaryTab),
+          // 첫 페이지가 아니면 오른쪽 스와이프로 이전 페이지로 돌아갑니다.
+          // prevPage(이전 페이지)와 frontPage(현재 페이지)는 서로 다른 티켓
+          // 목록이라 GlobalKey가 겹치지 않고, backPage와는 DiaryPageFlipper가
+          // 넘김 방향별로 한쪽만 트리에 올리므로 동시에 마운트되지 않습니다.
+          prevPage: prevPageIndex == null
+              ? null
+              : _buildFlipLeaf(prevPageIndex, diaryTab),
+          onFlipForward: _currentPageIndex < _totalPages - 1
+              ? () {
+                  final now = DateTime.now();
+                  if (now.difference(_lastFlipTime) < _flipCooldown) return;
+                  _lastFlipTime = now;
+                  setState(() => _currentPageIndex++);
+                }
+              : null,
+          onFlipBackward: prevPageIndex == null
+              ? null
+              : () {
+                  final now = DateTime.now();
+                  if (now.difference(_lastFlipTime) < _flipCooldown) return;
+                  _lastFlipTime = now;
+                  setState(() => _currentPageIndex--);
+                },
+          flipUpward: false,
+        ),
+      ),
+      child: const SizedBox.shrink(),
     );
   }
 
@@ -851,20 +1016,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Widget _buildAddTicketOptions(BuildContext context) {
-    return Container(
-      height: 100,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.60),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.shade400, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 10,
-            offset: const Offset(2, 4),
-          ),
-        ],
-      ),
+    // 다른 티켓들과 같은 비닐 포켓 프레임 안에 표시합니다.
+    return _buildTicketPocket(
       child: Row(
         children: [
           Expanded(
@@ -895,15 +1048,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
     final bool isFirstPage = pageIndex == 0;
     final pageTickets = _ticketsForPage(pageIndex);
 
-    // 첫 페이지: 100(추가버튼) + 30(간격) + (120 * 3)(티켓3개) + (25 * 2)(티켓간격) = 540
-    // 이후 페이지: (120 * 4)(티켓4개) + (25 * 3)(티켓간격) = 555
+    // 카드 높이는 고정값이 아니라, 실제 렌더링 너비(가로 Padding 25*2를 뺀 값)를
+    // 기준으로 _ticketAspectRatio에서 역산합니다(버튼도 티켓과 같은 비율·높이를 씀).
+    // _buildTicketPocket이 실제로는 이 너비의 1.1배로 그리므로 그만큼 반영합니다.
+    final double itemWidth = constraints.maxWidth - 50;
+    final double itemHeight = (itemWidth * 1.1) / _ticketAspectRatio;
+
+    // 첫 페이지: 버튼 1개 + 티켓 3개(총 4개, 모두 같은 높이) + 항목 사이 간격 3곳
+    // 이후 페이지: 티켓 4개(모두 같은 높이) + 항목 사이 간격 3곳
     final double targetTotalHeight = isFirstPage
-        ? 100 +
-              30 +
-              (120 * _firstPageTicketCapacity) +
-              (25 * (_firstPageTicketCapacity - 1))
-        : (120 * _otherPageTicketCapacity) +
-              (25 * (_otherPageTicketCapacity - 1));
+        ? (itemHeight * (_firstPageTicketCapacity + 1)) +
+              (_ticketSpacing * _firstPageTicketCapacity)
+        : (itemHeight * _otherPageTicketCapacity) +
+              (_ticketSpacing * (_otherPageTicketCapacity - 1));
     final double fixedTopPadding =
         (constraints.maxHeight - targetTotalHeight) / 2;
 
@@ -924,7 +1081,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
               ), // 계산된 고정 상단 여백
               if (isFirstPage) ...[
                 _buildAddTicketArea(context),
-                const SizedBox(height: 30), // 추가 버튼과 리스트 사이 간격 고정
+                const SizedBox(height: _ticketSpacing), // 추가 버튼과 리스트 사이 간격(티켓 간격과 동일)
               ],
               if (pageTickets.isEmpty && isFirstPage)
                 // 티켓이 없을 때도 자리를 유지하기 위한 투명 박스 또는 안내 문구
@@ -956,7 +1113,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: pageTickets.length,
                   separatorBuilder: (context, index) =>
-                      const SizedBox(height: 25),
+                      const SizedBox(height: _ticketSpacing),
                   itemBuilder: (context, index) {
                     final ticket = pageTickets[index];
                     // 공연 시간이 지나 "공연 전" -> "공연 후"로 자동 전환될 때,
@@ -1049,6 +1206,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
             title: ticket.title,
             info: ticket.info,
             overlayKey: ticket.overlayKey,
+            posterOverlayKey: ticket.posterOverlayKey,
             // 방금 "공연 전 -> 공연 후"로 전환된 티켓은, 전환 애니메이션이
             // 완전히 끝날 때까지(_transitionSpotlightIds에서 빠질 때까지)
             // 진동을 멈춰뒀다가 그 이후에 시작합니다.
@@ -1057,7 +1215,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
             // 뜯긴 상태로 보여주고, 처음 뜯는 순간에는 티켓 데이터에 기록해서
             // 이후에도 계속 뜯긴 채로 유지되게 합니다.
             initiallyRevealed: ticket.tornRevealed,
-            onTorn: () => setState(() => ticket.tornRevealed = true),
+            onTorn: () {
+              setState(() => ticket.tornRevealed = true);
+              unawaited(TornTicketStore.instance.markTorn(ticket.id));
+            },
           ),
         );
       case TicketStatus.error:
@@ -1072,25 +1233,24 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Widget _buildAddTicketButton() {
-    return Container(
-      height: 100,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(
-          color: Colors.grey.shade400,
-          width: 2,
-          style: BorderStyle.solid,
+    // 다른 티켓들처럼 비닐 포켓 프레임 안에, 실제 티켓 자리를 대신하는
+    // 네모난 박스(흰 배경 카드)를 하나 더 넣어서 "포켓 안에 티켓이 들어있는"
+    // 모양을 그대로 따라갑니다.
+    return _buildTicketPocket(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
         ),
-      ),
-      child: const Center(
-        child: Text(
-          "티켓  추가",
-          style: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-            letterSpacing: 4.0,
+        child: const Center(
+          child: Text(
+            "티켓  추가",
+            style: TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+              letterSpacing: 4.0,
+            ),
           ),
         ),
       ),
@@ -1098,33 +1258,50 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Widget _buildTicketPocket({required Widget child}) {
-    return Container(
-      height: 120,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.8),
-          width: 2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 5,
-            offset: const Offset(2, 2),
+    // 배치 공간(칸 크기)은 그대로 두고, 실제로 그려지는 티켓만 10% 더
+    // 크게 키웁니다. Transform.scale 대신 실제 레이아웃 너비를 10% 넓혀서
+    // (SizedBox+AspectRatio) 안의 글씨가 픽셀 단위로 늘어나지 않고 정상
+    // 크기로 다시 배치되도록 합니다. 늘어난 만큼은 칸 사이 간격 쪽으로
+    // 살짝 걸칩니다. (이 10% 확대는 _buildPageContent의 높이 계산에도
+    // 반영되어 있어야 합니다 — itemHeight 계산 참고.)
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Center(
+          child: SizedBox(
+            width: constraints.maxWidth * 1.1,
+            child: AspectRatio(
+              aspectRatio: _ticketAspectRatio,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.8),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 5,
+                      offset: const Offset(2, 2),
+                    ),
+                  ],
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.6),
+                      Colors.white.withValues(alpha: 0.0),
+                      Colors.white.withValues(alpha: 0.2),
+                    ],
+                  ),
+                ),
+                child: Padding(padding: const EdgeInsets.all(10.0), child: child),
+              ),
+            ),
           ),
-        ],
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Colors.white.withValues(alpha: 0.6),
-            Colors.white.withValues(alpha: 0.0),
-            Colors.white.withValues(alpha: 0.2),
-          ],
-        ),
-      ),
-      child: Padding(padding: const EdgeInsets.all(10.0), child: child),
+        );
+      },
     );
   }
 
@@ -1165,7 +1342,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return Row(
         children: [
           Expanded(
-            flex: 3,
+            flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
             child: _PosterTicketFace(
               title: title,
               info: info,
@@ -1174,7 +1351,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
           ),
           Container(width: 1, color: Colors.grey.shade400),
           Expanded(
-            flex: 1,
+            flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: isRegisterReady && !_isAddTicketExpanded
@@ -1192,7 +1369,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return Row(
       children: [
         Expanded(
-          flex: 3,
+          flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
           child: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
@@ -1229,7 +1406,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
         Container(width: 1, color: Colors.grey.shade400),
         Expanded(
-          flex: 1,
+          flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: isRegisterReady && !_isAddTicketExpanded
@@ -1376,12 +1553,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return Row(
         children: [
           Expanded(
-            flex: 3,
+            flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
             child: _PosterTicketFace(title: title, info: info),
           ),
           Container(width: 1, color: Colors.grey.shade400),
           const Expanded(
-            flex: 1,
+            flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
             child: _TicketStub(label: '입장 티켓'),
           ),
         ],
@@ -1390,7 +1567,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return Row(
       children: [
         Expanded(
-          flex: 3,
+          flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
           child: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
@@ -1425,7 +1602,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
         Container(width: 1, color: Colors.grey.shade400),
         Expanded(
-          flex: 1,
+          flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
           child: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
@@ -1453,6 +1630,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     required String title,
     TicketInfo? info,
     required GlobalKey overlayKey,
+    required GlobalKey posterOverlayKey,
     bool vibrate = true,
     bool initiallyRevealed = false,
     VoidCallback? onTorn,
@@ -1460,62 +1638,39 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return Row(
       children: [
         Expanded(
-          flex: 3,
+          flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
           child: PressableScale(
             onTap: _isAddTicketExpanded
                 ? null
                 : () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ConcertAfterScreen(
-                          concertTitle: title,
-                          ticketInfo: info,
-                        ),
+                    // "공연 전" 티켓과 동일한 로직: 일반 push 대신, 눌린
+                    // 티켓 위치(Rect)에서 자연스럽게 확장되는 오버레이로
+                    // 상세를 보여줍니다.
+                    final startRect = _globalRectOf(posterOverlayKey);
+                    if (startRect == null) return;
+
+                    ConcertAfterOverlay.show(
+                      context,
+                      startRect: startRect,
+                      collapsedTicket: _buildAfterConcertPosterFace(
+                        title: title,
+                        info: info,
                       ),
+                      concertTitle: title,
+                      ticketInfo: info,
                     );
                   },
             pressScale: 0.985,
             tapScale: 1.03,
-            child: _usePosterTicketDesign
-                ? _PosterTicketFace(title: title, info: info)
-                : Container(
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.horizontal(
-                        left: Radius.circular(8),
-                      ),
-                    ),
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey,
-                          ),
-                        ),
-                        Expanded(
-                          child: Center(
-                            child: Text(
-                              title,
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+            child: KeyedSubtree(
+              key: posterOverlayKey,
+              child: _buildAfterConcertPosterFace(title: title, info: info),
+            ),
           ),
         ),
         const _DashedVerticalDivider(),
         Expanded(
-          flex: 1,
+          flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
           child: EntryTicketTearPiece(
             enabled: !_isAddTicketExpanded,
             vibrate: vibrate,
@@ -1571,6 +1726,50 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
       ],
     );
+  }
+
+  /// [_buildTicketAfterConcert]의 왼쪽(포스터) 영역 디자인. 정지 상태 UI와
+  /// [ConcertAfterOverlay]의 collapsedTicket이 같은 모양을 보여줘야
+  /// 자연스럽게 이어지므로 별도 위젯으로 뽑아 양쪽에서 재사용합니다.
+  Widget _buildAfterConcertPosterFace({
+    required String title,
+    TicketInfo? info,
+  }) {
+    return _usePosterTicketDesign
+        ? _PosterTicketFace(title: title, info: info)
+        : Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.horizontal(
+                left: Radius.circular(8),
+              ),
+            ),
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
   }
 
   Widget _concertBeforeShortcutWidget({bool dark = false}) {

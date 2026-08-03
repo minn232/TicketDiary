@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
+import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 
 /// 앱 실행 시 보여주는 시작 애니메이션.
@@ -21,7 +22,7 @@ import 'package:ticketdiary/widgets/diary_tabs.dart';
 /// 그려서, 기존 다이어리 프레임([DiaryPageFrame])과 같은 배색(가죽 갈색 /
 /// 속지 크림색)을 유지합니다.
 ///
-/// 속지는 실제 다이어리처럼 A4와 같은 세로 1:루트2(≈1:1.414) 비율입니다.
+/// 속지는 실제 다이어리 페이지와 정확히 같은 비율([DiaryPageFrame.diaryAspectRatio])입니다.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -35,8 +36,15 @@ class _SplashScreenState extends State<SplashScreen>
   static const Color _coverColor = Color(0xFF5C4033);
   static const Color _pageColor = Color(0xFFF4F1E1);
 
-  /// A4 용지의 세로/가로 비율(297/210 ≈ 1.414). 속지 규격의 기준.
-  static const double _a4Ratio = 297 / 210;
+  /// 속지 규격의 기준(세로/가로 비율). 예전엔 A4(297/210)를 썼는데, 실제
+  /// [DiaryPageFrame.diaryAspectRatio](가로/세로)와 안 맞아서 펼침 애니메이션
+  /// 속 페이지가 실제 다이어리 페이지보다 세로로 길어 보이는 문제가
+  /// 있었습니다. 실제 다이어리와 같은 비율을 쓰도록 여기서 반전해 씁니다.
+  static const double _pageRatio = 1 / DiaryPageFrame.diaryAspectRatio;
+
+  /// 애니메이션 도중(화면을 다 채우기 전까지) 보이는 겉 가죽케이스를 이
+  /// 배율만큼 더 크게 보여줍니다. 최종 페이지 크기에는 영향이 없습니다.
+  static const double _bookSizeBoost = 1.2;
 
   static const Duration _totalDuration = Duration(milliseconds: 4000);
 
@@ -138,21 +146,41 @@ class _SplashScreenState extends State<SplashScreen>
       backgroundColor: const Color(0xFF3A281B),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final screenW = constraints.maxWidth;
-          final screenH = constraints.maxHeight;
+          // 실제 DiaryPageFrame은 SafeArea 안에서 크기를 잡는데(노치/상태
+          // 표시줄/홈 인디케이터만큼 화면보다 작음), 여기 Scaffold.body는
+          // SafeArea를 쓰지 않아 화면 전체 크기를 기준으로 계산되고
+          // 있었습니다. 그 차이만큼 애니메이션 끝의 페이지가 실제 다이어리
+          // 페이지보다 커 보였던 것이라, 여기서도 같은 SafeArea 여백을
+          // 빼서 계산합니다.
+          final safePadding = MediaQuery.of(context).padding;
+          final screenW =
+              constraints.maxWidth - safePadding.left - safePadding.right;
+          final screenH =
+              constraints.maxHeight - safePadding.top - safePadding.bottom;
 
-          // 속지가 A4 비율(세로형)이 되도록 다이어리 크기를 잡습니다.
-          final bookWidth = math.min(screenW * 0.52, screenH * 0.6 / _a4Ratio);
-          final bookHeight = bookWidth * _a4Ratio;
+          // 속지가 실제 다이어리와 같은 비율이 되도록 크기를 잡습니다.
+          // _bookSizeBoost는 애니메이션이 진행되는 동안(화면을 다 채우기
+          // 전까지) 보이는 겉 가죽케이스 자체를 더 크게 보이도록 키우는
+          // 배율입니다. fillScale이 항상 "bookWidth * fillScale = 실제
+          // 화면 크기"가 되도록 스스로 맞춰지므로, 다 자란 뒤 최종 페이지
+          // 크기(실제 DiaryPageFrame과 정확히 일치)에는 영향이 없습니다.
+          final bookWidth =
+              _bookSizeBoost *
+              math.min(screenW * 0.52, screenH * 0.6 / _pageRatio);
+          final bookHeight = bookWidth * _pageRatio;
 
-          // 마지막에 오른쪽 페이지가 화면을 가득 덮는 배율.
-          final fillScale =
-              math.max(screenW / bookWidth, screenH / bookHeight) * 1.04;
+          // 마지막에 페이지가 실제 다이어리 화면과 같은 크기가 되는 배율.
+          // 실제 DiaryPageFrame은 SafeArea 안에서 Center+AspectRatio로
+          // "꽉 채우기(cover)"가 아니라 "안에 맞추기(contain)"로 배치되므로
+          // (한쪽 축은 화면에 딱 맞고 다른 쪽엔 여백), 여기서도 같은 min을
+          // 써야 합니다. 예전엔 math.max에 1.04배까지 더해서 일부러 화면을
+          // 살짝 넘치게 채웠는데, 그 결과 애니메이션 끝의 페이지가 실제
+          // 다이어리 페이지보다 커 보이는 문제가 있었습니다.
+          final fillScale = math.min(screenW / bookWidth, screenH / bookHeight);
 
           return AnimatedBuilder(
             animation: _controller,
             builder: (context, _) => _buildScene(
-              Size(screenW, screenH),
               bookWidth,
               bookHeight,
               fillScale,
@@ -169,13 +197,7 @@ class _SplashScreenState extends State<SplashScreen>
   /// "테이블에 놓여" 있고 카메라가 다가가며 화면에 들어차게 됩니다.
   static const double _bookStartScale = 0.34;
 
-  Widget _buildScene(
-    Size screen,
-    double bookW,
-    double bookH,
-    double fillScale,
-    double t,
-  ) {
+  Widget _buildScene(double bookW, double bookH, double fillScale, double t) {
     // 줌: 작게 시작 -> 화면 80%(배율 1.0 근처) -> 페이지가 화면을 가득 채울 때까지.
     final zoomIn = Curves.easeInOut.transform(_seg(t, 0.0, _zoomInEnd));
     final zoomPage = Curves.easeInOut.transform(
@@ -209,7 +231,7 @@ class _SplashScreenState extends State<SplashScreen>
           Center(
             child: Transform.scale(
               scale: _bookStartScale,
-              child: _buildBook(bookW, bookH, t, screen),
+              child: _buildBook(bookW, bookH, t, fillScale),
             ),
           ),
         ],
@@ -217,7 +239,7 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildBook(double w, double h, double t, Size screen) {
+  Widget _buildBook(double w, double h, double t, double fillScale) {
     final coverT = _seg(t, _coverStart, _coverEnd);
     final zoomPage = Curves.easeInOut.transform(
       _seg(t, _zoomPageStart, _zoomPageEnd),
@@ -225,17 +247,19 @@ class _SplashScreenState extends State<SplashScreen>
 
     // 다이어리 내부(복제본) 속 실제 "페이지 종이" 영역. 촤라락 넘어가는
     // 속지들이 이 영역과 같은 크기/위치로 넘어가도록 계산합니다.
-    // (_MainPageReplica.build의 배치 계산과 동일한 식입니다.)
-    final rW = w - 10.0; // 복제본 영역 폭(left 6 + right 4 제외)
-    final rH = h - 10.0; // 복제본 영역 높이(top 5 + bottom 5 제외)
-    final miniW = math.min(rW, rH * (screen.width / screen.height));
-    final k = rH / screen.height;
-    final pageRect = Rect.fromLTWH(
-      6 + (rW - miniW) / 2 + 30 * k,
-      5 + 10 * k,
-      miniW - 75 * k, // 페이지 좌우 여백(left 30 + right 45) 제외
-      rH - 30 * k, // 페이지 상하 여백(top 10 + bottom 20) 제외
-    );
+    // (_MainPageReplica의 배치 계산과 동일한 식입니다.)
+    //
+    // w x h(=bookWidth x bookHeight)는 이미 diaryAspectRatio 그대로이고,
+    // fillScale은 "이 책이 다 자라면 정확히 실제 화면의 DiaryPageFrame과
+    // 같은 크기가 되는 배율"이므로, k=1/fillScale을 실제 DiaryPageFrame의
+    // 페이지 여백(pageTop/Bottom/Left/Right, 실제 화면 px 기준)에 곱하면
+    // 지금 책 크기 기준 여백으로 정확히 환산됩니다. 예전엔 여기서 화면
+    // 비율로 한 번 더 레터박싱하는 불필요한 단계가 있어서, 다 자란 뒤에도
+    // 실제 페이지보다 작게 멈추는 문제가 있었습니다(넘어가는 속지 → 예시
+    // 페이지 → 실제 메인 페이지로 이어질 때 크기가 어긋남). [_diaryPageCardRect]
+    // 하나로 통일해 크기가 끊김 없이 자연스럽게 이어지도록 합니다.
+    final k = 1 / fillScale;
+    final pageRect = _diaryPageCardRect(w, h, k);
 
     // 넘어가는 표지/속지가 아래에 드리우는 그림자의 세기.
     // (각 요소의 진행도가 절반일 때 가장 짙고, 시작/끝에는 사라집니다.)
@@ -303,22 +327,35 @@ class _SplashScreenState extends State<SplashScreen>
           // ---- 표지가 열린 뒤 드러나는, 다이어리 내부(줌의 목적지) ----
           // 실제 메인 화면(DiaryPageFrame + 다이어리 탭 첫 페이지)과 같은
           // 디자인의 축소 복제본. 그대로 확대되다가 진짜 메인 화면과 겹쳐집니다.
-          // (오른쪽 4px는 닫혀있을 때 보이는 속지 단면을 남겨둡니다.)
+          // book(w x h) 전체를 그대로 채워야 [_diaryPageCardRect]가
+          // [_buildBook]의 pageRect와 정확히 같은 기준으로 계산됩니다.
+          Positioned.fill(
+            child: _MainPageReplica(
+              bookW: w,
+              bookH: h,
+              fillScale: fillScale,
+              outlineAlpha: outlineAlpha,
+            ),
+          ),
+
+          // ---- 왼쪽 바인더 링(페이지가 넘어가기 전부터 계속 보임) ----
+          // _MainPageReplica 안에도 같은 링이 있지만, 그 안에서는 페이지
+          // 자체가 폭 대부분을 차지해 여백이 거의 없어 링이 페이지 가장자리에
+          // 살짝 겹쳐 아주 작게만 보였습니다. 여기서 pageRect 기준으로
+          // 직접 그려서, 표지가 열리는 순간부터 확실히 보이게 합니다.
           Positioned(
-            left: 6,
-            right: 4,
-            top: 5,
-            bottom: 5,
-            child: _MainPageReplica(screen: screen, outlineAlpha: outlineAlpha),
+            left: pageRect.left - 15 * k,
+            top: pageRect.top + pageRect.height * 0.08,
+            bottom: (h - pageRect.bottom) + pageRect.height * 0.08,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: List.generate(6, (_) => _buildMiniBinderRing(k)),
+            ),
           ),
 
           // ---- 열리는 표지가 다이어리 내부 전체에 드리우는 그림자(입체감) ----
           if (coverShadow > 0.001)
-            Positioned(
-              left: 6,
-              right: 4,
-              top: 5,
-              bottom: 5,
+            Positioned.fill(
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   borderRadius: const BorderRadius.horizontal(
@@ -380,7 +417,8 @@ class _SplashScreenState extends State<SplashScreen>
     final opacity = 1.0 - _seg(p, 0.55, 1.0);
     if (opacity <= 0.001) return const SizedBox.shrink();
 
-    final angle = Curves.easeInOutCubic.transform(p) * math.pi * 0.62;
+    final maxAngle = math.pi * 0.62;
+    final angle = Curves.easeInOutCubic.transform(p) * maxAngle;
     // 장마다 미묘하게 톤을 다르게 해서 여러 장이 넘어가는 게 보이게 합니다.
     final tint = Color.lerp(_pageColor, Colors.white, i * 0.045)!;
 
@@ -389,6 +427,17 @@ class _SplashScreenState extends State<SplashScreen>
     final edgeOn = (1.0 - math.cos(angle)).clamp(0.0, 1.0);
     final lift = math.sin(p * math.pi);
 
+    // 90도를 넘어서면(책등 축 회전만으로는 어색해 보여서) 이미 넘어간
+    // 페이지 더미 위에 얹히듯 왼쪽으로 천천히 이동하는 보조 애니메이션을
+    // 더합니다. 90도까지는 이동이 없다가(0), 최대 각도에서 페이지 폭의
+    // 16%만큼 왼쪽으로 옮겨갑니다.
+    const halfPi = math.pi / 2;
+    final pastNinety = angle <= halfPi
+        ? 0.0
+        : ((angle - halfPi) / (maxAngle - halfPi)).clamp(0.0, 1.0);
+    final settleShiftX =
+        -pageRect.width * 0.16 * Curves.easeOut.transform(pastNinety);
+
     // 메인 페이지 종이와 같은 모서리(오른쪽만 둥근 15px 비례).
     final radius = BorderRadius.horizontal(right: Radius.circular(15 * k));
 
@@ -396,34 +445,41 @@ class _SplashScreenState extends State<SplashScreen>
       rect: pageRect,
       child: Opacity(
         opacity: opacity,
-        child: Transform(
-          alignment: Alignment.centerLeft,
-          transform: Matrix4.identity()
-            ..setEntry(3, 2, 0.0016)
-            ..rotateY(-angle),
-          child: Transform.scale(
+        child: Transform.translate(
+          offset: Offset(settleShiftX, 0),
+          child: Transform(
             alignment: Alignment.centerLeft,
-            scale: 1.0 + lift * 0.05,
-            // 메인 페이지와 같은 순수 크림색 종이. 넘어가는 동안 책등 쪽에만
-            // 살짝 그림자를 드리워 입체감을 줍니다.
-            child: Container(
-              decoration: BoxDecoration(
-                color: tint,
-                borderRadius: radius,
-                border: Border.all(
-                  color: Colors.black.withValues(alpha: 0.30),
-                  width: 0.7,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.0016)
+              ..rotateY(-angle),
+            child: Transform.scale(
+              alignment: Alignment.centerLeft,
+              scale: 1.0 + lift * 0.05,
+              // 메인 페이지와 같은 순수 크림색 종이. 넘어가는 동안 책등 쪽에만
+              // 살짝 그림자를 드리워 입체감을 줍니다.
+              child: Container(
+                decoration: BoxDecoration(
+                  color: tint,
+                  borderRadius: radius,
+                  border: Border.all(
+                    color: Colors.black.withValues(alpha: 0.30),
+                    width: 0.7,
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [Color.lerp(tint, Colors.black, 0.08)!, tint],
+                    stops: const [0.0, 0.18],
+                  ),
                 ),
-                gradient: LinearGradient(
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                  colors: [Color.lerp(tint, Colors.black, 0.08)!, tint],
-                  stops: const [0.0, 0.18],
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: radius,
+                  color: Colors.black.withValues(alpha: edgeOn * 0.22),
                 ),
-              ),
-              foregroundDecoration: BoxDecoration(
-                borderRadius: radius,
-                color: Colors.black.withValues(alpha: edgeOn * 0.22),
+                // 표지를 열었을 때 맨 처음 보이는 속지(첫 장)에는 메인
+                // 화면 대신 "TICKET DIARY" 타이틀만 넣어, 이 장이 넘어간
+                // 뒤에야 실제 다이어리 화면이 자연스럽게 이어지도록 합니다.
+                child: i == 0 ? const _TitlePageContent() : null,
               ),
             ),
           ),
@@ -555,6 +611,44 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 표지를 연 뒤 맨 처음 보이는 속지(첫 장) 앞면 내용. 실제 다이어리 화면
+/// 대신, 책의 속표지처럼 앱 이름만 심플하게 보여줍니다.
+class _TitlePageContent extends StatelessWidget {
+  const _TitlePageContent();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.local_activity_outlined,
+                size: 40,
+                color: _SplashScreenState._coverColor.withValues(alpha: 0.55),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'TICKET DIARY',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2.5,
+                  color: _SplashScreenState._coverColor.withValues(alpha: 0.75),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -886,70 +980,65 @@ class _LeatherCoverPainter extends CustomPainter {
 /// 줌이 끝나 실제 화면이 페이드인될 때 디자인이 자연스럽게 겹쳐집니다.
 ///
 /// 확대가 끝났을 때 화면에 보이는 영역이 실제 기기 화면과 같아지도록,
-/// [screen] 크기를 기준으로 축척([_MainPageReplica.build]의 k)을 계산해
-/// 중앙에 화면 비율 그대로 배치합니다.
+/// [bookW] x [bookH](=[_SplashScreenState._buildBook]에 전달된 것과 같은
+/// 크기)와 [fillScale]을 기준으로 축척(k=1/fillScale)을 계산해 실제
+/// [DiaryPageFrame]과 정확히 같은 여백/비율로 배치합니다.
 class _MainPageReplica extends StatelessWidget {
-  final Size screen;
+  final double bookW;
+  final double bookH;
+  final double fillScale;
 
   /// 스플래시 전용 종이 외곽선의 불투명도(줌 후반에 0으로 사라짐).
   final double outlineAlpha;
 
-  const _MainPageReplica({required this.screen, required this.outlineAlpha});
+  const _MainPageReplica({
+    required this.bookW,
+    required this.bookH,
+    required this.fillScale,
+    required this.outlineAlpha,
+  });
 
   static const Color _leatherColor = Color(0xFF5C4033);
   static const Color _pageColor = Color(0xFFF4F1E1);
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final rW = constraints.maxWidth;
-        final rH = constraints.maxHeight;
-        // 다이어리 속지(A4 비율)의 중앙에, 실제 화면과 같은 비율의 영역을
-        // 잡고 그 안에 메인 화면을 그대로 축소해 그립니다. 줌이 끝나면
-        // 정확히 이 영역이 화면을 가득 채웁니다.
-        final miniW = math.min(rW, rH * (screen.width / screen.height));
-        final k = rH / screen.height;
-
-        return Container(
-          decoration: BoxDecoration(
-            color: _leatherColor,
-            borderRadius: const BorderRadius.horizontal(
-              right: Radius.circular(5),
-            ),
-            border: Border.all(
-              color: Colors.black.withValues(alpha: outlineAlpha),
-              width: 0.7,
-            ),
-          ),
-          child: ClipRRect(
-            borderRadius: const BorderRadius.horizontal(
-              right: Radius.circular(5),
-            ),
-            child: Stack(
-              children: [
-                Positioned(
-                  left: (rW - miniW) / 2,
-                  top: 0,
-                  bottom: 0,
-                  width: miniW,
-                  child: _buildMiniScreen(k, miniW, rH),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    final k = 1 / fillScale;
+    return Container(
+      decoration: BoxDecoration(
+        color: _leatherColor,
+        borderRadius: const BorderRadius.horizontal(right: Radius.circular(5)),
+        border: Border.all(
+          color: Colors.black.withValues(alpha: outlineAlpha),
+          width: 0.7,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.horizontal(right: Radius.circular(5)),
+        child: _buildMiniScreen(k, bookW, bookH),
+      ),
     );
   }
 
   /// 실제 화면 좌표(논리 px)에 [k]를 곱해 DiaryPageFrame의 레이아웃 수치를
-  /// 그대로 재현합니다.
+  /// 그대로 재현합니다. [w],[h]는 book(=bookW x bookH) 전체 크기입니다.
   Widget _buildMiniScreen(double k, double w, double h) {
-    final pageH = h - 30 * k; // top 10 + bottom 20
-    // DiaryScreen._buildPageContent의 고정 상단 여백 계산과 동일:
-    // 100(버튼) + 30(간격) + 120*3(티켓) + 25*2(간격) = 540
-    final topPad = ((pageH - 540 * k) / 2).clamp(20.0 * k, double.infinity);
+    // 실제 DiaryPageFrame의 "메인 페이지" 카드(여백 + widthFactor 1.1)와
+    // 정확히 같은 식([_diaryPageCardRect])을 씁니다. [_SplashScreenState._buildBook]의
+    // pageRect도 같은 식을 쓰므로, 넘어가는 속지 → 이 예시 페이지 → 실제
+    // 메인 페이지로 이어질 때 크기가 자연스럽게 이어집니다.
+    final cardRect = _diaryPageCardRect(w, h, k);
+    // DiaryScreen._ticketAspectRatio(156/60)와 동일한 비율로 카드 높이를
+    // 실제 렌더링 너비(widthFactor 1.1 적용된 폭)에서 역산합니다
+    // (DiaryScreen._buildPageContent와 동일).
+    final itemW = cardRect.width - 50 * k; // 가로 Padding 25*2
+    final itemH = itemW / (156 / 60);
+    // 버튼 1개 + 티켓 3개(모두 같은 높이) + 항목 사이 간격 3곳(50).
+    final targetTotalHeight = itemH * 4 + 50 * k * 3;
+    final topPad = ((cardRect.height - targetTotalHeight) / 2).clamp(
+      20.0 * k,
+      double.infinity,
+    );
 
     return Stack(
       clipBehavior: Clip.none,
@@ -971,18 +1060,16 @@ class _MainPageReplica extends StatelessWidget {
             ),
           ),
 
-        // 우측 인덱스 탭(다이어리/소식/결산/설정).
-        _buildTab(k, 4, 80, const Color(0xFFE8AE75), '다이어리'),
-        _buildTab(k, 7, 175, const Color(0xFF9CB8A7), '소식'),
-        _buildTab(k, 10, 270, const Color(0xFFD3A39B), '결산'),
-        _buildTab(k, 13, 450, const Color(0xFFB0B0B0), '설정'),
+        // 우측 인덱스 탭(다이어리/소식/결산/설정). 위치·간격은
+        // diary_tabs.dart의 buildDiarySideTabs와 동일합니다.
+        _buildTab(k, 4, 56, const Color(0xFFE8AE75), '다이어리'),
+        _buildTab(k, 4, 136.5, const Color(0xFF9CB8A7), '소식'),
+        _buildTab(k, 4, 217, const Color(0xFFD3A39B), '결산'),
+        _buildTab(k, 4, 315, const Color(0xFFB0B0B0), '설정'),
 
         // 메인 페이지 종이 + 첫 페이지 내용(티켓 추가 버튼, 티켓 포켓들).
-        Positioned(
-          top: 10 * k,
-          bottom: 20 * k,
-          left: 30 * k,
-          right: 45 * k,
+        Positioned.fromRect(
+          rect: cardRect,
           child: Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
@@ -1002,34 +1089,25 @@ class _MainPageReplica extends StatelessWidget {
             child: Column(
               children: [
                 SizedBox(height: topPad),
-                _buildMiniAddButton(k),
-                SizedBox(height: 30 * k),
+                _buildMiniAddButton(k, itemH),
+                SizedBox(height: 50 * k),
                 _buildMiniTicketStub(
                   k,
-                  label: '위켄드 내한공연',
-                  mainText: 'D-5',
+                  height: itemH,
+                  label: '배송 전 티켓 예시',
+                  mainText: 'D-00',
                   stubText: '예매처',
                 ),
-                SizedBox(height: 25 * k),
+                SizedBox(height: 50 * k),
                 _buildMiniTicketStub(
                   k,
-                  label: '첫사랑 페스티벌',
-                  mainText: '첫사랑 페스티벌',
+                  height: itemH,
+                  label: '공연 전 티켓 예시',
+                  mainText: '공연 전 티켓 예시',
                   stubText: '입장 티켓',
                 ),
               ],
             ),
-          ),
-        ),
-
-        // 왼쪽 바인더 링.
-        Positioned(
-          left: -15 * k,
-          top: 50 * k,
-          bottom: 50 * k,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: List.generate(6, (_) => _buildMiniBinderRing(k)),
           ),
         ),
       ],
@@ -1047,14 +1125,11 @@ class _MainPageReplica extends StatelessWidget {
       right: right * k,
       top: top * k,
       child: Container(
-        width: 45 * k,
-        height: 90 * k,
+        width: 45 * 0.7 * k,
+        height: 90 * 0.7 * k,
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.horizontal(
-            left: Radius.circular(10 * k),
-            right: Radius.circular(5 * k),
-          ),
+          borderRadius: BorderRadius.circular(3 * k),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.25),
@@ -1080,22 +1155,26 @@ class _MainPageReplica extends StatelessWidget {
     );
   }
 
-  Widget _buildMiniAddButton(double k) {
-    return Container(
-      height: 100 * k,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(15 * k),
-        border: Border.all(color: Colors.grey.shade400, width: 2 * k),
-      ),
-      child: Center(
-        child: Text(
-          '티켓  추가',
-          style: TextStyle(
-            fontSize: 26 * k,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-            letterSpacing: 4.0 * k,
+  /// DiaryScreen._buildAddTicketButton과 동일하게, 다른 티켓과 같은 비닐
+  /// 포켓 프레임 + 그 안의 흰 박스 구조로 그립니다.
+  Widget _buildMiniAddButton(double k, double height) {
+    return _buildMiniPocket(
+      k,
+      height: height,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8 * k),
+        ),
+        child: Center(
+          child: Text(
+            '티켓  추가',
+            style: TextStyle(
+              fontSize: 26 * k,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+              letterSpacing: 4.0 * k,
+            ),
           ),
         ),
       ),
@@ -1109,27 +1188,14 @@ class _MainPageReplica extends StatelessWidget {
   /// 있던 예전 버전 대신 이 구조를 그대로 재현합니다.
   Widget _buildMiniTicketStub(
     double k, {
+    required double height,
     required String label,
     required String mainText,
     required String stubText,
   }) {
-    return Container(
-      height: 120 * k,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(10 * k),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.8),
-          width: 2 * k,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 10 * k,
-            offset: Offset(5 * k, 5 * k),
-          ),
-        ],
-      ),
+    return _buildMiniPocket(
+      k,
+      height: height,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8 * k),
         child: Row(
@@ -1192,39 +1258,101 @@ class _MainPageReplica extends StatelessWidget {
     );
   }
 
-  Widget _buildMiniBinderRing(double k) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Transform.translate(
-          offset: Offset(8 * k, 0),
-          child: Container(
-            width: 15 * k,
-            height: 15 * k,
-            decoration: const BoxDecoration(
-              color: Color(0xFF3E2723),
-              shape: BoxShape.circle,
-            ),
-          ),
+  /// DiaryScreen._buildTicketPocket과 동일한 비닐 포켓 프레임(그라데이션
+  /// 화이트 + 테두리 + 그림자). 티켓추가 버튼과 티켓 카드가 공유합니다.
+  Widget _buildMiniPocket(
+    double k, {
+    required double height,
+    required Widget child,
+  }) {
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(10 * k),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.8),
+          width: 2 * k,
         ),
-        Container(
-          width: 40 * k,
-          height: 8 * k,
-          decoration: BoxDecoration(
-            color: Colors.grey.shade300,
-            borderRadius: BorderRadius.circular(3 * k),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.5),
-                blurRadius: 2 * k,
-                offset: Offset(1 * k, 1 * k),
-              ),
-            ],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 5 * k,
+            offset: Offset(2 * k, 2 * k),
           ),
+        ],
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: 0.6),
+            Colors.white.withValues(alpha: 0.0),
+            Colors.white.withValues(alpha: 0.2),
+          ],
         ),
-      ],
+      ),
+      child: Padding(padding: EdgeInsets.all(10.0 * k), child: child),
     );
   }
+}
+
+/// 실제 [DiaryPageFrame]의 "메인 페이지" 카드(기본 여백
+/// top10/bottom20/left30/right45, `FractionallySizedBox(widthFactor: 1.1)`로
+/// 가로만 10% 더 넓힘)가 [w] x [h] 크기의 프레임 안에서 차지하는 위치/크기를
+/// 그대로 재현합니다. [k](=1/fillScale)는 "실제 화면 px -> 지금 프레임 기준
+/// px" 환산 배율입니다. [_SplashScreenState._buildBook]의 넘어가는 속지와
+/// [_MainPageReplica]의 예시 페이지가 이 식을 공유해야, 페이지 넘김 →
+/// 예시 페이지 → 실제 메인 페이지로 이어질 때 크기가 끊김 없이 자연스럽게
+/// 이어집니다.
+Rect _diaryPageCardRect(double w, double h, double k) {
+  const insetTop = 10.0;
+  const insetBottom = 20.0;
+  const insetLeft = 30.0;
+  const insetRight = 45.0;
+  final insetW = w - (insetLeft + insetRight) * k;
+  final insetH = h - (insetTop + insetBottom) * k;
+  return Rect.fromLTWH(
+    insetLeft * k - insetW * 0.05,
+    insetTop * k,
+    insetW * 1.1,
+    insetH,
+  );
+}
+
+/// 바인더 링 하나(어두운 원형 그로밋 + 밝은 회색 막대). [_SplashScreenState]의
+/// 펼침 애니메이션과 [_MainPageReplica]의 축소 복제본이 함께 씁니다.
+Widget _buildMiniBinderRing(double k) {
+  return Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Transform.translate(
+        offset: Offset(8 * k, 0),
+        child: Container(
+          width: 15 * k,
+          height: 15 * k,
+          decoration: const BoxDecoration(
+            color: Color(0xFF3E2723),
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+      Container(
+        width: 20 * k,
+        height: 8 * k,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade300,
+          borderRadius: BorderRadius.circular(3 * k),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.5),
+              blurRadius: 2 * k,
+              offset: Offset(1 * k, 1 * k),
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 /// 닫힌 다이어리에서 오른쪽으로 살짝 보이는 속지 단면(겹친 종이들) 질감.

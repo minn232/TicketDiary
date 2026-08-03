@@ -116,6 +116,16 @@ class AuthService extends ChangeNotifier {
   bool get isLoggedIn => _accessToken != null;
   bool get isGuest => _currentUser?.isGuest ?? true;
 
+  /// "현재 로그인된 세션이 있고, 그 세션이 게스트"인 경우만 true입니다.
+  ///
+  /// [isGuest]는 세션이 아예 없을 때(예: [logout]이 재로그인에 실패해 토큰이
+  /// 지워진 채로 멈춘 경우)도 기본값으로 true를 반환하므로, "카카오로
+  /// 로그인" 버튼이 이 값만 보고 `/auth/migrate`(게스트 승격 전용, 인증
+  /// 필요)로 보내면 세션이 없을 때 401이 납니다. 이 게터는 그 경우 false를
+  /// 반환해, 세션이 없으면 항상 `/auth/kakao`(신규/기존 겸용)로 가도록
+  /// 판단하는 데 씁니다.
+  bool get hasActiveGuestSession => isLoggedIn && (_currentUser?.isGuest ?? false);
+
   /// 앱 시작 시 1회 호출: 저장된 토큰을 불러오고, 없으면 게스트로 로그인합니다.
   /// 스플래시 화면의 데이터 로딩 단계에서 다른 로딩과 함께 await 하면 됩니다.
   ///
@@ -199,10 +209,19 @@ class AuthService extends ChangeNotifier {
   }
 
   /// 로그아웃. 서버에 현재 refresh token 폐기를 요청한 뒤 로컬 토큰을
-  /// 지웁니다. 다음 실행 시 [ensureSession]이 새 게스트 세션을 만듭니다.
+  /// 지우고, 가능하면 새 게스트 세션을 만듭니다.
   ///
   /// 서버 요청이 실패해도(오프라인 등) 로컬 로그아웃은 항상 진행합니다 —
   /// 사용자 입장에서 로그아웃은 실패해서는 안 되는 동작이기 때문입니다.
+  ///
+  /// 새 게스트 세션 생성은 실패할 수 있습니다 — 이 기기가 이미 카카오
+  /// 계정으로 마이그레이션된 적이 있으면(guest_token은 그대로 남아있고
+  /// role만 바뀌는 구조라) 백엔드가 게스트 로그인을 403으로 거부합니다.
+  /// 이건 "게스트로 되돌아갈 수 없는" 정상적인 케이스이므로, 억지로 게스트
+  /// 세션을 만들려 하지 않고 완전 로그아웃 상태(토큰 없음, currentUser
+  /// 없음)로 둡니다 — [hasActiveGuestSession]이 이 상태를 false로 판단해,
+  /// 다음 카카오 로그인 시도가 `/auth/migrate`가 아니라 `/auth/kakao`로
+  /// 가도록 합니다.
   Future<void> logout() async {
     final currentRefreshToken = _refreshToken;
     if (currentRefreshToken != null) {
@@ -217,7 +236,12 @@ class AuthService extends ChangeNotifier {
       }
     }
     await _clearTokens();
-    await _loginAsGuest();
+    try {
+      await _loginAsGuest();
+    } catch (_) {
+      // 위 doc 참고: 게스트 세션을 못 만들어도(예: 이미 카카오로 연동된
+      // 기기의 403) 로그아웃 자체는 이미 끝난 상태이므로 그대로 둡니다.
+    }
   }
 
   /// [ApiClient.onUnauthorized]로 등록되는 콜백. 저장된 refresh token으로

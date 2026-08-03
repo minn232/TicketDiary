@@ -5,7 +5,7 @@ import 'package:dio/dio.dart';
 /// 지금은 로컬 개발 백엔드를 가리키는 자리표시자입니다. 실제 배포 전에는
 /// `--dart-define=API_BASE_URL=https://...`로 빌드하거나, 이 기본값 자체를
 /// 실제 서버 주소로 바꿔주세요.
-const String _defaultApiBaseUrl = 'http://localhost:8000';
+const String _defaultApiBaseUrl = 'http://localhost:8000/api/v1';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',

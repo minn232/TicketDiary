@@ -142,15 +142,25 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
         _stage = _ScanStage.positioning;
         _errorMessage = e.message;
       });
-      _startAlignmentDetection();
+      await _rearmAlignmentDetection();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _stage = _ScanStage.positioning;
         _errorMessage = '스캔 중 오류가 발생했습니다. 다시 시도해주세요.';
       });
-      _startAlignmentDetection();
+      await _rearmAlignmentDetection();
     }
+  }
+
+  /// 실패 직후 바로 정렬 인식을 다시 켜면, 카메라 앞 장면이 그대로인 채로
+  /// 곧장 다시 "정렬됨"으로 판정돼 촬영→실패→재촬영이 끊임없이 반복될 수
+  /// 있습니다(연결 실패처럼 정렬과 무관한 오류일 때 특히 심함). 잠깐
+  /// 멈춰서 사용자가 오류 문구를 보고 티켓을 다시 위치시킬 시간을 줍니다.
+  Future<void> _rearmAlignmentDetection() async {
+    await Future.delayed(const Duration(milliseconds: 1200));
+    if (!mounted) return;
+    _startAlignmentDetection();
   }
 
   /// 카메라 촬영도, 백엔드 OCR 호출도 하지 않고 [DebugFakeScanRequested]를
@@ -276,8 +286,10 @@ class _ScanGuideOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final guideWidth = constraints.maxWidth * 0.86;
-        final guideHeight = guideWidth * 6 / 14.8; // 14.8:6 비율
+        // 높이는 기존 기준(화면 폭의 86%에 14.8:6 비율)을 그대로 유지하고,
+        // 가로 폭만 12:6 비율에 맞춰 줄입니다.
+        final guideHeight = constraints.maxWidth * 0.86 * 6 / 14.8;
+        final guideWidth = guideHeight * 12 / 6; // 12:6 비율
         final guideRect = Rect.fromCenter(
           center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2 - 30),
           width: guideWidth,
