@@ -1056,6 +1056,24 @@ async def test_scan_returns_empty_when_no_confident_match(get_auth_token):
     assert response.json()["candidates"] == []
 
 
+# 날짜 정보가 없으면 제목만으로는 KOPIS 매칭을 확신할 방법이 없음(예: 메모장에 공연명만
+# 적어서 캡처한 경우도 실제 등록된 공연과 우연히 제목이 겹칠 수 있음) - 검증 없이 첫 매칭을
+# 그대로 받아들이지 않고 빈 후보 목록을 반환하는지 확인 (search_concerts_multi 회귀 방지)
+@pytest.mark.asyncio
+async def test_scan_returns_empty_candidates_without_date_even_if_title_matches(get_auth_token):
+    extracted = {**_SAMPLE_EXTRACTED, "date": None}
+    with _ocr_mock(extracted), kopis_mock(_make_kopis_xml("PF_NO_DATE_001", "BTS World Tour")):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers={"Authorization": f"Bearer {get_auth_token}"},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["candidates"] == []
+
+
 @pytest.mark.asyncio
 async def test_scan_no_candidates_when_no_keyword(get_auth_token):
     extracted = {**_SAMPLE_EXTRACTED, "title": None}
