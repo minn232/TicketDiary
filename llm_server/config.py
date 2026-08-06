@@ -22,5 +22,12 @@ class Settings(BaseSettings):
     # 처리 완료 ID를 기록하는 SQLite 파일 경로
     DEDUP_DB_PATH: str = "./processed_ids.sqlite3"
 
+    # vLLM OpenAI 호환 서버 주소. 이 프로세스(FastAPI 래퍼)와 같은 인스턴스에서 뜨지만
+    # 포트가 겹치면 안 됨 - 이 서버 자체가 8000번을 쓰므로(uvicorn main:app --port 8000)
+    # vLLM은 반드시 다른 포트(예: 8001)로 띄우고 여기 맞춰서 채울 것
+    VLLM_BASE_URL: str = "http://localhost:8001/v1"
+    # vLLM은 보통 임의 문자열이면 충분
+    VLLM_API_KEY: str = "EMPTY"
+
 
 settings = Settings()

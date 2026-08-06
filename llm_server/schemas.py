@@ -45,6 +45,7 @@ class CrawlResultCallback(BaseModel):
     ticketing_date: str | None = None  # YYYY-MM-DD
     delivery_date: str | None = None  # YYYY-MM-DD
     artist_name: list[str] | None = None
+    food_allowed: str | None = None  # "가능"/"불가능"/"일부허용"
 
 
 class ArtistResultCallback(BaseModel):
