@@ -51,6 +51,10 @@ async def receive_crawl_result(
         concert.price = body.prices
         updated.append("prices")
 
+    if body.food_allowed is not None:
+        concert.food_allowed = body.food_allowed
+        updated.append("food_allowed")
+
     if body.venue_layout is not None:
         await upsert_venue_layout(
             db,

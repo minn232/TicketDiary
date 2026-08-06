@@ -29,6 +29,7 @@ class ConcertResponse(BaseModel):
     event_type: str
     ticketing_date: datetime | None
     delivery_date: datetime | None
+    food_allowed: str | None
 
 
 class ConcertSummary(BaseModel):

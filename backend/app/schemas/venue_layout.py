@@ -28,6 +28,8 @@ class CrawlResultRequest(BaseModel):
     # 예매 사이트 라인업 텍스트에서 추출한 아티스트명. 포스터 기반 추출(artist-result 웹훅)이
     # 페스티벌처럼 출연진이 많은 공연에서 실패하기 쉬운 걸 보완하는 대체 경로
     artist_name: list[str] | None = None
+    # 음식물 반입 가능 여부 ("가능"/"불가능"/"일부허용"), 언급이 없으면 생략
+    food_allowed: str | None = None
 
 
 class CrawlResultResponse(BaseModel):

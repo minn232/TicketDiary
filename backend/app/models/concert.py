@@ -44,6 +44,8 @@ class Concert(Base):
     # 예매 사이트 크롤링 결과로 채워지는 배송 예정일 공지 (사이트 공통 공지라 티켓별이 아닌 공연 단위)
     delivery_date = Column(DateTime(timezone=True), nullable=True)
     ticketing_links = Column(JSONB, nullable=True)
+    # 음식물 반입 가능 여부 크롤링 결과 ("가능"/"불가능"/"일부허용"), 언급 없으면 None
+    food_allowed = Column(String, nullable=True)
     # KOPIS 상세 API(/pblprfr/{id})로 아티스트/가격 등을 채운 시점. 검색(목록 API) 경유로만
     # 생성된 공연은 이 값이 None이라 artist_name이 비어 있어도 "진짜 출연진 없음"과 구분 못하므로,
     # 상세 조회 시 이 값 유무로 재조회 필요 여부를 판단함 (None이면 아직 상세 미조회)
