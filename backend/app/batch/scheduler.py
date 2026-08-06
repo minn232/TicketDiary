@@ -15,7 +15,7 @@ from app.services.crawler import (
 from app.services.diary import send_diary_requests_to_llm
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
-from app.services.runpod import start_pod, stop_pod, wait_until_llm_server_ready
+from app.services.runpod import start_pod_and_launch_services, stop_pod, wait_until_llm_server_ready
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,9 @@ async def _run_daily_kopis_sync() -> None:
 
 async def _run_pod_start() -> None:
     try:
-        await start_pod()
+        # pod 시작 + SSH 원격으로 start_all.sh 실행까지 한 번에 (LLM팀 Container Start
+        # Command 자동화가 무산되면서 SSH 방식으로 대체함, 2026-08-06)
+        await start_pod_and_launch_services()
     except Exception as e:
         logger.error(f"RunPod pod 시작 오류: {e}")
 
@@ -124,7 +126,7 @@ async def _run_diary_send() -> None:
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
     # LLM팀 GPU pod을 배치 시작 10분 전에 미리 깨워둠 (KST 23:50 = UTC 14:50, 전날 기준).
-    # RUNPOD_API_KEY/RUNPOD_POD_ID 미설정이면 start_pod()이 알아서 아무것도 안 함
+    # RUNPOD_API_KEY/RUNPOD_POD_ID 미설정이면 start_pod_and_launch_services()가 알아서 아무것도 안 함
     scheduler.add_job(_run_pod_start, "cron", hour=14, minute=50, id="pod_start", max_instances=1)
     # KST 자정(00:00) = UTC 15:00
     scheduler.add_job(_run_daily_kopis_sync, "cron", hour=15, minute=0, id="daily_kopis_sync", max_instances=1)
