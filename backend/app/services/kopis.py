@@ -72,6 +72,22 @@ def _parse_date(s: str) -> datetime:
     return datetime.strptime(s.strip(), _DATE_FMT).replace(tzinfo=timezone.utc)
 
 
+# KOPIS poster 필드가 스킴 없이 옴 ("www.kopis.or.kr/upload/...") - 그대로 저장하면 절대
+# URL이 아니라서 requests/PIL 등 외부 소비자가 로컬 파일 경로로 오인해 실패함(LLM팀
+# 포스터 추출 파이프라인에서 실제로 FileNotFoundError로 확인됨). https://를 붙여 보정
+def _normalize_poster_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    url = url.strip()
+    if not url:
+        return None
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("//"):
+        return f"https:{url}"
+    return f"https://{url}"
+
+
 _TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
 
 
@@ -180,7 +196,7 @@ async def _fetch_and_upsert_concerts(
             "start_date": _parse_date(start_raw),
             "end_date": _parse_date(end_raw),
             "genre": [g for g in [genre_name] if g],
-            "poster_url": elem.findtext("poster") or None,
+            "poster_url": _normalize_poster_url(elem.findtext("poster")),
             "event_type": _classify_event_type(name),
         }
         await _upsert_concert(db, data)
@@ -755,7 +771,7 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
         "start_time": _parse_start_time(dtguidance) if dtguidance else None,
         "end_date": _parse_date(end_raw),
         "genre": [g for g in [elem.findtext("genrenm")] if g],
-        "poster_url": elem.findtext("poster") or None,
+        "poster_url": _normalize_poster_url(elem.findtext("poster")),
         "description": elem.findtext("sty") or None,
         "price": _parse_price(pcseguidance),
         "event_type": _classify_event_type(name),
