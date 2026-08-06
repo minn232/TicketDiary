@@ -776,3 +776,32 @@ async def get_concert_detail(
     await db.commit()
     await db.refresh(concert)
     return concert
+
+
+# 다중 아티스트로 확정된(FESTIVAL) 공연의 예매처 링크(concert.ticketing_links)를 KOPIS에서
+# 다시 받아와 갱신한다. concerts.py의 GET 상세조회는 kopis_detail_synced_at이 한 번이라도
+# 채워지면 두 번 다시 KOPIS를 호출하지 않으므로, ticketing_links는 유저가 최초로 조회/등록한
+# 시점의 스냅샷에 영원히 고정된다. 그런데 그 최초 시점이 페스티벌 1차 라인업 공개 직후(얼리버드/
+# 블라인드 판매가 시작되는 시점과 겹칠 수 있음)라면, 이후 실제 예매가 열리며 KOPIS 쪽 relate
+# 링크가 바뀌어도 우리 DB는 그 변화를 영원히 못 보게 된다. 이 함수는 crawler.py의 라인업
+# 재확인 배치(retry_festival_lineup_checks)에서 같이 호출되어 ticketing_links만 최신값으로
+# 덮어쓴다 - artist_name 등 다른 필드는 건드리지 않는다(artist_name은 크롤링/포스터 추출 결과와의
+# 합집합 병합 로직이 따로 있어([[festival_lineup_recrawl_plan]] 참고), 여기서 KOPIS prfcast로
+# 그냥 덮어쓰면 이미 병합된 아티스트 목록을 되돌려버리는 회귀가 생긴다).
+# KOPIS가 새 값을 안 주면(빈 응답/API 실패) 기존 링크를 그대로 유지 - 크롤링 대상을 아예 잃는
+# 회귀를 방지.
+async def refresh_ticketing_links(concert: Concert) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            data = await _fetch_kopis_detail_data(client, concert.kopis_id)
+    except HTTPException as e:
+        logger.warning(f"페스티벌 예매링크 재동기화 실패 ({concert.kopis_id}): {e.detail}")
+        return False
+
+    new_links = data.get("ticketing_links")
+    if not new_links or new_links == concert.ticketing_links:
+        return False
+
+    concert.ticketing_links = new_links
+    concert.kopis_detail_synced_at = datetime.now(timezone.utc)
+    return True

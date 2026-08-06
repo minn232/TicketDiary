@@ -639,6 +639,13 @@ async def _check_festival_lineup(concert_id) -> None:
         ):
             return
 
+        # 크롤링 대상을 고르기 전에 먼저 KOPIS 예매링크를 최신화 - 최초 등록 시점(1차 라인업
+        # 공개 직후, 얼리버드/블라인드 판매와 겹칠 수 있음)에 캡처된 링크가 이후 실제 판매 링크로
+        # 바뀌어도 우리 DB가 영원히 못 따라가는 문제 대응 (자세한 이유는 kopis.py의
+        # refresh_ticketing_links 참고). 여기서 갱신된 값이 실패 없이 반영되도록 즉시 커밋한다.
+        await refresh_ticketing_links(concert)
+        await db.commit()
+
         # 찜/티켓등록 트리거와 달리 특정 사이트에 안 묶인 주기 배치라 ticketing_site 없이
         # concert.ticketing_links만으로 대상 사이트를 고름 (social.py의 찜 갱신 경로와 동일 패턴)
         site_key, direct_url = _pick_crawl_target(None, concert.ticketing_links)

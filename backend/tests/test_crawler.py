@@ -1065,6 +1065,7 @@ async def test_check_festival_lineup_first_visit_uploads_and_saves_snapshot():
         patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
         patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
         patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+        patch("app.services.crawler.refresh_ticketing_links", new=AsyncMock(return_value=False)),
     ):
         await _check_festival_lineup(concert_id)
 
@@ -1095,6 +1096,7 @@ async def test_check_festival_lineup_unchanged_skips_upload():
         patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
         patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
         patch("app.services.crawler._upload_screenshot", new=mock_upload),
+        patch("app.services.crawler.refresh_ticketing_links", new=AsyncMock(return_value=False)),
     ):
         await _check_festival_lineup(concert_id)
 
@@ -1122,6 +1124,7 @@ async def test_check_festival_lineup_changed_uploads_new_version():
         patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
         patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
         patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+        patch("app.services.crawler.refresh_ticketing_links", new=AsyncMock(return_value=False)),
     ):
         await _check_festival_lineup(concert_id)
 
@@ -1164,10 +1167,39 @@ async def test_check_festival_lineup_skips_when_no_site_resolvable():
     with (
         patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
         patch("app.services.crawler._upload_screenshot", new=mock_upload),
+        patch("app.services.crawler.refresh_ticketing_links", new=AsyncMock(return_value=False)),
     ):
         await _check_festival_lineup(concert_id)
 
     mock_upload.assert_not_called()
+
+
+# refresh_ticketing_links가 갱신한 새 링크로 크롤링 대상을 고르는지 테스트 - 얼리버드/블라인드
+# 판매 시점에 캡처된 예매 링크가 실제 판매 링크로 바뀌었을 때, 그 갱신된 값을 바로 사용해야 함
+@pytest.mark.asyncio
+async def test_check_festival_lineup_uses_refreshed_ticketing_link():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(
+        concert_id, ticketing_links={"INTERPARK": "https://tickets.interpark.com/goods/OLD_BLIND"}
+    )
+    mock_db = _make_db_mock(concert)
+
+    async def _refresh(c):
+        c.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/NEW_REAL"}
+        return True
+
+    mock_crawler = AsyncMock(return_value=(b"png", "raw text", "hash", []))
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value="https://s3.example.com/x.png")),
+        patch("app.services.crawler.refresh_ticketing_links", new=_refresh),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    assert mock_crawler.call_args.kwargs["direct_url"] == "https://tickets.interpark.com/goods/NEW_REAL"
 
 
 # 공연이 이미 끝났으면 크롤러 호출 없이 종료하는지 테스트

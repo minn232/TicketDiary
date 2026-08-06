@@ -744,3 +744,129 @@ async def test_sync_handles_kopis_list_api_failure():
             await sync_daily_concerts(db)
 
     # 예외 없이 정상 종료됨
+
+
+# refresh_ticketing_links 테스트
+# (콘서트 상세정보를 최초 1회만 동기화하고 다시 안 보는 기존 구조 때문에, 얼리버드/블라인드
+# 판매 시점에 캡처된 예매 링크가 실제 판매 링크로 바뀌어도 영원히 못 따라가는 문제 대응)
+
+# KOPIS 상세 API의 relates에 예매링크가 있는 XML 생성 (site_name -> url 딕셔너리 기반)
+def _make_detail_xml_with_relates(kopis_id: str, relates: dict[str, str]) -> bytes:
+    relates_xml = "".join(
+        f"<relate><relatenm>{name}</relatenm><relateurl>{url}</relateurl></relate>"
+        for name, url in relates.items()
+    )
+    return (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f"<dbs><db>"
+        f"<mt20id>{kopis_id}</mt20id>"
+        f"<prfnm>{kopis_id} 공연</prfnm>"
+        f"<prfpdfrom>2030.06.01</prfpdfrom>"
+        f"<prfpdto>2030.06.30</prfpdto>"
+        f"<fcltynm>테스트공연장</fcltynm>"
+        f"<genrenm>대중음악</genrenm>"
+        f"<prfcast></prfcast>"
+        f"<pcseguidance></pcseguidance>"
+        f"<sty></sty>"
+        f"<relates>{relates_xml}</relates>"
+        f"</db></dbs>"
+    ).encode("utf-8")
+
+
+# KOPIS 쪽 relate 링크가 바뀌었으면(블라인드→실제 판매 등) ticketing_links를 갱신하고 True를 반환하는지 테스트
+@pytest.mark.asyncio
+async def test_refresh_ticketing_links_updates_when_changed():
+    from app.services.kopis import refresh_ticketing_links
+
+    concert = MagicMock()
+    concert.kopis_id = "PF_REFRESH_1"
+    concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/OLD_BLIND"}
+    concert.kopis_detail_synced_at = None
+
+    detail_xml = _make_detail_xml_with_relates(
+        "PF_REFRESH_1", {"놀유니버스": "https://tickets.interpark.com/goods/NEW_REAL"}
+    )
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=MagicMock(status_code=200, content=detail_xml))
+
+    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+        changed = await refresh_ticketing_links(concert)
+
+    assert changed is True
+    assert concert.ticketing_links == {"INTERPARK": "https://tickets.interpark.com/goods/NEW_REAL"}
+    assert concert.kopis_detail_synced_at is not None
+
+
+# KOPIS 쪽 링크가 기존과 동일하면 아무것도 안 바꾸고 False를 반환하는지 테스트
+@pytest.mark.asyncio
+async def test_refresh_ticketing_links_no_change_returns_false():
+    from app.services.kopis import refresh_ticketing_links
+
+    concert = MagicMock()
+    concert.kopis_id = "PF_REFRESH_2"
+    concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/SAME"}
+    concert.kopis_detail_synced_at = None
+
+    detail_xml = _make_detail_xml_with_relates(
+        "PF_REFRESH_2", {"놀유니버스": "https://tickets.interpark.com/goods/SAME"}
+    )
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=MagicMock(status_code=200, content=detail_xml))
+
+    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+        changed = await refresh_ticketing_links(concert)
+
+    assert changed is False
+    assert concert.ticketing_links == {"INTERPARK": "https://tickets.interpark.com/goods/SAME"}
+    assert concert.kopis_detail_synced_at is None
+
+
+# KOPIS가 relates를 아예 안 주면(빈 응답) 기존 링크를 그대로 유지하는지 테스트 - 크롤링
+# 대상을 아예 잃어버리는 회귀 방지
+@pytest.mark.asyncio
+async def test_refresh_ticketing_links_empty_relates_keeps_existing():
+    from app.services.kopis import refresh_ticketing_links
+
+    concert = MagicMock()
+    concert.kopis_id = "PF_REFRESH_3"
+    concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/KEEP_ME"}
+    concert.kopis_detail_synced_at = None
+
+    detail_xml = _make_detail_xml_with_relates("PF_REFRESH_3", {})
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=MagicMock(status_code=200, content=detail_xml))
+
+    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+        changed = await refresh_ticketing_links(concert)
+
+    assert changed is False
+    assert concert.ticketing_links == {"INTERPARK": "https://tickets.interpark.com/goods/KEEP_ME"}
+
+
+# KOPIS API 호출 자체가 실패해도 예외를 밖으로 던지지 않고 기존 링크를 유지하는지 테스트
+# (배치 하나에서 실패해도 다른 대상 처리가 멈추면 안 됨)
+@pytest.mark.asyncio
+async def test_refresh_ticketing_links_api_failure_keeps_existing():
+    from app.services.kopis import refresh_ticketing_links
+
+    concert = MagicMock()
+    concert.kopis_id = "PF_REFRESH_4"
+    concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/KEEP_ME"}
+    concert.kopis_detail_synced_at = None
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=MagicMock(status_code=502, content=b""))
+
+    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+        changed = await refresh_ticketing_links(concert)
+
+    assert changed is False
+    assert concert.ticketing_links == {"INTERPARK": "https://tickets.interpark.com/goods/KEEP_ME"}

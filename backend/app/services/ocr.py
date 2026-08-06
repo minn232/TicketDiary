@@ -552,6 +552,11 @@ def _parse_ticket_fields_from_layout(annotation: dict, raw_text: str) -> dict | 
         "time": time,
         "shipping_date": _extract_shipping_date(raw_text),
         "location": fields.get("location"),
+        # 예매내역 캡처는 좌석 라벨 자체가 없는 경우가 많아 자연히 None이 되는데, 그건
+        # 그대로 둠(자유 텍스트 입력 없이 실제 배송된 티켓 스캔으로 나중에 채우기로 결정).
+        # 다만 좌석 라벨이 실제로 인식되면(그리드 구조상 드물게 실물 티켓이 이 경로를 타는
+        # 경우 포함) 그 값을 버리지 않고 그대로 사용 - 인식된 정확한 값을 일부러 폐기할
+        # 이유가 없다고 확인함(사용자 확인, 2026-08-04)
         "seat": fields.get("seat"),
         "platform": platform,
         "price": price,

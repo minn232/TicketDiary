@@ -422,7 +422,8 @@ def test_parse_ticket_fields_from_layout_full():
     assert result["event_type"] == "SOLO"
 
 
-# "좌석(1)"처럼 라벨에 개수가 붙어도 정규화돼서 매칭되는지 확인
+# "좌석(1)"처럼 라벨에 개수가 붙어도 정규화돼서 매칭되는지 확인. 인식된 좌석값은
+# 버리지 않고 그대로 사용함(예매내역 화면에 좌석 라벨 자체가 없는 경우만 자연히 None)
 def test_parse_ticket_fields_from_layout_normalizes_seat_label_suffix():
     paragraphs = [
         _paragraph("관람일시", 40, 100, 160, 120),
