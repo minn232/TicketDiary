@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date, datetime, timezone
 from uuid import UUID
 
@@ -26,6 +27,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+# seat_type 비교(중복 판단)용 정규화 - "R석"/"r석"/"R 석"처럼 대소문자·공백 표기만 다른 걸
+# 별개 좌석으로 오인하지 않게 함. 실제 저장값은 원본 그대로 둔다(KOPIS 표기를 우선시하는 게
+# 목적이라 이미 있는 값을 크롤링 쪽 표기로 바꿔치기하면 안 됨 - 비교에만 쓰고 버리는 값)
+def _normalize_seat_type(seat_type: str) -> str:
+    return _WHITESPACE_RE.sub("", seat_type).upper()
+
 
 # LLM팀이 크롤링 분석 결과를 전송하는 웹훅 엔드포인트
 @router.post("/{concert_id}/crawl-result", response_model=CrawlResultResponse)
@@ -47,9 +57,25 @@ async def receive_crawl_result(
         await upsert_timetable(db, concert_id, contents, commit=False)
         updated.append("timetable")
 
+    # KOPIS가 이미 채워둔 가격(seat_type)은 우선순위를 두고 덮어쓰지 않는다 - KOPIS 값이 더
+    # 신뢰할 수 있다고 보고, 크롤링 결과 중 KOPIS에 없는 seat_type(얼리버드/팬티켓 등 KOPIS
+    # 안내에는 없는 추가 가격 유형)만 새로 추가한다. 같은 seat_type이 이미 있으면 크롤링 값은
+    # 무시(KOPIS 값 유지) - 겹치는 걸 새로 덮어쓰고 싶으면 이 필터를 없애면 됨
     if body.prices is not None:
-        concert.price = body.prices
-        updated.append("prices")
+        existing_prices = concert.price or []
+        existing_seat_types = {
+            _normalize_seat_type(p["seat_type"])
+            for p in existing_prices
+            if isinstance(p, dict) and p.get("seat_type")
+        }
+        new_prices = [
+            p
+            for p in body.prices
+            if p.get("seat_type") and _normalize_seat_type(p["seat_type"]) not in existing_seat_types
+        ]
+        if new_prices:
+            concert.price = existing_prices + new_prices
+            updated.append("prices")
 
     if body.food_allowed is not None:
         concert.food_allowed = body.food_allowed

@@ -180,9 +180,13 @@ async def test_crawl_result_timetable_only():
 
 
 # prices만 포함된 결과 수신 → Concert.price 업데이트
+# kopis_id를 매번 새로 생성함 - 이 테스트 스위트는 트랜잭션 롤백 없이 실제 로컬 DB를 그대로
+# 쓰고, crawl-result의 prices는 이제 KOPIS 값과 겹치지 않는 seat_type만 추가하는 병합 방식이라
+# (2026-08-06), 고정 kopis_id를 재사용하면 이전 실행에서 이미 추가된 S석이 남아있어 재실행 시
+# "새로 추가할 게 없다"고 판단해 실패함
 @pytest.mark.asyncio
 async def test_crawl_result_prices_only():
-    concert_id = await _create_concert("PF_CR_PRICE_001")
+    concert_id = await _create_concert(f"PF_CR_PRICE_{uuid.uuid4().hex[:8]}")
 
     body = {
         "prices": [
@@ -202,6 +206,42 @@ async def test_crawl_result_prices_only():
 
     assert response.status_code == 200
     assert response.json()["updated"] == ["prices"]
+
+
+# KOPIS가 이미 채운 R석과 대소문자/공백만 다른 표기("r 석")로 크롤링 결과가 들어오면 같은
+# 좌석으로 인식해서 KOPIS 값을 유지(덮어쓰지 않음)하고, 진짜 새로운 seat_type(얼리버드)만
+# 추가하는지 테스트 (2026-08-06)
+@pytest.mark.asyncio
+async def test_crawl_result_prices_seat_type_normalized_dedup():
+    concert_id = await _create_concert(f"PF_CR_PRICE_NORM_{uuid.uuid4().hex[:8]}")
+
+    body = {
+        "prices": [
+            {"seat_type": "r 석", "price": 999999},  # KOPIS의 "R석"(110,000원)과 같은 좌석 표기 변형
+            {"seat_type": "얼리버드", "price": 50000},  # KOPIS엔 없는 진짜 새 항목
+        ]
+    }
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert response.json()["updated"] == ["prices"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+
+    prices_by_type = {p["seat_type"]: p["price"] for p in concert.price}
+    assert prices_by_type["R석"] == 110000  # KOPIS 값 그대로 유지, 999999로 안 덮어써짐
+    assert "r 석" not in prices_by_type  # 크롤링 쪽 표기로 중복 추가되지 않음
+    assert prices_by_type["얼리버드"] == 50000  # 새 항목은 정상 추가
 
 
 # crawl-result의 artist_name으로 아티스트가 비어있던 공연이 채워지는지 테스트
@@ -336,7 +376,9 @@ async def test_crawl_result_does_not_upgrade_event_type_below_threshold():
 # timetable + prices + venue_layout 모두 포함된 결과 수신
 @pytest.mark.asyncio
 async def test_crawl_result_all_fields():
-    concert_id = await _create_concert("PF_CR_ALL_001")
+    # kopis_id를 매번 새로 생성함 - test_crawl_result_prices_only와 같은 이유
+    # (prices 병합 방식이 고정 ID 재사용 시 재실행에 취약함, 2026-08-06)
+    concert_id = await _create_concert(f"PF_CR_ALL_{uuid.uuid4().hex[:8]}")
 
     body = {
         "timetable": [{"date": "2030-06-01", "time": None, "stage": None, "event": "공연 시작"}],
