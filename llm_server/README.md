@@ -32,21 +32,21 @@ poster_info 스키마(json_schema 강제 출력)를 쓰는 같은 함수(`extrac
 pip install -r requirements.txt
 cp .env.example .env
 # .env 열어서 LLM_EXTRACT_API_KEY, BACKEND_BASE_URL, VLLM_BASE_URL 채우기
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8002
 ```
 
-**포트 주의**: 이 FastAPI 래퍼 자체가 8000번 포트를 씁니다. vLLM(OpenAI 호환 서버)은
-같은 인스턴스에서 **다른 포트**(예: 8001)로 띄우고, `.env`의 `VLLM_BASE_URL`을 그 포트에
-맞게 채워주세요(기본값도 `http://localhost:8001/v1`으로 잡아뒀습니다). 둘 다 8000번으로
-띄우면 포트 충돌 납니다.
+**포트 확정(2026-08-06)**: vLLM이 8000번 포트를 쓰고, LLM팀 인스턴스에 8001번도 이미
+다른 용도로 쓰이고 있어서, 이 FastAPI 래퍼는 **8002번**으로 띄웁니다(위 명령어 그대로).
+`.env`의 `VLLM_BASE_URL` 기본값도 `http://localhost:8000/v1`로 맞춰뒀습니다 — vLLM을
+다른 포트로 띄웠다면 그 값만 바꾸면 됩니다.
 
 이 프로세스 하나만 떠있으면 됩니다 (별도 중계 서버 없음 — 모델 추론과 웹서버가
 같은 프로세스).
 
 ## 도메인/네트워크 (인프라 담당이 처리)
 
-이 서버가 외부에서 `https://llm.ticket-diary.com`으로 접근 가능해야 백엔드가
-요청을 보낼 수 있습니다. Cloudflare Tunnel(`cloudflared`)로 연결하면 인스턴스의
+이 서버(포트 8002)가 외부에서 `https://llm.ticket-diary.com`으로 접근 가능해야
+백엔드가 요청을 보낼 수 있습니다. Cloudflare Tunnel(`cloudflared`)로 연결하면 인스턴스의
 실제 IP를 몰라도(또는 껐다 켜서 바뀌어도) 자동으로 재연결됩니다 — runpod이든
 나중에 다른 클라우드로 바뀌든 이 부분 코드는 그대로 두고 그 인스턴스에서
 `cloudflared` 데몬만 다시 띄우면 됩니다. 자세한 설정은 인프라 담당(백엔드팀)이
@@ -58,7 +58,7 @@ vLLM을 아직 안 띄운 상태여도(또는 `.env`의 `VLLM_BASE_URL`이 아�
 라우팅/인증만 먼저 확인하고 싶으면:
 
 ```bash
-curl -X POST http://localhost:8000/crawl-analyze \
+curl -X POST http://localhost:8002/crawl-analyze \
   -H "Authorization: Bearer <LLM_EXTRACT_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '[{"concert_id": "test-1", "concert_name": "테스트 공연", "screenshot_url": "https://example.com/a.png"}]'
