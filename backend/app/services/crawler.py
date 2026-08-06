@@ -136,6 +136,195 @@ async def _expand_collapsed_sections(page) -> None:
             logger.warning(f"스크롤 리셋 실패 (무시하고 계속): {e}")
 
 
+# 연령확인/이벤트배너/쿠키동의/"예매 안내" 같은 팝업이 스크린샷 위에 그대로 찍히는 걸 막기
+# 위한 범용 닫기 로직. 실측(2026-08-06)에서 "예매 안내" 제목까지는 찾았는데도 안 닫히는
+# 경우가 있었음 - 닫기 버튼이 <button> 태그가 아니거나(div/span 등으로 만든 "버튼"이 흔함),
+# ×가 텍스트가 아니라 아이콘/이미지/CSS content라 선택자로 못 잡는 경우가 원인으로 추정됨.
+# 그래서 클릭이 예외 없이 끝났다고 성공으로 치지 않고, 매 시도 후 컨테이너가 실제로 안
+# 보이게 됐는지 재확인하면서 여러 방법을 순서대로 시도한다. 전부 실패해도 예외 없이 조용히
+# 넘어감(크롤링 자체를 막으면 안 됨)
+
+# "예매 안내" 팝업의 흔한 컨테이너 class 패턴(사이트마다 정확한 이름은 다를 수 있어 대략적으로만).
+# `alert`처럼 구체적인 키워드를 먼저 시도하고, `pop`(YES24가 "pop-alert"/"movie-pop"처럼
+# "popup"이 아니라 "pop"만 쓰는 걸 실측으로 확인, 2026-08-06)처럼 넓은 패턴은 맨 뒤로 미룸 -
+# "pop"은 예고편 재생 팝업/쿠폰 아이콘 등 무관한 요소가 훨씬 많이 섞여서(YES24 실측: 29개 중
+# 진짜 공지 팝업은 뒤쪽에 있었고, 앞쪽 매치를 잘못 클릭했다가 엉뚱한 쿠폰 팝업을 열어버린 사고가
+# 실제로 있었음) 우선순위를 낮게 둠
+_POPUP_CONTAINER_SELECTORS = (
+    '[role="dialog"]',
+    '[class*="alert" i]',
+    '[class*="modal" i]',
+    '[class*="popup" i]',
+    '[class*="layer" i]',  # 국내 사이트에서 흔한 "레이어 팝업" 명명 관례
+    '[class*="dim" i]',  # 배경을 어둡게 깔고 뜨는 오버레이를 감싸는 컨테이너 명명 관례
+    '[class*="pop" i]',  # 가장 넓은 패턴이라 마지막 - 관련없는 요소가 많이 섞일 위험 있음
+)
+
+# XPath용 - 위 셀렉터와 같은 키워드 목록(모달/팝업/레이어/dim/role=dialog)
+_CONTAINER_CLASS_XPATH_COND = (
+    "contains(@class,'modal') or contains(@class,'Modal') "
+    "or contains(@class,'pop') or contains(@class,'Pop') "
+    "or contains(@class,'layer') or contains(@class,'Layer') "
+    "or contains(@class,'dim') or contains(@class,'Dim') "
+    "or @role='dialog'"
+)
+
+_ATTR_CLOSE_SELECTORS = (
+    '[aria-label*="닫기"]',
+    '[aria-label*="close" i]',
+    '[title*="닫기"]',
+    '[class*="close" i]',
+)
+
+# 닫기/확인류 버튼 후보 텍스트. <button> 태그로 한정하지 않음(div/span/a로 만든 "버튼"도 흔함) -
+# 대신 짧은 요소만 후보로 인정해서(_try_close_container의 길이 체크) 본문 문단 중 우연히 같은
+# 단어가 섞인 문장을 잘못 클릭하는 걸 방지
+_CLOSE_TEXT_CANDIDATES = ("×", "✕", "X", "닫기", "확인")
+
+# "예매 안내" 팝업 - 인터파크/YES24/멜론/티켓링크 등 대부분의 예매 사이트 상세 페이지에서
+# 방문할 때마다(당일 재방문 제외) 뜨는 가장 흔한 팝업(실측 확인, 2026-08-06). 이 문구로 먼저
+# 정확히 컨테이너를 특정한 뒤 닫기를 시도하고, 문구 자체가 없는 사이트(YES24 등)는 아래
+# _POPUP_CONTAINER_SELECTORS 범용 탐색이 대신 커버함
+_BOOKING_NOTICE_SIGNAL_TEXTS = ("예매 안내", "예매안내")
+
+
+# locator가 가리키는 요소가 지금 화면에 떠 있는지 (닫혔으면 False) - 클릭이 실제로 먹혔는지
+# 확인하는 용도라 count()/is_visible() 자체가 실패해도(이미 DOM에서 사라졌다면 흔함) False로 처리
+async def _still_visible(locator) -> bool:
+    try:
+        return await locator.count() > 0 and await locator.is_visible()
+    except Exception:
+        return False
+
+
+# container 안(또는 못 찾으면 페이지 전체)에서 닫기류 요소를 찾아 클릭 시도. 여러 방법을
+# 순서대로 시도하며 매번 실제로 닫혔는지 확인 - 닫힌 게 확인되면 즉시 True 반환
+async def _try_close_container(page, container, allow_position_click: bool) -> bool:
+    # 1) aria-label/title/class 기반 - attribute selector라 태그 종류와 무관하게 잡힘
+    for selector in _ATTR_CLOSE_SELECTORS:
+        try:
+            btn = container.locator(selector).first
+            if await btn.count() > 0 and await btn.is_visible():
+                await btn.click(timeout=1_000)
+                await page.wait_for_timeout(300)
+                if not await _still_visible(container):
+                    return True
+        except Exception:
+            continue
+
+    # 2) 텍스트 기반 - 부분 일치로 후보를 여러 개(최대 5개) 뽑되, 텍스트 길이가 짧은 것만
+    # 실제 "버튼"으로 인정(본문 문단처럼 긴 텍스트 안에 우연히 같은 단어가 포함된 경우를 배제).
+    # 텍스트 노드 자신은 스크린리더 전용이라 시각적으로 숨겨져 있고(예: 인터파크의
+    # <button><span class="blind">닫기</span></button>) 실제 클릭 가능한 건 그 부모(버튼/링크/
+    # role=button)인 경우가 흔함(실측 확인, 2026-08-06) - 텍스트 요소 자체가 안 보이면
+    # 가장 가까운 버튼류 조상을 대신 찾아서 클릭한다
+    for text in _CLOSE_TEXT_CANDIDATES:
+        try:
+            candidates = container.get_by_text(text, exact=False)
+            count = min(await candidates.count(), 5)
+            for i in range(count):
+                candidate = candidates.nth(i)
+                content = (await candidate.inner_text()).strip()
+                if len(content) > 15:
+                    continue
+
+                clickable = candidate
+                if not await candidate.is_visible():
+                    ancestor_btn = candidate.locator(
+                        "xpath=ancestor-or-self::*[self::button or self::a or @role='button'][1]"
+                    ).first
+                    if await ancestor_btn.count() > 0 and await ancestor_btn.is_visible():
+                        clickable = ancestor_btn
+                    else:
+                        continue
+
+                await clickable.click(timeout=1_000)
+                await page.wait_for_timeout(300)
+                if not await _still_visible(container):
+                    return True
+        except Exception:
+            continue
+
+    # 3) 최후 수단 - 텍스트/속성/시맨틱 마커 어디에도 안 걸릴 정도로 순수 좌표 기반 클릭
+    # 핸들러만 있는 경우 대응(실측 확인, 2026-08-06 - 멜론은 닫기 아이콘이 배경이미지고 클릭
+    # 핸들러가 헤더 div 전체에 걸려있어 텍스트/속성으로 전혀 못 찾음). "닫기 버튼은 보통 팝업
+    # 우측 상단 모서리 근처에 있다"는 흔한 UI 관례에 기대 그 근방 여러 지점을 순서대로 클릭.
+    # container가 실제 팝업 박스로 특정된 경우에만 의미가 있어서(페이지 전체를 좁게 클릭하면
+    # 안 되므로) allow_position_click=True일 때만 시도
+    if allow_position_click:
+        try:
+            box = await container.bounding_box()
+            if box and box["width"] > 0 and box["height"] > 0:
+                for dx, dy in ((15, 15), (25, 15), (15, 25), (10, 10), (30, 20)):
+                    await page.mouse.click(box["x"] + box["width"] - dx, box["y"] + dy)
+                    await page.wait_for_timeout(300)
+                    if not await _still_visible(container):
+                        return True
+        except Exception:
+            pass
+
+    return False
+
+
+async def _dismiss_popups(page) -> None:
+    # Escape가 대부분의 모달 라이브러리에서 기본 지원되는 가장 부작용 적은 방법이라 먼저 시도
+    try:
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+    # 가장 흔한 "예매 안내" 팝업을 텍스트로 먼저 정확히 특정해서 시도.
+    # exact=True로 찾는다 - 부분 일치(exact=False)로 찾으면 "[휠체어석 예매 안내]" 같은 전혀
+    # 다른 버튼이 먼저 걸려서 엉뚱한 걸 컨테이너로 잡는 경우가 실측으로 확인됨(멜론, 2026-08-06).
+    # 실제 팝업 제목은 앞뒤에 다른 글자 없이 정확히 "예매 안내"/"예매안내"만 있음
+    for signal_text in _BOOKING_NOTICE_SIGNAL_TEXTS:
+        try:
+            signals = page.get_by_text(signal_text, exact=True)
+            signal = None
+            for i in range(min(await signals.count(), 5)):
+                candidate = signals.nth(i)
+                if await candidate.is_visible():
+                    signal = candidate
+                    break
+            if signal is None:
+                continue
+
+            # 조상 후보를 여러 개(가까운 것부터) 뽑아서 순서대로 시도한다 - 가장 가까운 조상이
+            # 팝업 제목만 감싸는 좁은 헤더 div인 경우가 흔해서(인터파크의 popupHead 등, 실측
+            # 확인) 하나만 시도하면 실제 닫기 버튼이 있는 바깥 컨테이너를 놓침
+            containers = signal.locator(f"xpath=ancestor::*[{_CONTAINER_CLASS_XPATH_COND}]")
+            ccount = min(await containers.count(), 4)
+            if ccount == 0:
+                if await _try_close_container(page, page, allow_position_click=False):
+                    return
+                continue
+
+            for i in range(ccount):
+                container = containers.nth(i)
+                if await _try_close_container(page, container, allow_position_click=True):
+                    return
+        except Exception:
+            continue
+
+    # 위에서 못 닫았으면(제목 문구 자체가 없는 사이트 - YES24 등, 또는 다른 종류의 팝업 -
+    # 연령확인/이벤트배너/쿠키동의 등) class/role 기반 범용 탐색으로 한 번 더 시도.
+    # 여기도 `.first`만 쓰면 관련없는 다른 팝업(예: YES24의 예고편 재생용 "movie-pop-wrap"이
+    # "pop-alert-box"보다 먼저 걸림, 실측 확인)을 잘못 잡을 수 있어 여러 후보를 순서대로 시도
+    for container_selector in _POPUP_CONTAINER_SELECTORS:
+        try:
+            candidates = page.locator(container_selector)
+            ccount = min(await candidates.count(), 5)
+            for i in range(ccount):
+                container = candidates.nth(i)
+                if not await container.is_visible():
+                    continue
+                if await _try_close_container(page, container, allow_position_click=True):
+                    return
+        except Exception:
+            continue
+
+
 # 라인업 변경 감지에서 조회수/좋아요수 등 실시간으로 계속 바뀌는 숫자 노이즈를 없애기 위한 정규화.
 # 완벽하진 않음(날짜처럼 진짜 의미있는 숫자도 같이 지워짐) - 라인업 변경 판단 목적으론 괜찮은 트레이드오프
 _DIGIT_RE = re.compile(r"\d+")
@@ -207,6 +396,7 @@ async def crawl_interpark(
                     if await _is_unavailable_page(page):
                         logger.info(f"인터파크 아직 정보 없음/오픈 전으로 추정: {concert.name}")
                         return None
+                    await _dismiss_popups(page)
                     await _expand_collapsed_sections(page)
                     screenshot = await page.screenshot(full_page=True, type="png")
                     if capture_lineup_snapshot:
@@ -238,6 +428,7 @@ async def crawl_interpark(
                 detail_page = await new_page_info.value
                 await detail_page.wait_for_load_state("domcontentloaded")
                 await detail_page.wait_for_timeout(2_000)
+                await _dismiss_popups(detail_page)
                 await _expand_collapsed_sections(detail_page)
                 screenshot = await detail_page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
@@ -279,6 +470,7 @@ async def crawl_yes24(
                         await page.goto(href, wait_until="domcontentloaded", timeout=30_000)
                         await page.wait_for_timeout(2_000)
 
+                await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
                     text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
@@ -330,6 +522,7 @@ async def crawl_melon(
                             logger.info(f"멜론티켓 봇 차단 감지 (상세 페이지): {concert.name}")
                             return None
 
+                await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
                     text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
@@ -357,6 +550,7 @@ async def crawl_kopis(concert: Concert) -> bytes | None:
             browser, page = await _make_page(pw)
             try:
                 await page.goto(url, wait_until="networkidle", timeout=30_000)
+                await _dismiss_popups(page)
                 return await page.screenshot(full_page=True, type="png")
             finally:
                 await browser.close()
@@ -379,6 +573,7 @@ async def crawl_url(url: str, wait_ms: int = 2000, verbose: bool = False) -> byt
                     title = await page.title()
                     logger.info(f"[최종 URL] {page.url}")
                     logger.info(f"[페이지 제목] {title}")
+                await _dismiss_popups(page)
                 return await page.screenshot(full_page=True, type="png")
             finally:
                 await browser.close()
