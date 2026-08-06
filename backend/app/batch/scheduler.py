@@ -2,6 +2,7 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.notification import process_pending_notifications
 from app.services.kopis import sync_daily_concerts
@@ -14,6 +15,7 @@ from app.services.crawler import (
 from app.services.diary import send_diary_requests_to_llm
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
+from app.services.runpod import start_pod, stop_pod, wait_until_llm_server_ready
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +39,28 @@ async def _run_daily_kopis_sync() -> None:
         logger.error(f"KOPIS 일별 동기화 오류: {e}")
 
 
+async def _run_pod_start() -> None:
+    try:
+        await start_pod()
+    except Exception as e:
+        logger.error(f"RunPod pod 시작 오류: {e}")
+
+
+async def _run_pod_stop() -> None:
+    try:
+        await stop_pod()
+    except Exception as e:
+        logger.error(f"RunPod pod 정지 오류: {e}")
+
+
 async def _run_crawl_send() -> None:
     try:
+        # LLM_CRAWL_URL 미설정이면 send_screenshots_to_llm()이 알아서 건너뛰므로 대기 불필요.
+        # 설정돼 있으면 pod이 막 깨어난 직후일 수 있어(모델 로딩 시간) 준비될 때까지 기다렸다가
+        # 전송 - 타임아웃 안에 준비 안 되면 이번 배치는 건너뛰고 다음날 재시도(기존 실패 처리와 동일)
+        if settings.LLM_CRAWL_URL and not await wait_until_llm_server_ready():
+            logger.warning("llm_server 준비 안 됨, 이번 크롤링 전송은 건너뛰고 다음날 재시도")
+            return
         await send_screenshots_to_llm()
     except Exception as e:
         logger.error(f"크롤링 스크린샷 전송 오류: {e}")
@@ -82,6 +104,11 @@ async def _run_artist_genre_sync() -> None:
 
 async def _run_artist_extraction_send() -> None:
     try:
+        # crawl_send와 동일한 이유로 대기 - 이미 위에서 한 번 기다렸을 가능성이 높지만
+        # (같은 pod, 두 배치 사이 20분 텀) 짧게 재확인하는 정도라 비용 거의 없음
+        if settings.LLM_ARTIST_URL and not await wait_until_llm_server_ready():
+            logger.warning("llm_server 준비 안 됨, 이번 아티스트 추출 전송은 건너뛰고 다음날 재시도")
+            return
         await send_posters_for_artist_extraction()
     except Exception as e:
         logger.error(f"포스터 아티스트 추출 요청 전송 오류: {e}")
@@ -96,6 +123,9 @@ async def _run_diary_send() -> None:
 
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
+    # LLM팀 GPU pod을 배치 시작 10분 전에 미리 깨워둠 (KST 23:50 = UTC 14:50, 전날 기준).
+    # RUNPOD_API_KEY/RUNPOD_POD_ID 미설정이면 start_pod()이 알아서 아무것도 안 함
+    scheduler.add_job(_run_pod_start, "cron", hour=14, minute=50, id="pod_start", max_instances=1)
     # KST 자정(00:00) = UTC 15:00
     scheduler.add_job(_run_daily_kopis_sync, "cron", hour=15, minute=0, id="daily_kopis_sync", max_instances=1)
     # KOPIS 동기화와 부하가 겹치지 않도록 5분 뒤로 미룸 (KST 00:05)
@@ -113,6 +143,11 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_diary_send, "cron", hour=15, minute=30, id="diary_send", max_instances=1)
     # event_type=FESTIVAL 공연들의 라인업(출연진) 변경 여부를 매일 재확인 (KST 00:35)
     scheduler.add_job(_run_festival_lineup_check, "cron", hour=15, minute=35, id="festival_lineup_check", max_instances=1)
+    # 그날 배치 다 끝났으면 pod 정지 (KST 01:00 = UTC 16:00)
+    scheduler.add_job(_run_pod_stop, "cron", hour=16, minute=0, id="pod_stop", max_instances=1)
+    # stop 실패(네트워크 오류 등) 대비 백업 - 밤새 GPU 켜진 채 방치되는 비용 누수를 막는 게
+    # 목적이라 이미 꺼져있어도 다시 호출하는 게 안전함 (KST 02:00 = UTC 17:00)
+    scheduler.add_job(_run_pod_stop, "cron", hour=17, minute=0, id="pod_stop_backup", max_instances=1)
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

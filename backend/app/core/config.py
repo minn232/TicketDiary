@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     LLM_CRAWL_URL: str = ""
     LLM_ARTIST_URL: str = ""
     LLM_DIARY_URL: str = ""
+    # LLM팀 GPU pod을 매일 켜고 끄기 위한 RunPod REST API 인증 정보 (비용 절감용, 미설정 시 트리거 안 함)
+    RUNPOD_API_KEY: str = ""
+    RUNPOD_POD_ID: str = ""
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_REGION: str = "ap-northeast-2"
