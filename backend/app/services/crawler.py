@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert, EventType
 from app.models.social import ConcertFollow
+from app.services.kopis import refresh_ticketing_links
 from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
 
@@ -93,6 +94,48 @@ async def _is_unavailable_page(page) -> bool:
     return any(keyword in text for keyword in _UNAVAILABLE_PAGE_KEYWORDS)
 
 
+# NOL(야놀자, nol.yanolja.com) 상세 페이지의 "상품 상세"/"공지사항" 섹션은 기본적으로 접혀있고
+# 각각 "상품 상세 더보기"/"공지사항 더보기" 버튼을 직접 눌러야 전체 내용(라인업 포스터 이미지,
+# 공지 전문)이 펼쳐짐(실측 확인, 2026-08-05 - nol.yanolja.com/ticket/products/26010721). 안
+# 누르면 전체 페이지 스크린샷에서 뒷부분이 잘려서 나온다. 둘 다 순수 인라인 확장이라(모달·페이지
+# 이동 없음, 실측으로 role=dialog 없음/body overflow 안 바뀜 확인) 같은 방식으로 처리 가능.
+# "가격 전체보기"는 이 둘과 달리 모달 팝업이라(role=dialog, 배경 스크롤 잠김) 같은 전체 페이지
+# 스크린샷에 끼워 넣으면 배경을 덮어 오히려 다른 내용을 가리므로 여기서는 다루지 않음 - 별도 캡처가
+# 필요한 기능이라 스코프 밖으로 둔다(가격이 날짜별로 다른 경우에만 의미 있고, 대표가는 보통 본문에
+# 이미 나와 있음).
+#
+# 인터파크의 "NOL 티켓"이 2026-09-08부로 서비스를 종료하고 이 nol.yanolja.com으로 예매가
+# 이관되는 중이라(해당 페이지 공지사항에서 확인), ticketing_links의 INTERPARK 키에 이 도메인
+# URL이 들어오기 시작함 - 그래서 별도 크롤러를 새로 만들지 않고 crawl_interpark 안에서 같이
+# 처리한다. 구 인터파크 페이지엔 이 버튼들 자체가 없어 count()==0으로 조용히 넘어감
+_SHOW_MORE_BUTTON_TEXTS = ("상품 상세 더보기", "공지사항 더보기")
+
+
+async def _expand_collapsed_sections(page) -> None:
+    clicked = False
+    for text in _SHOW_MORE_BUTTON_TEXTS:
+        try:
+            show_more = page.locator(f'button:has-text("{text}")')
+            if await show_more.count() > 0:
+                await show_more.click()
+                await page.wait_for_timeout(500)
+                clicked = True
+        except Exception as e:
+            logger.warning(f"'{text}' 버튼 클릭 실패 (무시하고 계속): {e}")
+
+    if clicked:
+        # 버튼 클릭 시 Playwright가 요소를 뷰포트 안으로 자동 스크롤시키는데, 그 상태로 바로
+        # full_page 스크린샷을 찍으면 position:fixed인 상단 헤더가 원래 위치(맨 위)가 아니라
+        # 스크롤된 지점에 고정된 채로 캡처되어 본문 이미지 중간에 겹쳐 나옴(실측 확인, 2026-08-05
+        # - 헤더가 "더보기" 버튼이 있던 자리에 그대로 끼어들어옴). 스크린샷 직전에 항상 맨 위로
+        # 스크롤을 되돌려 이 문제를 방지한다
+        try:
+            await page.evaluate("window.scrollTo(0, 0)")
+            await page.wait_for_timeout(200)
+        except Exception as e:
+            logger.warning(f"스크롤 리셋 실패 (무시하고 계속): {e}")
+
+
 # 라인업 변경 감지에서 조회수/좋아요수 등 실시간으로 계속 바뀌는 숫자 노이즈를 없애기 위한 정규화.
 # 완벽하진 않음(날짜처럼 진짜 의미있는 숫자도 같이 지워짐) - 라인업 변경 판단 목적으론 괜찮은 트레이드오프
 _DIGIT_RE = re.compile(r"\d+")
@@ -164,6 +207,7 @@ async def crawl_interpark(
                     if await _is_unavailable_page(page):
                         logger.info(f"인터파크 아직 정보 없음/오픈 전으로 추정: {concert.name}")
                         return None
+                    await _expand_collapsed_sections(page)
                     screenshot = await page.screenshot(full_page=True, type="png")
                     if capture_lineup_snapshot:
                         text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
@@ -194,6 +238,7 @@ async def crawl_interpark(
                 detail_page = await new_page_info.value
                 await detail_page.wait_for_load_state("domcontentloaded")
                 await detail_page.wait_for_timeout(2_000)
+                await _expand_collapsed_sections(detail_page)
                 screenshot = await detail_page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
                     text, text_hash, img_srcs = await _capture_lineup_snapshot(detail_page)

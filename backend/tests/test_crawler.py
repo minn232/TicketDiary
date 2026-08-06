@@ -200,6 +200,148 @@ async def test_crawl_interpark_direct_url_nav_menu_open_pending_link_not_false_p
     assert result == expected
 
 
+# _expand_collapsed_sections 테스트 (NOL(야놀자) "상품 상세 더보기"/"공지사항 더보기" 버튼 대응)
+
+# 버튼 텍스트별로 다른 locator mock을 반환하는 헬퍼 (실제 page.locator(f'button:has-text("{text}")')
+# 호출을 셀렉터별로 구분해서 검증하기 위함)
+def _make_locator_by_text(counts: dict[str, int]):
+    locators = {}
+    for text, count in counts.items():
+        loc = AsyncMock()
+        loc.count = AsyncMock(return_value=count)
+        loc.click = AsyncMock()
+        locators[f'button:has-text("{text}")'] = loc
+
+    def _locator(selector):
+        return locators[selector]
+
+    return _locator, locators
+
+
+@pytest.mark.asyncio
+async def test_expand_collapsed_sections_clicks_both_when_both_present():
+    from app.services.crawler import _expand_collapsed_sections
+
+    locator_fn, locators = _make_locator_by_text({"상품 상세 더보기": 1, "공지사항 더보기": 1})
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(side_effect=locator_fn)
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.evaluate = AsyncMock()
+
+    await _expand_collapsed_sections(mock_page)
+
+    locators['button:has-text("상품 상세 더보기")'].click.assert_awaited_once()
+    locators['button:has-text("공지사항 더보기")'].click.assert_awaited_once()
+    # 클릭이 요소를 뷰포트로 자동 스크롤시켜 놓은 상태 그대로 스크린샷을 찍으면 position:fixed
+    # 헤더가 스크롤된 지점에 고정된 채로 찍히는 회귀 방지 - 클릭 후 맨 위로 스크롤을 되돌려야 함
+    # (버튼 2개를 각각 클릭해도 리셋은 한 번만 하면 충분)
+    mock_page.evaluate.assert_awaited_once_with("window.scrollTo(0, 0)")
+
+
+# 둘 중 하나만 있어도(구 인터파크처럼 상품상세는 없고 공지사항만 접혀있는 경우 등) 있는 것만
+# 클릭하고 리셋은 그대로 수행하는지 테스트
+@pytest.mark.asyncio
+async def test_expand_collapsed_sections_clicks_only_the_one_present():
+    from app.services.crawler import _expand_collapsed_sections
+
+    locator_fn, locators = _make_locator_by_text({"상품 상세 더보기": 0, "공지사항 더보기": 1})
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(side_effect=locator_fn)
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.evaluate = AsyncMock()
+
+    await _expand_collapsed_sections(mock_page)
+
+    locators['button:has-text("상품 상세 더보기")'].click.assert_not_called()
+    locators['button:has-text("공지사항 더보기")'].click.assert_awaited_once()
+    mock_page.evaluate.assert_awaited_once_with("window.scrollTo(0, 0)")
+
+
+# 구 인터파크 페이지처럼 두 버튼 다 없으면(count()==0) 클릭도 스크롤 리셋도 안 하는지 테스트
+@pytest.mark.asyncio
+async def test_expand_collapsed_sections_noop_when_neither_present():
+    from app.services.crawler import _expand_collapsed_sections
+
+    locator_fn, locators = _make_locator_by_text({"상품 상세 더보기": 0, "공지사항 더보기": 0})
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(side_effect=locator_fn)
+    mock_page.evaluate = AsyncMock()
+
+    await _expand_collapsed_sections(mock_page)
+
+    for loc in locators.values():
+        loc.click.assert_not_called()
+    mock_page.evaluate.assert_not_called()
+
+
+# 버튼 탐색/클릭 중 예외가 나도(한쪽만 실패해도) 크롤링 전체를 실패시키지 않고, 나머지 버튼은
+# 계속 시도하는지 테스트
+@pytest.mark.asyncio
+async def test_expand_collapsed_sections_swallows_errors_and_continues():
+    from app.services.crawler import _expand_collapsed_sections
+
+    ok_locator = AsyncMock()
+    ok_locator.count = AsyncMock(return_value=1)
+    ok_locator.click = AsyncMock()
+
+    def _locator(selector):
+        if "상품 상세" in selector:
+            raise RuntimeError("페이지 닫힘")
+        return ok_locator
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(side_effect=_locator)
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.evaluate = AsyncMock()
+
+    await _expand_collapsed_sections(mock_page)  # 예외 없이 반환되면 통과
+
+    ok_locator.click.assert_awaited_once()
+    mock_page.evaluate.assert_awaited_once_with("window.scrollTo(0, 0)")
+
+
+# ticketing_links의 INTERPARK 키에 nol.yanolja.com URL이 들어온 경우("NOL 티켓" -> "NOL(야놀자)"
+# 이관, 2026-09-08부로 구 서비스 종료) "상품 상세 더보기" 버튼을 클릭한 뒤 스크린샷을 찍는지 테스트
+@pytest.mark.asyncio
+async def test_crawl_interpark_direct_url_expands_nol_yanolja_show_more(mock_concert):
+    expected = b"nol-yanolja-expanded-png"
+
+    mock_show_more = AsyncMock()
+    mock_show_more.count = AsyncMock(return_value=1)
+    mock_show_more.click = AsyncMock()
+
+    mock_page = AsyncMock()
+    mock_page.goto = AsyncMock()
+    mock_page.wait_for_timeout = AsyncMock()
+    mock_page.inner_text = AsyncMock(return_value="정상 상세 페이지")
+    mock_page.locator = MagicMock(return_value=mock_show_more)
+    mock_page.screenshot = AsyncMock(return_value=expected)
+
+    mock_context = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_browser = AsyncMock()
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_browser.close = AsyncMock()
+    mock_pw = AsyncMock()
+    mock_pw.chromium.launch = AsyncMock(return_value=mock_browser)
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_pw)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("app.services.crawler.async_playwright", return_value=mock_cm):
+        result = await crawl_interpark(
+            mock_concert, direct_url="https://nol.yanolja.com/ticket/products/26010721"
+        )
+
+    assert result == expected
+    # mock_page.locator가 셀렉터와 무관하게 같은 mock을 반환하므로, "상품 상세 더보기"/
+    # "공지사항 더보기" 두 버튼 각각에 대해 한 번씩 총 2번 클릭됨
+    assert mock_show_more.click.await_count == 2
+
+
 # crawl_yes24 테스트
 
 # 링크 없어도 검색 결과 페이지 스크린샷 반환
