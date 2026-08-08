@@ -273,7 +273,7 @@ async def test_crawl_result_artist_name_fills_when_empty():
 # 아티스트는 합집합으로 병합되는지 테스트 (페스티벌 1차/2차/3차 라인업처럼 시간차를 두고 늘어나는 경우 대응)
 @pytest.mark.asyncio
 async def test_crawl_result_artist_name_merges_with_existing():
-    concert_id = await _create_concert(f"PF_CR_ARTIST_MERGE_{uuid.uuid4().hex[:6]}")  # prfcast="테스트아티스트"로 이미 채워짐
+    concert_id = await _create_concert(f"PF_CR_ARTIST_MERGE_{uuid.uuid4().hex}")  # prfcast="테스트아티스트"로 이미 채워짐
 
     body = {"artist_name": ["다른아티스트"]}
     with patch("app.core.deps.settings") as mock_settings:
@@ -297,7 +297,7 @@ async def test_crawl_result_artist_name_merges_with_existing():
 # 크롤링 결과로 온 아티스트가 기존과 완전히 동일하면(병합 결과가 안 바뀌면) updated에 안 잡히는지 테스트
 @pytest.mark.asyncio
 async def test_crawl_result_artist_name_no_change_when_already_merged():
-    concert_id = await _create_concert(f"PF_CR_ARTIST_SAME_{uuid.uuid4().hex[:6]}")  # prfcast="테스트아티스트"로 이미 채워짐
+    concert_id = await _create_concert(f"PF_CR_ARTIST_SAME_{uuid.uuid4().hex}")  # prfcast="테스트아티스트"로 이미 채워짐
 
     body = {"artist_name": ["테스트아티스트"]}
     with patch("app.core.deps.settings") as mock_settings:
@@ -330,7 +330,7 @@ async def test_crawl_result_upgrades_event_type_and_backfills_first_last_day():
         )
     assert ticket_res.json()["is_first_day"] is True
 
-    artists = [f"아티스트{uuid.uuid4().hex[:6]}" for _ in range(5)]
+    artists = [f"아티스트{uuid.uuid4().hex}" for _ in range(5)]
     with patch("app.core.deps.settings") as mock_settings:
         mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -357,7 +357,7 @@ async def test_crawl_result_upgrades_event_type_and_backfills_first_last_day():
 async def test_crawl_result_does_not_upgrade_event_type_below_threshold():
     concert_id = await _create_concert_without_artist(f"PF_CR_NOUPGRADE_{uuid.uuid4().hex[:6]}")
 
-    artists = [f"아티스트{uuid.uuid4().hex[:6]}" for _ in range(4)]
+    artists = [f"아티스트{uuid.uuid4().hex}" for _ in range(4)]
     with patch("app.core.deps.settings") as mock_settings:
         mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

@@ -378,7 +378,7 @@ async def test_sync_creates_new_concert():
 # 신규 공연 + 팔로우 아티스트 일치 시 뉴스피드 생성 테스트
 @pytest.mark.asyncio
 async def test_sync_creates_newsfeed_for_followed_artist():
-    artist_name = f"배치아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"배치아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -442,7 +442,7 @@ async def test_sync_no_newsfeed_for_non_followed_artist():
 # 그날 오전 9시(KST)로 잡히는지 테스트 (자정 배치 직후 바로 발송하지 않도록)
 @pytest.mark.asyncio
 async def test_sync_creates_new_concert_notification_for_followed_artist():
-    artist_name = f"배치알림아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"배치알림아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -480,7 +480,7 @@ async def test_sync_creates_new_concert_notification_for_followed_artist():
 async def test_schedule_new_concert_notifications_does_not_duplicate():
     from app.services.notification import schedule_new_concert_notifications
 
-    artist_name = f"배치중복아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"배치중복아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -520,7 +520,7 @@ async def test_schedule_new_concert_notifications_does_not_duplicate():
 # NEW_CONCERT 알림이 생성되지 않는지 테스트 (뉴스피드는 설정과 무관하게 그대로 생성됨)
 @pytest.mark.asyncio
 async def test_sync_no_new_concert_notification_when_setting_off():
-    artist_name = f"배치설정끔아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"배치설정끔아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -556,7 +556,7 @@ async def test_sync_no_new_concert_notification_when_setting_off():
 # NEW_CONCERT 알림은 생성되지 않는지 테스트 (온디맨드 상세조회로 먼저 생긴 공연 시나리오)
 @pytest.mark.asyncio
 async def test_sync_no_new_concert_notification_for_existing_concert_backfill():
-    artist_name = f"배치백필아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"배치백필아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -588,7 +588,7 @@ async def test_sync_no_new_concert_notification_for_existing_concert_backfill():
 # 기존 공연 (artist_name 있음) -> 상세 API 재호출 없이 뉴스피드만 생성 테스트
 @pytest.mark.asyncio
 async def test_sync_skips_detail_api_for_existing_concert():
-    artist_name = f"배치기존아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"배치기존아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_BATCH_{uuid.uuid4().hex[:8]}"
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}

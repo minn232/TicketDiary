@@ -108,7 +108,7 @@ def _llm_headers():
 @pytest.mark.asyncio
 async def test_artist_result_normalizes_and_saves():
     token = await _get_token()
-    existing = f"기존아티스트_{uuid.uuid4().hex[:6]}"
+    existing = f"기존아티스트_{uuid.uuid4().hex}"
     await _create_concert(f"PF_AR_EXIST_{uuid.uuid4().hex[:6]}", existing, token)
 
     concert_id = await _create_concert(f"PF_AR_TARGET_{uuid.uuid4().hex[:6]}", "", token)
@@ -134,7 +134,7 @@ async def test_artist_result_upgrades_event_type_at_threshold():
     token = await _get_token()
     concert_id = await _create_concert(f"PF_AR_UPGRADE_{uuid.uuid4().hex[:6]}", "", token)
 
-    artists = [f"아티스트{uuid.uuid4().hex[:6]}" for _ in range(5)]
+    artists = [f"아티스트{uuid.uuid4().hex}" for _ in range(5)]
     with patch("app.core.deps.settings") as mock_settings:
         mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -153,7 +153,7 @@ async def test_artist_result_upgrades_event_type_at_threshold():
 @pytest.mark.asyncio
 async def test_artist_result_generates_news_feed_for_existing_follower():
     token = await _get_token()
-    artist = f"소급알림아티스트_{uuid.uuid4().hex[:6]}"
+    artist = f"소급알림아티스트_{uuid.uuid4().hex}"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         follow_res = await ac.patch(

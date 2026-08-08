@@ -279,7 +279,7 @@ async def test_get_news_feed_empty():
 async def test_news_feed_created_on_artist_concert_detail():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -307,7 +307,7 @@ async def test_news_feed_created_on_artist_concert_detail():
 async def test_news_feed_pagination():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"피드페이지아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"피드페이지아티스트_{uuid.uuid4().hex}"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         await ac.patch(
@@ -359,7 +359,7 @@ async def test_news_feed_not_created_for_non_followed_artist():
 async def test_news_feed_no_duplicate():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
     xml = _make_detail_xml(kopis_id, artist_name)
 
@@ -388,7 +388,7 @@ async def test_news_feed_no_duplicate():
 async def test_news_feed_created_immediately_on_follow_for_existing_concert():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"뒤늦은팔로우아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"뒤늦은팔로우아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
 
     # 공연을 먼저 생성 (아직 팔로우 안 한 상태)
@@ -420,7 +420,7 @@ async def test_news_feed_created_immediately_on_follow_for_existing_concert():
 async def test_news_feed_no_duplicate_on_refollow_same_artist():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"재팔로우아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"재팔로우아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
 
     await _fetch_concert(kopis_id, artist_name, token)
@@ -461,7 +461,7 @@ async def test_get_news_feed_no_auth_401():
 async def test_mark_feed_read_success():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -489,7 +489,7 @@ async def test_mark_feed_read_success():
 async def test_mark_feed_read_persisted():
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -531,7 +531,7 @@ async def test_mark_feed_read_not_found_404():
 async def test_mark_feed_read_other_user_404():
     token_a = await _get_token()
     token_b = await _get_token()
-    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex[:6]}"
+    artist_name = f"뉴스피드아티스트_{uuid.uuid4().hex}"
     kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

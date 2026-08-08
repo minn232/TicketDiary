@@ -215,8 +215,8 @@ async def test_summary_basic_stats():
 # 집계되는지 테스트 - 아티스트A가 2번, 아티스트B가 1번 관람됐으니 아티스트A의 장르가 우세해야 함
 @pytest.mark.asyncio
 async def test_summary_top_genre_from_artist_genre_cache():
-    artist_a = f"장르아티스트A_{uuid.uuid4().hex[:6]}"
-    artist_b = f"장르아티스트B_{uuid.uuid4().hex[:6]}"
+    artist_a = f"장르아티스트A_{uuid.uuid4().hex}"
+    artist_b = f"장르아티스트B_{uuid.uuid4().hex}"
     concert_id1 = await _create_concert(f"PF_SUM_GENRE_{uuid.uuid4().hex[:6]}", artists=artist_a)
     concert_id2 = await _create_concert(f"PF_SUM_GENRE_{uuid.uuid4().hex[:6]}", artists=artist_b)
     concert_id3 = await _create_concert(f"PF_SUM_GENRE_{uuid.uuid4().hex[:6]}", artists=artist_a)
@@ -239,7 +239,7 @@ async def test_summary_top_genre_from_artist_genre_cache():
 # 관람한 아티스트가 전부 장르 캐시에 없거나(genre=None 포함) 캐시 자체가 없으면 None
 @pytest.mark.asyncio
 async def test_summary_top_genre_none_when_no_matching_genre():
-    artist_c = f"장르아티스트C_{uuid.uuid4().hex[:6]}"
+    artist_c = f"장르아티스트C_{uuid.uuid4().hex}"
     concert_id = await _create_concert(f"PF_SUM_GENRE_NONE_{uuid.uuid4().hex[:6]}", artists=artist_c)
     token = await _get_token()
 
@@ -258,8 +258,8 @@ async def test_summary_top_genre_none_when_no_matching_genre():
 # K-pop이 2표(둘 다 기여), 힙합은 1표(artist_multi만 기여)라 K-pop이 우세해야 함
 @pytest.mark.asyncio
 async def test_summary_top_genre_counts_each_genre_of_multi_genre_artist():
-    artist_multi = f"복합장르아티스트_{uuid.uuid4().hex[:6]}"
-    artist_single = f"단일장르아티스트_{uuid.uuid4().hex[:6]}"
+    artist_multi = f"복합장르아티스트_{uuid.uuid4().hex}"
+    artist_single = f"단일장르아티스트_{uuid.uuid4().hex}"
     concert_id1 = await _create_concert(f"PF_SUM_MULTI_{uuid.uuid4().hex[:6]}", artists=artist_multi)
     concert_id2 = await _create_concert(f"PF_SUM_MULTI_{uuid.uuid4().hex[:6]}", artists=artist_single)
     token = await _get_token()

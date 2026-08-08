@@ -2,16 +2,55 @@ import asyncio
 import sys
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 
 from app.main import app
 
 # Windows에서 asyncio 에러 방지
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+# 세션 시작 시 1회, 로컬 dev DB를 깨끗하게 비운다. 이 DB가 실제 dev용으로도 같이 쓰이고
+# 테스트 실행마다 데이터가 누적돼서([[flaky_test_fuzzy_artist_match]]의 근본 배경이었음
+# - 6000+ concerts 누적으로 아티스트명 퍼지매칭 오탐 확률이 올라감), 매 세션 시작 전에
+# 싹 비워서 테스트가 항상 빈 DB에서 시작하게 함.
+# host가 localhost/127.0.0.1이 아니면 절대 실행하지 않음 - 실수로 원격/프로덕션 DB를
+# 가리키는 상태로 테스트를 돌렸을 때 TRUNCATE가 나가는 참사를 막기 위한 안전장치.
+@pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
+async def _clean_db_before_session():
+    from app.core.config import settings
+    from app.core.database import engine
+
+    host = urlsplit(settings.DATABASE_URL.replace("+asyncpg", "")).hostname
+    if host not in ("localhost", "127.0.0.1"):
+        raise RuntimeError(
+            f"DATABASE_URL host가 localhost가 아님({host}) - 안전을 위해 테스트 DB 초기화를 중단합니다. "
+            "원격/프로덕션 DB를 가리키고 있는 게 아닌지 확인하세요."
+        )
+
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            text("SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename != 'alembic_version'")
+        )
+        tables = [row[0] for row in result]
+        if tables:
+            await conn.execute(text(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE"))
+
+    # 이 픽스처는 세션 스코프 이벤트 루프에서 도는데, 각 테스트는 함수 스코프 이벤트 루프를
+    # 쓴다(pytest.ini의 asyncio_default_fixture_loop_scope = function). engine이 여기서
+    # 세션 루프에 연결을 맺어두면 이후 테스트들이 다른 루프에서 그 커넥션을 재사용하려다
+    # "attached to a different loop" 에러가 남 - 여기서 바로 dispose해서 다음 사용(각
+    # 테스트의 함수 스코프 루프) 시 새 커넥션을 새로 맺게 한다(_reset_db_pool과 같은 이유).
+    await engine.dispose()
+    print(f"\n[conftest] 테스트 세션 시작 전 로컬 DB 초기화 완료 ({len(tables)}개 테이블)")
+
+    yield
 
 
 # 테스트마다 DB 연결 풀 초기화

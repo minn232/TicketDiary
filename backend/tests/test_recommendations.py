@@ -136,8 +136,8 @@ async def test_sync_artist_similarities_skips_already_cached():
     token = await _get_token()
     kopis_a = f"PF_LFM_A_{uuid.uuid4().hex[:6]}"
     kopis_b = f"PF_LFM_B_{uuid.uuid4().hex[:6]}"
-    artist_a = f"신규아티스트_{uuid.uuid4().hex[:6]}"
-    artist_b = f"기존아티스트_{uuid.uuid4().hex[:6]}"
+    artist_a = f"신규아티스트_{uuid.uuid4().hex}"
+    artist_b = f"기존아티스트_{uuid.uuid4().hex}"
 
     await _create_concert(kopis_a, artist_a, token)
     await _create_concert(kopis_b, artist_b, token)
@@ -163,8 +163,8 @@ async def test_sync_artist_similarities_continues_after_one_artist_fails():
     token = await _get_token()
     kopis_broken = f"PF_LFM_BROKEN_{uuid.uuid4().hex[:6]}"
     kopis_ok = f"PF_LFM_OK_{uuid.uuid4().hex[:6]}"
-    artist_broken = f"가장먼저오는아티스트_{uuid.uuid4().hex[:6]}"
-    artist_ok = f"나중에오는아티스트_{uuid.uuid4().hex[:6]}"
+    artist_broken = f"가장먼저오는아티스트_{uuid.uuid4().hex}"
+    artist_ok = f"나중에오는아티스트_{uuid.uuid4().hex}"
 
     await _create_concert(kopis_broken, artist_broken, token)
     await _create_concert(kopis_ok, artist_ok, token)
@@ -265,8 +265,8 @@ async def test_sync_artist_genres_skips_already_cached():
     token = await _get_token()
     kopis_a = f"PF_LFG_A_{uuid.uuid4().hex[:6]}"
     kopis_b = f"PF_LFG_B_{uuid.uuid4().hex[:6]}"
-    artist_a = f"신규장르아티스트_{uuid.uuid4().hex[:6]}"
-    artist_b = f"기존장르아티스트_{uuid.uuid4().hex[:6]}"
+    artist_a = f"신규장르아티스트_{uuid.uuid4().hex}"
+    artist_b = f"기존장르아티스트_{uuid.uuid4().hex}"
 
     await _create_concert(kopis_a, artist_a, token)
     await _create_concert(kopis_b, artist_b, token)
@@ -291,7 +291,7 @@ async def test_sync_artist_genres_skips_already_cached():
 async def test_sync_artist_genres_caches_none_when_no_whitelisted_tag():
     token = await _get_token()
     kopis_id = f"PF_LFG_NOMATCH_{uuid.uuid4().hex[:6]}"
-    artist = f"매칭안되는아티스트_{uuid.uuid4().hex[:6]}"
+    artist = f"매칭안되는아티스트_{uuid.uuid4().hex}"
     await _create_concert(kopis_id, artist, token)
 
     with patch("app.services.lastfm.fetch_top_tags", AsyncMock(return_value=["seen live", "awesome"])):
@@ -313,7 +313,7 @@ async def test_sync_artist_genres_caches_none_when_no_whitelisted_tag():
 async def test_sync_artist_genres_stores_multiple_genres():
     token = await _get_token()
     kopis_id = f"PF_LFG_MULTI_{uuid.uuid4().hex[:6]}"
-    artist = f"복합장르아티스트_{uuid.uuid4().hex[:6]}"
+    artist = f"복합장르아티스트_{uuid.uuid4().hex}"
     await _create_concert(kopis_id, artist, token)
 
     with patch("app.services.lastfm.fetch_top_tags", AsyncMock(return_value=["k-pop", "rap", "seen live"])):
@@ -356,7 +356,7 @@ async def test_ensure_artist_genres_cached_skips_already_cached():
 @pytest.mark.asyncio
 async def test_register_ticket_triggers_immediate_genre_caching():
     token = await _get_token()
-    artist = f"즉시등록아티스트_{uuid.uuid4().hex[:6]}"
+    artist = f"즉시등록아티스트_{uuid.uuid4().hex}"
     concert_id = await _create_concert(f"PF_TICKET_GENRE_{uuid.uuid4().hex[:6]}", artist, token)
 
     with patch("app.services.lastfm.fetch_top_tags", AsyncMock(return_value=["k-pop"])):
@@ -400,7 +400,7 @@ async def test_recommendations_empty_without_follows_or_tickets():
 @pytest.mark.asyncio
 async def test_recommendations_basic_ranking_and_exclusions():
     token = await _get_token()
-    seed = f"팔로우아티스트_{uuid.uuid4().hex[:6]}"
+    seed = f"팔로우아티스트_{uuid.uuid4().hex}"
     high = f"유사도높음_{uuid.uuid4().hex[:6]}"
     low = f"유사도낮음_{uuid.uuid4().hex[:6]}"
     no_concert = f"공연없음_{uuid.uuid4().hex[:6]}"
@@ -489,7 +489,7 @@ async def test_recommendations_limit_param():
 async def test_recommendations_cold_start_falls_back_to_ticket_history():
     token = await _get_token()
     user_id = await _get_user_id(token)
-    watched = f"관람아티스트_{uuid.uuid4().hex[:6]}"
+    watched = f"관람아티스트_{uuid.uuid4().hex}"
     similar = f"관람유사_{uuid.uuid4().hex[:6]}"
 
     watched_concert_id = await _create_concert(f"PF_REC_WATCHED_{uuid.uuid4().hex[:6]}", watched, token)
