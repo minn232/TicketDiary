@@ -758,24 +758,28 @@ async def send_screenshots_to_llm() -> None:
 # 자정 배치: 아티스트 정보 없는 공연의 포스터를 VLM팀에 보내 아티스트 추출 요청
 # (포스터 내용은 시간이 지나도 안 바뀌므로 크롤링과 달리 쿨다운/재시도 없이 한 번만 시도함 -
 # 전송 자체가 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에서 다시 시도됨)
-async def send_posters_for_artist_extraction() -> None:
+# limit: scripts/send_artist_extraction_now.py 같은 수동 트리거에서 소규모로 먼저
+# 테스트해보고 싶을 때만 씀 - 자정 배치 호출부는 안 넘기므로 기존 동작(전체 전송) 그대로.
+# 반환값은 실제로 전송(=attempted_at 마킹)된 건수(전송 실패/대상 없음이면 0).
+async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     if not settings.LLM_ARTIST_URL:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
-        return
+        return 0
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Concert).where(
-                Concert.artist_name == [],
-                Concert.poster_url.isnot(None),
-                Concert.artist_extraction_attempted_at.is_(None),
-            )
+        query = select(Concert).where(
+            Concert.artist_name == [],
+            Concert.poster_url.isnot(None),
+            Concert.artist_extraction_attempted_at.is_(None),
         )
+        if limit is not None:
+            query = query.limit(limit)
+        result = await db.execute(query)
         concerts = list(result.scalars().all())
 
     if not concerts:
         logger.info("아티스트 추출 대상 공연 없음")
-        return
+        return 0
 
     payload = [
         {"concert_id": str(c.id), "concert_name": c.name, "poster_url": c.poster_url}
@@ -792,7 +796,7 @@ async def send_posters_for_artist_extraction() -> None:
             response.raise_for_status()
     except Exception as e:
         logger.error(f"LLM팀 포스터 전송 실패: {e}")
-        return
+        return 0
 
     now = datetime.now(timezone.utc)
     concert_ids = [c.id for c in concerts]
@@ -803,6 +807,7 @@ async def send_posters_for_artist_extraction() -> None:
         await db.commit()
 
     logger.info(f"LLM팀 포스터 전송 완료: {len(concerts)}건")
+    return len(concerts)
 
 
 # 재시도 배치에서 동시에 띄우는 브라우저 프로세스 수 상한 (무제한 병렬은 메모리/CPU 부담이 큼)

@@ -268,3 +268,37 @@ async def test_send_posters_skips_when_no_url_configured():
 
         # 예외 없이 조용히 리턴되는지만 확인
         await send_posters_for_artist_extraction()
+
+
+@pytest.mark.asyncio
+async def test_send_posters_respects_limit():
+    # 수동 트리거 스크립트(scripts/send_artist_extraction_now.py)의 --limit 옵션이 실제로
+    # 전송 대상을 제한하는지 확인 - 자정 배치 호출부는 limit을 안 넘기므로 영향 없음
+    token = await _get_token()
+    concert_id_1 = await _create_concert(f"PF_LIMIT_{uuid.uuid4().hex[:6]}", "", token)
+    concert_id_2 = await _create_concert(f"PF_LIMIT_{uuid.uuid4().hex[:6]}", "", token)
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        sent = await send_posters_for_artist_extraction(limit=1)
+
+    assert sent == 1
+    assert len(mock_client.post.call_args.kwargs["json"]) == 1
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id_1))
+        c1 = result.scalar_one()
+        result = await db.execute(select_concert_by_id(concert_id_2))
+        c2 = result.scalar_one()
+    # 둘 중 하나만 attempted_at이 찍혀야 함(어느 쪽이 뽑히는지는 정렬 순서에 안 묶어둠)
+    attempted_count = sum(1 for c in (c1, c2) if c.artist_extraction_attempted_at is not None)
+    assert attempted_count == 1
