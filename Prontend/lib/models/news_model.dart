@@ -5,8 +5,8 @@ import 'concert_model.dart';
 /// 백엔드 `GET /social/feed`의 `NewsFeedResponse`(schemas/social.py)를 그대로
 /// 받아 화면용 필드로 변환합니다. 백엔드 피드는 "팔로우한 아티스트의 새 공연이
 /// 등록됐다"는 알림 수준의 데이터(공연명/포스터/기간/공연장)만 담고 있어서,
-/// 카드 요약([description])과 상세 본문([content])은 그 정보를 조합해 프론트에서
-/// 만들어 채웁니다.
+/// 카드 요약([description])과 상세 본문([contentTop]/[contentBottom])은 그
+/// 정보를 조합해 프론트에서 만들어 채웁니다.
 class NewsModel {
   /// 피드 항목 UUID(백엔드 `id`). 읽음 처리(`PATCH /social/feed/{id}/read`)에
   /// 사용합니다. 백엔드 연동 없이 만든 폴백 카드는 null입니다.
@@ -26,19 +26,33 @@ class NewsModel {
   /// 소식 한 줄 요약(폴라로이드 카드에 노출).
   final String description;
 
-  /// 소식 상세(카드를 눌렀을 때 확장되는 화면)에 보여줄 줄글 본문.
-  final String content;
+  /// 소식 상세(카드를 눌렀을 때 확장되는 화면)에 보여줄 줄글 본문 중
+  /// [venue] 위쪽에 오는 부분(공연 기간까지).
+  final String contentTop;
+
+  /// 줄글 본문 중 [venue] 아래쪽에 오는 부분(티케팅 날짜 등).
+  ///
+  /// 공연장 정보는 [contentTop]/[contentBottom] 어디에도 포함되지 않고
+  /// [venue]로 따로 빠져 있습니다 — 상세 화면에서 공연장 이름을 눌러
+  /// 지도로 바로 이동할 수 있게 하려면 줄글 속 텍스트가 아니라 두 텍스트
+  /// 사이에 끼워 넣는 별도의 탭 가능한 위젯으로 그려야 하기 때문입니다.
+  final String contentBottom;
 
   /// 소식 상세 화면에서 아티스트 이름과 본문 사이에 들어갈 이미지.
   final String articleImageUrl;
+
+  /// 공연장 이름. 상세 화면에서 탭하면 지도 앱으로 검색해 이동합니다.
+  final String? venue;
 
   NewsModel({
     required this.artist,
     required this.concert,
     required this.imageUrl,
     required this.description,
-    this.content = '',
+    this.contentTop = '',
+    this.contentBottom = '',
     this.articleImageUrl = '',
+    this.venue,
     this.id,
     this.concertId,
     this.isRead = true,
@@ -70,11 +84,12 @@ class NewsModel {
 
     final descriptionParts = <String>['새 공연이 등록됐어요!', ?period];
 
-    final contentLines = <String>[
+    final contentTopLines = <String>[
       '$artistName의 새 공연 <$concertName>이(가) 등록되었습니다.',
       '',
       if (period != null) '공연 기간  $period',
-      '공연장  ${venue ?? '미정'}',
+    ];
+    const contentBottomLines = <String>[
       '',
       '예매 일정과 상세 정보는 예매처에서 확인해주세요.',
     ];
@@ -87,8 +102,10 @@ class NewsModel {
       concert: concertName,
       imageUrl: posterUrl,
       description: descriptionParts.join(' '),
-      content: contentLines.join('\n'),
+      contentTop: contentTopLines.join('\n'),
+      contentBottom: contentBottomLines.join('\n'),
       articleImageUrl: posterUrl,
+      venue: venue,
     );
   }
 
@@ -97,8 +114,9 @@ class NewsModel {
   /// 읽음 처리 대상이 아니고, 그래서 [isRead]도 항상 true(NEW 배지 없음)로 둡니다.
   ///
   /// 카드 요약([description])은 제목 아래에 티케팅(예매) 오픈일까지 남은
-  /// 일수를 D-day로 보여줍니다. 상세 본문([content])에는 아티스트/공연
-  /// 기간/공연장/티케팅 상태를 모두 채워 넣습니다.
+  /// 일수를 D-day로 보여줍니다. 상세 본문에는 출연진/공연 기간
+  /// ([contentTop])과 티케팅 날짜([contentBottom])를 채워 넣고, 그 사이에
+  /// 공연장([venue])이 들어갑니다.
   factory NewsModel.fromFavoritedConcert(ConcertModel concert) {
     final period = _formatPeriod(
       concert.startDate?.toIso8601String(),
@@ -109,13 +127,9 @@ class NewsModel {
         ? concert.artistName.join(', ')
         : null;
 
-    final contentLines = <String>[
-      '찜한 공연 <${concert.name}>의 정보입니다.',
-      '',
-      if (artists != null) '아티스트  $artists',
+    final contentTopLines = <String>[
+      if (artists != null) '출연진  $artists',
       if (period != null) '공연 기간  $period',
-      '공연장  ${concert.venue ?? '미정'}',
-      '티케팅  $dDay',
     ];
 
     return NewsModel(
@@ -124,9 +138,11 @@ class NewsModel {
       artist: '찜한 공연',
       concert: concert.name,
       imageUrl: concert.posterImageUrl,
-      description: '티케팅 $dDay',
-      content: contentLines.join('\n'),
+      description: '티케팅 날짜  $dDay',
+      contentTop: contentTopLines.join('\n'),
+      contentBottom: '티케팅 날짜  $dDay',
       articleImageUrl: concert.posterImageUrl,
+      venue: concert.venue,
     );
   }
 

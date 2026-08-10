@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../models/ticket_scan.dart';
 import '../services/api_client.dart';
 import '../services/ticket_scan_service.dart';
+import 'responsive_text.dart';
 import 'ticket_alignment_detector.dart';
 
 enum _ScanStage { positioning, aligned, capturing }
@@ -240,8 +242,9 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
 
           // 개발용 임시 버튼: 카메라/백엔드 없이 테스트용 더미 티켓만 추가
           Positioned(
-            bottom: 24,
-            right: 16,
+            // 왼쪽 위 닫기 버튼(top+8) 바로 아래에 겹치지 않게 배치.
+            top: MediaQuery.of(context).padding.top + 56,
+            left: 16,
             child: FloatingActionButton.extended(
               heroTag: 'debug_force_scan',
               onPressed: _debugAddFakeTicket,
@@ -286,14 +289,39 @@ class _ScanGuideOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 높이는 기존 기준(화면 폭의 86%에 14.8:6 비율)을 그대로 유지하고,
-        // 가로 폭만 12:6 비율에 맞춰 줄입니다.
-        final guideHeight = constraints.maxWidth * 0.86 * 6 / 14.8;
-        final guideWidth = guideHeight * 12 / 6; // 12:6 비율
+        // 기존 기준(화면 폭의 86%에 14.9:6 비율)의 짧은 변 길이를 그대로
+        // 구한 뒤, 90도 돌려(가로↔세로 맞바꿈) 세로로 긴 가이드 박스로
+        // 만들고, 전체 크기를 30% 키웁니다. 긴 변 비율은 6:14.9(입장권까지
+        // 붙어 있는 티켓 전체 규격)로 맞춥니다.
+        final baseShortSide = constraints.maxWidth * 0.86 * 6 / 14.9;
+        final baseLongSide = baseShortSide * 14.9 / 6; // 6:14.9 비율
+        const enlargeFactor = 1.3;
+        final guideWidth = baseShortSide * enlargeFactor;
+        final guideHeight = baseLongSide * enlargeFactor;
         final guideRect = Rect.fromCenter(
           center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2 - 30),
           width: guideWidth,
           height: guideHeight,
+        );
+
+        // 박스 아래쪽에서 kTicketStubHeightRatio(14.9 중 4.5)만큼이
+        // "입장티켓" 영역입니다. 공연을 이미 본 뒤 추가하는 티켓은 입장권
+        // 스텁이 뜯겨 있을 수 있어, 점선으로 경계를 표시해 두 영역을
+        // 구분해 보여줍니다(인식 자체는 둘 중 하나만 채워도 통과합니다 —
+        // [LiveTicketAlignmentDetector] 참고).
+        final stubTop =
+            guideRect.bottom - guideRect.height * kTicketStubHeightRatio;
+        final ticketZone = Rect.fromLTRB(
+          guideRect.left,
+          guideRect.top,
+          guideRect.right,
+          stubTop,
+        );
+        final stubZone = Rect.fromLTRB(
+          guideRect.left,
+          stubTop,
+          guideRect.right,
+          guideRect.bottom,
         );
 
         return Stack(
@@ -325,6 +353,27 @@ class _ScanGuideOverlay extends StatelessWidget {
               ),
             ),
 
+            // 입장티켓 영역과의 경계를 점선으로 표시.
+            Positioned(
+              left: guideRect.left,
+              top: stubTop - 2,
+              width: guideRect.width,
+              height: 4,
+              child: const CustomPaint(painter: _DashedLinePainter()),
+            ),
+
+            // "티켓" / "입장티켓" 라벨. 사용자가 폰을 시계반대방향으로
+            // 90도 돌린 채로 촬영한다고 가정하므로, 라벨을 미리 시계
+            // 방향으로 90도 돌려둬야 실제 촬영 자세에서 똑바로 읽힙니다.
+            Positioned.fromRect(
+              rect: ticketZone,
+              child: const Center(child: _RotatedGuideLabel(text: '티켓')),
+            ),
+            Positioned.fromRect(
+              rect: stubZone,
+              child: const Center(child: _RotatedGuideLabel(text: '입장티켓')),
+            ),
+
             Positioned(
               top: guideRect.bottom + 24,
               left: 24,
@@ -332,9 +381,9 @@ class _ScanGuideOverlay extends StatelessWidget {
               child: Text(
                 _hintText,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 16,
+                  fontSize: context.sp(16),
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -344,6 +393,55 @@ class _ScanGuideOverlay extends StatelessWidget {
       },
     );
   }
+}
+
+/// 가이드 박스 안의 "티켓" / "입장티켓" 구역 라벨. 사용자가 폰을
+/// 시계반대방향으로 90도 돌린 채 촬영하므로, 여기서 미리 시계방향으로
+/// 90도 돌려둬야 실제로 폰을 돌렸을 때 똑바로 읽힙니다.
+class _RotatedGuideLabel extends StatelessWidget {
+  const _RotatedGuideLabel({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: math.pi / 2,
+      child: Text(
+        text,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: context.sp(15),
+          fontWeight: FontWeight.w800,
+          shadows: const [Shadow(color: Colors.black87, blurRadius: 6)],
+        ),
+      ),
+    );
+  }
+}
+
+/// 가이드 박스 안에 "티켓"/"입장티켓" 영역 경계를 표시하는 가로 점선.
+class _DashedLinePainter extends CustomPainter {
+  const _DashedLinePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.85)
+      ..strokeWidth = 2;
+    const dash = 6.0;
+    const gap = 5.0;
+    final y = size.height / 2;
+    var x = 0.0;
+    while (x < size.width) {
+      final end = (x + dash).clamp(0.0, size.width);
+      canvas.drawLine(Offset(x, y), Offset(end, y), paint);
+      x = end + gap;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedLinePainter oldDelegate) => false;
 }
 
 /// 가이드 박스(구멍)를 제외한 나머지 영역만 잘라내는 클리퍼.

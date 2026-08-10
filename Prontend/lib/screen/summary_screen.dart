@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/summary_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
+import '../widgets/responsive_text.dart';
 
 class SummaryScreen extends StatefulWidget {
   const SummaryScreen({super.key});
@@ -271,7 +272,7 @@ class _PeriodTag extends StatelessWidget {
           child: Text(
             text,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: context.sp(13),
               fontWeight: FontWeight.w800,
               color: selected ? Colors.white : Colors.black87,
             ),
@@ -306,8 +307,8 @@ class _SummaryCard extends StatelessWidget {
         Text(
           value ?? '',
           textAlign: center ? TextAlign.center : TextAlign.left,
-          style: const TextStyle(
-            fontSize: 16,
+          style: TextStyle(
+            fontSize: context.sp(16),
             fontWeight: FontWeight.w800,
             color: Colors.black87,
           ),
@@ -344,8 +345,8 @@ class _SummaryCard extends StatelessWidget {
                   Text(
                     title,
                     textAlign: center ? TextAlign.center : TextAlign.left,
-                    style: const TextStyle(
-                      fontSize: 12,
+                    style: TextStyle(
+                      fontSize: context.sp(12),
                       fontWeight: FontWeight.w900,
                       color: Colors.black87,
                     ),
@@ -424,9 +425,9 @@ class _ArtistList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (artists.isEmpty) {
-      return const Text(
+      return Text(
         '기록 없음',
-        style: TextStyle(fontSize: 13, color: Colors.black38),
+        style: TextStyle(fontSize: context.sp(13), color: Colors.black38),
       );
     }
     return Column(
@@ -437,8 +438,8 @@ class _ArtistList extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 6),
             child: Text(
               '• $a',
-              style: const TextStyle(
-                fontSize: 14,
+              style: TextStyle(
+                fontSize: context.sp(14),
                 fontWeight: FontWeight.w700,
                 color: Colors.black87,
               ),

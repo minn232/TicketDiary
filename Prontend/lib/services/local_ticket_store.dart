@@ -135,6 +135,8 @@ class LocalTicketStore {
     List<String>? concertPhotoUrls,
     bool? isFirstDay,
     bool? isLastDay,
+    DateTime? tornAt,
+    bool clearTornAt = false,
   }) async {
     final raw = await _readRaw();
     final index = raw.indexWhere((json) => json['id'] == ticketId);
@@ -151,6 +153,7 @@ class LocalTicketStore {
       concertPhotoUrls: concertPhotoUrls,
       isFirstDay: isFirstDay,
       isLastDay: isLastDay,
+      tornAt: clearTornAt ? null : (tornAt ?? current.tornAt),
     );
 
     raw[index] = updated.toJson();

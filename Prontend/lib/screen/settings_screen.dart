@@ -11,6 +11,7 @@ import '../services/notification_settings_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
+import '../widgets/responsive_text.dart';
 
 /// 아직 백엔드와 연동되지 않은 알림 항목의 라벨 색상(회색 처리용).
 const Color _unconnectedTextColor = Color(0x611A1A1A);
@@ -155,12 +156,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
                   child: Text(
                     '설정',
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: context.sp(18),
                       fontWeight: FontWeight.w900,
                       color: Colors.black87,
                     ),
@@ -197,10 +198,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           initiallyExpanded: pushExpanded,
                           onExpansionChanged: (v) =>
                               setState(() => pushExpanded = v),
-                          title: const Text(
+                          title: Text(
                             '푸쉬 알림',
                             style: TextStyle(
-                              fontSize: 15,
+                              fontSize: context.sp(15),
                               fontWeight: FontWeight.w800,
                               color: Colors.black87,
                             ),
@@ -304,7 +305,7 @@ class _SwitchRow extends StatelessWidget {
               child: Text(
                 title,
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: context.sp(15),
                   fontWeight: FontWeight.w800,
                   color: titleColor ?? Colors.black87,
                 ),
@@ -344,8 +345,8 @@ class _MenuRow extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 15,
+                  style: TextStyle(
+                    fontSize: context.sp(15),
                     fontWeight: FontWeight.w800,
                     color: Colors.black87,
                   ),
@@ -400,8 +401,8 @@ class _LoginStatusBanner extends StatelessWidget {
                   Expanded(
                     child: Text(
                       label,
-                      style: const TextStyle(
-                        fontSize: 15,
+                      style: TextStyle(
+                        fontSize: context.sp(15),
                         fontWeight: FontWeight.w800,
                         color: Colors.black87,
                       ),
@@ -693,11 +694,11 @@ class _ProfileRow extends StatelessWidget {
                     border: Border.all(color: Colors.white, width: 2),
                   ),
                   alignment: Alignment.center,
-                  child: const Text(
+                  child: Text(
                     '!',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 14,
+                      fontSize: context.sp(14),
                       fontWeight: FontWeight.w900,
                       height: 1,
                     ),
@@ -709,7 +710,7 @@ class _ProfileRow extends StatelessWidget {
         const SizedBox(height: 10),
         Text(
           label,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
         ),
       ],
     );
@@ -744,9 +745,9 @@ class _KakaoLoginButton extends StatelessWidget {
                   color: Color(0xFF3C1E1E),
                 ),
               )
-            : const Text(
+            : Text(
                 '카카오로 로그인',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
               ),
       ),
     );
@@ -781,9 +782,9 @@ class _LogoutButton extends StatelessWidget {
                   color: Colors.white,
                 ),
               )
-            : const Text(
+            : Text(
                 '로그아웃',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
               ),
       ),
     );

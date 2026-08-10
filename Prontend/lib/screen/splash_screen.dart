@@ -46,6 +46,32 @@ class _SplashScreenState extends State<SplashScreen>
   /// 배율만큼 더 크게 보여줍니다. 최종 페이지 크기에는 영향이 없습니다.
   static const double _bookSizeBoost = 1.2;
 
+  // ---- 닫힌 책 장식 요소 비율(책 폭 w / 높이 h 기준) ----
+  // 아래 값들은 예전에 고정 픽셀(아이폰17 기준 book≈251x441)로 짜여
+  // 있어서, 화면 비율이 달라 책 크기가 달라지는 다른 기기(아이패드 등)
+  // 에서는 책 대비 장식 크기가 어긋나 보였습니다. bookWidth/bookHeight는
+  // 항상 diaryAspectRatio를 유지하며 기기별로 커지거나 작아지므로, 이
+  // 값들을 w(또는 h) 비율로 표현해두면 어느 기기에서든 책과 같은 비율로
+  // 스케일됩니다(원래 픽셀값 / 아이폰17 기준 book 크기로 환산).
+  static const double _edgeInsetRatio = 0.0239; // 6 / 250.85
+  static const double _edgeInsetRatioV = 0.01133; // 5 / 441.3
+  static const double _edgeRadiusRatio = 0.01993; // 5 / 250.85
+  static const double _edgeShadowBlurRatio = 0.0877; // 22 / 250.85
+  static const double _edgeShadowOffsetRatio = 0.02719; // 12 / 441.3
+  static const double _ribbonProtrudeRatio = 0.02946; // 13 / 441.3
+  static const double _ribbonWidthRatio = 0.03588; // 9 / 250.85
+  static const double _ribbonHeightRatio = 0.05439; // 24 / 441.3
+  static const double _ribbonRadiusRatio = 0.00797; // 2 / 250.85
+  static const double _coverRadiusRatio = 0.0279; // 7 / 250.85
+  static const double _coverShadowBlurRatio = 0.07176; // 18 / 250.85
+  static const double _coverShadowOffsetXRatio = 0.00797; // 2 / 250.85
+  static const double _coverShadowOffsetYRatio = 0.02266; // 10 / 441.3
+  static const double _coverEdgeHighlightWidthRatio = 0.04784; // 12 / 250.85
+  static const double _bandInsetRatio = 0.00453; // 2 / 441.3
+  static const double _bandRadiusRatio = 0.01196; // 3 / 250.85
+  static const double _bandShadowOffsetXRatio = 0.00399; // 1 / 250.85
+  static const double _coverTitleGapRatio = 0.02266; // 10 / 441.3
+
   static const Duration _totalDuration = Duration(milliseconds: 4000);
 
   // ---- 타임라인(전체 0.0~1.0 기준 구간) ----
@@ -284,25 +310,25 @@ class _SplashScreenState extends State<SplashScreen>
         children: [
           // ---- 속지 묶음(닫혀있을 때 오른쪽으로 살짝 삐져나와 보이는 종이들) ----
           Positioned(
-            left: 6,
+            left: w * _edgeInsetRatio,
             right: 0,
-            top: 5,
-            bottom: 5,
+            top: h * _edgeInsetRatioV,
+            bottom: h * _edgeInsetRatioV,
             child: Container(
               decoration: BoxDecoration(
                 color: _pageColor,
-                borderRadius: const BorderRadius.horizontal(
-                  right: Radius.circular(5),
+                borderRadius: BorderRadius.horizontal(
+                  right: Radius.circular(w * _edgeRadiusRatio),
                 ),
                 border: Border.all(
                   color: Colors.black.withValues(alpha: outlineAlpha),
                   width: 0.7,
                 ),
-                boxShadow: const [
+                boxShadow: [
                   BoxShadow(
                     color: Colors.black45,
-                    blurRadius: 22,
-                    offset: Offset(0, 12),
+                    blurRadius: w * _edgeShadowBlurRatio,
+                    offset: Offset(0, h * _edgeShadowOffsetRatio),
                   ),
                 ],
               ),
@@ -313,13 +339,15 @@ class _SplashScreenState extends State<SplashScreen>
           // 갈피끈(리본). 속지 아래로 삐져나온 디테일.
           Positioned(
             right: w * 0.22,
-            bottom: -13,
+            bottom: -h * _ribbonProtrudeRatio,
             child: Container(
-              width: 9,
-              height: 24,
-              decoration: const BoxDecoration(
-                color: Color(0xFFB0413E),
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(2)),
+              width: w * _ribbonWidthRatio,
+              height: h * _ribbonHeightRatio,
+              decoration: BoxDecoration(
+                color: const Color(0xFFB0413E),
+                borderRadius: BorderRadius.vertical(
+                  bottom: Radius.circular(w * _ribbonRadiusRatio),
+                ),
               ),
             ),
           ),
@@ -514,12 +542,15 @@ class _SplashScreenState extends State<SplashScreen>
                 end: Alignment.bottomRight,
                 colors: [Color(0xFF6E4C39), _coverColor, Color(0xFF4A3227)],
               ),
-              borderRadius: BorderRadius.circular(7),
-              boxShadow: const [
+              borderRadius: BorderRadius.circular(w * _coverRadiusRatio),
+              boxShadow: [
                 BoxShadow(
                   color: Colors.black38,
-                  blurRadius: 18,
-                  offset: Offset(2, 10),
+                  blurRadius: w * _coverShadowBlurRatio,
+                  offset: Offset(
+                    w * _coverShadowOffsetXRatio,
+                    h * _coverShadowOffsetYRatio,
+                  ),
                 ),
               ],
             ),
@@ -535,11 +566,11 @@ class _SplashScreenState extends State<SplashScreen>
                   left: 0,
                   top: 0,
                   bottom: 0,
-                  width: 12,
+                  width: w * _coverEdgeHighlightWidthRatio,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.horizontal(
-                        left: Radius.circular(7),
+                      borderRadius: BorderRadius.horizontal(
+                        left: Radius.circular(w * _coverRadiusRatio),
                       ),
                       gradient: LinearGradient(
                         begin: Alignment.centerLeft,
@@ -556,18 +587,18 @@ class _SplashScreenState extends State<SplashScreen>
                 // 밴드(고무줄) 디테일.
                 Positioned(
                   right: w * 0.12,
-                  top: -2,
-                  bottom: -2,
-                  width: 9,
+                  top: -h * _bandInsetRatio,
+                  bottom: -h * _bandInsetRatio,
+                  width: w * _ribbonWidthRatio,
                   child: Container(
                     decoration: BoxDecoration(
                       color: const Color(0xFF3B2A20),
-                      borderRadius: BorderRadius.circular(3),
-                      boxShadow: const [
+                      borderRadius: BorderRadius.circular(w * _bandRadiusRatio),
+                      boxShadow: [
                         BoxShadow(
                           color: Colors.black38,
-                          blurRadius: 3,
-                          offset: Offset(1, 0),
+                          blurRadius: w * _bandRadiusRatio,
+                          offset: Offset(w * _bandShadowOffsetXRatio, 0),
                         ),
                       ],
                     ),
@@ -590,7 +621,7 @@ class _SplashScreenState extends State<SplashScreen>
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
+                      SizedBox(height: h * _coverTitleGapRatio),
                       Text(
                         'TICKET DIARY',
                         style: TextStyle(
@@ -629,7 +660,11 @@ class _TitlePageContent extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: FittedBox(
-          fit: BoxFit.scaleDown,
+          // scaleDown은 작아지는 방향으로만 맞춰서, 책이 화면보다 훨씬 큰
+          // 기기(아이패드 등)에서는 이 속표지 아이콘/글자가 고정 크기 그대로
+          // 남아 페이지에 비해 작아 보였습니다. contain은 양방향으로 맞춰
+          // 어느 기기에서든 페이지 크기에 비례해 보입니다.
+          fit: BoxFit.contain,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -829,7 +864,8 @@ class _RoomTablePainter extends CustomPainter {
     canvas.rotate(-1.15);
 
     final len = size.shortestSide * 0.30;
-    const w = 7.0;
+    // 원래 고정 7px 몸통 폭 기준 비율(7 / iPhone17 기준 shortestSide 402).
+    final w = size.shortestSide * 0.0174;
 
     // 몸통(노란 육각 연필 느낌으로 위/아래 톤 분리).
     canvas.drawRect(
@@ -840,26 +876,29 @@ class _RoomTablePainter extends CustomPainter {
       Rect.fromLTWH(0, -w / 2, len, w / 3),
       Paint()..color = const Color(0xFFE6B95C),
     );
-    // 깎인 나무 부분 + 심.
+    // 깎인 나무 부분 + 심(폭 대비 비율은 고정 픽셀 시절과 동일하게 유지).
+    final tipLen = w * (13 / 7);
     final tip = Path()
       ..moveTo(len, -w / 2)
-      ..lineTo(len + 13, 0)
+      ..lineTo(len + tipLen, 0)
       ..lineTo(len, w / 2)
       ..close();
     canvas.drawPath(tip, Paint()..color = const Color(0xFFE8D5B5));
+    final leadOffset = w * (8 / 7);
+    final leadHalf = w * (1.6 / 7);
     final lead = Path()
-      ..moveTo(len + 8, -1.6)
-      ..lineTo(len + 13, 0)
-      ..lineTo(len + 8, 1.6)
+      ..moveTo(len + leadOffset, -leadHalf)
+      ..lineTo(len + tipLen, 0)
+      ..lineTo(len + leadOffset, leadHalf)
       ..close();
     canvas.drawPath(lead, Paint()..color = const Color(0xFF3A3A3A));
     // 지우개 + 금속 밴드.
     canvas.drawRect(
-      Rect.fromLTWH(-4, -w / 2, 4, w),
+      Rect.fromLTWH(-w * 4 / 7, -w / 2, w * 4 / 7, w),
       Paint()..color = const Color(0xFF9E9E9E),
     );
     canvas.drawRect(
-      Rect.fromLTWH(-11, -w / 2, 7, w),
+      Rect.fromLTWH(-w * 11 / 7, -w / 2, w, w),
       Paint()..color = const Color(0xFFD98880),
     );
 
@@ -935,12 +974,15 @@ class _LeatherCoverPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rng = math.Random(21);
 
-    // 가죽의 얼룩덜룩한 질감을 아주 옅은 반점으로 표현.
+    // 가죽의 얼룩덜룩한 질감을 아주 옅은 반점으로 표현. size는 이미 책
+    // 크기(w x h, 기기별로 diaryAspectRatio에 맞춰 조정됨)이므로, 반점/
+    // 박음질 크기를 size 비율로 두면 어느 기기에서든 커버와 같은 비율로
+    // 보입니다(예전엔 고정 픽셀이라 아이폰17 기준에서만 맞았습니다).
     final blotch = Paint()..style = PaintingStyle.fill;
     for (var i = 0; i < 46; i++) {
       final cx = rng.nextDouble() * size.width;
       final cy = rng.nextDouble() * size.height;
-      final r = 6 + rng.nextDouble() * 22;
+      final r = size.shortestSide * (0.0239 + rng.nextDouble() * 0.0877);
       blotch.color = (rng.nextBool() ? Colors.black : Colors.white).withValues(
         alpha: 0.015 + rng.nextDouble() * 0.02,
       );
@@ -952,16 +994,19 @@ class _LeatherCoverPainter extends CustomPainter {
       ..color = const Color(0xFF8A6A50).withValues(alpha: 0.75)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
+    final stitchInset = size.shortestSide * 0.0319;
     final rrect = RRect.fromRectAndRadius(
-      const EdgeInsets.all(8).deflateRect(Offset.zero & size),
-      const Radius.circular(6),
+      EdgeInsets.all(stitchInset).deflateRect(Offset.zero & size),
+      Radius.circular(size.shortestSide * 0.0239),
     );
+    final dashLength = size.shortestSide * 0.01993;
+    final dashStep = size.shortestSide * 0.03987;
     final path = Path()..addRRect(rrect);
     for (final metric in path.computeMetrics()) {
       var d = 0.0;
       while (d < metric.length) {
-        canvas.drawPath(metric.extractPath(d, d + 5), stitchPaint);
-        d += 10;
+        canvas.drawPath(metric.extractPath(d, d + dashLength), stitchPaint);
+        d += dashStep;
       }
     }
   }
