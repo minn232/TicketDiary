@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'responsive_text.dart';
+
 /// 공연 포스터 배경.
 ///
 /// 백엔드에서 [imageUrl]로 실제 포스터 이미지를 받아오면 그 이미지를(살짝 투명하게)
@@ -57,7 +59,7 @@ class PosterGradientPlaceholder extends StatelessWidget {
           'CONCERT\nPOSTER',
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 44,
+            fontSize: context.sp(44),
             fontWeight: FontWeight.w900,
             letterSpacing: 2,
             color: Colors.white.withValues(alpha: 0.12),

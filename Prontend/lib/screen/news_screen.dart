@@ -9,6 +9,7 @@ import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
+import 'package:ticketdiary/widgets/responsive_text.dart';
 
 import 'news_detail_overlay.dart';
 
@@ -186,7 +187,7 @@ class _NewsScreenState extends State<NewsScreen> {
             '소식을 불러오지 못했어요.\n$reason',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: context.sp(13),
               fontWeight: FontWeight.w700,
               color: Colors.black.withValues(alpha: 0.45),
               height: 1.5,
@@ -281,7 +282,7 @@ class _PolaroidCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: context.sp(11),
                         fontWeight: FontWeight.bold,
                         color: Colors.black.withValues(alpha: 0.4),
                         letterSpacing: 0.5,
@@ -299,10 +300,10 @@ class _PolaroidCard extends StatelessWidget {
                         color: const Color(0xFFE0455E),
                         borderRadius: BorderRadius.circular(999),
                       ),
-                      child: const Text(
+                      child: Text(
                         'NEW',
                         style: TextStyle(
-                          fontSize: 8,
+                          fontSize: context.sp(8),
                           fontWeight: FontWeight.w900,
                           color: Colors.white,
                           letterSpacing: 0.5,
@@ -327,8 +328,8 @@ class _PolaroidCard extends StatelessWidget {
                 data.concert,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
+                style: TextStyle(
+                  fontSize: context.sp(13),
                   fontWeight: FontWeight.w900,
                   color: Colors.black87,
                 ),
@@ -339,7 +340,7 @@ class _PolaroidCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: context.sp(11),
                   fontWeight: FontWeight.w500,
                   color: Colors.grey.shade600,
                   height: 1.3,

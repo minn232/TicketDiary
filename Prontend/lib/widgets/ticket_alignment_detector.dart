@@ -2,6 +2,13 @@ import 'dart:async';
 import 'dart:math' show sqrt;
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
+/// 스캔 가이드 박스(6:14.9, 입장권 포함 티켓 전체 규격) 중 "입장티켓"이
+/// 차지하는 세로 비율(아래쪽 4.5). 공연을 이미 본 뒤 추가하는 티켓은
+/// 입장권 스텁이 뜯겨 있어 이 부분이 비어 있을 수 있으므로, 감지기와
+/// 가이드 오버레이(UI) 양쪽이 같은 값을 공유합니다.
+const double kTicketStubHeightRatio = 4.5 / 14.9;
 
 /// 티켓이 스캔 가이드 박스에 잘 맞춰졌는지 판단하는 감지기 인터페이스.
 abstract class TicketAlignmentDetector {
@@ -87,6 +94,20 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
 ///    종이 밝기, 바깥쪽은 배경(책상 등)이라 차이가 크지만, 박스에 아무
 ///    것도 없으면 안팎이 같은 배경이라 차이가 거의 없습니다 — 이 조건이
 ///    "박스에 티켓을 맞췄을 때만" 찍히게 하는 핵심 필터입니다.
+///
+/// 공연 전 티켓은 입장권 스텁이 붙어 있어 가이드 박스(6:14.9) 전체를
+/// 채우지만, 공연을 다 본 뒤 추가하는 티켓은 스텁이 이미 뜯겨 있어 박스의
+/// 한쪽 끝([kTicketStubHeightRatio]만큼)이 빈 채로 남습니다. 그래서 위
+/// 1~4번 판정을 "박스 전체" 기준과 "스텁을 뺀 티켓 영역만" 기준으로 각각
+/// 실행해서, 둘 중 하나만 만족해도 정렬로 인정합니다.
+///
+/// **주의**: 카메라 원본 프레임(raw sensor buffer)의 행(row)/열(col) 축이
+/// 화면에 그려지는 가이드 박스의 세로/가로 축 중 정확히 어느 쪽에
+/// 대응하는지(그리고 스텁이 시작 쪽/끝 쪽 중 어디에 놓이는지)는 기기의
+/// 센서 장착 방향(Android `sensorOrientation` 등)에 따라 달라질 수 있고,
+/// 이 프로젝트엔 실기기로 카메라를 켜서 검증할 방법이 없었습니다. 그래서
+/// "위/아래/왼쪽/오른쪽 중 한쪽을 스텁 비율만큼 제외"하는 4가지 후보를
+/// 모두 검사해서, 실제 대응 관계가 어느 쪽이든 정상 동작하도록 합니다.
 class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   LiveTicketAlignmentDetector(
     this._controller, {
@@ -136,8 +157,26 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
       StreamController<void>.broadcast();
   bool _busy = false;
   bool _emitted = false;
-  double? _smoothBrightness;
-  int _stableCount = 0;
+
+  /// 판정 후보 영역들: 박스 전체 1개 + "스텁 쪽 끝을 제외한 티켓 영역"
+  /// 4가지(위/아래 행 제외, 왼쪽/오른쪽 열 제외 — 실제 센서 방향을 몰라
+  /// 4가지를 모두 둠). 각 후보의 rowStart/rowEnd/colStart/colEnd는
+  /// 박스 안쪽 범위([0,1])에 대한 비율입니다.
+  static const List<({double rowStart, double rowEnd, double colStart, double colEnd})>
+      _regionCandidates = [
+    (rowStart: 0, rowEnd: 1, colStart: 0, colEnd: 1), // 박스 전체
+    (rowStart: 0, rowEnd: 1 - kTicketStubHeightRatio, colStart: 0, colEnd: 1), // 아래쪽 행 제외
+    (rowStart: kTicketStubHeightRatio, rowEnd: 1, colStart: 0, colEnd: 1), // 위쪽 행 제외
+    (rowStart: 0, rowEnd: 1, colStart: 0, colEnd: 1 - kTicketStubHeightRatio), // 오른쪽 열 제외
+    (rowStart: 0, rowEnd: 1, colStart: kTicketStubHeightRatio, colEnd: 1), // 왼쪽 열 제외
+  ];
+
+  /// 후보별 밝기 기준선(EMA)과 연속 안정 프레임 수. 후보마다 독립적으로
+  /// 추적해서, 그 후보가 실제로 "티켓으로 채워진" 쪽이면 정상 수렴해
+  /// 정렬로 인정될 수 있습니다.
+  final List<double?> _smoothBrightness =
+      List<double?>.filled(_regionCandidates.length, null);
+  final List<int> _stableCounts = List<int>.filled(_regionCandidates.length, 0);
 
   @override
   Stream<bool> get alignmentStream => _output.stream;
@@ -159,38 +198,33 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     );
   }
 
+  /// 테스트 전용: 실제 카메라 스트림/하드웨어 없이 프레임 하나를 직접
+  /// 분석 파이프라인에 넣습니다. 이 프로젝트엔 실기기로 카메라를 켜서
+  /// 검증할 방법이 없어서, 합성 프레임으로 정렬 판정 로직(특히
+  /// [_regionCandidates] 4방향 후보)을 단위 테스트로 확인하는 용도입니다.
+  @visibleForTesting
+  void debugProcessFrame(CameraImage image) => _onFrame(image);
+
   void _onFrame(CameraImage image) {
     if (_busy || _emitted || _output.isClosed) return;
     _busy = true;
     try {
-      final stats = _analyze(image);
-      final brightnessOk =
-          stats.brightness >= minBrightness && stats.brightness <= maxBrightness;
-      final contrastOk = stats.contrast >= minContrast;
+      final analysis = _analyze(image);
 
-      // 티켓이 박스를 채웠는지: 중심(박스 안)과 가장자리(박스 밖)의 평균
-      // 밝기가 충분히 달라야 합니다. 박스가 비어 있으면(안팎이 같은 배경)
-      // 차이가 거의 없어 여기서 걸러집니다.
-      final fillsGuide = stats.hasOuter &&
-          (stats.brightness - stats.outerBrightness).abs() >= minCenterEdgeDelta;
+      var anyReady = false;
+      for (var i = 0; i < _regionCandidates.length; i++) {
+        final pass = _evaluateRegion(
+          analysis.regions[i],
+          outerBrightness: analysis.outerBrightness,
+          hasOuter: analysis.hasOuter,
+          baseline: _smoothBrightness[i],
+          onBaseline: (v) => _smoothBrightness[i] = v,
+        );
+        _stableCounts[i] = pass ? _stableCounts[i] + 1 : 0;
+        if (_stableCounts[i] >= requiredStableFrames) anyReady = true;
+      }
 
-      // 바로 직전 프레임과 비교하면 카메라 자동노출의 프레임 단위 노이즈에도
-      // 흔들림으로 오판하기 쉬우므로, 천천히 따라오는 이동평균 기준선과
-      // 비교합니다(진짜 손떨림/움직임은 몇 프레임 안에 기준선도 같이 밀어내
-      // 여전히 잡아냅니다).
-      final baseline = _smoothBrightness;
-      final steady = baseline == null
-          ? false
-          : (stats.brightness - baseline).abs() <= maxFrameDelta;
-      _smoothBrightness = baseline == null
-          ? stats.brightness
-          : baseline + (stats.brightness - baseline) * smoothingFactor;
-
-      _stableCount = (brightnessOk && contrastOk && steady && fillsGuide)
-          ? _stableCount + 1
-          : 0;
-
-      if (_stableCount >= requiredStableFrames && !_emitted) {
+      if (anyReady && !_emitted) {
         _emitted = true;
         _output.add(true);
       }
@@ -199,16 +233,42 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     }
   }
 
-  /// 프레임 가운데 영역([centerMarginFraction]로 가장자리를 제외한 부분)의
-  /// 평균 밝기(brightness)·대비(표준편차, contrast)와, 가장자리 띠
-  /// ([outerBandFraction])의 평균 밝기를 계산합니다. 매 픽셀을 다 읽으면
-  /// 비용이 커서 행/열 방향으로 듬성듬성 샘플링합니다.
+  /// 중심 영역 통계 하나가 정렬 판정 4가지 조건(밝기/대비/안정성/안-밖
+  /// 대비)을 모두 만족하는지 검사하고, 그 영역 전용 밝기 기준선(EMA)을
+  /// 갱신합니다. 후보마다 독립된 기준선을 쓰므로, 그중 하나만 티켓으로
+  /// 채워져도 그쪽 기준선은 정상 수렴해 정렬로 인정될 수 있습니다.
+  bool _evaluateRegion(
+    _RegionStats stats, {
+    required double outerBrightness,
+    required bool hasOuter,
+    required double? baseline,
+    required void Function(double) onBaseline,
+  }) {
+    final brightnessOk =
+        stats.mean >= minBrightness && stats.mean <= maxBrightness;
+    final contrastOk = stats.contrast >= minContrast;
+    final fillsGuide = hasOuter &&
+        (stats.mean - outerBrightness).abs() >= minCenterEdgeDelta;
+    final steady = baseline == null
+        ? false
+        : (stats.mean - baseline).abs() <= maxFrameDelta;
+    onBaseline(baseline == null
+        ? stats.mean
+        : baseline + (stats.mean - baseline) * smoothingFactor);
+    return brightnessOk && contrastOk && steady && fillsGuide;
+  }
+
+  /// 프레임 가운데 영역([centerMarginFraction]로 가장자리를 제외한 부분)
+  /// 안에서, [_regionCandidates] 각각의 평균 밝기·대비(표준편차)를
+  /// 계산하고, 가장자리 띠([outerBandFraction])의 평균 밝기도 함께
+  /// 계산합니다. 매 픽셀을 다 읽으면 비용이 커서 행/열 방향으로
+  /// 듬성듬성 샘플링합니다.
   ///
   /// 행(row) 단위로 오프셋을 계산할 때 [CameraImagePlane.bytesPerRow]를
   /// 써야 합니다 — YUV 포맷은 정렬을 위해 한 행의 실제 바이트 폭이
   /// [CameraImage.width]보다 클 수 있어서, 이를 무시하고 1차원으로만
   /// 훑으면 행이 갈수록 어긋나 "가운데 영역"이 실제로는 다른 곳을 가리키게 됩니다.
-  _FrameStats _analyze(CameraImage image) {
+  _FrameAnalysis _analyze(CameraImage image) {
     final plane = image.planes.first;
     final bytes = plane.bytes;
     // iOS 기본 포맷(bgra8888)은 픽셀당 4바이트(B,G,R,A) 인터리브,
@@ -219,6 +279,14 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     final width = image.width;
     final height = image.height;
 
+    int luma(int row, int col) {
+      final i = row * bytesPerRow + col * pixelStride;
+      if (i + pixelStride > bytes.length) return -1;
+      return isPacked
+          ? ((bytes[i + 2] * 299 + bytes[i + 1] * 587 + bytes[i] * 114) ~/ 1000)
+          : bytes[i];
+    }
+
     final marginRows = (height * centerMarginFraction).round();
     final marginCols = (width * centerMarginFraction).round();
     final rowStart = marginRows;
@@ -226,23 +294,14 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     final colStart = marginCols;
     final colEnd = width - marginCols;
     if (rowEnd <= rowStart || colEnd <= colStart) {
-      return const _FrameStats(
-        brightness: 0,
-        contrast: 0,
+      return _FrameAnalysis(
+        regions: List<_RegionStats>.filled(
+          _regionCandidates.length,
+          _RegionStats.empty,
+        ),
         outerBrightness: 0,
         hasOuter: false,
       );
-    }
-
-    final outerRows = (height * outerBandFraction).round();
-    final outerCols = (width * outerBandFraction).round();
-
-    int luma(int row, int col) {
-      final i = row * bytesPerRow + col * pixelStride;
-      if (i + pixelStride > bytes.length) return -1;
-      return isPacked
-          ? ((bytes[i + 2] * 299 + bytes[i + 1] * 587 + bytes[i] * 114) ~/ 1000)
-          : bytes[i];
     }
 
     // 가운데 영역 안에서 가로/세로 각각 약 50포인트씩만 샘플링합니다
@@ -255,22 +314,33 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
         .clamp(1, double.infinity)
         .round();
 
-    int sum = 0;
-    int sumSq = 0;
-    int count = 0;
-
-    for (int row = rowStart; row < rowEnd; row += rowStep) {
-      for (int col = colStart; col < colEnd; col += colStep) {
-        final value = luma(row, col);
-        if (value < 0) continue;
-        sum += value;
-        sumSq += value * value;
-        count++;
-      }
-    }
+    final regions = [
+      for (final candidate in _regionCandidates)
+        _sampleRegion(
+          luma,
+          rowStart: (rowStart + (rowEnd - rowStart) * candidate.rowStart)
+              .round()
+              .clamp(rowStart, rowEnd),
+          rowEnd: (rowStart + (rowEnd - rowStart) * candidate.rowEnd)
+              .round()
+              .clamp(rowStart + 1, rowEnd),
+          colStart: (colStart + (colEnd - colStart) * candidate.colStart)
+              .round()
+              .clamp(colStart, colEnd),
+          colEnd: (colStart + (colEnd - colStart) * candidate.colEnd)
+              .round()
+              .clamp(colStart + 1, colEnd),
+          rowStep: rowStep,
+          colStep: colStep,
+        ),
+    ];
 
     // 가장자리 띠(박스 바깥 근사): 상/하 띠는 전체 폭을, 좌/우 띠는 상/하
-    // 띠와 겹치지 않는 나머지 높이를 훑습니다.
+    // 띠와 겹치지 않는 나머지 높이를 훑습니다. 모든 후보 판정이 이 바깥
+    // 띠를 공유합니다 — 어느 후보든 "박스 바깥은 배경"이라는 전제가
+    // 같기 때문입니다.
+    final outerRows = (height * outerBandFraction).round();
+    final outerCols = (width * outerBandFraction).round();
     int outerSum = 0;
     int outerCount = 0;
 
@@ -291,23 +361,41 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     sampleOuter(outerRows, height - outerRows, 0, outerCols); // 왼쪽 띠
     sampleOuter(outerRows, height - outerRows, width - outerCols, width); // 오른쪽 띠
 
-    if (count == 0) {
-      return const _FrameStats(
-        brightness: 0,
-        contrast: 0,
-        outerBrightness: 0,
-        hasOuter: false,
-      );
-    }
-
-    final mean = sum / count;
-    final variance = (sumSq / count) - (mean * mean);
-    return _FrameStats(
-      brightness: mean,
-      contrast: variance > 0 ? sqrt(variance) : 0.0,
+    return _FrameAnalysis(
+      regions: regions,
       outerBrightness: outerCount > 0 ? outerSum / outerCount : 0,
       hasOuter: outerCount > 0,
     );
+  }
+
+  /// 주어진 행/열 범위의 평균 밝기(mean)와 대비(표준편차, contrast)를
+  /// 계산합니다. [rowStep]/[colStep]은 호출부가 정한 샘플링 간격을
+  /// 그대로 씁니다.
+  _RegionStats _sampleRegion(
+    int Function(int row, int col) luma, {
+    required int rowStart,
+    required int rowEnd,
+    required int colStart,
+    required int colEnd,
+    required int rowStep,
+    required int colStep,
+  }) {
+    int sum = 0;
+    int sumSq = 0;
+    int count = 0;
+    for (int row = rowStart; row < rowEnd; row += rowStep) {
+      for (int col = colStart; col < colEnd; col += colStep) {
+        final value = luma(row, col);
+        if (value < 0) continue;
+        sum += value;
+        sumSq += value * value;
+        count++;
+      }
+    }
+    if (count == 0) return _RegionStats.empty;
+    final mean = sum / count;
+    final variance = (sumSq / count) - (mean * mean);
+    return _RegionStats(mean: mean, contrast: variance > 0 ? sqrt(variance) : 0.0);
   }
 
   @override
@@ -320,9 +408,22 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   }
 }
 
-class _FrameStats {
-  final double brightness;
+/// 후보 영역 하나(박스 전체 또는 스텁 쪽 끝을 제외한 티켓 영역)의 평균
+/// 밝기·대비.
+class _RegionStats {
+  final double mean;
   final double contrast;
+
+  const _RegionStats({required this.mean, required this.contrast});
+
+  static const empty = _RegionStats(mean: 0, contrast: 0);
+}
+
+/// 한 프레임 분석 결과: [LiveTicketAlignmentDetector._regionCandidates]
+/// 순서와 1:1 대응하는 중심 영역 통계들, 그리고 모든 후보가 공유하는
+/// 가장자리(바깥) 밝기.
+class _FrameAnalysis {
+  final List<_RegionStats> regions;
 
   /// 프레임 가장자리 띠(가이드 박스 바깥 근사)의 평균 밝기.
   final double outerBrightness;
@@ -330,9 +431,8 @@ class _FrameStats {
   /// 가장자리 띠에서 유효 샘플을 얻었는지(못 얻었으면 안-밖 대비 판단 불가).
   final bool hasOuter;
 
-  const _FrameStats({
-    required this.brightness,
-    required this.contrast,
+  const _FrameAnalysis({
+    required this.regions,
     required this.outerBrightness,
     required this.hasOuter,
   });

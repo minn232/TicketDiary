@@ -111,6 +111,12 @@ class TicketService {
     List<String>? concertPhotoUrls,
     bool? isFirstDay,
     bool? isLastDay,
+    // "공연 후" 입장 티켓 뜯기 연출 실행 시각. [clearTornAt]이 true면
+    // (tornAt 값과 무관하게) 명시적으로 null로 되돌립니다 — 나머지 필드처럼
+    // "값을 안 넘기면 그대로 둠"만으로는 "null로 지우기"를 표현할 수 없어서
+    // 별도 플래그가 필요합니다.
+    DateTime? tornAt,
+    bool clearTornAt = false,
   }) async {
     if (_isGuest) {
       return LocalTicketStore.instance.updateTicket(
@@ -124,6 +130,8 @@ class TicketService {
         concertPhotoUrls: concertPhotoUrls,
         isFirstDay: isFirstDay,
         isLastDay: isLastDay,
+        tornAt: tornAt,
+        clearTornAt: clearTornAt,
       );
     }
 
@@ -141,6 +149,8 @@ class TicketService {
           if (concertPhotoUrls != null) 'concert_photo_urls': concertPhotoUrls,
           if (isFirstDay != null) 'is_first_day': isFirstDay,
           if (isLastDay != null) 'is_last_day': isLastDay,
+          if (tornAt != null) 'torn_at': tornAt.toIso8601String(),
+          if (clearTornAt) 'torn_at': null,
         },
       );
       return TicketWithConcert.fromJson(json);

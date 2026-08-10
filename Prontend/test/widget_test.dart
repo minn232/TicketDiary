@@ -18,7 +18,7 @@ void main() {
   });
 
   testWidgets('shows diary home screen', (WidgetTester tester) async {
-    await tester.pumpWidget(const TicketDiaryApp());
+    await tester.pumpWidget(TicketDiaryApp());
     await tester.pumpAndSettle();
 
     expect(find.text('티켓  추가'), findsOneWidget);

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
 
 import 'api_client.dart';
 
@@ -315,8 +316,6 @@ class AuthService extends ChangeNotifier {
   }
 
   String _generateDeviceId() {
-    final now = DateTime.now().microsecondsSinceEpoch;
-    final rand = identityHashCode(Object());
-    return 'device_${now}_$rand';
+    return 'device_${const Uuid().v4()}';
   }
 }

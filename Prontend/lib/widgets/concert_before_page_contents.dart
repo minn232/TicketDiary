@@ -7,6 +7,7 @@ import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
+import 'responsive_text.dart';
 
 /// "공연 전" 페이지 콘텐츠.
 ///
@@ -44,31 +45,38 @@ class ConcertBeforePageContents extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // D-day를 제목과 같은 Row에 형제로 두면, 제목이 몇 줄로 늘어나든
-        // Row가 항상 칩만큼의 폭을 미리 비워두므로 절대 겹치지 않습니다.
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                concertTitle,
-                style: const TextStyle(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w900,
+        // 제목/D-day/"공연 전" 라벨은 순전히 표시용이라 히트테스트에서
+        // 제외합니다(IgnorePointer) — 그래야 이 자리를 눌렀을 때 뒤에 겹친
+        // 포스터의 "바깥 탭으로 닫기" 감지기까지 탭이 그대로 통과합니다.
+        IgnorePointer(
+          // D-day를 제목과 같은 Row에 형제로 두면, 제목이 몇 줄로 늘어나든
+          // Row가 항상 칩만큼의 폭을 미리 비워두므로 절대 겹치지 않습니다.
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  concertTitle,
+                  style: TextStyle(
+                    fontSize: context.sp(19),
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            _DDayChip(label: _dDayLabel(ticketInfo?.date)),
-          ],
+              const SizedBox(width: 10),
+              _DDayChip(label: _dDayLabel(ticketInfo?.date)),
+            ],
+          ),
         ),
         const SizedBox(height: 8),
-        Text(
-          '공연 전',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w800,
-            color: Colors.black.withValues(alpha: 0.55),
+        IgnorePointer(
+          child: Text(
+            '공연 전',
+            style: TextStyle(
+              fontSize: context.sp(14),
+              fontWeight: FontWeight.w800,
+              color: Colors.black.withValues(alpha: 0.55),
+            ),
           ),
         ),
         const SizedBox(height: 18),
@@ -82,11 +90,13 @@ class ConcertBeforePageContents extends StatelessWidget {
           // 카드 스와이프 영역과 고정된 안내 문구 사이의 경계를 명확히 합니다.
           Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
           const SizedBox(height: 10),
-          Text(
-            '닫기: 페이지 바깥(포스터 영역)을 눌러주세요.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.black.withValues(alpha: 0.45),
+          IgnorePointer(
+            child: Text(
+              '닫기: 페이지 바깥(포스터 영역)을 눌러주세요.',
+              style: TextStyle(
+                fontSize: context.sp(12),
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
             ),
           ),
         ],
@@ -511,8 +521,8 @@ class _SectionHeader extends StatelessWidget {
         const SizedBox(width: 7),
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 16,
+          style: TextStyle(
+            fontSize: context.sp(16),
             fontWeight: FontWeight.w900,
             color: Colors.black87,
           ),
@@ -542,7 +552,7 @@ class _InfoRow extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 12.5,
+                fontSize: context.sp(12.5),
                 fontWeight: FontWeight.w700,
                 color: Colors.black.withValues(alpha: 0.55),
               ),
@@ -551,8 +561,8 @@ class _InfoRow extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
-                fontSize: 15,
+              style: TextStyle(
+                fontSize: context.sp(15),
                 fontWeight: FontWeight.w700,
                 color: Colors.black87,
               ),
@@ -593,8 +603,8 @@ class _DDayChip extends StatelessWidget {
           Text(
             label,
             softWrap: false, // "D-12"처럼 짧은 배지 텍스트라 줄바꿈되면 안 됩니다.
-            style: const TextStyle(
-              fontSize: 15,
+            style: TextStyle(
+              fontSize: context.sp(15),
               fontWeight: FontWeight.w900,
               letterSpacing: 0.5,
               color: Colors.white,
@@ -654,8 +664,8 @@ class _TimelineRow extends StatelessWidget {
                 children: [
                   Text(
                     time,
-                    style: const TextStyle(
-                      fontSize: 14,
+                    style: TextStyle(
+                      fontSize: context.sp(14),
                       fontWeight: FontWeight.w900,
                       color: _accent,
                     ),
@@ -663,7 +673,7 @@ class _TimelineRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     label,
-                    style: const TextStyle(fontSize: 14.5, color: Colors.black87),
+                    style: TextStyle(fontSize: context.sp(14.5), color: Colors.black87),
                   ),
                 ],
               ),
@@ -702,8 +712,8 @@ class _SetlistNumbered extends StatelessWidget {
                       width: 22,
                       child: Text(
                         '${i + 1}',
-                        style: const TextStyle(
-                          fontSize: 14,
+                        style: TextStyle(
+                          fontSize: context.sp(14),
                           fontWeight: FontWeight.w900,
                           color: _accent,
                         ),
@@ -712,8 +722,8 @@ class _SetlistNumbered extends StatelessWidget {
                     Expanded(
                       child: Text(
                         setlist[i],
-                        style: const TextStyle(
-                          fontSize: 14.5,
+                        style: TextStyle(
+                          fontSize: context.sp(14.5),
                           color: Colors.black87,
                         ),
                       ),
@@ -746,7 +756,7 @@ class _UndecidedText extends StatelessWidget {
     return Text(
       message,
       style: TextStyle(
-        fontSize: 14,
+        fontSize: context.sp(14),
         fontWeight: FontWeight.w700,
         color: Colors.black.withValues(alpha: 0.4),
       ),

@@ -9,6 +9,7 @@ import 'package:ticketdiary/services/concert_search_service.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
+import 'package:ticketdiary/widgets/responsive_text.dart';
 
 /// 설정 > 선호 아티스트 / 찜 공연 설정 화면
 ///
@@ -338,8 +339,8 @@ class _TopBar extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
-                fontSize: 15,
+              style: TextStyle(
+                fontSize: context.sp(15),
                 fontWeight: FontWeight.w900,
                 color: Colors.black87,
               ),
@@ -351,8 +352,8 @@ class _TopBar extends StatelessWidget {
             label: const Text('관리'),
             style: TextButton.styleFrom(
               foregroundColor: Colors.black.withValues(alpha: 0.65),
-              textStyle: const TextStyle(
-                fontSize: 13,
+              textStyle: TextStyle(
+                fontSize: context.sp(13),
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -373,7 +374,7 @@ class _SectionTitle extends StatelessWidget {
     return Text(
       text,
       style: TextStyle(
-        fontSize: 13,
+        fontSize: context.sp(13),
         fontWeight: FontWeight.w900,
         color: Colors.black.withValues(alpha: 0.35),
       ),
@@ -417,13 +418,13 @@ class _SearchField extends StatelessWidget {
                 isDense: true,
                 hintText: hintText,
                 hintStyle: TextStyle(
-                  fontSize: 14,
+                  fontSize: context.sp(14),
                   fontWeight: FontWeight.w900,
                   color: Colors.black.withValues(alpha: 0.25),
                 ),
               ),
-              style: const TextStyle(
-                fontSize: 14,
+              style: TextStyle(
+                fontSize: context.sp(14),
                 fontWeight: FontWeight.w900,
                 color: Colors.black87,
               ),
@@ -501,7 +502,7 @@ class _SearchResultsRow<T> extends StatelessWidget {
               child: Text(
                 statusText,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: context.sp(12),
                   color: Colors.black.withValues(alpha: 0.3),
                 ),
               ),
@@ -619,7 +620,7 @@ class _ThumbCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: context.sp(12),
               fontWeight: FontWeight.w900,
               color: Colors.black.withValues(alpha: 0.55),
             ),
@@ -669,11 +670,11 @@ class _ManageFavoritesSheet extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, 16),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                   child: Text(
                     '찜 관리',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                    style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w900),
                   ),
                 ),
                 const Divider(height: 1, thickness: 1),
@@ -686,7 +687,7 @@ class _ManageFavoritesSheet extends StatelessWidget {
                         Text(
                           '선호 아티스트',
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: context.sp(13),
                             fontWeight: FontWeight.w900,
                             color: Colors.black.withValues(alpha: 0.4),
                           ),
@@ -707,7 +708,7 @@ class _ManageFavoritesSheet extends StatelessWidget {
                         Text(
                           '찜 공연',
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: context.sp(13),
                             fontWeight: FontWeight.w900,
                             color: Colors.black.withValues(alpha: 0.4),
                           ),
@@ -777,7 +778,7 @@ class _ManageListTile extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+              style: TextStyle(fontSize: context.sp(14), fontWeight: FontWeight.w700),
             ),
           ),
           IconButton(
@@ -803,7 +804,7 @@ class _EmptyManageRow extends StatelessWidget {
       child: Text(
         text,
         style: TextStyle(
-          fontSize: 12,
+          fontSize: context.sp(12),
           color: Colors.black.withValues(alpha: 0.35),
         ),
       ),

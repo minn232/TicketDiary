@@ -2,6 +2,11 @@ import 'package:flutter/foundation.dart';
 
 import 'ticket_scan.dart' show ConcertResponse;
 
+/// [TicketWithConcert.copyWith]의 [TicketWithConcert.tornAt] 파라미터 전용
+/// 미지정 표시값. `null`은 "명시적으로 null로 지운다"는 뜻이라, "이 필드는
+/// 건드리지 않는다"와 구분하려면 별도의 감시값이 필요합니다.
+const Object _unset = Object();
+
 /// 티켓 등록/조회 응답(공연 정보 포함). 백엔드 `schemas/ticket.py`의
 /// `TicketResponse`/`TicketWithConcert`와 대응.
 ///
@@ -24,6 +29,11 @@ class TicketWithConcert {
   final bool? isLastDay;
   final ConcertResponse? concert;
 
+  /// 공연 후 "입장 티켓 뜯기" 연출을 실행한 시각. null이면 아직 안 뜯긴
+  /// 상태입니다. 백엔드는 이 값을 저장만 담당하고, 다시 안 뜯긴 상태로
+  /// 되돌리는 단방향 강제는 프론트가 담당합니다.
+  final DateTime? tornAt;
+
   const TicketWithConcert({
     required this.id,
     this.concertId,
@@ -38,6 +48,7 @@ class TicketWithConcert {
     this.isFirstDay,
     this.isLastDay,
     this.concert,
+    this.tornAt,
   });
 
   factory TicketWithConcert.fromJson(Map<String, dynamic> json) {
@@ -61,6 +72,9 @@ class TicketWithConcert {
       concert: json['concert'] != null
           ? ConcertResponse.fromJson(json['concert'] as Map<String, dynamic>)
           : null,
+      tornAt: json['torn_at'] != null
+          ? DateTime.parse(json['torn_at'] as String)
+          : null,
     );
   }
 
@@ -80,6 +94,7 @@ class TicketWithConcert {
     'is_first_day': isFirstDay,
     'is_last_day': isLastDay,
     'concert': concert?.toJson(),
+    'torn_at': tornAt?.toIso8601String(),
   };
 
   TicketWithConcert copyWith({
@@ -93,6 +108,10 @@ class TicketWithConcert {
     List<String>? concertPhotoUrls,
     bool? isFirstDay,
     bool? isLastDay,
+    // tornAt은 "명시적으로 null로 지운다"(재설정)가 유효한 동작이라, 다른
+    // 필드처럼 `??`(null이면 안 건드림)로는 표현할 수 없습니다. 감시값으로
+    // "안 넘김"과 "null로 지움"을 구분합니다.
+    Object? tornAt = _unset,
   }) {
     return TicketWithConcert(
       id: id,
@@ -106,6 +125,7 @@ class TicketWithConcert {
       review: review ?? this.review,
       concertPhotoUrls: concertPhotoUrls ?? this.concertPhotoUrls,
       isFirstDay: isFirstDay ?? this.isFirstDay,
+      tornAt: identical(tornAt, _unset) ? this.tornAt : tornAt as DateTime?,
       isLastDay: isLastDay ?? this.isLastDay,
       concert: concert,
     );
