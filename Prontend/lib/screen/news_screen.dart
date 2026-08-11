@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:ticketdiary/models/news_model.dart';
 import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
+import 'package:ticketdiary/services/news_cache_store.dart';
+import 'package:ticketdiary/services/news_loading_signal.dart';
 import 'package:ticketdiary/services/social_service.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
+import 'package:ticketdiary/widgets/responsive_text.dart';
 
 import 'news_detail_overlay.dart';
 
@@ -37,11 +40,71 @@ class _NewsScreenState extends State<NewsScreen> {
   /// 카드 확장 애니메이션의 시작 Rect를 구하기 위한, 카드 인덱스별 key.
   final List<GlobalKey> _cardKeys = [];
 
+  /// 로딩이 10초를 넘으면(혹시 모를 무한 로딩 오류 대비) 인덱스 탭 전환
+  /// 애니메이션의 대기를 강제로 풀어, 화면 자체의 로딩 스피너로 넘어가게
+  /// 합니다.
+  Timer? _loadingHoldTimeout;
+
   @override
   void initState() {
     super.initState();
+    NewsLoadingSignal.isLoading.value = true;
+    _loadingHoldTimeout = Timer(const Duration(seconds: 10), () {
+      NewsLoadingSignal.isLoading.value = false;
+    });
     // 화면 초기화 시 데이터 호출 시작
-    _newsFuture = _loadNews();
+    _newsFuture = _loadNewsWithCache();
+    unawaited(
+      _newsFuture.whenComplete(() {
+        _loadingHoldTimeout?.cancel();
+        NewsLoadingSignal.isLoading.value = false;
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    _loadingHoldTimeout?.cancel();
+    super.dispose();
+  }
+
+  /// 캐시가 있으면 즉시 그걸로 화면을 채우고, 그 뒤 조용히 최신 데이터를
+  /// 다시 불러와 캐시와 화면을 함께 갱신합니다("stale while revalidate").
+  /// 캐시가 없으면(첫 방문 등) 기존처럼 네트워크 응답을 기다립니다.
+  Future<List<NewsModel>> _loadNewsWithCache() async {
+    // FavoritesStore.load()는 이미 로드됐으면 곧장 반환하므로(멱등),
+    // 여기서 먼저 호출해도 안전합니다 — 캐시가 "지금" 찜 목록 기준으로
+    // 여전히 유효한지 판단하려면 revision이 최신 상태여야 합니다.
+    await FavoritesStore.instance.load();
+    final cached = await NewsCacheStore.instance.load(
+      favoritesRevision: FavoritesStore.instance.revision,
+    );
+    if (cached != null && cached.isNotEmpty) {
+      unawaited(_refreshInBackground());
+      return cached;
+    }
+    return _fetchAndCacheNews();
+  }
+
+  Future<void> _refreshInBackground() async {
+    try {
+      final fresh = await _fetchAndCacheNews();
+      if (!mounted) return;
+      setState(() => _newsFuture = Future.value(fresh));
+    } catch (_) {
+      // 백그라운드 갱신 실패는 조용히 무시합니다 — 캐시된 화면을 그대로 둡니다.
+    }
+  }
+
+  Future<List<NewsModel>> _fetchAndCacheNews() async {
+    final items = await _loadNews();
+    unawaited(
+      NewsCacheStore.instance.save(
+        items,
+        favoritesRevision: FavoritesStore.instance.revision,
+      ),
+    );
+    return items;
   }
 
   Future<List<NewsModel>> _loadNews() async {
@@ -186,7 +249,7 @@ class _NewsScreenState extends State<NewsScreen> {
             '소식을 불러오지 못했어요.\n$reason',
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: context.sp(13),
               fontWeight: FontWeight.w700,
               color: Colors.black.withValues(alpha: 0.45),
               height: 1.5,
@@ -194,7 +257,7 @@ class _NewsScreenState extends State<NewsScreen> {
           ),
           const SizedBox(height: 14),
           OutlinedButton(
-            onPressed: () => setState(() => _newsFuture = _loadNews()),
+            onPressed: () => setState(() => _newsFuture = _fetchAndCacheNews()),
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.brown,
               side: const BorderSide(color: Colors.brown),
@@ -210,6 +273,11 @@ class _NewsScreenState extends State<NewsScreen> {
     const crossAxisCount = 2;
     const spacing = 18.0;
 
+    // 한 행의 높이는 기존과 동일하게 "2행이 화면에 꽉 차는" 기준으로 고정합니다
+    // (4개 이하일 때의 모양은 그대로 유지). 5개 이상 등록되면 physics가
+    // 스크롤 가능해서 아래로 스크롤해 나머지 행을 볼 수 있습니다 — 기존에는
+    // NeverScrollableScrollPhysics라 4개를 넘는 카드는 그냥 화면 밖으로
+    // 잘려 안 보였습니다.
     final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: crossAxisCount,
       crossAxisSpacing: spacing,
@@ -219,7 +287,7 @@ class _NewsScreenState extends State<NewsScreen> {
 
     return GridView.builder(
       padding: EdgeInsets.zero,
-      physics: const NeverScrollableScrollPhysics(),
+      physics: const BouncingScrollPhysics(),
       gridDelegate: gridDelegate,
       itemCount: items.length,
       itemBuilder: (context, index) {
@@ -281,7 +349,7 @@ class _PolaroidCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: context.sp(11),
                         fontWeight: FontWeight.bold,
                         color: Colors.black.withValues(alpha: 0.4),
                         letterSpacing: 0.5,
@@ -299,10 +367,10 @@ class _PolaroidCard extends StatelessWidget {
                         color: const Color(0xFFE0455E),
                         borderRadius: BorderRadius.circular(999),
                       ),
-                      child: const Text(
+                      child: Text(
                         'NEW',
                         style: TextStyle(
-                          fontSize: 8,
+                          fontSize: context.sp(8),
                           fontWeight: FontWeight.w900,
                           color: Colors.white,
                           letterSpacing: 0.5,
@@ -327,8 +395,8 @@ class _PolaroidCard extends StatelessWidget {
                 data.concert,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
+                style: TextStyle(
+                  fontSize: context.sp(13),
                   fontWeight: FontWeight.w900,
                   color: Colors.black87,
                 ),
@@ -339,7 +407,7 @@ class _PolaroidCard extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: context.sp(11),
                   fontWeight: FontWeight.w500,
                   color: Colors.grey.shade600,
                   height: 1.3,

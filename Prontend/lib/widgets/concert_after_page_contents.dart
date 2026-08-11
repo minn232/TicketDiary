@@ -8,12 +8,69 @@ import '../services/api_client.dart';
 import '../services/concert_detail_service.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
+import 'responsive_text.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
 /// `http(s)`로 시작하지 않습니다 — 이 차이로 [Image.network]/[Image.file] 중
 /// 무엇을 쓸지 결정합니다.
 bool _isNetworkUrl(String value) =>
     value.startsWith('http://') || value.startsWith('https://');
+
+Widget _buildFullPhoto(String url) {
+  const errorIcon = Icon(
+    Icons.broken_image_outlined,
+    size: 48,
+    color: Colors.white54,
+  );
+  return _isNetworkUrl(url)
+      ? Image.network(
+          url,
+          fit: BoxFit.contain,
+          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+          errorBuilder: (context, error, stackTrace) => errorIcon,
+        )
+      : Image.file(
+          File(url),
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) => errorIcon,
+        );
+}
+
+/// 폴라로이드 썸네일을 눌렀을 때, 원본 사진을 화면 전체에 크게 보여줍니다.
+/// 바깥(사진 바깥 여백)을 누르면 닫힙니다.
+void _openFullPhoto(BuildContext context, String url) {
+  showGeneralDialog(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: '사진 확대 닫기',
+    barrierColor: Colors.black.withValues(alpha: 0.85),
+    transitionDuration: const Duration(milliseconds: 220),
+    pageBuilder: (context, animation, secondaryAnimation) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => Navigator.of(context).pop(),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Center(
+              child: GestureDetector(
+                // 사진 자체를 눌렀을 때는 닫히지 않도록 이벤트를 흡수합니다.
+                onTap: () {},
+                child: _buildFullPhoto(url),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: child,
+      );
+    },
+  );
+}
 
 /// "공연 후" 페이지 콘텐츠.
 ///
@@ -33,12 +90,18 @@ class ConcertAfterPageContents extends StatefulWidget {
   final Animation<double>? postItOpacity;
   final bool showCloseHint;
 
+  /// 사진 추가/소감 저장이 성공해 [ticketInfo]가 최신화될 때마다 호출됩니다.
+  /// 호출자(다이어리 화면)가 원본 티켓 데이터를 같이 갱신해야, 이 오버레이를
+  /// 닫은 뒤에도 앱 재시작 없이 바로 최신 내용이 보입니다.
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
+
   const ConcertAfterPageContents({
     super.key,
     required this.concertTitle,
     this.ticketInfo,
     this.postItOpacity,
     this.showCloseHint = true,
+    this.onTicketInfoChanged,
   });
 
   @override
@@ -109,6 +172,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       setState(() {
         _ticketInfo = _ticketInfo?.copyWith(review: updated.review ?? '');
       });
+      if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
       _showSnack('소감을 저장했어요.');
     } on TicketNotFoundException {
       _showSnack('티켓을 찾을 수 없어요.');
@@ -147,6 +211,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
           concertPhotoUrls: updated.concertPhotoUrls ?? nextUrls,
         );
       });
+      if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
     } on TicketNotFoundException {
       _showSnack('티켓을 찾을 수 없어요.');
     } on ApiException catch (e) {
@@ -166,10 +231,9 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
           child: Row(
             children: [
               Expanded(
-                child: _MemoryCard(
+                child: _DashedPhotoCard(
                   icon: Icons.photo_camera_outlined,
                   label: '사진',
-                  color: const Color(0xFFFFE0B8),
                   child: _PhotoBoard(
                     photoUrls: _ticketInfo?.concertPhotoUrls ?? const [],
                     uploading: _uploadingPhoto,
@@ -234,10 +298,14 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _DiaryHeader(
-          title: widget.concertTitle,
-          date: _ticketInfo?.date,
-          venue: _ticketInfo?.venueName,
+        // 헤더는 순전히 표시용이라 히트테스트에서 제외합니다(IgnorePointer) —
+        // 그래야 이 자리를 눌렀을 때 뒤에 겹친 포스터의 "바깥 탭으로 닫기"
+        // 감지기까지 탭이 그대로 통과합니다.
+        IgnorePointer(
+          child: _DiaryHeader(
+            title: widget.concertTitle,
+            date: _ticketInfo?.date,
+          ),
         ),
         const SizedBox(height: 16),
         // 4개 기능(사진/공연 소감/업적 도장/실제 셋리스트)을 스크롤도
@@ -251,11 +319,13 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
           const SizedBox(height: 10),
           Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
           const SizedBox(height: 10),
-          Text(
-            '닫기: 페이지 바깥을 눌러주세요.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.black.withValues(alpha: 0.45),
+          IgnorePointer(
+            child: Text(
+              '닫기: 페이지 바깥을 눌러주세요.',
+              style: TextStyle(
+                fontSize: context.sp(12),
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
             ),
           ),
         ],
@@ -286,9 +356,10 @@ class _MemoryCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        // 완전 불투명이 아니라 살짝 비치게 해서, 카드 영역에서도 뒤에 겹친
-        // 포스터가(옅게) 드러나 페이지 전체에 걸쳐 고르게 보이도록 합니다.
-        color: color.withValues(alpha: 0.9),
+        // 완전 불투명 — 뒤에 겹친 포스터가 카드 영역까지 옅게 비쳐 보이면
+        // 포스트잇이 지저분해 보인다는 피드백으로, 포스트잇 부분은 포스터와
+        // 무관하게 온전한 색으로만 보이도록 바꿨습니다.
+        color: color,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
         boxShadow: [
@@ -319,8 +390,8 @@ class _MemoryCard extends StatelessWidget {
                         label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13,
+                        style: TextStyle(
+                          fontSize: context.sp(13),
                           fontWeight: FontWeight.w900,
                           color: Colors.black87,
                         ),
@@ -339,28 +410,161 @@ class _MemoryCard extends StatelessWidget {
   }
 }
 
+/// "사진" 칸 전용 카드. 다른 3장(공연 소감/업적 도장/실제 셋리스트)과 달리
+/// 포스트잇 색 배경을 쓰지 않고, 다이어리 페이지 위에 직접 사진을 붙여둔
+/// 자리처럼 경계를 점선으로만 표시합니다. 경계 위쪽엔 찢어진 마스킹테이프
+/// 조각([_TornTapePiece])을 겹쳐서 "종이를 여기 붙여뒀다"는 느낌을 냅니다.
+/// (디자인 초안 — 사용자 확인 후 조정 예정)
+class _DashedPhotoCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Widget child;
+
+  const _DashedPhotoCard({
+    required this.icon,
+    required this.label,
+    required this.child,
+  });
+
+  static const double _radius = 14;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        CustomPaint(
+          painter: const _DashedBorderPainter(
+            color: Color(0x59000000), // Colors.black.withValues(alpha: 0.35)
+            radius: _radius,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(icon, size: 15, color: Colors.black.withValues(alpha: 0.65)),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: context.sp(13),
+                          fontWeight: FontWeight.w900,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(child: child),
+              ],
+            ),
+          ),
+        ),
+
+        // 위쪽 경계선에 걸쳐 붙인 찢어진 테이프 조각.
+        const Positioned(
+          top: -9,
+          left: 0,
+          right: 0,
+          child: Center(child: _TornTapePiece()),
+        ),
+      ],
+    );
+  }
+}
+
+/// 찢어진 마스킹테이프 한 조각. 위/아래 변은 곧고, 좌/우 짧은 변은 손으로
+/// 뜯은 것처럼 삐죽삐죽한 지그재그로 그립니다.
+class _TornTapePiece extends StatelessWidget {
+  const _TornTapePiece();
+
+  static const double _width = 50;
+  static const double _height = 18;
+  static const double _angle = -0.035;
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.rotate(
+      angle: _angle,
+      child: CustomPaint(
+        size: const Size(_width, _height),
+        painter: const _TornTapePainter(),
+      ),
+    );
+  }
+}
+
+class _TornTapePainter extends CustomPainter {
+  const _TornTapePainter();
+
+  /// 지그재그 삐죽함(짧은 변에서 안쪽으로 파고드는 최대 깊이).
+  static const double _notch = 3.2;
+
+  /// 짧은 변 하나에 들어가는 지그재그 산의 개수.
+  static const int _teeth = 4;
+
+  Path _tornPath(Size size) {
+    final path = Path()..moveTo(0, 0);
+    path.lineTo(size.width, 0); // 위쪽 변(곧음)
+
+    // 오른쪽 변: 위 -> 아래로 내려가며 안쪽/바깥쪽을 번갈아 찔러 톱니를 만듦.
+    for (var i = 1; i <= _teeth; i++) {
+      final y = size.height * i / _teeth;
+      final x = size.width - (i.isOdd ? _notch : 0.0);
+      path.lineTo(x, y);
+    }
+
+    path.lineTo(0, size.height); // 아래쪽 변(곧음)
+
+    // 왼쪽 변: 아래 -> 위로 올라가며 마찬가지로 톱니를 만듦.
+    for (var i = _teeth - 1; i >= 0; i--) {
+      final y = size.height * i / _teeth;
+      final x = i.isOdd ? _notch : 0.0;
+      path.lineTo(x, y);
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = _tornPath(size);
+    canvas.drawPath(path, Paint()..color = Colors.white.withValues(alpha: 0.68));
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.10)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TornTapePainter oldDelegate) => false;
+}
+
 /// 공연 후 페이지 전반에서 쓰는 포인트 색(빨간 도장 잉크 색과 통일).
 const Color _memoryAccent = Color(0xFFD64545);
 
-/// 일기장 표제 느낌의 상단 헤더: 날짜 · 공연장, 공연 제목, 빨간 "관람 완료" 도장.
+/// 일기장 표제 느낌의 상단 헤더: 날짜, 공연 제목, 빨간 "관람 완료" 도장.
 class _DiaryHeader extends StatelessWidget {
   final String title;
   final DateTime? date;
-  final String? venue;
 
-  const _DiaryHeader({required this.title, this.date, this.venue});
+  const _DiaryHeader({required this.title, this.date});
 
+  // 원래는 날짜 · 공연장을 함께 보여줬지만, 날짜만 남기기로 했습니다.
   String? get _metaLine {
-    final parts = <String>[];
     final d = date;
-    if (d != null) {
-      parts.add(
-        '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}',
-      );
-    }
-    final v = venue;
-    if (v != null && v.isNotEmpty) parts.add(v);
-    return parts.isEmpty ? null : parts.join(' · ');
+    if (d == null) return null;
+    return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -378,10 +582,10 @@ class _DiaryHeader extends StatelessWidget {
                 Text(
                   meta,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: context.sp(12),
                     fontWeight: FontWeight.w800,
                     letterSpacing: 0.5,
-                    color: Colors.black.withValues(alpha: 0.45),
+                    color: Colors.black,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -390,8 +594,8 @@ class _DiaryHeader extends StatelessWidget {
                 title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 20,
+                style: TextStyle(
+                  fontSize: context.sp(20),
                   fontWeight: FontWeight.w900,
                   color: Colors.black87,
                   height: 1.2,
@@ -440,7 +644,7 @@ class _WatchedStamp extends StatelessWidget {
             Text(
               '관람 완료',
               style: TextStyle(
-                fontSize: 14,
+                fontSize: context.sp(14),
                 fontWeight: FontWeight.w900,
                 letterSpacing: 2,
                 color: inkColor.withValues(alpha: 0.85),
@@ -450,7 +654,7 @@ class _WatchedStamp extends StatelessWidget {
             Text(
               'TICKET DIARY',
               style: TextStyle(
-                fontSize: 7,
+                fontSize: context.sp(7),
                 fontWeight: FontWeight.w800,
                 letterSpacing: 1.5,
                 color: inkColor.withValues(alpha: 0.55),
@@ -482,8 +686,8 @@ class _ReviewContent extends StatelessWidget {
             ? SingleChildScrollView(
                 child: Text(
                   text,
-                  style: const TextStyle(
-                    fontSize: 13,
+                  style: TextStyle(
+                    fontSize: context.sp(13),
                     fontWeight: FontWeight.w700,
                     color: Colors.black87,
                     height: 22 / 13, // 줄노트 간격(22px)에 맞춤
@@ -504,7 +708,7 @@ class _ReviewContent extends StatelessWidget {
                       '탭해서 오늘의\n감상을 적어보세요',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: context.sp(12),
                         fontWeight: FontWeight.w700,
                         color: Colors.black.withValues(alpha: 0.35),
                         height: 1.4,
@@ -572,7 +776,7 @@ class _PhotoBoard extends StatelessWidget {
                 '탭해서 사진을\n붙여보세요',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: context.sp(12),
                   fontWeight: FontWeight.w700,
                   color: Colors.black.withValues(alpha: 0.4),
                   height: 1.4,
@@ -673,74 +877,77 @@ class _PolaroidThumb extends StatelessWidget {
   Widget build(BuildContext context) {
     return Transform.rotate(
       angle: angle,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(4, 5, 4, 13),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  blurRadius: 5,
-                  offset: const Offset(1.5, 2.5),
-                ),
-              ],
-            ),
-            child: _isNetworkUrl(url)
-                ? Image.network(
-                    url,
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
-                    webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      width: 50,
-                      height: 50,
-                      color: Colors.black12,
-                      child: const Icon(Icons.broken_image_outlined, size: 18),
-                    ),
-                  )
-                // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
-                : Image.file(
-                    File(url),
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      width: 50,
-                      height: 50,
-                      color: Colors.black12,
-                      child: const Icon(Icons.broken_image_outlined, size: 18),
-                    ),
+      child: GestureDetector(
+        onTap: () => _openFullPhoto(context, url),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(4, 5, 4, 13),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.22),
+                    blurRadius: 5,
+                    offset: const Offset(1.5, 2.5),
                   ),
-          ),
+                ],
+              ),
+              child: _isNetworkUrl(url)
+                  ? Image.network(
+                      url,
+                      width: 50,
+                      height: 50,
+                      fit: BoxFit.cover,
+                      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        width: 50,
+                        height: 50,
+                        color: Colors.black12,
+                        child: const Icon(Icons.broken_image_outlined, size: 18),
+                      ),
+                    )
+                  // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
+                  : Image.file(
+                      File(url),
+                      width: 50,
+                      height: 50,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        width: 50,
+                        height: 50,
+                        color: Colors.black12,
+                        child: const Icon(Icons.broken_image_outlined, size: 18),
+                      ),
+                    ),
+            ),
 
-          // 위쪽 가운데 테이프 — 포스트잇처럼 종이에 붙여둔 느낌
-          Positioned(
-            top: -6,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Transform.rotate(
-                angle: -0.08,
-                child: Container(
-                  width: 30,
-                  height: 11,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(2),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      width: 1,
+            // 위쪽 가운데 테이프 — 포스트잇처럼 종이에 붙여둔 느낌
+            Positioned(
+              top: -6,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Transform.rotate(
+                  angle: -0.08,
+                  child: Container(
+                    width: 30,
+                    height: 11,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(2),
+                      border: Border.all(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        width: 1,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -802,7 +1009,7 @@ class _StampsPlaceholder extends StatelessWidget {
           Text(
             '도장 기능 준비 중',
             style: TextStyle(
-              fontSize: 11,
+              fontSize: context.sp(11),
               fontWeight: FontWeight.w700,
               color: Colors.black.withValues(alpha: 0.3),
             ),
@@ -840,7 +1047,7 @@ class _StampCircle extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: context.sp(13),
               fontWeight: FontWeight.w900,
               letterSpacing: 1,
               color: color.withValues(alpha: 0.35),
@@ -908,7 +1115,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
               '아직 등록되지\n않았어요',
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: context.sp(12),
                 fontWeight: FontWeight.w700,
                 color: Colors.black.withValues(alpha: 0.35),
                 height: 1.4,
@@ -931,7 +1138,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
                   Text(
                     (i + 1).toString().padLeft(2, '0'),
                     style: TextStyle(
-                      fontSize: 11,
+                      fontSize: context.sp(11),
                       fontWeight: FontWeight.w900,
                       color: Colors.black.withValues(alpha: 0.35),
                     ),
@@ -940,8 +1147,8 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
                   Expanded(
                     child: Text(
                       songs[i],
-                      style: const TextStyle(
-                        fontSize: 12,
+                      style: TextStyle(
+                        fontSize: context.sp(12),
                         fontWeight: FontWeight.w700,
                       ),
                     ),

@@ -20,6 +20,7 @@ import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/add_ticket_option.dart';
 import 'package:ticketdiary/widgets/entry_ticket_tear_piece.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
+import 'package:ticketdiary/widgets/responsive_text.dart';
 import 'package:ticketdiary/widgets/sparkle_highlight.dart';
 import 'package:ticketdiary/widgets/ticket_flip_card.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart';
@@ -30,7 +31,10 @@ class TicketData {
   final TicketStatus status;
 
   /// 스캔으로 추출된 상세 정보(공연장/날짜/가격/좌석 등). 없을 수도 있습니다.
-  final TicketInfo? info;
+  /// "공연 후" 오버레이에서 사진/소감을 저장하면 그 결과를 [_buildTicketAfterConcert]의
+  /// onInfoChanged 콜백으로 여기 그대로 반영합니다(같은 [TicketData] 인스턴스를
+  /// 유지해야 overlayKey 등 다른 상태가 끊기지 않으므로 final이 아닙니다).
+  TicketInfo? info;
 
   /// 오버레이 확장 애니메이션의 시작 위치(Rect)를 구하기 위한 티켓별 고유 key.
   /// 여러 티켓이 동시에 화면(앞/뒷 페이지)에 존재할 수 있으므로 티켓마다 별도로 가져야 합니다.
@@ -114,10 +118,14 @@ class TicketData {
         concertPhotoUrls: ticket.concertPhotoUrls,
       ),
       id: ticket.id,
-      // 이전에 이 기기에서 이미 입장 티켓을 뜯어봤다면 그 상태를 이어받습니다
-      // (TornTicketStore.ensureLoaded가 끝난 뒤에 호출된다는 전제 —
-      // _loadTicketsFromBackend가 보장합니다).
-      tornRevealed: TornTicketStore.instance.isTorn(ticket.id),
+      // 서버(또는 게스트는 LocalTicketStore)에 저장된 torn_at이 있으면
+      // 그걸 우선합니다. 이 필드가 생기기 전에 이 기기에서 이미 뜯어본
+      // 적이 있는 경우를 위해 TornTicketStore(로컬 전용, 구버전 호환용)도
+      // 함께 확인합니다 — 둘 중 하나라도 뜯긴 기록이 있으면 뜯긴 채로
+      // 보여줍니다 (TornTicketStore.ensureLoaded가 끝난 뒤에 호출된다는
+      // 전제 — _loadTicketsFromBackend가 보장합니다).
+      tornRevealed:
+          ticket.tornAt != null || TornTicketStore.instance.isTorn(ticket.id),
     );
   }
 }
@@ -176,10 +184,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 다중 페이지 상태
   int _currentPageIndex = 0;
 
-  /// 페이지 넘김 애니메이션 진행 여부. [DiaryPageFlipper]가 갱신하고,
-  /// [DiaryPageFrame]이 구독해 바인더 링을 넘어가는 페이지보다 앞/뒤로
-  /// 전환하는 데 씁니다(넘김 중에만 페이지가 링 위로 오게).
-  final ValueNotifier<bool> _flipAnimating = ValueNotifier(false);
+  /// 페이지 넘김 애니메이션 진행도(0.0~1.0). [DiaryPageFlipper]가 갱신하고,
+  /// [DiaryPageFrame]이 구독해 바인더 링이 페이지 넘김과 같은 속도로
+  /// 오른쪽부터 사라졌다가(넘어가는 동안) 다시 나타나는(넘김이 끝나면)
+  /// 효과를 만드는 데 씁니다.
+  final ValueNotifier<double> _flipAnimating = ValueNotifier(0.0);
 
   /// 첫 페이지는 티켓추가 버튼 + 티켓 3개(총 4개, 버튼도 티켓과 같은 높이),
   /// 이후 페이지부터는 티켓 4개씩 채웁니다. 페이지당 항목 수와 높이를
@@ -253,8 +262,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
   final TicketService _ticketService = TicketService();
 
   /// "공연 전 -> 공연 후" 전환 페이드 지속 시간. 두 디자인이 겹쳐 보이는 구간이
-  /// 보이도록 하되, 너무 늘어지지 않게 6초의 50% 속도(=3초)로 잡습니다.
-  static const Duration _promotionFadeDuration = Duration(seconds: 3);
+  /// 보이도록 하되, 너무 늘어지지 않게 6초의 50% 속도(=3초)로 잡았다가,
+  /// 다시 절반(1.5초)으로 줄였습니다.
+  static const Duration _promotionFadeDuration = Duration(milliseconds: 1500);
 
   /// 전환을 강조하는 어두운 오버레이가 나타나고/사라지는 페이드 속도(역시 느리게).
   static const Duration _spotlightDimFadeDuration = Duration(milliseconds: 900);
@@ -662,11 +672,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
           shrinkWrap: true,
           padding: const EdgeInsets.symmetric(vertical: 12),
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 8, 20, 12),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               child: Text(
                 '일치하는 공연이 여러 개예요. 하나를 선택해주세요.',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: context.sp(15), fontWeight: FontWeight.w800),
               ),
             ),
             for (final candidate in candidates)
@@ -864,69 +874,71 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   /// 플립 애니메이션에 쓰이는 페이지 잎 한 장. 프레임 전체 크기를 받아,
-  /// 페이지 종이(프레임 3번 레이어와 같은 여백/10% 가로 확대)와 [tabs]로
-  /// 넘겨받은 인덱스 탭을 함께 담습니다 — 탭이 종이에 붙어서 페이지와 같이
-  /// 넘어가고, 아래에 깔린 다음/이전 페이지 잎에도 탭이 그대로 있어 넘김
-  /// 내내 인덱스가 두 장 모두에 존재합니다.
+  /// 페이지 종이(프레임 3번 레이어와 같은 여백/10% 가로 확대)를 담습니다.
   ///
-  /// 호출부에서 "다이어리" 탭 하나만 넘겨서, 페이지와 함께 넘어가는 인덱스는
-  /// 다이어리뿐이고 소식/결산/설정은 [DiaryPageFrame.sideTabs]로 프레임에
-  /// 고정돼 넘김과 무관하게 제자리를 지킵니다.
-  Widget _buildFlipLeaf(int pageIndex, List<DiarySideTabSpec> tabs) {
-    Widget tabChild(DiarySideTabSpec tab) => tab.onTap == null
-        ? tab.child
-        : PressableScale(
-            onTap: tab.onTap,
-            pressScale: 0.985,
-            tapScale: 1.03,
-            child: tab.child,
-          );
-
+  /// "다이어리" 활성 탭은 여기 포함하지 않습니다 — 탭이 회전축(pivotX)에서
+  /// 멀리 떨어져 있다 보니, 페이지 전체를 3D로 휘게 만드는 행별 메시
+  /// 계산에 같이 포함되면 두 조각으로 쪼개져 보이는 문제가 있었습니다.
+  /// 대신 [DiaryPageFlipper.activeTab]으로 따로 넘겨서, 메시가 아닌 단순
+  /// 회전으로만 페이지와 같이 넘어가도록 합니다.
+  Widget _buildFlipLeaf(int pageIndex) {
+    // 페이지 종이. 여백/가로 10% 확대는 [DiaryPageFrame]의 기본 페이지
+    // 배치(defaultPageTop/Bottom/Left/Right/WidthFactor)와 동일해야
+    // 합니다. 그림자는 여기 없습니다 — 페이지가 넘어갈 때 이 위젯째로
+    // 스냅샷을 찍어 3D로 휘게 만드는데, boxShadow가 그 안에 같이
+    // 있으면 휘어지는 메시를 따라 그림자도 왜곡돼(원래 가장자리에만
+    // 있던 그림자가 대각선으로 크게 번진 것처럼 보임) 정지 상태와
+    // 다르게 보였습니다. 대신 [DiaryPageFlipper]가 이 위치에 항상
+    // 왜곡 없는 정적 그림자를 별도로 깔아둡니다.
     return Stack(
       clipBehavior: Clip.none,
       fit: StackFit.expand,
       children: [
-        // 비활성 탭(종이 뒤로 살짝 깔림 — 프레임 2번 레이어와 동일 배치).
-        for (final tab in tabs)
-          if (!tab.isActive)
-            Positioned(right: tab.right, top: tab.top, child: tabChild(tab)),
-
-        // 페이지 종이. 여백(10/20/30/45)과 가로 10% 확대는
-        // [DiaryPageFrame]의 기본 페이지 배치와 동일해야 합니다.
         Positioned(
-          top: 10,
-          bottom: 20,
-          left: 30,
-          right: 45,
+          top: DiaryPageFrame.defaultPageTop,
+          bottom: DiaryPageFrame.defaultPageBottom,
+          left: DiaryPageFrame.defaultPageLeft,
+          right: DiaryPageFrame.defaultPageRight,
           child: FractionallySizedBox(
-            widthFactor: 1.1,
+            widthFactor: DiaryPageFrame.defaultPageWidthFactor,
             child: LayoutBuilder(
               builder: (context, constraints) => Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
                   color: _paperColor,
-                  borderRadius: const BorderRadius.horizontal(
-                    right: Radius.circular(15),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      blurRadius: 10,
-                      offset: const Offset(5, 5),
-                    ),
-                  ],
+                  borderRadius: DiaryPageFrame.defaultPageBorderRadius,
                 ),
                 child: _buildPageContent(pageIndex, constraints),
               ),
             ),
           ),
         ),
-
-        // 활성 탭(종이 위 — 프레임 6번 레이어와 동일 배치).
-        for (final tab in tabs)
-          if (tab.isActive)
-            Positioned(right: tab.right, top: tab.top, child: tabChild(tab)),
       ],
+    );
+  }
+
+  /// 페이지와 함께 넘어가는 "다이어리" 활성 탭. [DiaryPageFlipper.activeTab]
+  /// 으로 넘겨서 단순 회전으로만 종이와 같이 움직이게 합니다.
+  ///
+  /// 이 위젯은 [DiaryPageFrame]의 생성자 인자로 쓰일 트리를 여기(diary_screen
+  /// 자신의 State.context)에서 미리 만들지만, 실제로는 나중에
+  /// [DiaryPageFrame]이 세운 [DiaryFrameScale] 서브트리 안(overlayMainPage
+  /// 경유)에 마운트됩니다. 그래서 [DiaryFrameScale]을 조회하려면(=다른
+  /// 고정 탭들과 같은 배율/여백 확장을 적용하려면) 지금 이 context가 아니라,
+  /// 실제로 트리에 들어간 뒤의 context가 필요합니다 — [Builder]로 그 시점의
+  /// context를 받아 [DiaryPageFrame.buildScaledSideTab]에 넘깁니다(다른
+  /// 고정 탭들이 [DiaryPageFrame._buildFrameStack]에서 쓰는 것과 동일한
+  /// 로직이라, 크기·여백 확장 동작이 완전히 같아집니다).
+  Widget? _buildActiveTab(List<DiarySideTabSpec> tabs) {
+    if (tabs.isEmpty) return null;
+    final tab = tabs.first;
+    return Builder(
+      builder: (context) {
+        final frameScale = DiaryFrameScale.maybeWidgetOf(context);
+        final scale = frameScale?.scale ?? 1.0;
+        final marginEachSide = frameScale?.marginEachSide ?? 0.0;
+        return DiaryPageFrame.buildScaledSideTab(tab, scale, marginEachSide);
+      },
     );
   }
 
@@ -945,9 +957,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
       // 프레임 전체를 차지해야 합니다. 회전축(pivotX)은 페이지 종이의
       // 왼쪽 모서리(= 30 - 가로 10% 확대로 늘어난 절반) 위치입니다.
       overlayMainPageFullFrame: true,
-      // 넘김 애니메이션이 진행되는 동안에만 오버레이가 바인더 링보다
-      // 앞으로 옵니다(정지 상태에선 원래대로 링이 페이지 위).
-      overlayAnimatingNotifier: _flipAnimating,
+      // 페이지 넘김과 같은 속도로 바인더 링이 오른쪽부터 사라졌다가
+      // 넘김이 끝나면 다시 나타나게 합니다.
+      overlayFlipProgress: _flipAnimating,
       overlayMainPage: LayoutBuilder(
         builder: (context, constraints) => DiaryPageFlipper(
           key: ValueKey('flipper_$_currentPageIndex'),
@@ -956,22 +968,23 @@ class _DiaryScreenState extends State<DiaryScreen> {
           // 자리라, 스와이프 제스처가 그 탭들의 탭(누름) 이벤트를 가로채지
           // 않도록 제외합니다.
           dragExclusionRight: 45,
-          animatingNotifier: _flipAnimating,
-          frontPage: _buildFlipLeaf(pageIndex, diaryTab),
+          flipProgressNotifier: _flipAnimating,
+          activeTab: _buildActiveTab(diaryTab),
+          frontPage: _buildFlipLeaf(pageIndex),
           // 다음 페이지가 없으면(nextPageIndex==null) frontPage와 같은
           // 티켓을 같은 GlobalKey로 다시 그리지 않도록 빈 페이지를
           // 넣습니다. 이 상태에서는 onFlipForward도 null이라 실제로
           // 넘어가 보이지도 않습니다.
           backPage: nextPageIndex == null
               ? const SizedBox.shrink()
-              : _buildFlipLeaf(nextPageIndex, diaryTab),
+              : _buildFlipLeaf(nextPageIndex),
           // 첫 페이지가 아니면 오른쪽 스와이프로 이전 페이지로 돌아갑니다.
           // prevPage(이전 페이지)와 frontPage(현재 페이지)는 서로 다른 티켓
           // 목록이라 GlobalKey가 겹치지 않고, backPage와는 DiaryPageFlipper가
           // 넘김 방향별로 한쪽만 트리에 올리므로 동시에 마운트되지 않습니다.
           prevPage: prevPageIndex == null
               ? null
-              : _buildFlipLeaf(prevPageIndex, diaryTab),
+              : _buildFlipLeaf(prevPageIndex),
           onFlipForward: _currentPageIndex < _totalPages - 1
               ? () {
                   final now = DateTime.now();
@@ -1215,8 +1228,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
             // 뜯긴 상태로 보여주고, 처음 뜯는 순간에는 티켓 데이터에 기록해서
             // 이후에도 계속 뜯긴 채로 유지되게 합니다.
             initiallyRevealed: ticket.tornRevealed,
+            onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
               setState(() => ticket.tornRevealed = true);
+              // 서버(게스트는 로컬 저장소)에 torn_at을 기록해 재설치/다른
+              // 기기에서도 유지되게 합니다. TornTicketStore(기기 로컬)에도
+              // 그대로 남겨서, 이 요청이 네트워크 실패로 못 나가도 최소한
+              // 이 기기에서는 뜯긴 상태가 유지됩니다.
+              // 서버 동기화는 최선 노력(best-effort)입니다 — 실패해도 이미
+              // 화면상 연출은 끝났고 TornTicketStore가 로컬 유지를
+              // 보장하므로, ignore()로 조용히 무시합니다.
+              _ticketService
+                  .updateTicket(ticket.id, tornAt: DateTime.now())
+                  .ignore();
               unawaited(TornTicketStore.instance.markTorn(ticket.id));
             },
           ),
@@ -1242,11 +1266,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: const Center(
+        child: Center(
           child: Text(
             "티켓  추가",
             style: TextStyle(
-              fontSize: 26,
+              fontSize: context.sp(26),
               fontWeight: FontWeight.bold,
               color: Colors.black87,
               letterSpacing: 4.0,
@@ -1382,8 +1406,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 12,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
                     fontWeight: FontWeight.bold,
                     color: Colors.grey,
                   ),
@@ -1393,8 +1417,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   child: Text(
                     dDayLabel,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      fontSize: 18,
+                    style: TextStyle(
+                      fontSize: context.sp(18),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -1426,7 +1450,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: context.sp(12),
                     color: isRegisterReady
                         ? const Color(0xFF16A34A)
                         : Colors.black54,
@@ -1456,8 +1480,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
             width: 36,
             child: Text(
               label,
-              style: const TextStyle(
-                fontSize: 11,
+              style: TextStyle(
+                fontSize: context.sp(11),
                 fontWeight: FontWeight.bold,
                 color: Colors.grey,
               ),
@@ -1469,8 +1493,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
               value,
               maxLines: maxLines,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: context.sp(12),
                 fontWeight: FontWeight.w600,
                 color: Colors.black87,
                 height: 1.15,
@@ -1490,10 +1514,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             '공연 정보',
             style: TextStyle(
-              fontSize: 12,
+              fontSize: context.sp(12),
               fontWeight: FontWeight.bold,
               color: Colors.grey,
             ),
@@ -1579,8 +1603,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 12,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
                     fontWeight: FontWeight.bold,
                     color: Colors.grey,
                   ),
@@ -1589,8 +1613,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   child: Center(
                     child: Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 22,
+                      style: TextStyle(
+                        fontSize: context.sp(22),
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -1613,7 +1637,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 '입장 티켓',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: context.sp(12),
                   fontWeight: FontWeight.w800,
                   color: Colors.black.withValues(alpha: 0.55),
                 ),
@@ -1634,6 +1658,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     bool vibrate = true,
     bool initiallyRevealed = false,
     VoidCallback? onTorn,
+    ValueChanged<TicketInfo>? onInfoChanged,
   }) {
     return Row(
       children: [
@@ -1658,6 +1683,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       ),
                       concertTitle: title,
                       ticketInfo: info,
+                      onTicketInfoChanged: onInfoChanged,
                     );
                   },
             pressScale: 0.985,
@@ -1691,7 +1717,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                         '관람 완료',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: context.sp(12),
                           fontWeight: FontWeight.w800,
                           color: Colors.black.withValues(alpha: 0.55),
                         ),
@@ -1750,8 +1776,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 12,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
                     fontWeight: FontWeight.bold,
                     color: Colors.grey,
                   ),
@@ -1760,8 +1786,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   child: Center(
                     child: Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 22,
+                      style: TextStyle(
+                        fontSize: context.sp(22),
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -1779,7 +1805,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         child: Text(
           "공연전",
           style: TextStyle(
-            fontSize: 12,
+            fontSize: context.sp(12),
             fontWeight: FontWeight.w800,
             color: dark ? Colors.black54 : Colors.black54,
           ),
@@ -1924,8 +1950,8 @@ class _PosterTicketFace extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             child: bigCenterText != null
-                ? _buildBigCenterLayout()
-                : _buildConcertLayout(),
+                ? _buildBigCenterLayout(context)
+                : _buildConcertLayout(context),
           ),
         ],
       ),
@@ -1933,7 +1959,7 @@ class _PosterTicketFace extends StatelessWidget {
   }
 
   /// 배송 전 티켓: 작은 제목 + 가운데 큰 D-day.
-  Widget _buildBigCenterLayout() {
+  Widget _buildBigCenterLayout(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1942,7 +1968,7 @@ class _PosterTicketFace extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            fontSize: 11,
+            fontSize: context.sp(11),
             fontWeight: FontWeight.w800,
             color: Colors.white.withValues(alpha: 0.85),
             shadows: _textShadows,
@@ -1952,8 +1978,8 @@ class _PosterTicketFace extends StatelessWidget {
         Center(
           child: Text(
             bigCenterText!,
-            style: const TextStyle(
-              fontSize: 20,
+            style: TextStyle(
+              fontSize: context.sp(20),
               fontWeight: FontWeight.w900,
               color: Colors.white,
               shadows: _textShadows,
@@ -1966,7 +1992,7 @@ class _PosterTicketFace extends StatelessWidget {
   }
 
   /// 공연 전/후 티켓: 큰 공연명 + 날짜·공연장 + 하단 좌석/가격.
-  Widget _buildConcertLayout() {
+  Widget _buildConcertLayout(BuildContext context) {
     final seat = info?.seat ?? '';
     final price = info?.price ?? '';
     final metaParts = <String>[
@@ -1981,8 +2007,8 @@ class _PosterTicketFace extends StatelessWidget {
           title,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 15,
+          style: TextStyle(
+            fontSize: context.sp(15),
             fontWeight: FontWeight.w900,
             color: Colors.white,
             height: 1.15,
@@ -1996,7 +2022,7 @@ class _PosterTicketFace extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 10.5,
+              fontSize: context.sp(10.5),
               fontWeight: FontWeight.w600,
               color: Colors.white.withValues(alpha: 0.85),
               shadows: _textShadows,
@@ -2006,16 +2032,16 @@ class _PosterTicketFace extends StatelessWidget {
         const Spacer(),
         Row(
           children: [
-            if (seat.isNotEmpty) _miniStat('좌석', seat),
+            if (seat.isNotEmpty) _miniStat(context, '좌석', seat),
             if (seat.isNotEmpty && price.isNotEmpty) const SizedBox(width: 14),
-            if (price.isNotEmpty) _miniStat('가격', price),
+            if (price.isNotEmpty) _miniStat(context, '가격', price),
           ],
         ),
       ],
     );
   }
 
-  Widget _miniStat(String label, String value) {
+  Widget _miniStat(BuildContext context, String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
@@ -2023,7 +2049,7 @@ class _PosterTicketFace extends StatelessWidget {
         Text(
           label,
           style: TextStyle(
-            fontSize: 9,
+            fontSize: context.sp(9),
             fontWeight: FontWeight.w700,
             color: Colors.white.withValues(alpha: 0.7),
             shadows: _textShadows,
@@ -2033,8 +2059,8 @@ class _PosterTicketFace extends StatelessWidget {
           value,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 11,
+          style: TextStyle(
+            fontSize: context.sp(11),
             fontWeight: FontWeight.w800,
             color: Colors.white,
             shadows: _textShadows,
@@ -2068,7 +2094,7 @@ class _TicketStub extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: context.sp(12),
               fontWeight: FontWeight.w800,
               color: labelColor ?? Colors.black.withValues(alpha: 0.55),
             ),

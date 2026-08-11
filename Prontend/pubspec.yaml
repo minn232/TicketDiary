@@ -44,6 +44,8 @@ dependencies:
   dio: ^5.10.0
   flutter_secure_storage: ^10.3.1
   webview_flutter: ^4.13.0
+  url_launcher: ^6.3.2
+  uuid: ^4.6.0
 
 dev_dependencies:
   flutter_test:
@@ -56,6 +58,9 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4
+  # ticket_alignment_detector_test.dart에서 실기기 카메라 없이
+  # CameraImage 합성 프레임을 만드는 데 씁니다(camera의 전이 의존성).
+  camera_platform_interface: ^2.13.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -28,12 +28,19 @@ class ConcertAfterOverlay extends StatefulWidget {
   /// 스캔된 티켓 정보(공연장/날짜/사진/소감 등). 없으면 placeholder가 표시됩니다.
   final TicketInfo? ticketInfo;
 
+  /// 오버레이 안(사진 추가/소감 작성)에서 [ticketInfo]가 갱신될 때마다
+  /// 호출됩니다. 호출자가 다이어리 화면의 원본 [TicketData.info]를 같이
+  /// 갱신해야, 오버레이를 닫은 뒤에도(앱 재시작 없이) 바로 최신 내용이
+  /// 보입니다.
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
+
   const ConcertAfterOverlay({
     super.key,
     required this.startRect,
     required this.collapsedTicket,
     required this.concertTitle,
     this.ticketInfo,
+    this.onTicketInfoChanged,
   });
 
   /// 다이어리 위에 오버레이를 띄우는 헬퍼.
@@ -43,6 +50,7 @@ class ConcertAfterOverlay extends StatefulWidget {
     required Widget collapsedTicket,
     required String concertTitle,
     TicketInfo? ticketInfo,
+    ValueChanged<TicketInfo>? onTicketInfoChanged,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -56,6 +64,7 @@ class ConcertAfterOverlay extends StatefulWidget {
           collapsedTicket: collapsedTicket,
           concertTitle: concertTitle,
           ticketInfo: ticketInfo,
+          onTicketInfoChanged: onTicketInfoChanged,
         );
       },
     );
@@ -72,9 +81,6 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
 
   /// 2x2 카드(콘텐츠) 페이드 인
   late final Animation<double> _postItOpacity;
-
-  /// 카드(다이어리 종이) 바깥 탭으로만 닫기 위한 key
-  final GlobalKey _pageKey = GlobalKey();
 
   bool _isClosing = false;
 
@@ -134,23 +140,12 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     return lerpDouble(10, 18, t)!;
   }
 
-  void _onBackgroundTap(TapDownDetails details) {
+  /// 카드 바깥(어두운 dim 영역) 또는 카드 안이지만 포스트잇이 아닌 자리
+  /// (헤더/안내 문구/포스터가 비치는 여백)를 눌렀을 때 호출됩니다. 두 곳
+  /// 모두 "닫기"만 하면 되므로 같은 로직을 공유합니다.
+  void _handleOutsideTap() {
     // 애니메이션 중에는 실수로 닫히지 않도록 어느 정도 진행 이후만 허용
     if (_controller.value < 0.85) return;
-
-    // "카드(다이어리 종이)" 안을 눌렀으면 닫히면 안 됨
-    final ctx = _pageKey.currentContext;
-    if (ctx != null) {
-      final box = ctx.findRenderObject() as RenderBox?;
-      if (box != null && box.hasSize) {
-        final topLeft = box.localToGlobal(Offset.zero);
-        final rect = topLeft & box.size;
-        if (rect.contains(details.globalPosition)) {
-          return;
-        }
-      }
-    }
-
     _close();
   }
 
@@ -217,7 +212,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
                 Positioned.fill(
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
-                    onTapDown: _onBackgroundTap,
+                    onTapDown: (_) => _handleOutsideTap(),
                     child: const SizedBox.expand(),
                   ),
                 ),
@@ -245,10 +240,11 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
                           child: Opacity(
                             opacity: expandedOpacity,
                             child: _ExpandedConcertAfter(
-                              pageKey: _pageKey,
                               postItOpacity: _postItOpacity,
                               concertTitle: widget.concertTitle,
                               ticketInfo: widget.ticketInfo,
+                              onOutsideTap: _handleOutsideTap,
+                              onTicketInfoChanged: widget.onTicketInfoChanged,
                             ),
                           ),
                         ),
@@ -266,16 +262,18 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
 }
 
 class _ExpandedConcertAfter extends StatelessWidget {
-  final GlobalKey pageKey;
   final Animation<double> postItOpacity;
   final String concertTitle;
   final TicketInfo? ticketInfo;
+  final VoidCallback onOutsideTap;
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
 
   const _ExpandedConcertAfter({
-    required this.pageKey,
     required this.postItOpacity,
     required this.concertTitle,
+    required this.onOutsideTap,
     this.ticketInfo,
+    this.onTicketInfoChanged,
   });
 
   @override
@@ -284,48 +282,76 @@ class _ExpandedConcertAfter extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
         child: Center(
-          child: Container(
-            key: pageKey,
+          child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 562),
-            // 포스터 배경(아래)이 이 카드의 둥근 모서리 밖으로 삐져나오지
-            // 않도록 clip합니다.
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              // DiaryPageFrame.pageColor 기본값과 동일한 다이어리 종이색.
-              color: const Color(0xFFF4F1E1),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: Colors.black.withValues(alpha: 0.10),
-                width: 1.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  blurRadius: 18,
-                  offset: const Offset(0, 10),
-                ),
-              ],
-            ),
             child: Stack(
               children: [
-                // 공연 포스터를 카드 배경 전체(카드와 같은 둥근 모서리)에
-                // 살짝 투명하게 겹칩니다.
+                // 카드 배경(색/테두리/그림자)만 그리는 장식용 레이어.
+                // IgnorePointer로 히트테스트에서 완전히 제외해야, 이 색만
+                // 있는 자리(콘텐츠가 비어 있는 곳)를 눌렀을 때 탭이 이
+                // 레이어에 막히지 않고 아래 포스터의 "바깥 탭으로 닫기"
+                // 감지기까지 그대로 전달됩니다. 그림자가 모서리 클립에
+                // 잘리지 않도록 클립 레이어 바깥(이 자리)에 둡니다.
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: Opacity(
-                      opacity: 0.4,
-                      child: PosterBackground(
-                        imageUrl: ticketInfo?.posterImageUrl,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        // DiaryPageFrame.pageColor 기본값과 동일한
+                        // 다이어리 종이색.
+                        color: const Color(0xFFF4F1E1),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.black.withValues(alpha: 0.10),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 18,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
                       ),
                     ),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
-                  child: ConcertAfterPageContents(
-                    concertTitle: concertTitle,
-                    ticketInfo: ticketInfo,
-                    postItOpacity: postItOpacity,
+
+                // 포스터 + 콘텐츠는 카드와 같은 둥근 모서리 밖으로 삐져
+                // 나오지 않도록 별도로 clip합니다.
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(
+                    children: [
+                      // 공연 포스터를 카드 배경 전체에 살짝 투명하게
+                      // 겹칩니다. 콘텐츠(2x2 카드)의 인터랙티브 요소가
+                      // 그려지는 자리는 이 Stack에서 나중에(=위에) 그려져
+                      // 먼저 히트되므로 이 감지기와 경합(arena)하지
+                      // 않습니다 — 포스트잇이 아닌 자리(헤더/안내 문구/
+                      // 카드 사이 여백)를 눌렀을 때만 이 감지기가 받아서
+                      // 오버레이를 닫습니다.
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onOutsideTap,
+                          child: Opacity(
+                            opacity: 0.4,
+                            child: PosterBackground(
+                              imageUrl: ticketInfo?.posterImageUrl,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
+                        child: ConcertAfterPageContents(
+                          concertTitle: concertTitle,
+                          ticketInfo: ticketInfo,
+                          postItOpacity: postItOpacity,
+                          onTicketInfoChanged: onTicketInfoChanged,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],

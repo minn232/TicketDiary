@@ -11,6 +11,7 @@ import '../services/notification_settings_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
+import '../widgets/responsive_text.dart';
 
 /// 아직 백엔드와 연동되지 않은 알림 항목의 라벨 색상(회색 처리용).
 const Color _unconnectedTextColor = Color(0x611A1A1A);
@@ -155,12 +156,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 10),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
                   child: Text(
                     '설정',
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: context.sp(18),
                       fontWeight: FontWeight.w900,
                       color: Colors.black87,
                     ),
@@ -197,10 +198,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           initiallyExpanded: pushExpanded,
                           onExpansionChanged: (v) =>
                               setState(() => pushExpanded = v),
-                          title: const Text(
+                          title: Text(
                             '푸쉬 알림',
                             style: TextStyle(
-                              fontSize: 15,
+                              fontSize: context.sp(15),
                               fontWeight: FontWeight.w800,
                               color: Colors.black87,
                             ),
@@ -304,7 +305,7 @@ class _SwitchRow extends StatelessWidget {
               child: Text(
                 title,
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: context.sp(15),
                   fontWeight: FontWeight.w800,
                   color: titleColor ?? Colors.black87,
                 ),
@@ -344,8 +345,8 @@ class _MenuRow extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 15,
+                  style: TextStyle(
+                    fontSize: context.sp(15),
                     fontWeight: FontWeight.w800,
                     color: Colors.black87,
                   ),
@@ -400,8 +401,8 @@ class _LoginStatusBanner extends StatelessWidget {
                   Expanded(
                     child: Text(
                       label,
-                      style: const TextStyle(
-                        fontSize: 15,
+                      style: TextStyle(
+                        fontSize: context.sp(15),
                         fontWeight: FontWeight.w800,
                         color: Colors.black87,
                       ),
@@ -517,9 +518,17 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   ///   수 있는 엔드포인트라, 세션이 없는데 마이그레이션을 시도하면 401이
   ///   납니다 — 그래서 [AuthService.isGuest](세션이 없을 때도 기본값 true)가
   ///   아니라 [AuthService.hasActiveGuestSession]으로 판단합니다.
-  /// - 활성 게스트인데 기기에 옮길 데이터가 없으면 바로 마이그레이션합니다.
+  /// - 활성 게스트인데 기기에 옮길 데이터가 없으면 일반 로그인
+  ///   (`/auth/kakao`)으로 처리합니다. 옮길 데이터가 없는 빈 게스트를 굳이
+  ///   마이그레이션(`/auth/migrate`)하면, 그 카카오 계정이 이미 다른
+  ///   기기에서 가입/로그인된 적이 있을 때 "이미 다른 계정으로 가입된
+  ///   카카오 계정"이라며 충돌합니다(마이그레이션은 "지금 이 게스트를 그
+  ///   계정으로 승격"하는 동작이라, 이미 다른 유저에게 연결된 계정과는
+  ///   병합할 수 없기 때문). 일반 로그인은 그런 경우에도 그냥 그 기존
+  ///   계정으로 로그인시켜주므로, 옮길 데이터가 없다면 항상 이 경로가
+  ///   안전합니다.
   /// - 활성 게스트인데 기기에 저장해둔 티켓이 있으면, 먼저 그 데이터를
-  ///   카카오 계정으로 가져올지 물어봅니다("가져오기"/"새로 시작"/"취소").
+  ///   카카오 계정으로 옮길지 물어봅니다("옮기기"/"삭제하기"/"취소").
   Future<void> _loginWithKakaoFlow() async {
     if (!_auth.hasActiveGuestSession) {
       await KakaoLoginController.instance.login(
@@ -535,7 +544,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
       if (!mounted) return;
       await KakaoLoginController.instance.login(
         context: context,
-        migrateFromGuest: true,
+        migrateFromGuest: false,
       );
       _showMessage('로그인됐어요.');
       return;
@@ -572,11 +581,11 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     return showDialog<_MigrationChoice>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('게스트 데이터를 옮길까요?'),
+        title: const Text('게스트로 등록된 데이터를 옮기시겠습니까?'),
         content: const Text(
           '게스트로 이용하며 추가한 티켓이 기기에 저장되어 있어요.\n'
-          '카카오 계정으로 로그인하면서 이 데이터를 그대로 가져올까요?\n\n'
-          '가져오지 않으면 게스트 데이터는 이 기기에 그대로 남고, 카카오 계정은 새로 시작해요.',
+          '카카오 계정으로 로그인하면서 이 데이터를 그대로 옮길까요?\n\n'
+          '삭제하기를 선택하면 게스트 데이터는 이 기기에 그대로 남고, 카카오 계정에는 반영되지 않아요.',
         ),
         actions: [
           TextButton(
@@ -586,19 +595,48 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
           TextButton(
             onPressed: () =>
                 Navigator.pop(context, _MigrationChoice.startFresh),
-            child: const Text('새로 시작'),
+            child: const Text('삭제하기'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, _MigrationChoice.migrate),
-            child: const Text('가져오기'),
+            child: const Text('옮기기'),
           ),
         ],
       ),
     );
   }
 
-  void _logout() {
+  Future<void> _logout() async {
+    final confirmed = await _showLogoutConfirmDialog();
+    if (!confirmed || !mounted) return;
     _runGuarded(_auth.logout, successMessage: '로그아웃했어요.');
+  }
+
+  /// 로그아웃 전 한 번 더 확인하는 창. "예"를 왼쪽에 살짝 눈에 덜 띄는
+  /// 회색으로 둬서, 실수로 로그아웃을 누르는 걸 방지합니다.
+  Future<bool> _showLogoutConfirmDialog() async {
+    if (!mounted) return false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('로그아웃'),
+        content: const Text('정말 로그아웃 하시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.black.withValues(alpha: 0.45),
+            ),
+            child: const Text('예'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('아니오'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   @override
@@ -693,11 +731,11 @@ class _ProfileRow extends StatelessWidget {
                     border: Border.all(color: Colors.white, width: 2),
                   ),
                   alignment: Alignment.center,
-                  child: const Text(
+                  child: Text(
                     '!',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 14,
+                      fontSize: context.sp(14),
                       fontWeight: FontWeight.w900,
                       height: 1,
                     ),
@@ -709,7 +747,7 @@ class _ProfileRow extends StatelessWidget {
         const SizedBox(height: 10),
         Text(
           label,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+          style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
         ),
       ],
     );
@@ -744,9 +782,9 @@ class _KakaoLoginButton extends StatelessWidget {
                   color: Color(0xFF3C1E1E),
                 ),
               )
-            : const Text(
+            : Text(
                 '카카오로 로그인',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
               ),
       ),
     );
@@ -781,9 +819,9 @@ class _LogoutButton extends StatelessWidget {
                   color: Colors.white,
                 ),
               )
-            : const Text(
+            : Text(
                 '로그아웃',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
               ),
       ),
     );
