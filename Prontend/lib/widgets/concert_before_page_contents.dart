@@ -708,7 +708,8 @@ class _TimelineRow extends StatelessWidget {
 }
 
 /// 예상 셋 리스트 본문(트랙리스트처럼 번호 매김). 설정 > "예상 셋리 노출
-/// 여부"가 켜져 있으면 스포일러 방지를 위해 블러 처리해서 보여줍니다.
+/// 여부"가 꺼져 있으면 스포일러 방지를 위해 블러 처리해서 보여주고, 켜져
+/// 있으면 그대로 보여줍니다.
 class _SetlistNumbered extends StatelessWidget {
   final List<String> setlist;
 
@@ -756,7 +757,7 @@ class _SetlistNumbered extends StatelessWidget {
           ],
         );
 
-        if (!AppSettingsStore.instance.showExpectedSetlist) return content;
+        if (AppSettingsStore.instance.showExpectedSetlist) return content;
 
         return ImageFiltered(
           imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
