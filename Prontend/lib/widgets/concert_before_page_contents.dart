@@ -133,10 +133,9 @@ class _ConcertBeforeBody extends StatefulWidget {
 /// 타임테이블/예상 셋리스트 포스트잇의 조회 상태.
 /// - [loading]: 조회 중(응답 대기)
 /// - [empty]: 조회는 끝났는데 아직 등록된 데이터가 없음(백엔드 404) — "미정"
-/// - [disabled]: 예상 셋리스트 표시 설정이 꺼져 있음(백엔드 403)
 /// - [error]: 그 외 실패(500, 네트워크 오류 등) — 상태 코드를 같이 보여줌
 /// - [loaded]: 정상적으로 데이터를 받아옴
-enum _FetchStatus { loading, empty, disabled, error, loaded }
+enum _FetchStatus { loading, empty, error, loaded }
 
 class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   final ConcertDetailService _service = ConcertDetailService();
@@ -261,9 +260,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
-        if (e.statusCode == 403) {
-          _presetlistStatus = _FetchStatus.disabled;
-        } else if (e.statusCode == 404) {
+        if (e.statusCode == 404) {
           _presetlistStatus = _FetchStatus.empty;
         } else {
           _presetlistStatus = _FetchStatus.error;
@@ -284,8 +281,6 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         return const _UndecidedText(message: '조회 중');
       case _FetchStatus.empty:
         return const _UndecidedText();
-      case _FetchStatus.disabled:
-        return const _UndecidedText(message: '예상 셋리스트 표시가 꺼져 있어요');
       case _FetchStatus.error:
         // 네트워크 단절 등 HTTP 응답 자체가 없으면 ApiClient가 statusCode -1로
         // 던지므로, 양수 코드일 때만 코드를 그대로 보여줍니다.

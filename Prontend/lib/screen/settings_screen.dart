@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'favorite_pinned_settings_screen.dart';
+import 'notifications_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
@@ -56,6 +57,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _onAppSettingsChanged() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  // [백엔드 수정]
+  // show_predicted_setlist가 이제 백엔드에 저장되므로, 다른 알림 토글들과
+  // 마찬가지로 저장 실패 시 안내를 띄웁니다(값 되돌리기는 AppSettingsStore가
+  // 이미 처리해 _onAppSettingsChanged로 반영됨).
+  Future<void> _setShowExpectedSetlist(bool v) async {
+    try {
+      await _appSettings.setShowExpectedSetlist(v);
+    } catch (e) {
+      _showSaveError(e, label: '예상 셋리 노출 여부');
+    }
   }
 
   Future<void> _loadNotificationSettings() async {
@@ -141,12 +154,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  void _showSaveError(Object e) {
+  void _showSaveError(Object e, {String label = '알림 설정'}) {
     if (!mounted) return;
     final message = e is ApiException ? e.message : '잠시 후 다시 시도해주세요.';
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text('알림 설정을 저장하지 못했어요: $message')));
+    ).showSnackBar(SnackBar(content: Text('$label 저장에 실패했어요: $message')));
   }
 
   void _openMemberSettingsSheet(BuildContext context) {
@@ -204,8 +217,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _SwitchRow(
                         title: '예상 셋리 노출 여부',
                         value: _appSettings.showExpectedSetlist,
-                        onChanged: (v) =>
-                            _appSettings.setShowExpectedSetlist(v),
+                        onChanged: _setShowExpectedSetlist,
                       ),
                       _divider,
 
@@ -288,6 +300,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               builder: (context) =>
                                   const FavoritePinnedSettingsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      _divider,
+                      // [백엔드 수정]
+                      // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
+                      _MenuRow(
+                        title: '알림함',
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              settings: const RouteSettings(
+                                name: DiaryRoutes.notifications,
+                              ),
+                              builder: (context) => const NotificationsScreen(),
                             ),
                           );
                         },

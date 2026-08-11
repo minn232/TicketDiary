@@ -17,9 +17,6 @@ class ConcertDetailService {
     return TimeTableResponse.fromJson(json);
   }
 
-  /// 예상 셋리스트 조회(`GET /concerts/{concertId}/setlist/pre`).
-  /// 유저의 `show_predicted_setlist` 설정이 꺼져있으면 백엔드가 403을 줍니다.
-  Future<PreSetlistResponse> getPreSetlist(String concertId) async {
   // [백엔드 수정]
   // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre.
   // concertId만으로는 페스티벌처럼 날짜가 여러 개인 공연에서 어느 날짜인지 특정이 안 돼 400.
