@@ -146,6 +146,39 @@ class NewsModel {
     );
   }
 
+  /// [NewsCacheStore]에 저장하기 위한 직렬화. 화면에 보여줄 형태로 이미
+  /// 다 가공된 필드를 그대로 저장해서, 캐시를 다시 불러올 때(백엔드/찜
+  /// 목록을 다시 조회하지 않고) 값만 그대로 복원하면 됩니다.
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'concertId': concertId,
+    'isRead': isRead,
+    'artist': artist,
+    'concert': concert,
+    'imageUrl': imageUrl,
+    'description': description,
+    'contentTop': contentTop,
+    'contentBottom': contentBottom,
+    'articleImageUrl': articleImageUrl,
+    'venue': venue,
+  };
+
+  factory NewsModel.fromCacheJson(Map<String, dynamic> json) {
+    return NewsModel(
+      id: json['id'] as String?,
+      concertId: json['concertId'] as String?,
+      isRead: json['isRead'] as bool? ?? true,
+      artist: json['artist'] as String? ?? '',
+      concert: json['concert'] as String? ?? '',
+      imageUrl: json['imageUrl'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      contentTop: json['contentTop'] as String? ?? '',
+      contentBottom: json['contentBottom'] as String? ?? '',
+      articleImageUrl: json['articleImageUrl'] as String? ?? '',
+      venue: json['venue'] as String?,
+    );
+  }
+
   /// 티케팅(예매) 오픈일까지 남은 일수. 크롤러가 아직 수집 못 한 공연은
   /// 값이 없어 "미정"으로 표시됩니다.
   static String _ticketingDDay(DateTime? date) {

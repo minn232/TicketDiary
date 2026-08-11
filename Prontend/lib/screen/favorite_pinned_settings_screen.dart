@@ -37,6 +37,22 @@ class _FavoritePinnedSettingsScreenState
   final TextEditingController _artistQueryController = TextEditingController();
   final TextEditingController _concertQueryController = TextEditingController();
 
+  /// 선호 아티스트/찜 공연 검색을 좌우 스와이프로 넘나드는 페이지 컨트롤러.
+  final PageController _categoryPageController = PageController();
+  _FavCategory _currentCategory = _FavCategory.artist;
+
+  void _onCategoryPageChanged(int index) {
+    setState(() => _currentCategory = _FavCategory.values[index]);
+  }
+
+  void _goToCategory(_FavCategory category) {
+    _categoryPageController.animateToPage(
+      category.index,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   /// 매 키 입력마다 KOPIS 실시간 검색을 부르지 않도록, 타이핑이 잠깐
   /// 멈춘 뒤에 검색을 실행합니다.
   static const _debounce = Duration(milliseconds: 450);
@@ -68,6 +84,7 @@ class _FavoritePinnedSettingsScreenState
     _favorites.removeListener(_onFavoritesChanged);
     _artistQueryController.dispose();
     _concertQueryController.dispose();
+    _categoryPageController.dispose();
     super.dispose();
   }
 
@@ -231,78 +248,46 @@ class _FavoritePinnedSettingsScreenState
                   onManage: _openManageSheet,
                 ),
                 const Divider(height: 1, thickness: 1),
+                // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
+                // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
+                // PageView 바로 위에 고정으로 둡니다.
+                _CategorySwitcher(
+                  current: _currentCategory,
+                  onSelect: _goToCategory,
+                ),
                 Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, viewport) {
-                      const padding = 16.0;
-                      return SingleChildScrollView(
-                        padding: const EdgeInsets.all(padding),
-                        child: ConstrainedBox(
-                          // 내용이 화면보다 짧을 때, 아래에만 여백이 몰리는
-                          // 대신 두 섹션 사이/앞뒤로 균등하게 나뉘도록
-                          // 최소 높이를 뷰포트 전체로 잡습니다. 내용이 더
-                          // 길어지면(검색 결과 등) 자연스럽게 스크롤됩니다.
-                          constraints: BoxConstraints(
-                            minHeight: viewport.maxHeight - padding * 2,
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const _SectionTitle('선호 아티스트'),
-                                  const SizedBox(height: 10),
-                                  _SearchField(
-                                    controller: _artistQueryController,
-                                    hintText: '아티스트 이름 검색',
-                                  ),
-                                  const SizedBox(height: 14),
-                                  _SearchResultsRow<ArtistModel>(
-                                    items: _artistResults,
-                                    searching: _artistSearching,
-                                    statusText: _artistStatusText,
-                                    nameOf: (a) => a.name,
-                                    imageUrlOf: (a) => a.profileImageUrl,
-                                    // 아티스트 프로필 사진은 백엔드에 소스가 없어
-                                    // 사람 아이콘 플레이스홀더를 보여줍니다.
-                                    placeholderIcon: Icons.person_outline,
-                                    isFavoritedOf: (a) =>
-                                        _favorites.isArtistFavorited(a.name),
-                                    onTap: (a) => _favorites.toggleArtist(a),
-                                  ),
-                                ],
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const _SectionTitle('찜 공연'),
-                                  const SizedBox(height: 10),
-                                  _SearchField(
-                                    controller: _concertQueryController,
-                                    hintText: '공연 이름 검색',
-                                  ),
-                                  const SizedBox(height: 14),
-                                  _SearchResultsRow<ConcertModel>(
-                                    items: _concertResults,
-                                    searching: _concertSearching,
-                                    statusText: _concertStatusText,
-                                    nameOf: (c) => c.name,
-                                    imageUrlOf: (c) => c.posterImageUrl,
-                                    isFavoritedOf: (c) =>
-                                        _favorites.isConcertFavorited(c.name),
-                                    onTap: (c) => _favorites.toggleConcert(c),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                  child: PageView(
+                    controller: _categoryPageController,
+                    onPageChanged: _onCategoryPageChanged,
+                    children: [
+                      _CategorySearchPage<ArtistModel>(
+                        controller: _artistQueryController,
+                        hintText: '아티스트 이름 검색',
+                        items: _artistResults,
+                        searching: _artistSearching,
+                        statusText: _artistStatusText,
+                        nameOf: (a) => a.name,
+                        imageUrlOf: (a) => a.profileImageUrl,
+                        // 아티스트 프로필 사진은 백엔드에 소스가 없어
+                        // 사람 아이콘 플레이스홀더를 보여줍니다.
+                        placeholderIcon: Icons.person_outline,
+                        isFavoritedOf: (a) =>
+                            _favorites.isArtistFavorited(a.name),
+                        onTap: (a) => _favorites.toggleArtist(a),
+                      ),
+                      _CategorySearchPage<ConcertModel>(
+                        controller: _concertQueryController,
+                        hintText: '공연 이름 검색',
+                        items: _concertResults,
+                        searching: _concertSearching,
+                        statusText: _concertStatusText,
+                        nameOf: (c) => c.name,
+                        imageUrlOf: (c) => c.posterImageUrl,
+                        isFavoritedOf: (c) =>
+                            _favorites.isConcertFavorited(c.name),
+                        onTap: (c) => _favorites.toggleConcert(c),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -364,19 +349,153 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  final String text;
+enum _FavCategory { artist, concert }
 
-  const _SectionTitle(this.text);
+/// 선호 아티스트/찜 공연 검색 페이지 중 하나를 통째로 그립니다 — 검색창은
+/// 항상 페이지 내부 상단에 고정되고, 그 아래로 결과 그리드가 스크롤됩니다.
+class _CategorySearchPage<T> extends StatelessWidget {
+  final TextEditingController controller;
+  final String hintText;
+  final List<T> items;
+  final bool searching;
+  final String statusText;
+  final String Function(T) nameOf;
+  final String Function(T) imageUrlOf;
+  final IconData placeholderIcon;
+  final bool Function(T) isFavoritedOf;
+  final ValueChanged<T> onTap;
+
+  const _CategorySearchPage({
+    super.key,
+    required this.controller,
+    required this.hintText,
+    required this.items,
+    required this.searching,
+    required this.statusText,
+    required this.nameOf,
+    required this.imageUrlOf,
+    this.placeholderIcon = Icons.broken_image_outlined,
+    required this.isFavoritedOf,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(
-        fontSize: context.sp(13),
-        fontWeight: FontWeight.w900,
-        color: Colors.black.withValues(alpha: 0.35),
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SearchField(controller: controller, hintText: hintText),
+          const SizedBox(height: 14),
+          Expanded(
+            child: _SearchResultsGrid<T>(
+              items: items,
+              searching: searching,
+              statusText: statusText,
+              nameOf: nameOf,
+              imageUrlOf: imageUrlOf,
+              placeholderIcon: placeholderIcon,
+              isFavoritedOf: isFavoritedOf,
+              onTap: onTap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 페이지 상단에 고정으로 두는, 두 검색 페이지 사이를 탭으로도 이동할 수
+/// 있는 알약형 스위처. 좌우에 화살표를 둬서(현재 페이지 반대쪽만 진하게)
+/// 좌우 스와이프로도 넘어갈 수 있다는 걸 알기 쉽게 합니다.
+class _CategorySwitcher extends StatelessWidget {
+  final _FavCategory current;
+  final ValueChanged<_FavCategory> onSelect;
+
+  const _CategorySwitcher({required this.current, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    final canGoLeft = current == _FavCategory.concert;
+    final canGoRight = current == _FavCategory.artist;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Row(
+        children: [
+          Icon(
+            Icons.chevron_left,
+            size: 20,
+            color: Colors.black.withValues(alpha: canGoLeft ? 0.45 : 0.12),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(
+                  child: _CategoryPill(
+                    label: '선호 아티스트',
+                    selected: current == _FavCategory.artist,
+                    onTap: () => onSelect(_FavCategory.artist),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _CategoryPill(
+                    label: '찜 공연',
+                    selected: current == _FavCategory.concert,
+                    onTap: () => onSelect(_FavCategory.concert),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            Icons.chevron_right,
+            size: 20,
+            color: Colors.black.withValues(alpha: canGoRight ? 0.45 : 0.12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryPill extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _CategoryPill({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? const Color(0xFF8D6E63)
+              : Colors.white.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: Colors.black.withValues(alpha: selected ? 0 : 0.15),
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: context.sp(13),
+            fontWeight: FontWeight.w900,
+            color: selected ? Colors.white : Colors.black.withValues(alpha: 0.55),
+          ),
+        ),
       ),
     );
   }
@@ -436,9 +555,9 @@ class _SearchField extends StatelessWidget {
   }
 }
 
-/// 검색 결과를 가로로 보여주는 목록. 3개까지는 한 화면에 딱 맞게 채우고,
-/// 그보다 많으면 가로 스크롤이 가능합니다(카드 크기는 항상 동일하게 유지).
-class _SearchResultsRow<T> extends StatelessWidget {
+/// 검색 결과를 3열 그리드로 보여줍니다(세로 스크롤로 더 많은 결과를 볼 수
+/// 있음, 카드 크기는 항상 동일하게 유지).
+class _SearchResultsGrid<T> extends StatelessWidget {
   final List<T> items;
 
   /// true면 결과 대신 로딩 스피너를 보여줍니다(검색 요청 진행 중).
@@ -456,7 +575,7 @@ class _SearchResultsRow<T> extends StatelessWidget {
   final bool Function(T) isFavoritedOf;
   final ValueChanged<T> onTap;
 
-  const _SearchResultsRow({
+  const _SearchResultsGrid({
     required this.items,
     required this.searching,
     required this.statusText,
@@ -467,71 +586,60 @@ class _SearchResultsRow<T> extends StatelessWidget {
     required this.onTap,
   });
 
-  static const _visibleCount = 3;
+  static const _crossAxisCount = 3;
   static const _spacing = 12.0;
 
   @override
   Widget build(BuildContext context) {
+    if (searching) {
+      return const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.brown),
+        ),
+      );
+    }
+
+    if (items.isEmpty) {
+      return Center(
+        child: Text(
+          statusText,
+          style: TextStyle(
+            fontSize: context.sp(12),
+            color: Colors.black.withValues(alpha: 0.3),
+          ),
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final cardWidth =
-            (constraints.maxWidth - _spacing * (_visibleCount - 1)) /
-            _visibleCount;
-        final rowHeight = cardWidth + 34;
+            (constraints.maxWidth - _spacing * (_crossAxisCount - 1)) /
+            _crossAxisCount;
+        final cellHeight = cardWidth + 34;
 
-        if (searching) {
-          return SizedBox(
-            height: rowHeight,
-            child: const Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.brown,
-                ),
-              ),
-            ),
-          );
-        }
-
-        if (items.isEmpty) {
-          return SizedBox(
-            height: rowHeight,
-            child: Center(
-              child: Text(
-                statusText,
-                style: TextStyle(
-                  fontSize: context.sp(12),
-                  color: Colors.black.withValues(alpha: 0.3),
-                ),
-              ),
-            ),
-          );
-        }
-
-        return SizedBox(
-          height: rowHeight,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            itemCount: items.length,
-            separatorBuilder: (context, index) =>
-                const SizedBox(width: _spacing),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return SizedBox(
-                width: cardWidth,
-                child: _ThumbCard(
-                  label: nameOf(item),
-                  imageUrl: imageUrlOf(item),
-                  placeholderIcon: placeholderIcon,
-                  favorited: isFavoritedOf(item),
-                  onTap: () => onTap(item),
-                ),
-              );
-            },
+        return GridView.builder(
+          padding: EdgeInsets.zero,
+          physics: const BouncingScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: _crossAxisCount,
+            crossAxisSpacing: _spacing,
+            mainAxisSpacing: _spacing,
+            mainAxisExtent: cellHeight,
           ),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return _ThumbCard(
+              label: nameOf(item),
+              imageUrl: imageUrlOf(item),
+              placeholderIcon: placeholderIcon,
+              favorited: isFavoritedOf(item),
+              onTap: () => onTap(item),
+            );
+          },
         );
       },
     );
