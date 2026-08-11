@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
+import '../services/auth_service.dart';
 import '../services/concert_detail_service.dart';
 import 'responsive_text.dart';
 
@@ -168,7 +169,8 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   @override
   void didUpdateWidget(covariant _ConcertBeforeBody oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.ticketInfo?.concertId != widget.ticketInfo?.concertId) {
+    if (oldWidget.ticketInfo?.concertId != widget.ticketInfo?.concertId ||
+        oldWidget.ticketInfo?.ticketId != widget.ticketInfo?.ticketId) {
       _loadedConcertId = null;
       _fetchedTimetable = const [];
       _fetchedSetlist = const [];
@@ -194,7 +196,15 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     if (concertId == _loadedConcertId) return;
     _loadedConcertId = concertId;
     unawaited(_loadTimetable(concertId));
-    unawaited(_loadPreSetlist(concertId));
+    // [백엔드 수정]
+    // 예상 셋리스트 ticketId로 조회.
+    // concertId는 게스트 폴백용.
+    final ticketId = widget.ticketInfo?.ticketId;
+    if (ticketId != null) {
+      unawaited(_loadPreSetlist(ticketId, concertId));
+    } else {
+      setState(() => _presetlistStatus = _FetchStatus.empty);
+    }
   }
 
   /// `GET /concerts/{concertId}/timetable`. 미등록(404)은 "미정", 그 외
@@ -231,12 +241,16 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     }
   }
 
-  /// `GET /concerts/{concertId}/setlist/pre`. 유저의 `show_predicted_setlist`
-  /// 설정이 꺼져있으면(403) "표시 꺼짐"으로, 미등록(404)은 "미정"으로, 그 외
-  /// 실패는 상태 코드와 함께 오류로 표시합니다.
-  Future<void> _loadPreSetlist(String concertId) async {
+  // [백엔드 수정]
+  // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre.
+  // 게스트 티켓은 concertId 기준 구버전 라우트로 폴백.
+  /// `GET /tickets/{ticketId}/setlist/pre`(게스트는 `/concerts/{concertId}/setlist/pre`).
+  /// 미등록(404)은 "미정"으로, 그 외 실패는 상태 코드와 함께 오류로 표시합니다.
+  Future<void> _loadPreSetlist(String ticketId, String concertId) async {
     try {
-      final res = await _service.getPreSetlist(concertId);
+      final res = AuthService.instance.isGuest
+          ? await _service.getPreSetlistByConcert(concertId)
+          : await _service.getPreSetlist(ticketId);
       if (!mounted) return;
       setState(() {
         _fetchedSetlist = res.songs
