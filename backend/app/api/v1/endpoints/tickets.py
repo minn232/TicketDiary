@@ -16,7 +16,12 @@ from app.schemas.setlist import (
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
-from app.services.pre_setlist import get_pre_setlist, generate_pre_setlist, update_pre_setlist
+from app.services.pre_setlist import (
+    get_pre_setlist,
+    generate_pre_setlist,
+    generate_pre_setlist_background,
+    update_pre_setlist,
+)
 from app.services.setlist import (
     get_real_setlist,
     search_setlists_for_concert,
@@ -47,6 +52,11 @@ async def register_ticket(
     if ticket.ticketing_site:
         background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
     if ticket.concert and ticket.concert.artist_name:
+        # 아티스트 정보가 있으니 예상 셋리스트도 바로 생성 시도(Setlist.fm에 데이터가
+        # 없으면 generate_pre_setlist_background 내부에서 조용히 스킵됨). 이미 생성된
+        # 적 있으면 generate_pre_setlist가 upsert하므로 여러 유저가 같은 공연에
+        # 티켓을 등록해도 안전함.
+        background_tasks.add_task(generate_pre_setlist_background, ticket.concert.id)
         # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
         # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
         background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
