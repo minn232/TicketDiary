@@ -13,6 +13,10 @@ abstract class DiaryRoutes {
   static const String concertBefore = '/concert/before';
   static const String concertAfter = '/concert/after';
   static const String favoritePinned = '/settings/favorite_pinned';
+
+  // [백엔드 수정]
+  // 인앱 알림함 화면 신규 추가로 라우트 이름 신규 추가.
+  static const String notifications = '/settings/notifications';
 }
 
 enum DiaryTab { diary, news, summary, settings }
