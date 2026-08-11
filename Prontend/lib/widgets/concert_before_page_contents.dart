@@ -699,13 +699,31 @@ class _TimelineRow extends StatelessWidget {
   }
 }
 
+// [백엔드 수정]
+// "꾹 눌러서 잠깐 보기" 기능 신규 추가. StatelessWidget → StatefulWidget으로
+// 바뀌었고(_peeking 상태), 블러 처리된 동안엔 GestureDetector(long press)로
+// 누르고 있는 동안만 원본을 보여줌.
 /// 예상 셋 리스트 본문(트랙리스트처럼 번호 매김). 설정 > "예상 셋리 노출
 /// 여부"가 꺼져 있으면 스포일러 방지를 위해 블러 처리해서 보여주고, 켜져
-/// 있으면 그대로 보여줍니다.
-class _SetlistNumbered extends StatelessWidget {
+/// 있으면 그대로 보여줍니다. 블러 처리된 동안엔 꾹 눌러서(long press) 누르고
+/// 있는 동안만 잠깐 풀어볼 수 있습니다(뗴면 다시 블러).
+class _SetlistNumbered extends StatefulWidget {
   final List<String> setlist;
 
   const _SetlistNumbered({required this.setlist});
+
+  @override
+  State<_SetlistNumbered> createState() => _SetlistNumberedState();
+}
+
+class _SetlistNumberedState extends State<_SetlistNumbered> {
+  /// 지금 꾹 눌러서 블러를 잠깐 풀어보고 있는 중인지.
+  bool _peeking = false;
+
+  void _setPeeking(bool value) {
+    if (_peeking == value) return;
+    setState(() => _peeking = value);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -715,10 +733,10 @@ class _SetlistNumbered extends StatelessWidget {
         final content = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (var i = 0; i < setlist.length; i++)
+            for (var i = 0; i < widget.setlist.length; i++)
               Padding(
                 padding: EdgeInsets.only(
-                  bottom: i == setlist.length - 1 ? 0 : 10,
+                  bottom: i == widget.setlist.length - 1 ? 0 : 10,
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -736,7 +754,7 @@ class _SetlistNumbered extends StatelessWidget {
                     ),
                     Expanded(
                       child: Text(
-                        setlist[i],
+                        widget.setlist[i],
                         style: TextStyle(
                           fontSize: context.sp(14.5),
                           color: Colors.black87,
@@ -751,9 +769,39 @@ class _SetlistNumbered extends StatelessWidget {
 
         if (AppSettingsStore.instance.showExpectedSetlist) return content;
 
-        return ImageFiltered(
-          imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-          child: content,
+        // 블러 상태: 꾹 누르고 있는 동안만(_peeking) 실제 내용을 보여주고,
+        // 손을 떼거나(onLongPressEnd) 제스처가 중간에 취소되면(스크롤 등,
+        // onLongPressCancel) 곧바로 다시 블러 처리합니다.
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onLongPressStart: (_) => _setPeeking(true),
+          onLongPressEnd: (_) => _setPeeking(false),
+          onLongPressCancel: () => _setPeeking(false),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 150),
+                child: _peeking
+                    ? KeyedSubtree(key: const ValueKey('clear'), child: content)
+                    : KeyedSubtree(
+                        key: const ValueKey('blurred'),
+                        child: ImageFiltered(
+                          imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                          child: content,
+                        ),
+                      ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '꾹 눌러서 잠깐 보기',
+                style: TextStyle(
+                  fontSize: context.sp(12),
+                  color: Colors.black.withValues(alpha: 0.45),
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
