@@ -185,6 +185,73 @@ async def test_generate_pre_setlist_api_502():
     assert response.status_code == 502
 
 
+# 티켓 등록 시 자동 생성 테스트 (POST /tickets -> generate_pre_setlist_background)
+
+# 아티스트 정보 있는 공연에 티켓 등록하면 예상 셋리스트가 자동으로 생성되는지 테스트
+@pytest.mark.asyncio
+async def test_ticket_registration_auto_generates_pre_setlist():
+    concert_id = await _create_concert("PF_PRE_AUTO_001")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    concerts_data = _make_artist_setlists([["노래A", "노래B"]])
+    with _setlistfm_artist_mock(concerts_data):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                "/api/v1/tickets", json={"concert_id": concert_id}, headers=headers
+            )
+    assert res.status_code == 201
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
+
+    assert pre_res.status_code == 200
+    assert pre_res.json()["concert_id"] == concert_id
+    song_names = [s["name"] for s in pre_res.json()["songs"]]
+    assert "노래A" in song_names
+
+
+# 아티스트 정보 없는 공연은 티켓 등록해도(자동 생성 시도가 조용히 스킵돼) 예상
+# 셋리스트가 안 만들어지고, 티켓 등록 자체는 정상 처리되는지 테스트
+@pytest.mark.asyncio
+async def test_ticket_registration_skips_pre_setlist_when_no_artist():
+    concert_id = await _create_concert("PF_PRE_AUTO_002", artist="")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id}, headers=headers
+        )
+    assert res.status_code == 201
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
+
+    assert pre_res.status_code == 404
+
+
+# Setlist.fm에 그 아티스트 데이터가 없어도(404) 티켓 등록은 실패하지 않고
+# 조용히 예상 셋리스트만 안 만들어지는지 테스트
+@pytest.mark.asyncio
+async def test_ticket_registration_succeeds_when_setlistfm_has_no_data():
+    concert_id = await _create_concert("PF_PRE_AUTO_003")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with _setlistfm_artist_mock(status_code=404):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                "/api/v1/tickets", json={"concert_id": concert_id}, headers=headers
+            )
+    assert res.status_code == 201
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
+
+    assert pre_res.status_code == 404
+
+
 # 예상 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist/pre)
 
 # 저장된 예상 셋리스트 조회 성공 테스트
@@ -226,11 +293,14 @@ async def test_get_pre_setlist_not_found_404():
     assert response.status_code == 404
 
 
-# show_predicted_setlist 설정 비활성화 시 403 테스트
+# [프론트 요청]
+# show_predicted_setlist는 더 이상 조회/생성을 막는 스위치가 아니라(프론트가
+# 롱탭/홀드로 블러를 잠깐 풀어 보여주는 기능을 만들 수 있도록, 꺼져 있어도
+# 데이터는 그대로 내려줘야 함) 아래 두 테스트는 "꺼도 안 막힌다"로 뒤집음.
 
-# 조회 비활성화 403 테스트
+# 설정을 꺼도 조회가 막히지 않는지 테스트
 @pytest.mark.asyncio
-async def test_get_pre_setlist_forbidden_when_setting_off():
+async def test_get_pre_setlist_not_forbidden_when_setting_off():
     concert_id = await _create_concert("PF_PRE_SETTING_001")
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -244,12 +314,13 @@ async def test_get_pre_setlist_forbidden_when_setting_off():
         await ac.patch("/api/v1/settings", json={"show_predicted_setlist": False}, headers=headers)
         res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
 
-    assert res.status_code == 403
+    assert res.status_code == 200
+    assert res.json()["songs"]
 
 
-# 생성 비활성화 403 테스트
+# 설정을 꺼도 생성이 막히지 않는지 테스트
 @pytest.mark.asyncio
-async def test_generate_pre_setlist_forbidden_when_setting_off():
+async def test_generate_pre_setlist_not_forbidden_when_setting_off():
     concert_id = await _create_concert("PF_PRE_SETTING_002")
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
@@ -265,24 +336,4 @@ async def test_generate_pre_setlist_forbidden_when_setting_off():
                 headers=headers,
             )
 
-    assert res.status_code == 403
-
-
-# 설정 다시 활성화 시 정상 조회 테스트
-@pytest.mark.asyncio
-async def test_get_pre_setlist_accessible_when_setting_restored():
-    concert_id = await _create_concert("PF_PRE_SETTING_003")
-    token = await _get_token()
-    headers = {"Authorization": f"Bearer {token}"}
-
-    concerts_data = _make_artist_setlists([["노래A"]])
-    with _setlistfm_artist_mock(concerts_data):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        await ac.patch("/api/v1/settings", json={"show_predicted_setlist": False}, headers=headers)
-        await ac.patch("/api/v1/settings", json={"show_predicted_setlist": True}, headers=headers)
-        res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
-
-    assert res.status_code == 200
+    assert res.status_code == 201

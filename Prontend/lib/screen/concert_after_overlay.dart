@@ -28,12 +28,19 @@ class ConcertAfterOverlay extends StatefulWidget {
   /// 스캔된 티켓 정보(공연장/날짜/사진/소감 등). 없으면 placeholder가 표시됩니다.
   final TicketInfo? ticketInfo;
 
+  /// 오버레이 안(사진 추가/소감 작성)에서 [ticketInfo]가 갱신될 때마다
+  /// 호출됩니다. 호출자가 다이어리 화면의 원본 [TicketData.info]를 같이
+  /// 갱신해야, 오버레이를 닫은 뒤에도(앱 재시작 없이) 바로 최신 내용이
+  /// 보입니다.
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
+
   const ConcertAfterOverlay({
     super.key,
     required this.startRect,
     required this.collapsedTicket,
     required this.concertTitle,
     this.ticketInfo,
+    this.onTicketInfoChanged,
   });
 
   /// 다이어리 위에 오버레이를 띄우는 헬퍼.
@@ -43,6 +50,7 @@ class ConcertAfterOverlay extends StatefulWidget {
     required Widget collapsedTicket,
     required String concertTitle,
     TicketInfo? ticketInfo,
+    ValueChanged<TicketInfo>? onTicketInfoChanged,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -56,6 +64,7 @@ class ConcertAfterOverlay extends StatefulWidget {
           collapsedTicket: collapsedTicket,
           concertTitle: concertTitle,
           ticketInfo: ticketInfo,
+          onTicketInfoChanged: onTicketInfoChanged,
         );
       },
     );
@@ -235,6 +244,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
                               concertTitle: widget.concertTitle,
                               ticketInfo: widget.ticketInfo,
                               onOutsideTap: _handleOutsideTap,
+                              onTicketInfoChanged: widget.onTicketInfoChanged,
                             ),
                           ),
                         ),
@@ -256,12 +266,14 @@ class _ExpandedConcertAfter extends StatelessWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
   final VoidCallback onOutsideTap;
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
 
   const _ExpandedConcertAfter({
     required this.postItOpacity,
     required this.concertTitle,
     required this.onOutsideTap,
     this.ticketInfo,
+    this.onTicketInfoChanged,
   });
 
   @override
@@ -336,6 +348,7 @@ class _ExpandedConcertAfter extends StatelessWidget {
                           concertTitle: concertTitle,
                           ticketInfo: ticketInfo,
                           postItOpacity: postItOpacity,
+                          onTicketInfoChanged: onTicketInfoChanged,
                         ),
                       ),
                     ],

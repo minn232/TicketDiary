@@ -2,8 +2,11 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
+import '../services/news_loading_signal.dart';
 import 'diary_page_flipper.dart' show BentLeafPainter, DiaryPageFlipper;
 import 'diary_page_frame.dart';
 import 'diary_route.dart';
@@ -24,13 +27,18 @@ class DiaryTabFlipRoute extends PageRouteBuilder<void> {
     required WidgetBuilder builder,
   }) : super(
           settings: RouteSettings(name: routeNameForDiaryTab(to)),
-          transitionDuration: const Duration(milliseconds: 500),
+          transitionDuration: DiaryTabFlipTransition.transitionDuration,
           pageBuilder: (context, animation, secondaryAnimation) =>
               builder(context),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return DiaryTabFlipTransition(
               animation: animation,
               forward: to.index > from.index,
+              // 소식 탭으로 이동할 때만, 소식 데이터 로딩이 끝날 때까지
+              // 전환 애니메이션이 (로딩 화면 대신) 계속 재생되도록 신호를
+              // 넘깁니다. 다른 탭은 null이라 기존과 동일하게 동작합니다.
+              holdSignal:
+                  to == DiaryTab.news ? NewsLoadingSignal.isLoading : null,
               child: child,
             );
           },
@@ -59,16 +67,27 @@ class DiaryTabFlipTransition extends StatefulWidget {
   final bool forward;
   final Widget child;
 
+  /// true인 동안은 전환이 끝나도(routeT가 끝에 닿아도) 목적지 화면을
+  /// 바로 드러내지 않고, 마지막 속지가 화면을 덮은 정지 화면으로 계속
+  /// 대기합니다(소식 탭 로딩 스피너 대신). null이면 기존과 동일하게
+  /// 전환이 끝나는 즉시 목적지를 보여줍니다.
+  final ValueListenable<bool>? holdSignal;
+
   const DiaryTabFlipTransition({
     super.key,
     required this.animation,
     required this.forward,
     required this.child,
+    this.holdSignal,
   });
 
+  /// 전환 전체(잎이 다 넘어가는 데 걸리는) 시간. 기존 500ms에서 20% 줄임.
+  static const Duration transitionDuration = Duration(milliseconds: 400);
+
   /// 전환 동안 넘어가는 속지 수. 실제 페이지 넘김(한 장 420ms)보다 훨씬
-  /// 빠르고 많이 넘어가도록 잡은 값입니다(처음 14장에서 절반으로 조정).
-  static const int leafCount = 6;
+  /// 빠르고 많이 넘어가도록 잡은 값입니다(처음 14장에서 절반으로 조정한
+  /// 6장에서, 더 촘촘한 연출을 위해 3장 늘림).
+  static const int leafCount = 9;
 
   /// 속지 한 장이 넘어가는 데 걸리는 시간(전체 전환 시간 1.0 기준).
   /// 전체 0.5초 기준 약 80ms — 실제 페이지 넘김(420ms)의 5배 속도입니다.
@@ -77,6 +96,18 @@ class DiaryTabFlipTransition extends StatefulWidget {
   /// 마지막 속지가 넘어가기를 끝내는 시각(1.0 기준). 남는 끝부분은
   /// 목적지 페이지가 자리를 잡는 여유 구간입니다.
   static const double lastLeafEnd = 0.94;
+
+  /// 마지막 속지가 넘어가기 "시작"하는 시각. 이 시각까지는 마지막 속지가
+  /// 평평하게 화면 전체를 덮고 있습니다(p=0으로 고정) — [holdSignal]이
+  /// true인 동안(소식 탭 로딩 중) 전환을 이 지점에서 정지시켜, 목적지
+  /// 화면이 잠깐도 비치지 않으면서 대기하는 데 씁니다.
+  static const double lastLeafStart = lastLeafEnd - leafSpan;
+
+  /// 넘어가는 속지 묶음(leaves)의 실제 렌더링 Rect를 테스트에서 찾기
+  /// 위한 key. [DiaryPageFrame]의 실제 프레임 위치와 어긋나지 않는지
+  /// 검증하는 diary_tab_flip_frame_alignment_test.dart 전용입니다.
+  @visibleForTesting
+  static const Key leavesBoxKey = ValueKey('diaryTabFlipLeavesBox');
 
   @override
   State<DiaryTabFlipTransition> createState() => _DiaryTabFlipTransitionState();
@@ -88,6 +119,29 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   /// 종이에 내용이 스며들 듯 나타납니다.
   static const double _revealStart = 0.84;
   static const double _revealEnd = 0.98;
+
+  bool get _holding => widget.holdSignal?.value ?? false;
+
+  void _onHoldSignalChanged() {
+    if (!mounted) return;
+    // holdSignal(ValueNotifier)의 notifyListeners()는 동기 호출이라, 이
+    // 리스너가 "다른 위젯이 한창 빌드되는 도중"(예: 소식 탭으로 막 전환된
+    // 라우트가 처음 지어질 때 NewsScreen.initState가 곧장 로딩 신호를
+    // true로 바꾸는 경우) 실행될 수 있습니다. 그 시점에 바로 setState를
+    // 부르면 "build 중 setState" 예외가 나므로, 이번 프레임이 끝난 뒤로
+    // 미룹니다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+    // addPostFrameCallback은 "다음 프레임이 그려질 때" 실행되도록 예약할
+    // 뿐, 그 다음 프레임이 실제로 예약되어 있음을 보장하지는 않습니다.
+    // 정적 대기 화면으로 바뀐 뒤로는 이 시점에 다른 애니메이션이 전혀
+    // 돌고 있지 않을 수 있어서, 프레임이 그려질 계기가 없으면 콜백이
+    // 무기한 미뤄지고 로딩이 끝나도 화면이 영영 드러나지 않는 문제가
+    // 있었습니다(실기기에서 재현). 프레임을 명시적으로 예약해서 반드시
+    // 다음 프레임에서 실행되게 합니다.
+    SchedulerBinding.instance.ensureVisualUpdate();
+  }
 
   /// 실제 페이지 종이와 같은 색(diary_screen의 _paperColor,
   /// [DiaryPageFrame]의 기본 pageColor와 동일).
@@ -111,17 +165,24 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   Size? _leafImageSize;
 
   @override
+  void initState() {
+    super.initState();
+    widget.holdSignal?.addListener(_onHoldSignalChanged);
+  }
+
+  @override
   void dispose() {
+    widget.holdSignal?.removeListener(_onHoldSignalChanged);
     _leafImage?.dispose();
     super.dispose();
   }
 
   double _leafProgress(int index, double t) {
-    const lastStart =
-        DiaryTabFlipTransition.lastLeafEnd - DiaryTabFlipTransition.leafSpan;
     final start = DiaryTabFlipTransition.leafCount == 1
         ? 0.0
-        : lastStart * index / (DiaryTabFlipTransition.leafCount - 1);
+        : DiaryTabFlipTransition.lastLeafStart *
+            index /
+            (DiaryTabFlipTransition.leafCount - 1);
     return ((t - start) / DiaryTabFlipTransition.leafSpan).clamp(0.0, 1.0);
   }
 
@@ -242,8 +303,25 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
         // 화면(실제 링 포함)을 보여주도록 임계값을 다르게 둡니다.
         final doneThreshold =
             widget.forward ? DiaryTabFlipTransition.lastLeafEnd : 1.0;
-        if (t >= doneThreshold) return child!;
-        return _buildScene(context, t, child!);
+        if (t < doneThreshold) return _buildScene(context, t, child!);
+        if (!_holding) return child!;
+
+        // 목적지(소식 탭) 로딩이 아직 안 끝났습니다: 정상 전환은 끝났지만
+        // 목적지를 드러내지 않고, lastLeafStart 시점(마지막 속지가 아직
+        // 시작 전이라 화면 전체를 평평하게 덮고 있는 상태)에서 정지한
+        // 정적인 화면으로 대기합니다 — 로딩 스피너 대신 "전환이 아직
+        // 끝나지 않은 것처럼" 자연스럽게 이어 보이게 하는 용도입니다.
+        // (반복 재생 루프로 구현했을 때는 매 프레임 복잡한 곡면 메시를
+        // 다시 그리다가 정점 부근에서 렌더링이 꼬여 잎과 바인더 링이
+        // 동시에 비치는 등 실제 기기에서 화면이 깨지는 문제가 있었습니다
+        // — 정적 프레임 하나만 그리는 지금 방식은 그 문제 자체가 생길
+        // 여지가 없습니다.)
+        return _buildScene(
+          context,
+          DiaryTabFlipTransition.lastLeafStart,
+          child!,
+          forceCovered: true,
+        );
       },
     );
   }
@@ -257,7 +335,12 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   /// 이중으로 축소됨) [ClipRect]로 링이 있는 자리(왼쪽 여백)만 화면 전체
   /// 좌표 기준으로 가려서, 목적지 화면 자신의 실제 링이 비쳐 보이지
   /// 않게 합니다.
-  Widget _buildScene(BuildContext context, double t, Widget child) {
+  Widget _buildScene(
+    BuildContext context,
+    double t,
+    Widget child, {
+    bool forceCovered = false,
+  }) {
     return SafeArea(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -278,6 +361,15 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
           }
           final marginEachSide =
               math.max(0.0, (availableWidth - frameWidth) / 2);
+          // DiaryPageFrame.build()는 AspectRatio를 Center로 감싸서 가로뿐
+          // 아니라 세로도 중앙 정렬합니다(diaryAspectRatio가 화면비보다
+          // 좁은 대부분의 폰에서는 frameHeight < availableHeight라 위아래
+          // 여백이 생김). 여기서 top을 0으로 고정하면 그 여백만큼 실제
+          // 다이어리 페이지 위치보다 위로 밀려 보이므로, 같은 공식으로
+          // 세로 마진도 계산해 맞춰야 합니다 — 기기별 화면비 차이로 이
+          // 여백 크기가 달라, "몇몇 기기에서만" 어긋나 보이던 원인입니다.
+          final marginTop =
+              math.max(0.0, (availableHeight - frameHeight) / 2);
 
           final metrics = DiaryPageFrame.computeRingMetrics(
             frameWidth: frameWidth,
@@ -287,10 +379,11 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
 
           final leaves = Positioned(
             left: marginEachSide,
-            top: 0,
+            top: marginTop,
             width: frameWidth,
             height: frameHeight,
             child: IgnorePointer(
+              key: DiaryTabFlipTransition.leavesBoxKey,
               child: Stack(
                 fit: StackFit.expand,
                 clipBehavior: Clip.none,
@@ -310,10 +403,15 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
             marginEachSide + metrics.pivotX + metrics.barWidth / 2,
           );
 
-          if (widget.forward) {
+          if (widget.forward || forceCovered) {
             // 목적지(child)가 바닥, 속지들이 그 위. 속지가 다 넘어가면
             // 목적지가 드러납니다. child 자신의 실제 링은 속지가 다
             // 사라지기 전까지 clip으로 가려둡니다.
+            //
+            // forceCovered(로딩 대기 정지 화면)는 원래 뒤로 넘김이었어도
+            // 이 분기를 씁니다 — 뒤로 넘김의 정상 분기(아래)는 reveal
+            // 페이드로 child가 미리 살짝 비치기 시작하는데, 대기 중엔
+            // 항상 완전히 가려둬야 하기 때문입니다.
             return Stack(
               fit: StackFit.expand,
               clipBehavior: Clip.none,

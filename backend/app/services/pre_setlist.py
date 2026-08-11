@@ -1,3 +1,4 @@
+import logging
 from collections import Counter
 from uuid import UUID
 
@@ -5,10 +6,13 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry
 from app.services.setlistfm import search_setlists_by_artist
+
+logger = logging.getLogger(__name__)
 
 
 # concert 조회 (없으면 404)
@@ -104,3 +108,17 @@ async def generate_pre_setlist(
     await db.commit()
     await db.refresh(pre_setlist)
     return pre_setlist
+
+
+# 티켓 등록 시 BackgroundTasks로 호출(tickets.py). 요청 세션과 분리된 자체 세션을 씀.
+# Setlist.fm에 그 아티스트 데이터가 없는 경우가 흔해서(특히 인지도 낮은 아티스트) 404가
+# 자주 나는데, 이건 실패가 아니라 정상적인 "데이터 없음" 케이스라 조용히 로그만 남기고
+# 넘어감 - 티켓 등록 자체를 막으면 안 됨.
+async def generate_pre_setlist_background(concert_id: UUID) -> None:
+    async with AsyncSessionLocal() as db:
+        try:
+            await generate_pre_setlist(db, concert_id)
+        except HTTPException as e:
+            logger.info(f"예상 셋리스트 자동 생성 스킵 (concert_id={concert_id}): {e.detail}")
+        except Exception as e:
+            logger.warning(f"예상 셋리스트 자동 생성 실패 (concert_id={concert_id}): {e}")

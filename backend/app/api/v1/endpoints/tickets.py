@@ -16,7 +16,12 @@ from app.schemas.setlist import (
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
-from app.services.pre_setlist import get_pre_setlist, generate_pre_setlist, update_pre_setlist
+from app.services.pre_setlist import (
+    get_pre_setlist,
+    generate_pre_setlist,
+    generate_pre_setlist_background,
+    update_pre_setlist,
+)
 from app.services.setlist import (
     get_real_setlist,
     search_setlists_for_concert,
@@ -47,6 +52,11 @@ async def register_ticket(
     if ticket.ticketing_site:
         background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
     if ticket.concert and ticket.concert.artist_name:
+        # 아티스트 정보가 있으니 예상 셋리스트도 바로 생성 시도(Setlist.fm에 데이터가
+        # 없으면 generate_pre_setlist_background 내부에서 조용히 스킵됨). 이미 생성된
+        # 적 있으면 generate_pre_setlist가 upsert하므로 여러 유저가 같은 공연에
+        # 티켓을 등록해도 안전함.
+        background_tasks.add_task(generate_pre_setlist_background, ticket.concert.id)
         # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
         # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
         background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
@@ -145,6 +155,13 @@ async def edit_ticket_real_setlist(
     return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, explicit_date)
 
 
+# [프론트 요청]
+# show_predicted_setlist는 이제 조회 자체를 막는 스위치가 아니라 프론트 블러
+# 처리용 화면 취향 값이라(꺼도 데이터는 그대로 내려줘야 롱탭/홀드로 잠깐
+# 풀어볼 수 있는 기능을 만들 수 있음), 아래 세 엔드포인트에서 하던 403
+# 게이팅을 제거함. 값 자체(GET/PATCH /settings)는 그대로 유지.
+
+
 # 예상 셋리스트는 아티스트 과거 통계 기반 추측이라 날짜에 안 묶임 - ticket.concert_id로만 위임
 @router.get("/{ticket_id}/setlist/pre", response_model=PreSetlistResponse)
 async def get_ticket_pre_setlist(
@@ -152,8 +169,6 @@ async def get_ticket_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not current_user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, _ = _ticket_concert_and_date(ticket)
     return await get_pre_setlist(db, concert_id)
@@ -165,8 +180,6 @@ async def generate_ticket_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not current_user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, _ = _ticket_concert_and_date(ticket)
     return await generate_pre_setlist(db, concert_id)
@@ -179,8 +192,6 @@ async def edit_ticket_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not current_user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, _ = _ticket_concert_and_date(ticket)
     return await update_pre_setlist(db, concert_id, body.songs, current_user.nickname)

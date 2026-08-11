@@ -1,7 +1,7 @@
 from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -69,10 +69,12 @@ async def edit_real_setlist(
     return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, performance_date)
 
 
-# show_predicted_setlist 설정 체크 (비활성화 시 403)
-def _check_pre_setlist_enabled(user: User) -> None:
-    if not user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
+# [프론트 요청]
+# show_predicted_setlist는 이제 "조회 자체를 막는 스위치"가 아니라, 프론트에서
+# 블러 처리 여부만 결정하는 화면 취향 값으로 재정의됨(꺼도 데이터는 그대로
+# 내려줘야 프론트가 롱탭/홀드로 블러를 잠깐 풀어 보여주는 기능을 만들 수 있음).
+# 그래서 여기서 하던 403 게이팅은 제거함 — 값 자체(GET/PATCH /settings)는
+# 그대로 유지.
 
 
 # 저장된 예상 셋리스트 조회
@@ -82,7 +84,6 @@ async def get_pre_setlist_endpoint(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_pre_setlist_enabled(current_user)
     return await get_pre_setlist(db, concert_id)
 
 
@@ -93,7 +94,6 @@ async def generate_pre_setlist_endpoint(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_pre_setlist_enabled(current_user)
     return await generate_pre_setlist(db, concert_id)
 
 
@@ -105,5 +105,4 @@ async def edit_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _check_pre_setlist_enabled(current_user)
     return await update_pre_setlist(db, concert_id, body.songs, current_user.nickname)

@@ -571,6 +571,10 @@ Authorization: Bearer <token>
 
 ## 설정 API
 
+> `show_predicted_setlist`는 조회/생성을 막는 스위치가 아니라 프론트 전용
+> 블러 처리 취향 값입니다 — 꺼져 있어도 `GET/POST/PATCH .../setlist/pre`는
+> 그대로 정상 응답합니다.
+
 ### 설정 조회
 ```
 GET /settings
