@@ -292,9 +292,12 @@ class _ScanGuideOverlay extends StatelessWidget {
         // 기존 기준(화면 폭의 86%에 14.9:6 비율)의 짧은 변 길이를 그대로
         // 구한 뒤, 90도 돌려(가로↔세로 맞바꿈) 세로로 긴 가이드 박스로
         // 만들고, 전체 크기를 30% 키웁니다. 긴 변 비율은 6:14.9(입장권까지
-        // 붙어 있는 티켓 전체 규격)로 맞춥니다.
+        // 붙어 있는 티켓 전체 규격)를 기준으로 하되, 세로(긴 변)만 30% 더
+        // 늘려 6:19.37 비율로 만듭니다(가로 폭은 그대로 유지).
+        const verticalRatioBoost = 1.3;
         final baseShortSide = constraints.maxWidth * 0.86 * 6 / 14.9;
-        final baseLongSide = baseShortSide * 14.9 / 6; // 6:14.9 비율
+        final baseLongSide =
+            baseShortSide * (14.9 * verticalRatioBoost) / 6; // 6:19.37 비율
         const enlargeFactor = 1.3;
         final guideWidth = baseShortSide * enlargeFactor;
         final guideHeight = baseLongSide * enlargeFactor;

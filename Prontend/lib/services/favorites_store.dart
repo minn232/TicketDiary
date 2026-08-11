@@ -36,6 +36,13 @@ class FavoritesStore extends ChangeNotifier {
   bool _loaded = false;
   bool _serverSynced = false;
 
+  /// 찜 목록(또는 그 표시 내용)이 바뀔 때마다 1씩 늘어납니다.
+  /// [NewsCacheStore]가 이 값을 캐시와 함께 저장해뒀다가, 저장 당시 값과
+  /// 지금 값이 다르면(=찜을 바꾼 뒤 첫 방문) 캐시를 못 미더운 것으로 보고
+  /// 건너뛰어 항상 최신 소식을 다시 불러오게 합니다.
+  int _revision = 0;
+  int get revision => _revision;
+
   List<ArtistModel> get favoriteArtists => _artists.values.toList();
   List<ConcertModel> get favoriteConcerts => _concerts.values.toList();
 
@@ -127,6 +134,7 @@ class FavoritesStore extends ChangeNotifier {
     }
 
     if (changed) {
+      _revision++;
       notifyListeners();
       await _persistArtists();
       await _persistConcerts();
@@ -186,6 +194,7 @@ class FavoritesStore extends ChangeNotifier {
     } else {
       _artists[artist.name] = artist;
     }
+    _revision++;
     notifyListeners();
     await _persistArtists();
     await _pushArtistsToServer();
@@ -198,6 +207,7 @@ class FavoritesStore extends ChangeNotifier {
     } else {
       _concerts[concert.name] = concert;
     }
+    _revision++;
     notifyListeners();
     await _persistConcerts();
     await _pushConcertsToServer();
@@ -237,6 +247,7 @@ class FavoritesStore extends ChangeNotifier {
             current.artistName.isNotEmpty ? current.artistName : detail.artistName,
         ticketingDate: current.ticketingDate ?? detail.ticketingDate,
       );
+      _revision++;
       notifyListeners();
       await _persistConcerts();
     } catch (_) {
@@ -246,6 +257,7 @@ class FavoritesStore extends ChangeNotifier {
 
   Future<void> removeArtist(String name) async {
     if (_artists.remove(name) == null) return;
+    _revision++;
     notifyListeners();
     await _persistArtists();
     await _pushArtistsToServer();
@@ -253,6 +265,7 @@ class FavoritesStore extends ChangeNotifier {
 
   Future<void> removeConcert(String name) async {
     if (_concerts.remove(name) == null) return;
+    _revision++;
     notifyListeners();
     await _persistConcerts();
     await _pushConcertsToServer();

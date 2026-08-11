@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/news_loading_signal.dart';
 import 'diary_route.dart';
 
 /// 인덱스 탭(다이어리/소식/결산/설정) 전환을 조율합니다.
@@ -94,20 +95,57 @@ class TabNavCoordinator {
     _queuedTab = null;
 
     final route = routeBuilder(from, tab);
-    navigator.pushAndRemoveUntil(route, (r) => r.isFirst);
+    // (r) => false: 스택에 남은 라우트를 전부 제거하고 이 라우트 하나만
+    // 남깁니다. 예전엔 (r) => r.isFirst를 썼는데, Route.isFirst는 "지금
+    // 스택 맨 밑"이라는 뜻이라 스플래시 직후 처음 만들어진 다이어리 화면
+    // 인스턴스가 절대 제거되지 않고 영원히 스택 바닥에 남아있었습니다.
+    // 그 상태에서 다이어리 탭에 다시 들어가면 완전히 새 DiaryScreen
+    // 인스턴스가 그 위에 또 쌓이는데, 둘 다 static _tickets(같은
+    // TicketData 인스턴스, 같은 overlayKey/posterOverlayKey)를 그대로
+    // 참조해 동시에 마운트되면서 "Duplicate GlobalKey" 예외가 났습니다
+    // (탭을 여러 번 오가며 실제 시뮬레이터에서 재현 후 발견). 탭 전환은
+    // 항상 화면 하나만 스택에 있으면 되고(뒤로가기는 PopScope로 별도
+    // 처리되므로 스택 깊이에 의존하지 않음), 비워도 push가 곧장 새
+    // 라우트를 넣어주므로 안전합니다.
+    navigator.pushAndRemoveUntil(route, (r) => false);
 
-    // 전환(진입 애니메이션)이 완전히 끝나는 시점(AnimationStatus.completed)에
-    // 맞춰 잠금을 풀고, 그 사이 새로 요청된 탭이 있으면 이어서 실행합니다.
-    late final AnimationStatusListener listener;
-    listener = (status) {
-      if (status != AnimationStatus.completed) return;
-      route.animation?.removeStatusListener(listener);
+    // 소식 탭으로 갈 때는 route.animation이 끝나도(고정 시간) 화면이
+    // 실제로는 DiaryTabFlipTransition의 홀드 루프로 계속 대기 중일 수
+    // 있습니다(NewsLoadingSignal 참고 — 로딩이 안 끝났으면 잎 넘김
+    // 애니메이션이 계속 재생됨). route.animation만 보고 잠금을 풀면, 아직
+    // 화면이 홀드 중인데 다음 탭 전환을 새로 시작해버려 두 전환이 겹쳐
+    // GlobalKey 충돌 등으로 위젯 트리가 깨지는 문제가 있었습니다(탭을
+    // 빠르게 연속으로 눌렀을 때 재현됨). route.animation 완료 + (있다면)
+    // 홀드 신호가 꺼질 때까지 둘 다 기다린 뒤에만 잠금을 풉니다.
+    final holdSignal = tab == DiaryTab.news ? NewsLoadingSignal.isLoading : null;
+    var animDone = false;
+
+    void unlockAndMaybeAdvance() {
       isTransitioning.value = false;
       final next = _queuedTab;
       if (next != null && next != tab) {
         _start(next);
       }
+    }
+
+    late final VoidCallback onHoldChanged;
+    onHoldChanged = () {
+      if (holdSignal!.value) return;
+      holdSignal.removeListener(onHoldChanged);
+      if (animDone) unlockAndMaybeAdvance();
     };
-    route.animation?.addStatusListener(listener);
+
+    late final AnimationStatusListener animListener;
+    animListener = (status) {
+      if (status != AnimationStatus.completed) return;
+      route.animation?.removeStatusListener(animListener);
+      animDone = true;
+      if (holdSignal == null || !holdSignal.value) {
+        holdSignal?.removeListener(onHoldChanged);
+        unlockAndMaybeAdvance();
+      }
+    };
+    route.animation?.addStatusListener(animListener);
+    holdSignal?.addListener(onHoldChanged);
   }
 }

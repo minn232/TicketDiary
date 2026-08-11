@@ -244,8 +244,54 @@ class _ExpandedNewsDetail extends StatefulWidget {
 
 class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
   /// 포스터를 크게 보여주는 중인지. 작은 포스터를 누르면 true, 커진
-  /// 포스터를 다시 누르면 false로 돌아갑니다.
+  /// 포스터 바깥(여백)을 누르면 false로 돌아갑니다.
   bool _posterExpanded = false;
+
+  /// 확대된 포스터의 확대/이동 상태. 더블탭으로 이 값을 직접 바꿔
+  /// 확대·축소하고, 확대된 동안은 [InteractiveViewer]가 드래그로 이동을
+  /// 처리합니다.
+  final TransformationController _posterZoomController =
+      TransformationController();
+
+  /// 더블탭한 위치를 기준으로 확대해야 자연스러워서, onDoubleTapDown에서
+  /// 좌표를 받아뒀다가 onDoubleTap에서 씁니다.
+  TapDownDetails? _posterDoubleTapDetails;
+
+  static const double _posterDoubleTapZoomScale = 2.5;
+
+  void _handlePosterDoubleTapDown(TapDownDetails details) {
+    _posterDoubleTapDetails = details;
+  }
+
+  void _handlePosterDoubleTap() {
+    final isZoomedIn =
+        _posterZoomController.value.getMaxScaleOnAxis() > 1.01;
+    if (isZoomedIn) {
+      _posterZoomController.value = Matrix4.identity();
+      return;
+    }
+    final position = _posterDoubleTapDetails?.localPosition ?? Offset.zero;
+    const scale = _posterDoubleTapZoomScale;
+    _posterZoomController.value = Matrix4.identity()
+      ..translateByDouble(
+        -position.dx * (scale - 1),
+        -position.dy * (scale - 1),
+        0,
+        1,
+      )
+      ..scaleByDouble(scale, scale, scale, 1);
+  }
+
+  void _collapsePoster() {
+    setState(() => _posterExpanded = false);
+    _posterZoomController.value = Matrix4.identity();
+  }
+
+  @override
+  void dispose() {
+    _posterZoomController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -403,26 +449,47 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
           ),
         ),
 
-        // 포스터를 크게 보여주는 레이어. 작은 포스터를 누르면 나타나고,
-        // 이 레이어 아무 곳이나 다시 누르면 닫힙니다. 흰 카드보다 나중에
-        // (=위에) 그려지므로, 카드 안 다른 요소와 탭 제스처가 경합할
-        // 걱정 없이 항상 이 레이어가 먼저 탭을 받습니다.
+        // 포스터를 크게 보여주는 레이어. 작은 포스터를 누르면 나타납니다.
+        // 흰 카드보다 나중에(=위에) 그려지므로, 카드 안 다른 요소와 탭
+        // 제스처가 경합할 걱정 없이 항상 이 레이어가 먼저 탭을 받습니다.
         IgnorePointer(
           ignoring: !_posterExpanded,
           child: AnimatedOpacity(
             opacity: _posterExpanded ? 1 : 0,
             duration: const Duration(milliseconds: 220),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _posterExpanded = false),
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.88),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(28),
-                    child: Center(child: _buildLargePoster(news)),
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.88),
+              child: Stack(
+                children: [
+                  // 포스터 바깥(여백)을 누르면 닫히는 감지기. 포스터
+                  // 자체(아래 SafeArea 안)보다 먼저(=아래에) 둬서, 포스터
+                  // 위 더블탭/드래그 제스처와 경합하지 않고 포스터가
+                  // 차지하지 않는 자리만 이 감지기가 받습니다 — 배경
+                  // 감지기를 카드보다 뒤에 두는 것과 같은 원칙입니다.
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _collapsePoster,
+                    ),
                   ),
-                ),
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Center(
+                        child: GestureDetector(
+                          onDoubleTapDown: _handlePosterDoubleTapDown,
+                          onDoubleTap: _handlePosterDoubleTap,
+                          child: InteractiveViewer(
+                            transformationController: _posterZoomController,
+                            minScale: 1.0,
+                            maxScale: _posterDoubleTapZoomScale * 2,
+                            child: _buildLargePoster(news),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

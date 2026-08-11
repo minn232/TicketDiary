@@ -31,7 +31,10 @@ class TicketData {
   final TicketStatus status;
 
   /// 스캔으로 추출된 상세 정보(공연장/날짜/가격/좌석 등). 없을 수도 있습니다.
-  final TicketInfo? info;
+  /// "공연 후" 오버레이에서 사진/소감을 저장하면 그 결과를 [_buildTicketAfterConcert]의
+  /// onInfoChanged 콜백으로 여기 그대로 반영합니다(같은 [TicketData] 인스턴스를
+  /// 유지해야 overlayKey 등 다른 상태가 끊기지 않으므로 final이 아닙니다).
+  TicketInfo? info;
 
   /// 오버레이 확장 애니메이션의 시작 위치(Rect)를 구하기 위한 티켓별 고유 key.
   /// 여러 티켓이 동시에 화면(앞/뒷 페이지)에 존재할 수 있으므로 티켓마다 별도로 가져야 합니다.
@@ -1225,6 +1228,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
             // 뜯긴 상태로 보여주고, 처음 뜯는 순간에는 티켓 데이터에 기록해서
             // 이후에도 계속 뜯긴 채로 유지되게 합니다.
             initiallyRevealed: ticket.tornRevealed,
+            onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
               setState(() => ticket.tornRevealed = true);
               // 서버(게스트는 로컬 저장소)에 torn_at을 기록해 재설치/다른
@@ -1654,6 +1658,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     bool vibrate = true,
     bool initiallyRevealed = false,
     VoidCallback? onTorn,
+    ValueChanged<TicketInfo>? onInfoChanged,
   }) {
     return Row(
       children: [
@@ -1678,6 +1683,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       ),
                       concertTitle: title,
                       ticketInfo: info,
+                      onTicketInfoChanged: onInfoChanged,
                     );
                   },
             pressScale: 0.985,
