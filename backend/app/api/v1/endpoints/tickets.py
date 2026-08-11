@@ -155,6 +155,13 @@ async def edit_ticket_real_setlist(
     return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, explicit_date)
 
 
+# [프론트 요청]
+# show_predicted_setlist는 이제 조회 자체를 막는 스위치가 아니라 프론트 블러
+# 처리용 화면 취향 값이라(꺼도 데이터는 그대로 내려줘야 롱탭/홀드로 잠깐
+# 풀어볼 수 있는 기능을 만들 수 있음), 아래 세 엔드포인트에서 하던 403
+# 게이팅을 제거함. 값 자체(GET/PATCH /settings)는 그대로 유지.
+
+
 # 예상 셋리스트는 아티스트 과거 통계 기반 추측이라 날짜에 안 묶임 - ticket.concert_id로만 위임
 @router.get("/{ticket_id}/setlist/pre", response_model=PreSetlistResponse)
 async def get_ticket_pre_setlist(
@@ -162,8 +169,6 @@ async def get_ticket_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not current_user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, _ = _ticket_concert_and_date(ticket)
     return await get_pre_setlist(db, concert_id)
@@ -175,8 +180,6 @@ async def generate_ticket_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not current_user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, _ = _ticket_concert_and_date(ticket)
     return await generate_pre_setlist(db, concert_id)
@@ -189,8 +192,6 @@ async def edit_ticket_pre_setlist(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not current_user.show_predicted_setlist:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="예상 셋리스트 표시가 비활성화되어 있습니다.")
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, _ = _ticket_concert_and_date(ticket)
     return await update_pre_setlist(db, concert_id, body.songs, current_user.nickname)
