@@ -1,24 +1,30 @@
 import 'api_client.dart';
 
-/// 백엔드 `notification_settings`(delivery/before_concert)와 대응.
-///
-/// "하루전 알림"과 "당일날 알림"은 UI상으로는 별개 스위치지만, 백엔드에는
-/// 이 둘을 합친 `before_concert` 플래그 하나만 있어서 항상 같은 값으로
-/// 취급됩니다.
+/// [백엔드 수정]
+/// - `before_concert` → `day_before`/`concert_day`로 분리
 class NotificationSettingsModel {
   final bool delivery;
-  final bool beforeConcert;
+  final bool dayBefore;
+  final bool concertDay;
+  final bool ticketing;
+  final bool newConcert;
 
   const NotificationSettingsModel({
     required this.delivery,
-    required this.beforeConcert,
+    required this.dayBefore,
+    required this.concertDay,
+    required this.ticketing,
+    required this.newConcert,
   });
 
   factory NotificationSettingsModel.fromJson(Map<String, dynamic> json) {
     final ns = json['notification_settings'] as Map<String, dynamic>? ?? const {};
     return NotificationSettingsModel(
       delivery: ns['delivery'] as bool? ?? true,
-      beforeConcert: ns['before_concert'] as bool? ?? true,
+      dayBefore: ns['day_before'] as bool? ?? true,
+      concertDay: ns['concert_day'] as bool? ?? true,
+      ticketing: ns['ticketing'] as bool? ?? true,
+      newConcert: ns['new_concert'] as bool? ?? true,
     );
   }
 }
@@ -34,19 +40,24 @@ class NotificationSettingsService {
     return NotificationSettingsModel.fromJson(json);
   }
 
-  /// 백엔드가 `notification_settings`를 부분 수정이 아니라 통째로 덮어쓰기
-  /// 때문에(스키마 기본값이 둘 다 true), 하나만 바꾸더라도 항상 두 값을
-  /// 함께 보내야 다른 값이 의도치 않게 초기화되는 걸 막을 수 있습니다.
+  /// [백엔드 수정]
+  /// update_user_settings에서 부분 수정 가능
   Future<NotificationSettingsModel> update({
-    required bool delivery,
-    required bool beforeConcert,
+    bool? delivery,
+    bool? dayBefore,
+    bool? concertDay,
+    bool? ticketing,
+    bool? newConcert,
   }) async {
     final json = await _client.patch(
       '/settings',
       body: {
         'notification_settings': {
-          'delivery': delivery,
-          'before_concert': beforeConcert,
+          if (delivery != null) 'delivery': delivery,
+          if (dayBefore != null) 'day_before': dayBefore,
+          if (concertDay != null) 'concert_day': concertDay,
+          if (ticketing != null) 'ticketing': ticketing,
+          if (newConcert != null) 'new_concert': newConcert,
         },
       },
     );

@@ -13,9 +13,6 @@ import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
 import '../widgets/responsive_text.dart';
 
-/// 아직 백엔드와 연동되지 않은 알림 항목의 라벨 색상(회색 처리용).
-const Color _unconnectedTextColor = Color(0x611A1A1A);
-
 /// 게스트 데이터가 있는 상태에서 카카오 로그인을 시도할 때, 그 데이터를
 /// 가져올지("migrate") 그대로 두고 새 카카오 계정으로 시작할지
 /// ("startFresh") 사용자가 고르는 선택지.
@@ -66,9 +63,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final s = await _notifSettingsService.fetch();
       if (!mounted) return;
       setState(() {
-        pushDayBefore = s.beforeConcert;
-        pushOnTheDay = s.beforeConcert;
+        pushDayBefore = s.dayBefore;
+        pushOnTheDay = s.concertDay;
         pushTicketDelivery = s.delivery;
+        pushFavArtistConcert = s.newConcert;
+        pushPinnedConcert = s.ticketing;
       });
     } catch (_) {
       // 조회에 실패하면 기본값(꺼짐)으로 남겨둡니다. 스위치를 직접 켜면
@@ -76,27 +75,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  /// "하루전 알림"/"당일날 알림"은 백엔드에 `before_concert` 하나로 묶여
-  /// 있어서, 둘 중 하나만 눌러도 두 스위치를 함께 갱신하고 같은 값을
-  /// 서버에 저장합니다.
-  Future<void> _setBeforeConcert(bool v) async {
-    final prevDayBefore = pushDayBefore;
-    final prevOnTheDay = pushOnTheDay;
-    setState(() {
-      pushDayBefore = v;
-      pushOnTheDay = v;
-    });
+  /// [백엔드 수정]
+  /// - `before_concert` → `day_before`/`concert_day`로 분리
+  Future<void> _setDayBefore(bool v) async {
+    final prev = pushDayBefore;
+    setState(() => pushDayBefore = v);
     try {
-      await _notifSettingsService.update(
-        delivery: pushTicketDelivery,
-        beforeConcert: v,
-      );
+      await _notifSettingsService.update(dayBefore: v);
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        pushDayBefore = prevDayBefore;
-        pushOnTheDay = prevOnTheDay;
-      });
+      setState(() => pushDayBefore = prev);
+      _showSaveError(e);
+    }
+  }
+
+  Future<void> _setConcertDay(bool v) async {
+    final prev = pushOnTheDay;
+    setState(() => pushOnTheDay = v);
+    try {
+      await _notifSettingsService.update(concertDay: v);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => pushOnTheDay = prev);
       _showSaveError(e);
     }
   }
@@ -105,13 +105,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prev = pushTicketDelivery;
     setState(() => pushTicketDelivery = v);
     try {
-      await _notifSettingsService.update(
-        delivery: v,
-        beforeConcert: pushDayBefore,
-      );
+      await _notifSettingsService.update(delivery: v);
     } catch (e) {
       if (!mounted) return;
       setState(() => pushTicketDelivery = prev);
+      _showSaveError(e);
+    }
+  }
+
+  /// [백엔드 수정]
+  /// 선호 아티스트 공연 알림 서버 저장
+  Future<void> _setFavArtistConcert(bool v) async {
+    final prev = pushFavArtistConcert;
+    setState(() => pushFavArtistConcert = v);
+    try {
+      await _notifSettingsService.update(newConcert: v);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => pushFavArtistConcert = prev);
+      _showSaveError(e);
+    }
+  }
+
+  /// [백엔드 수정]
+  /// 찜 공연 알림 서버 저장
+  Future<void> _setPinnedConcert(bool v) async {
+    final prev = pushPinnedConcert;
+    setState(() => pushPinnedConcert = v);
+    try {
+      await _notifSettingsService.update(ticketing: v);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => pushPinnedConcert = prev);
       _showSaveError(e);
     }
   }
@@ -217,13 +242,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             _SwitchRow(
                               title: '하루전 알림',
                               value: pushDayBefore,
-                              onChanged: _setBeforeConcert,
+                              onChanged: _setDayBefore,
                             ),
                             _divider,
                             _SwitchRow(
                               title: '당일날 알림',
                               value: pushOnTheDay,
-                              onChanged: _setBeforeConcert,
+                              onChanged: _setConcertDay,
                             ),
                             _divider,
                             _SwitchRow(
@@ -232,20 +257,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               onChanged: _setDelivery,
                             ),
                             _divider,
+                            // [백엔드 수정]
+                            // new_concert로 서버 저장
                             _SwitchRow(
                               title: '선호 아티스트 공연 알림',
                               value: pushFavArtistConcert,
-                              onChanged: (v) =>
-                                  setState(() => pushFavArtistConcert = v),
-                              titleColor: _unconnectedTextColor,
+                              onChanged: _setFavArtistConcert,
                             ),
                             _divider,
+                            // [백엔드 수정]
+                            // ticketing으로 서버 저장
                             _SwitchRow(
                               title: '찜 공연 알림',
                               value: pushPinnedConcert,
-                              onChanged: (v) =>
-                                  setState(() => pushPinnedConcert = v),
-                              titleColor: _unconnectedTextColor,
+                              onChanged: _setPinnedConcert,
                             ),
                           ],
                         ),
