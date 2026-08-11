@@ -19,6 +19,11 @@ class GuestMigrationResult {
   bool get hasFailures => failedCount > 0;
 }
 
+// [백엔드 수정]
+// 게스트도 등록 시점부터 서버 저장(TicketService 참고)이라, 이 마이그레이션은
+// 이전 로컬 전용 레거시 게스트 티켓 대상 하위호환 경로로만 남음. 신규
+// 게스트는 localTickets가 항상 빈 리스트라 아래 for문이 안 돌고 바로 끝남 —
+// 로직을 따로 줄이지 않아도 자연히 빠른 경로가 됨.
 /// 게스트 로그인 상태에서 [LocalTicketStore]에 쌓아둔 티켓들을 카카오
 /// 계정으로 옮깁니다.
 ///

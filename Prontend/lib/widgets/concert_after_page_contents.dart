@@ -5,7 +5,6 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/ticket_info.dart';
 import '../services/api_client.dart';
-import '../services/auth_service.dart';
 import '../services/concert_detail_service.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
@@ -112,7 +111,7 @@ class ConcertAfterPageContents extends StatefulWidget {
 
 class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
   final TicketService _ticketService = TicketService();
-  final UploadService _uploadService = GuestAwareUploadService();
+  final UploadService _uploadService = BackendUploadService();
   final ImagePicker _imagePicker = ImagePicker();
 
   late TicketInfo? _ticketInfo = widget.ticketInfo;
@@ -283,11 +282,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
                   color: const Color(0xFFD9E8FF),
                   // [백엔드 수정]
                   // concertId → ticketId 기준 조회로 바뀜.
-                  // concertId는 게스트 폴백용으로 같이 넘김.
-                  child: _RealSetlistContent(
-                    ticketId: _ticketId,
-                    concertId: _ticketInfo?.concertId,
-                  ),
+                  child: _RealSetlistContent(ticketId: _ticketId),
                 ),
               ),
             ],
@@ -1066,16 +1061,15 @@ class _StampCircle extends StatelessWidget {
 
 // [백엔드 수정]
 // /concerts/{concertId}/setlist → /tickets/{ticketId}/setlist.
-// 티켓 기준 라우트로 날짜를 자동으로 확인.
-// 게스트 티켓은 구버전 라우트로 폴백.
+// 티켓 기준 라우트로 날짜를 자동으로 확인. 게스트도 이제 서버 ticketId를
+// 가지므로, 예전에 있던 concertId 기준 게스트 전용 폴백은 제거.
 /// "실제 셋리스트" 포스트잇 안에 들어가는 내용. ticketId가 있으면
-/// `GET /tickets/{ticketId}/setlist`(게스트는 `GET /concerts/{concertId}/setlist`)로
-/// 실제 데이터를 불러오고, 없거나 아직 등록 전이면 안내 문구 표시.
+/// `GET /tickets/{ticketId}/setlist`로 실제 데이터를 불러오고, 없거나
+/// 아직 등록 전이면 안내 문구 표시.
 class _RealSetlistContent extends StatefulWidget {
   final String? ticketId;
-  final String? concertId;
 
-  const _RealSetlistContent({required this.ticketId, required this.concertId});
+  const _RealSetlistContent({required this.ticketId});
 
   @override
   State<_RealSetlistContent> createState() => _RealSetlistContentState();
@@ -1093,14 +1087,9 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
 
   Future<void> _load() async {
     final ticketId = widget.ticketId;
-    final concertId = widget.concertId;
     if (ticketId == null) return;
-    final isGuest = AuthService.instance.isGuest;
-    if (isGuest && concertId == null) return;
     try {
-      final res = isGuest
-          ? await _service.getRealSetlistByConcert(concertId!)
-          : await _service.getRealSetlist(ticketId);
+      final res = await _service.getRealSetlist(ticketId);
       if (!mounted) return;
       setState(() {
         _songs = res.songs

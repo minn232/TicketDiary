@@ -627,7 +627,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
       final extracted = scanResult.extracted;
       final ticket = await _ticketService.createTicket(
         concertId: selected.id,
-        concert: selected,
         deliveryDate: _parseYmd(extracted.shippingDate),
         // [백엔드 수정]
         // extracted.time을 버리지 않고 넘기도록 수정.

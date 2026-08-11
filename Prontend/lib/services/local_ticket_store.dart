@@ -9,14 +9,14 @@ import '../models/ticket_response.dart';
 import '../models/ticket_scan.dart';
 import 'ticket_service.dart' show TicketAlreadyRegisteredException, TicketNotFoundException;
 
-/// 게스트 로그인 상태의 티켓/사진을 "서버로 보내지 않고" 기기에만 저장하는
-/// 저장소. 앱을 지우면 기기 저장소(이 값들이 저장되는 곳)도 함께 사라지므로,
-/// 게스트 데이터가 자연스럽게 사라지는 요구사항을 만족합니다.
-///
-/// [TicketService]가 [AuthService.isGuest]일 때 이 클래스로 위임하고,
-/// 카카오 로그인일 때는 그대로 백엔드 API를 씁니다. 카카오로 마이그레이션할
-/// 때는 [GuestMigrationService]가 여기 저장된 티켓들을 읽어 백엔드에
-/// 업로드한 뒤 [clearAll]로 정리합니다.
+// [백엔드 수정]
+// 게스트도 서버에 직접 저장(TicketService/UploadService)하도록 변경.
+// 쓰기 경로(createTicket/updateTicket/deleteTicket/saveImageLocally)는
+// 이제 호출 안 됨. listTickets/clearAll만 GuestMigrationService의
+// 레거시 데이터 마이그레이션용으로 남김.
+/// 게스트 로그인 상태의 티켓/사진을 "서버로 보내지 않고" 기기에만 저장하던
+/// 저장소. 새 쓰기 경로에서는 안 쓰임(위 주석 참고) — [GuestMigrationService]가
+/// 이 변경 이전 레거시 데이터를 읽어 서버에 올리는 용도로만 남아있습니다.
 class LocalTicketStore {
   LocalTicketStore._();
 
