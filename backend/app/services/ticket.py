@@ -339,6 +339,11 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
     now = datetime.now(timezone.utc)
     to_add: list[Notification] = []
 
+    # 페스티벌 등 여러 날짜에 걸친 공연은 concert.start_date(첫날) 대신 티켓의
+    # 실제 관람일(attended_date, OCR로 읽음)을 우선 사용 - 없으면 단독공연 등 하루짜리
+    # 공연으로 보고 concert.start_date로 폴백
+    target_date = ticket.attended_date or concert.start_date
+
     # 배송 예정일 알림 (delivery 설정 on, 배송일 오전 9시)
     if delivery_on and ticket.delivery_date is not None:
         scheduled = _at_9am_kst(ticket.delivery_date)
@@ -352,9 +357,9 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
                 scheduled_at=scheduled,
             ))
 
-    # 공연 하루 전 알림 (day_before 설정 on, 공연 전날 오전 9시)
+    # 공연 하루 전 알림 (day_before 설정 on, 관람일 전날 오전 9시)
     if day_before_on:
-        day_before = _at_9am_kst(concert.start_date - timedelta(days=1))
+        day_before = _at_9am_kst(target_date - timedelta(days=1))
         if day_before > now:
             to_add.append(Notification(
                 user_id=ticket.user_id,
@@ -365,9 +370,9 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
                 scheduled_at=day_before,
             ))
 
-    # 공연 당일 알림 (concert_day 설정 on, 공연일 오전 9시)
+    # 공연 당일 알림 (concert_day 설정 on, 관람일 오전 9시)
     if concert_day_on:
-        concert_day = _at_9am_kst(concert.start_date)
+        concert_day = _at_9am_kst(target_date)
         if concert_day > now:
             to_add.append(Notification(
                 user_id=ticket.user_id,

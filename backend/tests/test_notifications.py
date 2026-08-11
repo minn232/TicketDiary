@@ -277,6 +277,34 @@ async def test_schedule_creates_notifications_for_future_concert():
     assert all(n.is_sent is False for n in notifications)
 
 
+# 여러 날짜에 걸친 공연(페스티벌 등)은 concert.start_date(첫날)이 아니라 티켓의
+# attended_date(실제 관람일) 기준으로 day_before/concert_day가 잡혀야 함
+@pytest.mark.asyncio
+async def test_schedule_uses_attended_date_over_concert_start_date():
+    # 2030-06-01 ~ 2030-06-30 (한 달짜리 공연)
+    concert_id = await _create_concert("PF_SCHED_ATTEND_001", _make_future_xml("PF_SCHED_ATTEND_001"))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    ticket_id = await _create_ticket(concert_id, token)
+
+    # 관람일을 start_date와 다른 날(6/15)로 지정
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"attended_date": "2030-06-15T00:00:00Z"},
+            headers=headers,
+        )
+        res = await ac.get("/api/v1/notifications", headers=headers)
+
+    notifications = {n["type"]: n["scheduled_at"] for n in res.json()}
+    concert_day_at = datetime.fromisoformat(notifications["concert_day"])
+    day_before_at = datetime.fromisoformat(notifications["day_before"])
+
+    # concert.start_date(6/1) 기준이 아니라 attended_date(6/15) 기준이어야 함
+    assert concert_day_at.date() == datetime(2030, 6, 15, tzinfo=timezone.utc).date()
+    assert day_before_at.date() == datetime(2030, 6, 14, tzinfo=timezone.utc).date()
+
+
 # 과거 공연 티켓 등록 시 알림 미생성 테스트
 @pytest.mark.asyncio
 async def test_schedule_creates_no_notifications_for_past_concert():
