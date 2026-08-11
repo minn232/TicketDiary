@@ -46,6 +46,11 @@ dependencies:
   webview_flutter: ^4.13.0
   url_launcher: ^6.3.2
   uuid: ^4.6.0
+  # [백엔드 수정]
+  # FCM 푸시 수신 연동에 필요. 백엔드는 이미 firebase_admin으로 발송 중이었는데
+  # 앱에 수신 SDK가 전혀 없었음.
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.5
 
 dev_dependencies:
   flutter_test:

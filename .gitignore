@@ -30,6 +30,10 @@ htmlcov/
 # Firebase credentials
 firebase-credentials.json
 
+# Firebase 클라이언트 설정(환경별 값, .env와 같은 이유로 커밋 안 함 — 프론트에 직접 전달)
+Prontend/android/app/google-services.json
+Prontend/ios/Runner/GoogleService-Info.plist
+
 # LLM 서버 처리완료 ID 장부 (로컬 상태, 커밋 불필요)
 llm_server/*.sqlite3
 

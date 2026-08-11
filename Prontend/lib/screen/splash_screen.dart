@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
+import 'package:ticketdiary/services/fcm_service.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 
@@ -124,6 +125,11 @@ class _SplashScreenState extends State<SplashScreen>
       // 저장된 로그인 세션을 불러오거나(없으면) 게스트 세션을 새로 만듭니다.
       AuthService.instance.ensureSession(),
     ]).timeout(timeout, onTimeout: () => const []);
+
+    // [백엔드 수정]
+    // FCM 초기화(권한 요청)시 스플래시를 막지 않도록 fire-and-forget으로 분리.
+    // 메인 화면 진입과 동시에 백그라운드에서 실행, ensureSession이 끝난 뒤(=위 await 이후)에 호출.
+    unawaited(FcmService.instance.init());
     if (!mounted) return;
     _dataReady = true;
     _maybeNavigate();
