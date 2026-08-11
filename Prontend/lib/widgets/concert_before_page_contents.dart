@@ -777,30 +777,17 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
           onLongPressStart: (_) => _setPeeking(true),
           onLongPressEnd: (_) => _setPeeking(false),
           onLongPressCancel: () => _setPeeking(false),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 150),
-                child: _peeking
-                    ? KeyedSubtree(key: const ValueKey('clear'), child: content)
-                    : KeyedSubtree(
-                        key: const ValueKey('blurred'),
-                        child: ImageFiltered(
-                          imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
-                          child: content,
-                        ),
-                      ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '꾹 눌러서 잠깐 보기',
-                style: TextStyle(
-                  fontSize: context.sp(12),
-                  color: Colors.black.withValues(alpha: 0.45),
-                ),
-              ),
-            ],
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 150),
+            child: _peeking
+                ? KeyedSubtree(key: const ValueKey('clear'), child: content)
+                : KeyedSubtree(
+                    key: const ValueKey('blurred'),
+                    child: ImageFiltered(
+                      imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                      child: content,
+                    ),
+                  ),
           ),
         );
       },
