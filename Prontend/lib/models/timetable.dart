@@ -1,17 +1,23 @@
 import 'package:flutter/foundation.dart';
 
+// [백엔드 수정]
+// time/description(둘 다 non-null) → date/time/stage(전부 nullable)/event(필수)로 스키마 변경.
 /// 타임테이블 한 항목. 백엔드 `schemas/timetable.py`의 `TimeTableEntry`와 대응.
 @immutable
 class TimeTableEntry {
-  final String time;
-  final String description;
+  final String? date;
+  final String? time;
+  final String? stage;
+  final String event;
 
-  const TimeTableEntry({required this.time, required this.description});
+  const TimeTableEntry({this.date, this.time, this.stage, required this.event});
 
   factory TimeTableEntry.fromJson(Map<String, dynamic> json) {
     return TimeTableEntry(
-      time: json['time'] as String,
-      description: json['description'] as String,
+      date: json['date'] as String?,
+      time: json['time'] as String?,
+      stage: json['stage'] as String?,
+      event: json['event'] as String,
     );
   }
 }

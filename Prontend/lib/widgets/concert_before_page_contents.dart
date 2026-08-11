@@ -204,8 +204,16 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       final res = await _service.getTimetable(concertId);
       if (!mounted) return;
       setState(() {
+        // [백엔드 수정]
+        // time/description → time(nullable)/event로 필드가 바뀜.
+        // time이 없으면 빈 문자열로, stage가 있으면 event 앞에 붙여서 보여줌.
         _fetchedTimetable = res.contents
-            .map((e) => TimetableEntry(time: e.time, label: e.description))
+            .map(
+              (e) => TimetableEntry(
+                time: e.time ?? '',
+                label: e.stage != null ? '${e.stage} · ${e.event}' : e.event,
+              ),
+            )
             .toList();
         _timetableStatus = _FetchStatus.loaded;
       });
