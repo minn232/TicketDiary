@@ -9,6 +9,7 @@ import '../services/guest_migration_service.dart';
 import '../services/kakao_login_controller.dart';
 import '../services/local_ticket_store.dart';
 import '../services/notification_settings_service.dart';
+import '../services/ticket_service.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
@@ -572,7 +573,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   ///   수 있는 엔드포인트라, 세션이 없는데 마이그레이션을 시도하면 401이
   ///   납니다 — 그래서 [AuthService.isGuest](세션이 없을 때도 기본값 true)가
   ///   아니라 [AuthService.hasActiveGuestSession]으로 판단합니다.
-  /// - 활성 게스트인데 기기에 옮길 데이터가 없으면 일반 로그인
+  /// - 활성 게스트인데 옮길 데이터가 없으면 일반 로그인
   ///   (`/auth/kakao`)으로 처리합니다. 옮길 데이터가 없는 빈 게스트를 굳이
   ///   마이그레이션(`/auth/migrate`)하면, 그 카카오 계정이 이미 다른
   ///   기기에서 가입/로그인된 적이 있을 때 "이미 다른 계정으로 가입된
@@ -581,8 +582,8 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   ///   병합할 수 없기 때문). 일반 로그인은 그런 경우에도 그냥 그 기존
   ///   계정으로 로그인시켜주므로, 옮길 데이터가 없다면 항상 이 경로가
   ///   안전합니다.
-  /// - 활성 게스트인데 기기에 저장해둔 티켓이 있으면, 먼저 그 데이터를
-  ///   카카오 계정으로 옮길지 물어봅니다("옮기기"/"삭제하기"/"취소").
+  /// - 활성 게스트인데 옮길 티켓이(로컬이든 서버든) 하나라도 있으면, 먼저
+  ///   그 데이터를 카카오 계정으로 옮길지 물어봅니다("옮기기"/"삭제하기"/"취소").
   Future<void> _loginWithKakaoFlow() async {
     if (!_auth.hasActiveGuestSession) {
       await KakaoLoginController.instance.login(
@@ -593,8 +594,8 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
       return;
     }
 
-    final hasLocalData = await LocalTicketStore.instance.hasAnyTickets();
-    if (!hasLocalData) {
+    final hasDataToMigrate = await _hasGuestDataToMigrate();
+    if (!hasDataToMigrate) {
       if (!mounted) return;
       await KakaoLoginController.instance.login(
         context: context,
@@ -617,7 +618,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
         code,
         migrateFromGuest: false,
       );
-      _showMessage('로그인됐어요. 게스트 데이터는 기기에 그대로 남아있어요.');
+      _showMessage('로그인됐어요. 게스트로 등록했던 티켓은 이 카카오 계정에 반영되지 않았어요.');
       return;
     }
 
@@ -630,6 +631,28 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     );
   }
 
+  // [백엔드 수정]
+  // 게스트도 이제 서버에 티켓을 저장하므로(TicketService 참고), 옮길 데이터가
+  // 있는지 로컬(LocalTicketStore, 레거시 전용)만 보면 안 되고 서버 티켓
+  // 개수도 같이 확인해야 함. 이전엔 로컬만 봐서, 게스트 기능 동등화 이후
+  // 서버에만 티켓이 있는(=지금은 거의 항상 이 경우) 상황에서 이 다이얼로그가
+  // 아예 안 뜨고 조용히 일반 로그인으로 빠지면서 그 티켓들이 버려지는
+  // 버그가 있었음(사용자가 실기기 테스트로 발견).
+  /// 지금 게스트 계정에 카카오로 넘어갈 때 물어볼 만한 데이터(로컬 레거시
+  /// 티켓이든, 서버에 이미 등록된 티켓이든)가 하나라도 있는지 확인합니다.
+  Future<bool> _hasGuestDataToMigrate() async {
+    if (await LocalTicketStore.instance.hasAnyTickets()) return true;
+
+    try {
+      final serverTickets = await TicketService().listTickets();
+      return serverTickets.isNotEmpty;
+    } catch (_) {
+      // 서버 조회 실패(오프라인 등) 시엔 안전한 쪽으로 판단합니다 — 데이터가
+      // 있는데 확인 없이 버리는 것보다, 없어도 한 번 더 물어보는 쪽이 낫습니다.
+      return true;
+    }
+  }
+
   /// 게스트로 저장해둔 데이터를 카카오 계정으로 가져올지 물어보는 확인창.
   Future<_MigrationChoice?> _showMigrationChoiceDialog() {
     return showDialog<_MigrationChoice>(
@@ -637,9 +660,9 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
       builder: (context) => AlertDialog(
         title: const Text('게스트로 등록된 데이터를 옮기시겠습니까?'),
         content: const Text(
-          '게스트로 이용하며 추가한 티켓이 기기에 저장되어 있어요.\n'
+          '게스트로 이용하며 추가한 티켓이 있어요.\n'
           '카카오 계정으로 로그인하면서 이 데이터를 그대로 옮길까요?\n\n'
-          '삭제하기를 선택하면 게스트 데이터는 이 기기에 그대로 남고, 카카오 계정에는 반영되지 않아요.',
+          '삭제하기를 선택하면 이 티켓들은 카카오 계정에 반영되지 않아요(다시 게스트로 돌아가야 확인할 수 있어요).',
         ),
         actions: [
           TextButton(
