@@ -29,6 +29,19 @@ class TicketWithConcert {
   final bool? isLastDay;
   final ConcertResponse? concert;
 
+  // [백엔드 수정]
+  // TicketCreate/TicketUpdate/TicketResponse에 start_time("HH:MM") 필드 추가.
+  // OCR로 읽은 티켓 시작시간을 서버에 저장.
+  /// 공연(Concert)의 공식 시작시각과는 별개.
+  final String? startTime;
+
+  // [백엔드 수정]
+  // TicketCreate/TicketUpdate/TicketResponse에 attended_date 필드 추가.
+  // OCR로 읽은 실제 관람 날짜를 서버에 저장.
+  /// OCR로 추출한 실제 관람 날짜. 첫콘/막콘 자동판정, 다중 날짜 공연의
+  /// 셋리스트 날짜 특정에 사용.
+  final DateTime? attendedDate;
+
   /// 공연 후 "입장 티켓 뜯기" 연출을 실행한 시각. null이면 아직 안 뜯긴
   /// 상태입니다. 백엔드는 이 값을 저장만 담당하고, 다시 안 뜯긴 상태로
   /// 되돌리는 단방향 강제는 프론트가 담당합니다.
@@ -39,6 +52,8 @@ class TicketWithConcert {
     this.concertId,
     required this.status,
     this.deliveryDate,
+    this.startTime,
+    this.attendedDate,
     this.ticketingSite,
     this.price,
     this.seatType,
@@ -58,6 +73,10 @@ class TicketWithConcert {
       status: json['status'] as String,
       deliveryDate: json['delivery_date'] != null
           ? DateTime.parse(json['delivery_date'] as String)
+          : null,
+      startTime: json['start_time'] as String?,
+      attendedDate: json['attended_date'] != null
+          ? DateTime.parse(json['attended_date'] as String)
           : null,
       ticketingSite: json['ticketing_site'] as String?,
       price: json['price'] as int?,
@@ -85,6 +104,8 @@ class TicketWithConcert {
     'concert_id': concertId,
     'status': status,
     'delivery_date': deliveryDate?.toIso8601String(),
+    'start_time': startTime,
+    'attended_date': attendedDate?.toIso8601String(),
     'ticketing_site': ticketingSite,
     'price': price,
     'seat_type': seatType,
@@ -100,6 +121,8 @@ class TicketWithConcert {
   TicketWithConcert copyWith({
     String? status,
     DateTime? deliveryDate,
+    String? startTime,
+    DateTime? attendedDate,
     String? ticketingSite,
     int? price,
     String? seatType,
@@ -118,6 +141,8 @@ class TicketWithConcert {
       concertId: concertId,
       status: status ?? this.status,
       deliveryDate: deliveryDate ?? this.deliveryDate,
+      startTime: startTime ?? this.startTime,
+      attendedDate: attendedDate ?? this.attendedDate,
       ticketingSite: ticketingSite ?? this.ticketingSite,
       price: price ?? this.price,
       seatType: seatType ?? this.seatType,

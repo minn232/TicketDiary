@@ -37,11 +37,16 @@ class TicketService {
   /// 없어서, 검색 결과로 이미 들고 있는 공연 정보를 그대로 함께 저장해둬야
   /// 다이어리 화면에 공연명/포스터 등을 보여줄 수 있습니다. 카카오 로그인
   /// 상태(백엔드 저장)에서는 무시됩니다.
+  // [백엔드 수정]
+  // TicketCreate.start_time 파라미터 추가. OCR로 읽은 시작시간(extracted.time) 서버에 저장.
+  // attendedDate도 같은 이유로 추가.
   Future<TicketWithConcert> createTicket({
     String? concertId,
     String? kopisId,
     ConcertResponse? concert,
     DateTime? deliveryDate,
+    String? startTime,
+    DateTime? attendedDate,
     String? ticketingSite,
     int? price,
     String? seatType,
@@ -56,6 +61,8 @@ class TicketService {
       return LocalTicketStore.instance.createTicket(
         concert: concert!,
         deliveryDate: deliveryDate,
+        startTime: startTime,
+        attendedDate: attendedDate,
         ticketingSite: ticketingSite,
         price: price,
         seatType: seatType,
@@ -70,6 +77,9 @@ class TicketService {
           if (kopisId != null) 'kopis_id': kopisId,
           if (deliveryDate != null)
             'delivery_date': deliveryDate.toIso8601String(),
+          if (startTime != null) 'start_time': startTime,
+          if (attendedDate != null)
+            'attended_date': attendedDate.toIso8601String(),
           if (ticketingSite != null) 'ticketing_site': ticketingSite,
           if (price != null) 'price': price,
           if (seatType != null) 'seat_type': seatType,
@@ -103,6 +113,10 @@ class TicketService {
   Future<TicketWithConcert> updateTicket(
     String ticketId, {
     DateTime? deliveryDate,
+    // [백엔드 수정]
+    // TicketUpdate.start_time/attended_date 파라미터 추가(createTicket과 같은 이유).
+    String? startTime,
+    DateTime? attendedDate,
     String? ticketingSite,
     int? price,
     String? seatType,
@@ -122,6 +136,8 @@ class TicketService {
       return LocalTicketStore.instance.updateTicket(
         ticketId,
         deliveryDate: deliveryDate,
+        startTime: startTime,
+        attendedDate: attendedDate,
         ticketingSite: ticketingSite,
         price: price,
         seatType: seatType,
@@ -141,6 +157,9 @@ class TicketService {
         body: {
           if (deliveryDate != null)
             'delivery_date': deliveryDate.toIso8601String(),
+          if (startTime != null) 'start_time': startTime,
+          if (attendedDate != null)
+            'attended_date': attendedDate.toIso8601String(),
           if (ticketingSite != null) 'ticketing_site': ticketingSite,
           if (price != null) 'price': price,
           if (seatType != null) 'seat_type': seatType,

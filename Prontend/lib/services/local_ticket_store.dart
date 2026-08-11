@@ -96,6 +96,7 @@ class LocalTicketStore {
     required ConcertResponse concert,
     DateTime? deliveryDate,
     String? startTime,
+    DateTime? attendedDate,
     String? ticketingSite,
     int? price,
     String? seatType,
@@ -113,6 +114,12 @@ class LocalTicketStore {
       concertId: concert.id,
       status: _initialStatus(concert),
       deliveryDate: deliveryDate,
+      // [백엔드 수정]
+      // TicketWithConcert에 필드가 추가돼서 startTime 파라미터로 받은 값을 저장.
+      startTime: startTime,
+      // [백엔드 수정]
+      // attendedDate도 같은 이유로 추가.
+      attendedDate: attendedDate,
       ticketingSite: ticketingSite,
       price: price,
       seatType: seatType,
@@ -127,6 +134,10 @@ class LocalTicketStore {
   Future<TicketWithConcert> updateTicket(
     String ticketId, {
     DateTime? deliveryDate,
+    // [백엔드 수정]
+    // createTicket과 같은 이유로 updateTicket에도 startTime/attendedDate 추가.
+    String? startTime,
+    DateTime? attendedDate,
     String? ticketingSite,
     int? price,
     String? seatType,
@@ -145,6 +156,8 @@ class LocalTicketStore {
     final current = TicketWithConcert.fromJson(raw[index]);
     final updated = current.copyWith(
       deliveryDate: deliveryDate,
+      startTime: startTime,
+      attendedDate: attendedDate,
       ticketingSite: ticketingSite,
       price: price,
       seatType: seatType,

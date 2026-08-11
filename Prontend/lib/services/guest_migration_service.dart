@@ -68,9 +68,13 @@ class GuestMigrationService {
           }
         }
 
+        // [백엔드 수정]
+        // startTime/attendedDate 전달 추가.
         final created = await ticketService.createTicket(
           concertId: concert.id,
           deliveryDate: ticket.deliveryDate,
+          startTime: ticket.startTime,
+          attendedDate: ticket.attendedDate,
           ticketingSite: ticket.ticketingSite,
           price: ticket.price,
           seatType: ticket.seatType,

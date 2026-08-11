@@ -64,6 +64,9 @@ class TicketData {
        posterOverlayKey = GlobalKey(),
        id = id ?? 'ticket_${_nextId++}';
 
+  // [백엔드 수정]
+  // `time`(공연 시각)이 백엔드에 ticket.start_time으로 서버에 저장됨에 따라
+  // 아래 문서와 조회 우선순위(ticket.startTime 우선)를 갱신.
   /// 실제로 등록된 티켓([TicketWithConcert])으로부터 화면에 쓸
   /// [TicketData]를 만듭니다. `id`는 티켓의 실제 식별자를 그대로 씁니다
   /// (카카오 로그인이면 백엔드 발급 UUID, 게스트면 [LocalTicketStore]가
@@ -72,9 +75,9 @@ class TicketData {
   ///
   /// [scanExtracted]는 방금 스캔해서 만든 티켓일 때만 넘겨주면 됩니다
   /// (`GET /tickets`로 불러온 기존 티켓엔 없음). `time`(공연 시각)은
-  /// 백엔드에 저장되는 값이 아니라 스캔 결과에만 잠깐 존재하므로, 이
-  /// 시점에만 [TicketInfo.extraFields]에 반영할 수 있습니다. `event_type`
-  /// (단독공연/페스티벌)은 반대로 공연 자체에 저장되는 값이라 [scanExtracted]
+  /// 방금 스캔한 시점엔 [scanExtracted]에서, 재조회 시엔 서버에 저장된
+  /// `ticket.startTime`에서 가져와 [TicketInfo.extraFields]에 반영합니다.
+  /// `event_type`(단독공연/페스티벌)은 공연 자체에 저장되는 값이라 [scanExtracted]
   /// 없이도(=기존 티켓을 불러올 때도) 항상 채워집니다.
   factory TicketData.fromBackend(
     TicketWithConcert ticket, {
@@ -91,7 +94,7 @@ class TicketData {
     if (eventType != null && eventType.isNotEmpty) {
       extraFields['공연 유형'] = _eventTypeLabel(eventType);
     }
-    final time = scanExtracted?.time;
+    final time = ticket.startTime ?? scanExtracted?.time;
     if (time != null && time.isNotEmpty) {
       extraFields['공연 시간'] = time;
     }
@@ -623,6 +626,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
         concertId: selected.id,
         concert: selected,
         deliveryDate: _parseYmd(extracted.shippingDate),
+        // [백엔드 수정]
+        // extracted.time을 버리지 않고 넘기도록 수정.
+        startTime: extracted.time,
+        // [백엔드 수정]
+        // extracted.date(OCR 관람일)도 같은 이유로 넘기도록 수정.
+        attendedDate: _parseYmd(extracted.date),
         ticketingSite: extracted.platform,
         price: extracted.price,
         seatType: extracted.seat,
