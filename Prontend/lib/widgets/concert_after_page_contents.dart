@@ -224,6 +224,57 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     }
   }
 
+  // [백엔드 수정]
+  // 사진을 꾹 눌러서 삭제할 수 있는 기능.
+  // 확인 팝업 후 서버에서 삭제.
+  Future<void> _confirmDeletePhoto(String url) async {
+    if (!_ensureEditable() || _uploadingPhoto) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('사진 삭제'),
+        content: const Text('이 사진을 삭제할까요? 되돌릴 수 없어요.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final List<String> nextUrls = [
+      ...(_ticketInfo?.concertPhotoUrls ?? const <String>[]),
+    ]..remove(url);
+
+    try {
+      final updated = await _ticketService.updateTicket(
+        _ticketId!,
+        concertPhotoUrls: nextUrls,
+      );
+      if (!mounted) return;
+      setState(() {
+        _ticketInfo = _ticketInfo?.copyWith(
+          concertPhotoUrls: updated.concertPhotoUrls ?? nextUrls,
+        );
+      });
+      if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
+      _showSnack('사진을 삭제했어요.');
+    } on TicketNotFoundException {
+      _showSnack('티켓을 찾을 수 없어요.');
+    } on ApiException catch (e) {
+      _showSnack('사진 삭제에 실패했어요: ${e.message}');
+    } catch (_) {
+      _showSnack('사진 삭제 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final grid = Column(
@@ -239,6 +290,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
                     photoUrls: _ticketInfo?.concertPhotoUrls ?? const [],
                     uploading: _uploadingPhoto,
                     onAddTap: _uploadingPhoto ? null : _addPhoto,
+                    onDeleteTap: _uploadingPhoto ? null : _confirmDeletePhoto,
                   ),
                 ),
               ),
@@ -748,11 +800,13 @@ class _PhotoBoard extends StatelessWidget {
   final List<String> photoUrls;
   final bool uploading;
   final VoidCallback? onAddTap;
+  final ValueChanged<String>? onDeleteTap;
 
   const _PhotoBoard({
     required this.photoUrls,
     required this.uploading,
     required this.onAddTap,
+    required this.onDeleteTap,
   });
 
   @override
@@ -799,6 +853,9 @@ class _PhotoBoard extends StatelessWidget {
               url: photoUrls[i],
               // 번갈아 살짝 기울여 실제로 붙인 느낌을 냅니다.
               angle: i.isEven ? -0.05 : 0.045,
+              onLongPress: onDeleteTap == null
+                  ? null
+                  : () => onDeleteTap!(photoUrls[i]),
             ),
           if (uploading)
             const SizedBox(
@@ -868,18 +925,82 @@ class _DashedBorderPainter extends CustomPainter {
 
 /// 다이어리에 직접 붙인 폴라로이드 사진. 흰 테두리(아래쪽이 더 두꺼움) +
 /// 그림자 + 위쪽 가운데 반투명 테이프로 "붙어있는" 느낌을 냅니다.
-class _PolaroidThumb extends StatelessWidget {
+//
+// [백엔드 수정]
+// 사진 프레임이 정사각형 고정이라 가로/세로로 긴 사진은 억지로 잘려
+// 보이던 문제 - 실제 이미지 비율을 읽어와 프레임 크기를 그에 맞게
+// 조절(짧은 변은 고정, 긴 변만 비율만큼 늘어나되 상한 있음).
+class _PolaroidThumb extends StatefulWidget {
   final String url;
   final double angle;
+  final VoidCallback? onLongPress;
 
-  const _PolaroidThumb({required this.url, required this.angle});
+  const _PolaroidThumb({
+    required this.url,
+    required this.angle,
+    this.onLongPress,
+  });
+
+  @override
+  State<_PolaroidThumb> createState() => _PolaroidThumbState();
+}
+
+class _PolaroidThumbState extends State<_PolaroidThumb> {
+  static const double _shortSide = 50;
+  static const double _maxLongSide = 88;
+
+  double? _aspectRatio; // width / height
+  ImageStream? _stream;
+  late ImageStreamListener _listener;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveAspectRatio();
+  }
+
+  @override
+  void dispose() {
+    _stream?.removeListener(_listener);
+    super.dispose();
+  }
+
+  void _resolveAspectRatio() {
+    final provider = _isNetworkUrl(widget.url)
+        ? NetworkImage(widget.url) as ImageProvider
+        : FileImage(File(widget.url));
+    _listener = ImageStreamListener(
+      (info, _) {
+        if (!mounted) return;
+        setState(() {
+          _aspectRatio = info.image.width / info.image.height;
+        });
+      },
+      onError: (_, _) {}, // 실패하면 정사각형 기본값 유지
+    );
+    _stream = provider.resolve(const ImageConfiguration())
+      ..addListener(_listener);
+  }
+
+  Size get _frameSize {
+    final ratio = _aspectRatio;
+    if (ratio == null || ratio == 1) return const Size(_shortSide, _shortSide);
+    if (ratio > 1) {
+      // 가로로 긴 사진: 세로를 고정하고 가로만 비율만큼 늘림
+      return Size((_shortSide * ratio).clamp(_shortSide, _maxLongSide), _shortSide);
+    }
+    // 세로로 긴 사진: 가로를 고정하고 세로만 비율만큼 늘림
+    return Size(_shortSide, (_shortSide / ratio).clamp(_shortSide, _maxLongSide));
+  }
 
   @override
   Widget build(BuildContext context) {
+    final size = _frameSize;
     return Transform.rotate(
-      angle: angle,
+      angle: widget.angle,
       child: GestureDetector(
-        onTap: () => _openFullPhoto(context, url),
+        onTap: () => _openFullPhoto(context, widget.url),
+        onLongPress: widget.onLongPress,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -895,29 +1016,29 @@ class _PolaroidThumb extends StatelessWidget {
                   ),
                 ],
               ),
-              child: _isNetworkUrl(url)
+              child: _isNetworkUrl(widget.url)
                   ? Image.network(
-                      url,
-                      width: 50,
-                      height: 50,
+                      widget.url,
+                      width: size.width,
+                      height: size.height,
                       fit: BoxFit.cover,
                       webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
                       errorBuilder: (context, error, stackTrace) => Container(
-                        width: 50,
-                        height: 50,
+                        width: size.width,
+                        height: size.height,
                         color: Colors.black12,
                         child: const Icon(Icons.broken_image_outlined, size: 18),
                       ),
                     )
                   // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
                   : Image.file(
-                      File(url),
-                      width: 50,
-                      height: 50,
+                      File(widget.url),
+                      width: size.width,
+                      height: size.height,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) => Container(
-                        width: 50,
-                        height: 50,
+                        width: size.width,
+                        height: size.height,
                         color: Colors.black12,
                         child: const Icon(Icons.broken_image_outlined, size: 18),
                       ),
