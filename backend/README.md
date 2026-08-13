@@ -377,6 +377,23 @@ Authorization: Bearer <token>
 }
 ```
 
+### 실제 셋리스트 자동 생성
+아티스트별로 Setlist.fm을 자동 검색해서(유저 선택 없이 후보 1순위) 하나로 병합 저장.
+단독 공연이든 페스티벌이든 동일하게 동작(단독이면 아티스트 1명만 돎). 위 검색/저장(수동
+후보 선택) API와 별개 경로 - 정확도는 수동 후보 선택보다 낮을 수 있음(동명이인/같은 날
+다른 도시 공연 등으로 후보 1순위가 틀릴 가능성).
+```
+POST /concerts/{concert_id}/setlist/generate-festival
+Authorization: Bearer <token>
+```
+티켓 기준 twin: `POST /tickets/{ticket_id}/setlist/generate-festival`(날짜는 `ticket.attended_date` 자동 사용).
+
+**자동 백필**: 콘서트 종료(그 `performance_date`가 지난 뒤) 후 14일간, 아직 안 채워진 실제
+셋리스트를 매일 자정 배치(`app/batch/scheduler.py`)가 위 로직으로 자동 재시도함. 유저가
+티켓 등록한 콘서트만 대상. 14일이 지나도 안 채워지면 포기하고 유저의 수동 편집
+(`PATCH /concerts/{concert_id}/setlist`)을 기다림 - 이 엔드포인트는 그 자동 백필이 실패했을
+때 유저가 "다시 찾기"로 수동 트리거하는 용도로도 쓸 수 있음.
+
 ### 예상 셋리스트 조회
 ```
 GET /concerts/{concert_id}/setlist/pre

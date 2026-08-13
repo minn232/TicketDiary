@@ -1,10 +1,16 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.concert import Concert
+from app.models.setlist import RealSetlist
+from app.services.setlist import retry_real_setlist_generation
 from conftest import _get_token, kopis_mock
 
 
@@ -151,8 +157,8 @@ async def test_search_setlists_success():
     assert candidate["venue_name"] == "테스트공연장"
     assert candidate["city_name"] == "서울"
     assert candidate["song_count"] == 3  # 본 공연 2곡 + 앙코르 1곡
-    assert candidate["songs"][0] == {"name": "노래1", "encore": False}
-    assert candidate["songs"][2] == {"name": "앙코르곡", "encore": True}
+    assert candidate["songs"][0] == {"name": "노래1", "encore": False, "artist": None}
+    assert candidate["songs"][2] == {"name": "앙코르곡", "encore": True, "artist": None}
 
 
 # Setlist.fm 결과 없음 404 테스트
@@ -241,8 +247,8 @@ async def test_fetch_real_setlist_success():
     assert data["concert_id"] == concert_id
     assert data["is_user_edited"] is False
     assert len(data["songs"]) == 3
-    assert data["songs"][0] == {"name": "노래1", "encore": False}
-    assert data["songs"][2] == {"name": "앙코르곡", "encore": True}
+    assert data["songs"][0] == {"name": "노래1", "encore": False, "artist": None}
+    assert data["songs"][2] == {"name": "앙코르곡", "encore": True, "artist": None}
 
 
 # 동일 공연에 다른 setlistfm_id로 재저장 시 upsert 테스트
@@ -307,6 +313,102 @@ async def test_fetch_real_setlist_api_502():
             )
 
     assert response.status_code == 502
+
+
+# 페스티벌(아티스트 2명 이상) 실제 셋리스트 자동 생성 테스트
+
+# 아티스트별로 다른 검색 응답을 주는 Setlist.fm 모킹. by_artist에 없는 아티스트로
+# 검색하면 404(데이터 없음)로 취급.
+def _setlistfm_search_mock_multi(by_artist: dict[str, dict]):
+    async def _get(url, headers=None, params=None):
+        mock_response = MagicMock()
+        artist = (params or {}).get("artistName")
+        data = by_artist.get(artist)
+        if data is None:
+            mock_response.status_code = 404
+            mock_response.json = MagicMock(return_value={})
+        else:
+            mock_response.status_code = 200
+            mock_response.json = MagicMock(return_value=data)
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(side_effect=_get)
+    return patch("app.services.setlistfm.httpx.AsyncClient", return_value=mock_client)
+
+
+# 아티스트 2명 각각의 실제 셋리스트를 자동 검색해서 하나로 합치는지 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_for_festival_success():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_concert("PF_SL_FEST_001", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+
+    search_a = _make_setlistfm_search("SF_FEST_A", artist=artist_a)
+    search_b = _make_setlistfm_search("SF_FEST_B", artist=artist_b)
+
+    with _setlistfm_search_mock_multi({artist_a: search_a, artist_b: search_b}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/generate-festival",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["concert_id"] == concert_id
+    assert data["setlistfm_id"] is None  # 아티스트 2명 매칭돼서 단일 필드로 못 채움
+    songs = data["songs"]
+    a_songs = [s for s in songs if s["artist"] == artist_a]
+    b_songs = [s for s in songs if s["artist"] == artist_b]
+    assert len(a_songs) == 3  # _make_setlistfm_detail 기본: 본공연 2곡 + 앙코르 1곡
+    assert len(b_songs) == 3
+
+
+# 아티스트 한 명만 매칭돼도(나머지는 데이터 없음) 매칭된 그 한 명 기준으로 저장되고,
+# setlistfm_id도 그 하나로 채워지는지 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_for_festival_partial_match():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_concert("PF_SL_FEST_002", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+
+    search_a = _make_setlistfm_search("SF_FEST_PARTIAL", artist=artist_a)
+    # artist_b는 by_artist에 없음 -> 404 취급
+
+    with _setlistfm_search_mock_multi({artist_a: search_a}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/generate-festival",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["setlistfm_id"] == "SF_FEST_PARTIAL"
+    assert all(s["artist"] == artist_a for s in data["songs"])
+
+
+# 어느 아티스트도 안 매칭되면 404 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_for_festival_no_match_404():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_concert("PF_SL_FEST_003", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+
+    with _setlistfm_search_mock_multi({}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/generate-festival",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 404
 
 
 # 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist)
@@ -432,6 +534,34 @@ async def test_single_day_concert_performance_date_auto_resolved():
     assert response.json()["performance_date"] == "2030-06-01"
 
 
+# 티켓 기준 페스티벌 실제 셋리스트 자동 생성 라우트 테스트
+@pytest.mark.asyncio
+async def test_ticket_generate_real_setlist_for_festival():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_concert("PF_SL_TICKET_FEST_001", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    search_a = _make_setlistfm_search("SF_TICKET_FEST_A", artist=artist_a)
+    search_b = _make_setlistfm_search("SF_TICKET_FEST_B", artist=artist_b)
+
+    with _setlistfm_search_mock_multi({artist_a: search_a, artist_b: search_b}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/tickets/{ticket_id}/setlist/generate-festival",
+                headers=headers,
+            )
+
+    assert response.status_code == 201
+    songs = response.json()["songs"]
+    assert {s["artist"] for s in songs} == {artist_a, artist_b}
+
+
 # 티켓 기준 셋리스트 라우트 테스트 (GET/POST /tickets/{ticket_id}/setlist)
 
 # 하루짜리 공연 티켓은 attended_date 없이도 티켓 라우트로 조회/저장 가능한지 테스트
@@ -508,3 +638,129 @@ async def test_ticket_setlist_route_without_attended_date_on_multiday_concert_40
         response = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
 
     assert response.status_code == 400
+
+
+# 실제 셋리스트 자동 채움 백필 잡(retry_real_setlist_generation) 테스트.
+# _create_concert가 KOPIS mock으로 항상 미래(2030.06.01) 날짜로 만드니, 여기서는 직접 DB에서
+# start_date/end_date를 원하는 시점으로 옮겨서 "이미 끝난 공연"을 재현함.
+async def _set_concert_dates(concert_id: str, start: datetime, end: datetime) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+        concert.start_date = start
+        concert.end_date = end
+        await db.commit()
+
+
+async def _get_real_setlist_row(concert_id: str, performance_date) -> RealSetlist | None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(RealSetlist).where(
+                RealSetlist.concert_id == uuid.UUID(concert_id),
+                RealSetlist.performance_date == performance_date,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+# 티켓 등록된, 3일 전에 끝난(=14일 창 안) 공연은 자동으로 채워지는지 테스트
+@pytest.mark.asyncio
+async def test_retry_real_setlist_generation_backfills_within_window():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_BACKFILL_001", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    show_date = (datetime.now(timezone.utc) - timedelta(days=3)).date()
+    show_dt = datetime.combine(show_date, datetime.min.time(), tzinfo=timezone.utc)
+    await _set_concert_dates(concert_id, show_dt, show_dt)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+
+    search_data = _make_setlistfm_search("SF_BACKFILL_001", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        await retry_real_setlist_generation()
+
+    row = await _get_real_setlist_row(concert_id, show_date)
+    assert row is not None
+    assert len(row.songs) == 3  # 본공연 2곡 + 앙코르 1곡
+
+
+# 20일 전에 끝난(=14일 창 밖) 공연은 시도조차 안 하는지 테스트
+@pytest.mark.asyncio
+async def test_retry_real_setlist_generation_skips_after_window():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_BACKFILL_002", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    show_date = (datetime.now(timezone.utc) - timedelta(days=20)).date()
+    show_dt = datetime.combine(show_date, datetime.min.time(), tzinfo=timezone.utc)
+    await _set_concert_dates(concert_id, show_dt, show_dt)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+
+    search_data = _make_setlistfm_search("SF_BACKFILL_002", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        await retry_real_setlist_generation()
+
+    row = await _get_real_setlist_row(concert_id, show_date)
+    assert row is None
+
+
+# 아무도 티켓을 등록하지 않은 공연은 대상에서 빠지는지 테스트
+@pytest.mark.asyncio
+async def test_retry_real_setlist_generation_skips_without_ticket():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_BACKFILL_003", artist=artist)
+
+    show_date = (datetime.now(timezone.utc) - timedelta(days=3)).date()
+    show_dt = datetime.combine(show_date, datetime.min.time(), tzinfo=timezone.utc)
+    await _set_concert_dates(concert_id, show_dt, show_dt)
+    # 티켓 등록 없음
+
+    search_data = _make_setlistfm_search("SF_BACKFILL_003", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        await retry_real_setlist_generation()
+
+    row = await _get_real_setlist_row(concert_id, show_date)
+    assert row is None
+
+
+# 이미 채워진 (concert_id, date)는 재시도하지 않고 그대로 두는지 테스트
+@pytest.mark.asyncio
+async def test_retry_real_setlist_generation_skips_already_filled():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_BACKFILL_004", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    show_date = (datetime.now(timezone.utc) - timedelta(days=3)).date()
+    show_dt = datetime.combine(show_date, datetime.min.time(), tzinfo=timezone.utc)
+    await _set_concert_dates(concert_id, show_dt, show_dt)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+
+    # 미리 직접 채워둠
+    async with AsyncSessionLocal() as db:
+        db.add(
+            RealSetlist(
+                concert_id=uuid.UUID(concert_id),
+                performance_date=show_date,
+                songs=[{"name": "이미있는곡", "encore": False}],
+            )
+        )
+        await db.commit()
+
+    # 이 mock이 실제로 호출되면(=재시도했다는 뜻) 곡 수가 바뀌어야 하므로, 호출 여부를
+    # 곡 내용이 그대로인지로 검증
+    search_data = _make_setlistfm_search("SF_BACKFILL_004", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        await retry_real_setlist_generation()
+
+    row = await _get_real_setlist_row(concert_id, show_date)
+    assert row is not None
+    assert [s["name"] for s in row.songs] == ["이미있는곡"]

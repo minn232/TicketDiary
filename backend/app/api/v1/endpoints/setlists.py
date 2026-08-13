@@ -15,6 +15,7 @@ from app.services.setlist import (
     get_real_setlist,
     search_setlists_for_concert,
     fetch_and_save_real_setlist,
+    generate_real_setlist_auto,
     update_real_setlist,
 )
 from app.services.pre_setlist import get_pre_setlist, generate_pre_setlist, update_pre_setlist
@@ -69,7 +70,24 @@ async def edit_real_setlist(
     return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, performance_date)
 
 
-# [프론트 요청]
+# 아티스트별 자동 검색+병합으로 실제 셋리스트 생성(페스티벌뿐 아니라 단독 공연도 동작 -
+# generate_real_setlist_auto 참고). 매일 자동으로 도는 백필 잡(retry_real_setlist_generation)이
+# 주로 쓰지만, 유저가 수동으로 "다시 찾기"를 트리거할 수 있게 엔드포인트도 남겨둠. 티켓 기준
+# twin은 tickets.py의 generate_ticket_real_setlist_auto 참고.
+@router.post(
+    "/{concert_id}/setlist/generate-festival",
+    response_model=RealSetlistResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_real_setlist_auto_endpoint(
+    concert_id: UUID,
+    performance_date: date | None = Query(None, alias="date"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await generate_real_setlist_auto(db, concert_id, performance_date)
+
+
 # show_predicted_setlist는 이제 "조회 자체를 막는 스위치"가 아니라, 프론트에서
 # 블러 처리 여부만 결정하는 화면 취향 값으로 재정의됨(꺼도 데이터는 그대로
 # 내려줘야 프론트가 롱탭/홀드로 블러를 잠깐 풀어 보여주는 기능을 만들 수 있음).
