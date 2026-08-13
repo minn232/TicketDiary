@@ -46,7 +46,11 @@ async def _create_concert(kopis_id: str, artist: str = "테스트아티스트") 
 # Setlist.fm mock (아티스트 과거 공연 데이터)
 
 # 여러 공연의 곡 목록 생성
-def _make_artist_setlists(songs_per_concert: list[list[str]], encore_songs: list[str] | None = None) -> dict:
+def _make_artist_setlists(
+    songs_per_concert: list[list[str]],
+    encore_songs: list[str] | None = None,
+    artist: str = "테스트아티스트",
+) -> dict:
     setlists = []
     for i, songs in enumerate(songs_per_concert):
         sets = [{"song": [{"name": s} for s in songs]}]
@@ -55,7 +59,7 @@ def _make_artist_setlists(songs_per_concert: list[list[str]], encore_songs: list
         setlists.append({
             "id": f"SF_ARTIST_{i:03d}",
             "eventDate": f"01-0{(i % 9) + 1}-2025",
-            "artist": {"name": "테스트아티스트"},
+            "artist": {"name": artist},
             "venue": {"name": "테스트공연장", "city": {"name": "서울"}},
             "sets": {"set": sets},
             "url": f"https://www.setlist.fm/setlist/test/SF_ARTIST_{i:03d}.html",
@@ -220,8 +224,8 @@ async def test_generate_pre_setlist_festival_uses_all_artists():
     concert_id = await _create_concert("PF_PRE_FEST_001", artist=f"{artist_a},{artist_b}")
     token = await _get_token()
 
-    data_a = _make_artist_setlists([["에이곡1", "에이곡2", "에이곡3", "에이곡4"]])
-    data_b = _make_artist_setlists([["비곡1", "비곡2"]])
+    data_a = _make_artist_setlists([["에이곡1", "에이곡2", "에이곡3", "에이곡4"]], artist=artist_a)
+    data_b = _make_artist_setlists([["비곡1", "비곡2"]], artist=artist_b)
 
     with _setlistfm_artist_mock_multi({artist_a: data_a, artist_b: data_b}):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -249,7 +253,7 @@ async def test_generate_pre_setlist_festival_partial_artist_data_missing():
     concert_id = await _create_concert("PF_PRE_FEST_002", artist=f"{artist_a},{artist_b}")
     token = await _get_token()
 
-    data_a = _make_artist_setlists([["에이곡1"]])
+    data_a = _make_artist_setlists([["에이곡1"]], artist=artist_a)
     # artist_b는 by_artist에 아예 없음 -> 404 취급
 
     with _setlistfm_artist_mock_multi({artist_a: data_a}):
