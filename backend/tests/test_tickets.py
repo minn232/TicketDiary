@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -597,6 +598,62 @@ async def test_update_ticket_fields():
     assert data["review"] == "공연공연"
     assert data["concert_photo_urls"] == ["https://example.com/photo1.jpg"]
     assert data["is_first_day"] is True
+
+
+# 사진을 목록에서 빼면(교체 포함) 더 이상 참조되지 않는 S3 객체도 같이 지워지는지 테스트
+# - 유저 개인 사진이 DB 참조만 끊긴 채 공개 URL로 계속 남아있으면 안 됨
+@pytest.mark.asyncio
+async def test_update_ticket_removed_photo_deleted_from_s3():
+    concert_id = await _create_concert("PF_PHOTO_DEL_001")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    kept_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/concert-photos/kept.jpg"
+    removed_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/concert-photos/removed.jpg"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+
+        await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"concert_photo_urls": [kept_url, removed_url]},
+            headers=headers,
+        )
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            response = await ac.patch(
+                f"/api/v1/tickets/{ticket_id}",
+                json={"concert_photo_urls": [kept_url]},
+                headers=headers,
+            )
+
+    assert response.status_code == 200
+    mock_delete.assert_called_once_with("concert-photos/removed.jpg")
+
+
+# 티켓을 통째로 삭제하면 그 티켓에 달려있던 사진들도 S3에서 같이 지워지는지 테스트
+@pytest.mark.asyncio
+async def test_delete_ticket_cleans_up_s3_photos():
+    concert_id = await _create_concert("PF_PHOTO_DEL_002")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    photo_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/concert-photos/bye.jpg"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+
+        await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"concert_photo_urls": [photo_url]},
+            headers=headers,
+        )
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            del_response = await ac.delete(f"/api/v1/tickets/{ticket_id}", headers=headers)
+
+    assert del_response.status_code == 204
+    mock_delete.assert_called_once_with("concert-photos/bye.jpg")
 
 
 # "티켓 뜯기" 연출 시각(torn_at) 저장 + 재설정(null로 되돌리는 것 포함) 테스트 -

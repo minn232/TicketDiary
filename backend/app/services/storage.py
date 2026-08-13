@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import uuid
 
 import boto3
@@ -57,3 +58,32 @@ async def upload_image(image_bytes: bytes, folder: str, content_type: str) -> st
     key = f"{folder}/{uuid.uuid4()}{ext}"
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _do_upload, image_bytes, key, content_type)
+
+
+_S3_URL_RE = re.compile(
+    rf"^https://{re.escape(settings.S3_BUCKET_NAME)}\.s3\.[^/]+\.amazonaws\.com/(?P<key>.+)$"
+)
+
+
+# _do_upload가 만든 URL에서 S3 key만 추출(이 버킷 URL이 아니면 None)
+def _key_from_url(url: str) -> str | None:
+    m = _S3_URL_RE.match(url)
+    return m.group("key") if m else None
+
+
+def _do_delete(key: str) -> None:
+    try:
+        _get_s3_client().delete_object(Bucket=settings.S3_BUCKET_NAME, Key=key)
+    except (BotoCoreError, ClientError) as e:
+        logger.warning(f"S3 객체 삭제 실패(무시하고 계속 진행): {key} - {e}")
+
+
+# 유저가 사진을 지우거나(콘서트 사진 교체 포함) 티켓을 통째로 삭제할 때,
+# S3도 같이 삭제. 실패해도 예외를 던지지 않고 로그만
+# 남김(호출부의 주 작업인 DB 갱신을 막지 않기 위함).
+async def delete_image(url: str) -> None:
+    key = _key_from_url(url)
+    if key is None:
+        return
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _do_delete, key)

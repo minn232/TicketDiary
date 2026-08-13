@@ -1,5 +1,6 @@
 from uuid import UUID
 from datetime import datetime, timezone, timedelta
+import asyncio
 import difflib
 import logging
 import re
@@ -16,6 +17,7 @@ from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
 from app.services.social import remove_concert_follow
+from app.services.storage import delete_image
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -282,6 +284,10 @@ async def update_ticket(
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
+    # 사진/티켓이미지가 교체되거나 빠지면 S3에서도 지우기 위해 미리 옛 값을 기억해둠
+    old_photo_urls = list(ticket.concert_photo_urls or [])
+    old_image_url = ticket.ticket_image_url
+
     fields = body.model_dump(exclude_unset=True)
     for field, value in fields.items():
         setattr(ticket, field, value)
@@ -304,6 +310,21 @@ async def update_ticket(
     # 위 select에서 이미 concert를 eager-load 했고 expire_on_commit=False라
     # 커밋 후에도 그대로 유효함 -> 재조회 불필요
     await schedule_ticket_notifications(db, ticket, user)
+
+    # DB 갱신이 끝난 뒤 더 이상 참조되지 않는 옛 이미지를 S3에서도 지움(실패해도
+    # delete_image가 조용히 로그만 남기므로 응답에는 영향 없음)
+    if "concert_photo_urls" in fields:
+        new_photo_urls = set(ticket.concert_photo_urls or [])
+        removed_photo_urls = [u for u in old_photo_urls if u not in new_photo_urls]
+        if removed_photo_urls:
+            await asyncio.gather(*(delete_image(u) for u in removed_photo_urls))
+    if (
+        "ticket_image_url" in fields
+        and old_image_url
+        and old_image_url != ticket.ticket_image_url
+    ):
+        await delete_image(old_image_url)
+
     return ticket
 
 
@@ -316,8 +337,16 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
+    # 티켓과 함께 참조가 완전히 사라지는 이미지들 - DB 삭제 후 S3에서도 정리
+    orphaned_urls = list(ticket.concert_photo_urls or [])
+    if ticket.ticket_image_url:
+        orphaned_urls.append(ticket.ticket_image_url)
+
     await db.delete(ticket)
     await db.commit()
+
+    if orphaned_urls:
+        await asyncio.gather(*(delete_image(u) for u in orphaned_urls))
 
 
 # 유저 알림 설정에서 delivery/day_before/concert_day 활성화 여부 반환
