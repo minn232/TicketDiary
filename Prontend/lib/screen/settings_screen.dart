@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'favorite_pinned_settings_screen.dart';
 import 'notifications_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
@@ -289,23 +288,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                       _divider,
-
-                      _MenuRow(
-                        title: '선호 아티스트 / 찜 공연 설정',
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              settings: const RouteSettings(
-                                name: DiaryRoutes.favoritePinned,
-                              ),
-                              builder: (context) =>
-                                  const FavoritePinnedSettingsScreen(),
-                            ),
-                          );
-                        },
-                      ),
-                      _divider,
                       // [백엔드 수정]
                       // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
                       _MenuRow(
@@ -328,6 +310,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuRow extends StatelessWidget {
+  final String title;
+  final VoidCallback onTap;
+
+  const _MenuRow({required this.title, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return PressableScale(
+      onTap: onTap,
+      pressScale: 0.985,
+      tapScale: 1.02,
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: context.sp(15),
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ],
           ),
         ),
       ),

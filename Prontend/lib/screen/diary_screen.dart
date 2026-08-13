@@ -2013,7 +2013,11 @@ class _PosterTicketFace extends StatelessWidget {
       children: [
         Text(
           title,
-          maxLines: 2,
+          // 날짜/공연장(metaParts)과 좌석/가격 줄까지 함께 있으면, 제목이
+          // 2줄로 늘어날 때 카드의 좁은 높이 안에 다 들어가지 않아
+          // RenderFlex 오버플로우가 났습니다(실제 서버 데이터처럼 제목이
+          // 길 때 재현됨). 1줄로 제한하고 넘치면 말줄임표로 처리합니다.
+          maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: context.sp(15),
