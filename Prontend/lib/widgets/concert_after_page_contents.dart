@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/setlist.dart';
 import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/concert_detail_service.dart';
@@ -1077,7 +1078,7 @@ class _RealSetlistContent extends StatefulWidget {
 
 class _RealSetlistContentState extends State<_RealSetlistContent> {
   final ConcertDetailService _service = ConcertDetailService();
-  List<String>? _songs;
+  List<SongEntry>? _songs;
 
   @override
   void initState() {
@@ -1092,9 +1093,11 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       final res = await _service.getRealSetlist(ticketId);
       if (!mounted) return;
       setState(() {
-        _songs = res.songs
-            .map((s) => s.encore ? '${s.name} (앵콜)' : s.name)
-            .toList();
+        // [백엔드 수정]
+        // 실제 셋리는 Setlist.fm의 실제 공연 세트 순서(본공연 → 앙코르)를
+        // 그대로 담고 있어서, 곡마다 "(앵콜)"을 반복하지 않고 앙코르가
+        // 시작되는 지점에 구분선 하나만 넣으면 충분함(build에서 처리).
+        _songs = res.songs;
       });
     } on ApiException catch (_) {
       // 아직 등록 안 됐으면(404) 조용히 안내 문구를 유지합니다.
@@ -1129,37 +1132,216 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         ),
       );
     }
+
+    // [백엔드 수정]
+    // 페스티벌(아티스트 2명 이상)이면 예상 셋리와 마찬가지로 아티스트별
+    // 아코디언으로, 단독 공연이면 기존처럼 평범한 번호 목록으로.
+    final groups = <String?, List<SongEntry>>{};
+    for (final song in songs) {
+      groups.putIfAbsent(song.artist, () => []).add(song);
+    }
+    final groupList = groups.entries.toList();
+
     return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < songs.length; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    (i + 1).toString().padLeft(2, '0'),
-                    style: TextStyle(
-                      fontSize: context.sp(11),
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black.withValues(alpha: 0.35),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      songs[i],
-                      style: TextStyle(
-                        fontSize: context.sp(12),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
+      child: groupList.length > 1
+          ? _RealSetlistGroupedByArtist(groups: groupList)
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _buildRealSongRows(context, songs),
+            ),
+    );
+  }
+}
+
+// [백엔드 수정]
+// 곡마다 번호 매긴 Row + 앙코르 시작 지점 구분선을 만드는 헬퍼. 단독 공연
+// 목록/아코디언 펼친 목록 둘 다 재사용(실제 셋리는 Setlist.fm 실제 공연
+// 세트 순서 그대로라, 아티스트별로 나눠도 그 아티스트 안에서는 순서가
+// 여전히 유효함).
+List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
+  return [
+    for (var i = 0; i < songs.length; i++) ...[
+      if (songs[i].encore && (i == 0 || !songs[i - 1].encore))
+        const _EncoreDivider(),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              (i + 1).toString().padLeft(2, '0'),
+              style: TextStyle(
+                fontSize: context.sp(11),
+                fontWeight: FontWeight.w900,
+                color: Colors.black.withValues(alpha: 0.35),
               ),
             ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                songs[i].name,
+                style: TextStyle(
+                  fontSize: context.sp(12),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  ];
+}
+
+// [백엔드 수정]
+/// 페스티벌 실제 셋리 - 아티스트 이름을 나열해두고, 누른 아티스트만 곡
+/// 목록이 펼쳐지는 아코디언(예상 셋리와 동일한 UX). 한 번에 하나만
+/// 펼쳐지고, 목록 순서는 그대로 유지한 채 펼친 아티스트 위치로 화면을
+/// 스크롤합니다.
+class _RealSetlistGroupedByArtist extends StatefulWidget {
+  final List<MapEntry<String?, List<SongEntry>>> groups;
+
+  const _RealSetlistGroupedByArtist({required this.groups});
+
+  @override
+  State<_RealSetlistGroupedByArtist> createState() =>
+      _RealSetlistGroupedByArtistState();
+}
+
+class _RealSetlistGroupedByArtistState
+    extends State<_RealSetlistGroupedByArtist> {
+  int? _expandedIndex;
+  late final List<GlobalKey> _sectionKeys = [
+    for (var _ in widget.groups) GlobalKey(),
+  ];
+
+  void _toggle(int index) {
+    final willExpand = _expandedIndex != index;
+    setState(() => _expandedIndex = willExpand ? index : null);
+    if (!willExpand) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _sectionKeys[index].currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var g = 0; g < widget.groups.length; g++)
+          Padding(
+            key: _sectionKeys[g],
+            padding: EdgeInsets.only(
+              bottom: g == widget.groups.length - 1 ? 0 : 4,
+            ),
+            child: _RealSetlistArtistSection(
+              artistName: widget.groups[g].key ?? '아티스트 미상',
+              songs: widget.groups[g].value,
+              expanded: g == _expandedIndex,
+              onTap: () => _toggle(g),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _RealSetlistArtistSection extends StatelessWidget {
+  final String artistName;
+  final List<SongEntry> songs;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _RealSetlistArtistSection({
+    required this.artistName,
+    required this.songs,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                Icon(
+                  expanded
+                      ? Icons.expand_more_rounded
+                      : Icons.chevron_right_rounded,
+                  size: 16,
+                  color: Colors.black.withValues(alpha: 0.4),
+                ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: Text(
+                    artistName,
+                    style: TextStyle(
+                      fontSize: context.sp(12.5),
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 20, top: 2, bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _buildRealSongRows(context, songs),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// [백엔드 수정]
+/// 실제 셋리 곡 목록 중 앙코르가 시작되는 지점에 한 번만 표시하는 구분선.
+class _EncoreDivider extends StatelessWidget {
+  const _EncoreDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(height: 1, color: Colors.black.withValues(alpha: 0.15)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+              'ENCORE',
+              style: TextStyle(
+                fontSize: context.sp(9.5),
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.2,
+                color: Colors.black.withValues(alpha: 0.4),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Container(height: 1, color: Colors.black.withValues(alpha: 0.15)),
+          ),
         ],
       ),
     );

@@ -6,12 +6,18 @@ class SongEntry {
   final String name;
   final bool encore;
 
-  const SongEntry({required this.name, this.encore = false});
+  // [백엔드 수정]
+  /// 페스티벌처럼 아티스트가 여럿인 공연에서, 이 곡이 누구 소속인지.
+  /// 단독 공연이면 null.
+  final String? artist;
+
+  const SongEntry({required this.name, this.encore = false, this.artist});
 
   factory SongEntry.fromJson(Map<String, dynamic> json) {
     return SongEntry(
       name: json['name'] as String,
       encore: json['encore'] as bool? ?? false,
+      artist: json['artist'] as String?,
     );
   }
 }
