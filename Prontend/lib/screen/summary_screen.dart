@@ -197,8 +197,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
                   child: Row(
                     children: [
                       Expanded(
+                        // [백엔드 수정]
+                        // 띄어쓰기로 바꿔서 Flutter가 화면 폭에 맞게 알아서 줄바꿈.
                         child: _SummaryCard(
-                          title: '스탠딩 / 좌석\n선호도',
+                          title: '스탠딩 / 좌석 선호도',
                           value: withFallback(
                             '좌석 ${(data.seatRatio * 100).toInt()}% / 스탠딩 ${(data.standingRatio * 100).toInt()}%',
                           ),
@@ -210,7 +212,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                       const SizedBox(width: 14),
                       Expanded(
                         child: _SummaryCard(
-                          title: '첫콘 / 막콘\n선호도',
+                          title: '첫콘 / 막콘 선호도',
                           value: withFallback(
                             '첫콘 ${(data.firstConcertRatio * 100).toInt()}% / 막콘 ${(data.lastConcertRatio * 100).toInt()}%',
                           ),

@@ -1094,9 +1094,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       if (!mounted) return;
       setState(() {
         // [백엔드 수정]
-        // 실제 셋리는 Setlist.fm의 실제 공연 세트 순서(본공연 → 앙코르)를
-        // 그대로 담고 있어서, 곡마다 "(앵콜)"을 반복하지 않고 앙코르가
-        // 시작되는 지점에 구분선 하나만 넣으면 충분함(build에서 처리).
+        // 앙코르가 시작되는 지점에 구분선(build에서 처리).
         _songs = res.songs;
       });
     } on ApiException catch (_) {
@@ -1134,8 +1132,8 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     }
 
     // [백엔드 수정]
-    // 페스티벌(아티스트 2명 이상)이면 예상 셋리와 마찬가지로 아티스트별
-    // 아코디언으로, 단독 공연이면 기존처럼 평범한 번호 목록으로.
+    // 페스티벌(아티스트 2명 이상)이면 아티스트별 아코디언.
+    // 단독 공연이면 번호 목록.
     final groups = <String?, List<SongEntry>>{};
     for (final song in songs) {
       groups.putIfAbsent(song.artist, () => []).add(song);
@@ -1154,10 +1152,8 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
 }
 
 // [백엔드 수정]
-// 곡마다 번호 매긴 Row + 앙코르 시작 지점 구분선을 만드는 헬퍼. 단독 공연
-// 목록/아코디언 펼친 목록 둘 다 재사용(실제 셋리는 Setlist.fm 실제 공연
-// 세트 순서 그대로라, 아티스트별로 나눠도 그 아티스트 안에서는 순서가
-// 여전히 유효함).
+// 곡마다 번호 매긴 Row + 앙코르 시작 지점 구분선을 만드는 헬퍼.
+// 단독 공연 목록/아코디언 펼친 목록 둘 다 재사용
 List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
   return [
     for (var i = 0; i < songs.length; i++) ...[
@@ -1195,9 +1191,9 @@ List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
 
 // [백엔드 수정]
 /// 페스티벌 실제 셋리 - 아티스트 이름을 나열해두고, 누른 아티스트만 곡
-/// 목록이 펼쳐지는 아코디언(예상 셋리와 동일한 UX). 한 번에 하나만
-/// 펼쳐지고, 목록 순서는 그대로 유지한 채 펼친 아티스트 위치로 화면을
-/// 스크롤합니다.
+/// 목록이 펼쳐지는 아코디언(예상 셋리와 동일한 UX). 
+/// 한 번에 하나만 펼쳐지고, 목록 순서는 그대로 유지한 채 
+/// 펼친 아티스트 위치로 화면 스크롤.
 class _RealSetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
 

@@ -572,7 +572,9 @@ class _InfoRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 62,
+            // [백엔드 수정]
+            // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈.
+            width: context.rs(62),
             child: Text(
               label,
               style: TextStyle(
@@ -713,13 +715,12 @@ class _TimelineRow extends StatelessWidget {
 // 페스티벌(아티스트 2명 이상) 예상 셋리스트 지원 - setlist가 List<String>에서
 // List<SongEntry>로 바뀜(artist 태그 포함). 아티스트별 아코디언 그룹핑은
 // 아래 _SetlistGroupedByArtist 참고.
-/// 예상 셋 리스트 본문. 아티스트가 1명(또는 없음)이면 기존처럼 번호만 매긴
-/// 평범한 목록으로, 페스티벌처럼 아티스트가 여럿(많으면 20팀)이면 아티스트
-/// 이름을 쭉 나열해두고 눌러야 그 아티스트 곡이 펼쳐지는 아코디언으로
-/// 보여줍니다(한 번에 다 펼쳐지면 스크롤이 너무 길어져서). 설정 > "예상
-/// 셋리 노출 여부"가 꺼져 있으면 스포일러 방지를 위해 블러 처리(단독/
+/// 예상 셋 리스트 본문.
+/// 아티스트가 1명(또는 없음)이면 번호만 매긴 목록,
+/// 페스티벌이면 아티스트별로 곡을 묶어서 아코디언.
+/// 설정 > "예상 셋리 노출 여부"가 꺼져 있으면 스포일러 방지를 위해 블러 처리(단독/
 /// 페스티벌 모두 동일 적용), 블러 상태에서 꾹 눌러서(long press) 누르고
-/// 있는 동안만 잠깐 풀어볼 수 있습니다(떼면 다시 블러).
+/// 있는 동안만 미리보기 가능(떼면 다시 블러).
 class _SetlistNumbered extends StatefulWidget {
   final List<SongEntry> setlist;
 
@@ -787,12 +788,7 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
 }
 
 // [백엔드 수정]
-// 곡마다 반복해서 붙던 "(앵콜)" 텍스트를 뺌. 예상 셋리는 아티스트 과거
-// 공연 빈도순 top-N이라 encore 플래그가 "역대 앙코르였던 비율" 같은
-// 통계값이지 실제 공연 순서가 아님 - 그래서 여기선 앙코르곡이 뒤에
-// 몰려있다는 보장이 없어 "구간 구분선" 같은 위치 기반 표시를 못 씀(그건
-// 순서가 진짜인 실제 셋리 쪽(concert_after_page_contents.dart)에만 적용).
-// 그냥 표시 자체를 빼는 걸로 정리함.
+// (앵콜) 텍스트 제거. 
 List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
   return [
     for (var i = 0; i < songs.length; i++)
@@ -818,13 +814,11 @@ class _FlatNumberedSongs extends StatelessWidget {
   }
 }
 
+// [백엔드 수정]
 /// 페스티벌처럼 아티스트가 여럿일 때 - 이름을 쭉 나열해두고, 누른
-/// 아티스트만 곡 목록이 펼쳐지는 아코디언. 20팀이 나와도 접힌 상태에선
-/// 이름만 훑어보면 되고, 곡은 관심 있는 아티스트 것만 펼쳐서 봄. 한 번에
-/// 하나만 펼쳐지고(다른 걸 누르면 이전 건 자동으로 접힘). 목록 순서
-/// 자체는 그대로 유지하고(재배치 없음), 펼칠 때 그 아티스트 위치로 화면을
-/// 스크롤해서 맨 위에 오도록 합니다 - 위로 스크롤하면 앞 아티스트들이,
-/// 아래로 스크롤하면 뒤 아티스트들이 원래 순서 그대로 있습니다.
+/// 아티스트만 곡 목록이 펼쳐지는 아코디언.
+/// 한 번에 하나만 펼쳐지고(다른 걸 누르면 이전 건 자동으로 접힘),
+/// 펼칠 때 그 아티스트 위치로 화면을 스크롤.
 class _SetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
 
@@ -888,10 +882,9 @@ class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
   }
 }
 
-/// 아코디언 한 칸: 아티스트 이름 + 곡 수(눌러서 펼치기/접기), 펼치면 그
-/// 아래에 이 아티스트만의 번호 매긴 곡 목록(1번부터 다시 시작 - 백엔드가
-/// 아티스트마다 독립적으로 상위 곡을 뽑아준 거라, 전체를 이어서 매기면
-/// 마치 하나로 합쳐서 순위를 매긴 것처럼 오해될 수 있음).
+// [백엔드 수정]
+/// 아코디언 한 칸: 아티스트 이름(눌러서 펼치기/접기), 
+/// 펼치면 그 아래에 이 아티스트만의 번호 매긴 곡 목록
 class _ArtistAccordionSection extends StatelessWidget {
   final String artistName;
   final List<SongEntry> songs;
@@ -971,8 +964,6 @@ class _SongRow extends StatelessWidget {
       children: [
         SizedBox(
           // [백엔드 수정]
-          // 고정 22px라 태블릿처럼 context.sp()로 폰트가 커지는 화면에서
-          // 두 자릿수(10 이상)가 박스보다 넓어져 "1"/"0"이 줄바꿈되던 버그.
           // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈.
           width: context.rs(22),
           child: Text(
