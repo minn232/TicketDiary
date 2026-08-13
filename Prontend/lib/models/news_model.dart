@@ -44,6 +44,10 @@ class NewsModel {
   /// 공연장 이름. 상세 화면에서 탭하면 지도 앱으로 검색해 이동합니다.
   final String? venue;
 
+  // [백엔드 수정]
+  // 예매처 바로가기 버튼용(키: YES24/INTERPARK/TICKETLINK/MELON).
+  final Map<String, String>? ticketingLinks;
+
   NewsModel({
     required this.artist,
     required this.concert,
@@ -56,6 +60,7 @@ class NewsModel {
     this.id,
     this.concertId,
     this.isRead = true,
+    this.ticketingLinks,
   });
 
   /// 백엔드 `NewsFeedResponse` JSON으로부터 생성합니다.
@@ -77,6 +82,9 @@ class NewsModel {
     final concertName = concertJson?['name'] as String? ?? '알 수 없는 공연';
     final posterUrl = concertJson?['poster_url'] as String? ?? '';
     final venue = concertJson?['venue'] as String?;
+    final ticketingLinks =
+        (concertJson?['ticketing_links'] as Map<String, dynamic>?)
+            ?.map((key, value) => MapEntry(key, value as String));
     final period = _formatPeriod(
       concertJson?['start_date'] as String?,
       concertJson?['end_date'] as String?,
@@ -106,6 +114,7 @@ class NewsModel {
       contentBottom: contentBottomLines.join('\n'),
       articleImageUrl: posterUrl,
       venue: venue,
+      ticketingLinks: ticketingLinks,
     );
   }
 
@@ -143,6 +152,7 @@ class NewsModel {
       contentBottom: '티케팅 날짜  $dDay',
       articleImageUrl: concert.posterImageUrl,
       venue: concert.venue,
+      ticketingLinks: concert.ticketingLinks,
     );
   }
 
@@ -161,6 +171,7 @@ class NewsModel {
     'contentBottom': contentBottom,
     'articleImageUrl': articleImageUrl,
     'venue': venue,
+    'ticketingLinks': ticketingLinks,
   };
 
   factory NewsModel.fromCacheJson(Map<String, dynamic> json) {
@@ -176,6 +187,8 @@ class NewsModel {
       contentBottom: json['contentBottom'] as String? ?? '',
       articleImageUrl: json['articleImageUrl'] as String? ?? '',
       venue: json['venue'] as String?,
+      ticketingLinks: (json['ticketingLinks'] as Map<String, dynamic>?)
+          ?.map((key, value) => MapEntry(key, value as String)),
     );
   }
 

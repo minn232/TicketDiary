@@ -122,6 +122,7 @@ class FavoritesStore extends ChangeNotifier {
               endDate: detail.endDate,
               artistName: detail.artistName,
               ticketingDate: detail.ticketingDate,
+              ticketingLinks: detail.ticketingLinks,
             );
             changed = true;
           }
@@ -181,6 +182,8 @@ class FavoritesStore extends ChangeNotifier {
         ticketingDate: ticketingDateRaw != null
             ? DateTime.tryParse(ticketingDateRaw)
             : null,
+        ticketingLinks: (map['ticketingLinks'] as Map<String, dynamic>?)
+            ?.map((key, value) => MapEntry(key, value as String)),
       );
       if (concert.name.isNotEmpty) {
         _concerts[concert.name] = concert;
@@ -226,7 +229,8 @@ class FavoritesStore extends ChangeNotifier {
     final kopisId = concert.kopisId;
     final missingSomething = concert.venue == null ||
         concert.startDate == null ||
-        concert.ticketingDate == null;
+        concert.ticketingDate == null ||
+        concert.ticketingLinks == null;
     if (!missingSomething || kopisId == null || kopisId.isEmpty) return;
 
     try {
@@ -246,6 +250,7 @@ class FavoritesStore extends ChangeNotifier {
         artistName:
             current.artistName.isNotEmpty ? current.artistName : detail.artistName,
         ticketingDate: current.ticketingDate ?? detail.ticketingDate,
+        ticketingLinks: current.ticketingLinks ?? detail.ticketingLinks,
       );
       _revision++;
       notifyListeners();
@@ -299,6 +304,7 @@ class FavoritesStore extends ChangeNotifier {
                 'endDate': c.endDate?.toIso8601String(),
                 'artistName': c.artistName,
                 'ticketingDate': c.ticketingDate?.toIso8601String(),
+                'ticketingLinks': c.ticketingLinks,
               },
             )
             .toList(),

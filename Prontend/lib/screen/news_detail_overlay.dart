@@ -430,7 +430,7 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
                                       _NewsContentBody(news: news, scale: k),
                                       SizedBox(height: 18 * k),
                                       _TicketingVendorButtons(
-                                        concertName: news.concert,
+                                        ticketingLinks: news.ticketingLinks,
                                         scale: k,
                                       ),
                                     ],
@@ -536,38 +536,39 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
   }
 }
 
-/// 예매 가능한 예매처(인터파크/예스24/티켓링크/멜론티켓) 바로가기 버튼들.
-///
-/// 이 공연의 정확한 예매 링크는 아직 앱에 없습니다 — KOPIS가 예매처별
-/// URL을 주긴 하지만, 백엔드가 그 값을 API 응답에 아직 실어주지 않습니다
-/// (크롤러 내부 용도로만 DB에 저장, 프론트로는 안 내려옴). 그래서 정확한
-/// 공연 페이지 대신, 각 예매처 사이트 안에서 공연명으로 검색되는 구글
-/// site: 검색 링크로 대신 연결합니다 — 예매처마다 검색 URL 형식이 달라
-/// 직접 만들면 깨지기 쉬운데, 구글 검색 URL(`google.com/search?q=`)은
-/// 안정적으로 잘 알려진 형식이라 이 방식이 더 견고합니다.
+// [백엔드 수정]
+// KOPIS가 실제로 준 예매처만(ticketingLinks) 버튼으로 보여주고, 눌렀을 때
+// 진짜 예매 링크로 이동. externalApplication 모드로 열어서, 그 사이트가
+// 앱 링크(Android App Links/iOS Universal Links)를 지원하면 자동으로 해당
+// 예매처 앱으로 연결됨(설치 안 돼있으면 브라우저 폴백) - 예매처별 커스텀
+// 딥링크 스킴은 알아내기 fragile해서 안 씀. ticketingLinks가 비어있으면
+// 섹션 자체를 숨김.
 class _TicketingVendorButtons extends StatelessWidget {
-  const _TicketingVendorButtons({required this.concertName, required this.scale});
+  const _TicketingVendorButtons({required this.ticketingLinks, required this.scale});
 
-  final String concertName;
+  final Map<String, String>? ticketingLinks;
 
   /// 카드 실제 렌더링 폭 기준 스케일(자세한 설명은 [_ExpandedNewsDetailState.build] 참고).
   final double scale;
 
-  static const List<(String label, String domain)> _vendors = [
-    ('인터파크', 'tickets.interpark.com'),
-    ('예스24', 'ticket.yes24.com'),
-    ('티켓링크', 'www.ticketlink.co.kr'),
-    ('멜론티켓', 'ticket.melon.com'),
-  ];
+  static const Map<String, String> _vendorLabels = {
+    'INTERPARK': '인터파크',
+    'YES24': '예스24',
+    'TICKETLINK': '티켓링크',
+    'MELON': '멜론티켓',
+  };
 
-  Future<void> _openVendorSearch(String domain) async {
-    final query = Uri.encodeComponent('site:$domain $concertName');
-    final uri = Uri.parse('https://www.google.com/search?q=$query');
+  Future<void> _openVendor(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   @override
   Widget build(BuildContext context) {
+    final links = ticketingLinks;
+    if (links == null || links.isEmpty) return const SizedBox.shrink();
+
     final k = scale;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -587,7 +588,7 @@ class _TicketingVendorButtons extends StatelessWidget {
           spacing: 8 * k,
           runSpacing: 8 * k,
           children: [
-            for (final (label, domain) in _vendors)
+            for (final entry in links.entries)
               OutlinedButton(
                 style: OutlinedButton.styleFrom(
                   padding: EdgeInsets.symmetric(
@@ -599,9 +600,9 @@ class _TicketingVendorButtons extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20 * k),
                   ),
                 ),
-                onPressed: () => _openVendorSearch(domain),
+                onPressed: () => _openVendor(entry.value),
                 child: Text(
-                  label,
+                  _vendorLabels[entry.key] ?? entry.key,
                   style: TextStyle(
                     fontSize: context.sp(13),
                     fontWeight: FontWeight.w700,
