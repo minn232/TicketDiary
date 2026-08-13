@@ -1,12 +1,27 @@
 import 'api_client.dart';
 
+// [백엔드 수정]
+// 관람 아티스트가 이름만 있던 걸 몇 회 관람했는지(count)까지 주도록 바뀜(내림차순 정렬).
+/// 관람 아티스트 한 명 + 관람 횟수.
+class ArtistVisit {
+  final String name;
+  final int count;
+
+  const ArtistVisit({required this.name, required this.count});
+
+  factory ArtistVisit.fromJson(Map<String, dynamic> json) => ArtistVisit(
+    name: json['name'] as String? ?? '',
+    count: json['count'] as int? ?? 0,
+  );
+}
+
 /// 결산 데이터 모델. 백엔드 `GET /summary` 응답과 대응합니다.
 class SummaryModel {
   final int concertCount;
   final int totalSpending;
   final int songCount;
   final String favoriteGenre;
-  final List<String> visitedArtists;
+  final List<ArtistVisit> visitedArtists;
   final double standingRatio;
   final double seatRatio;
   final double firstConcertRatio;
@@ -36,7 +51,9 @@ class SummaryModel {
       totalSpending: json['total_spent'] as int? ?? 0,
       songCount: json['song_count'] as int? ?? 0,
       favoriteGenre: json['top_genre'] as String? ?? '-',
-      visitedArtists: List<String>.from(json['artists'] as List? ?? const []),
+      visitedArtists: (json['artists'] as List? ?? const [])
+          .map((e) => ArtistVisit.fromJson(e as Map<String, dynamic>))
+          .toList(),
       standingRatio: ratio(json['standing_count']),
       seatRatio: ratio(json['seated_count']),
       firstConcertRatio: ratio(json['first_day_count']),

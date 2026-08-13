@@ -419,8 +419,10 @@ class _PostItCornerClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
+// [백엔드 수정]
+// 6개로 자르던 걸 스크롤 목록으로 변경.
 class _ArtistList extends StatelessWidget {
-  final List<String> artists;
+  final List<ArtistVisit> artists;
 
   const _ArtistList({required this.artists});
 
@@ -432,22 +434,60 @@ class _ArtistList extends StatelessWidget {
         style: TextStyle(fontSize: context.sp(13), color: Colors.black38),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final a in artists.take(6))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              '• $a',
-              style: TextStyle(
-                fontSize: context.sp(14),
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      itemCount: artists.length,
+      separatorBuilder: (_, _) => SizedBox(height: context.rs(6)),
+      itemBuilder: (context, index) {
+        final artist = artists[index];
+        return Row(
+          children: [
+            Expanded(
+              child: Text(
+                artist.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: context.sp(14),
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
               ),
             ),
-          ),
-      ],
+            SizedBox(width: context.rs(6)),
+            _VisitCountStamp(count: artist.count),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// "n회" 스탬프 뱃지. 포스트잇 배경색과 대비되는 색으로 관람 횟수를 강조합니다.
+class _VisitCountStamp extends StatelessWidget {
+  final int count;
+
+  const _VisitCountStamp({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: context.rs(7),
+        vertical: context.rs(2),
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFD64545),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        '$count회',
+        style: TextStyle(
+          fontSize: context.sp(11),
+          fontWeight: FontWeight.w800,
+          color: Colors.white,
+        ),
+      ),
     );
   }
 }
