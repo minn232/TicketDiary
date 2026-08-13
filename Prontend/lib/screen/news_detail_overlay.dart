@@ -475,7 +475,16 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
                   SafeArea(
                     child: Padding(
                       padding: const EdgeInsets.all(28),
-                      child: Center(
+                      // InteractiveViewer는 (Center 밑에서 그냥 두면) 자기
+                      // 자식인 포스터의 원래(축소 배율) 크기로 줄어들어,
+                      // 뷰포트 자체가 그 작은 박스에 갇혀버립니다 — 그
+                      // 안에서만 확대/이동이 되니 "확대해도 딱 그 자리
+                      // 안에서만 커 보이는" 문제가 있었습니다. SizedBox.expand
+                      // 로 뷰포트 자체를 이 자리(패딩 뺀 화면 전체)만큼
+                      // 강제로 채워서, 확대했을 때 포스터의 원래 그리드
+                      // 크기와 무관하게 화면 전체를 자유롭게 씁니다. 확대
+                      // 전(1배) 모습은 안쪽 Center가 그대로 유지합니다.
+                      child: SizedBox.expand(
                         child: GestureDetector(
                           onDoubleTapDown: _handlePosterDoubleTapDown,
                           onDoubleTap: _handlePosterDoubleTap,
@@ -483,7 +492,7 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
                             transformationController: _posterZoomController,
                             minScale: 1.0,
                             maxScale: _posterDoubleTapZoomScale * 2,
-                            child: _buildLargePoster(news),
+                            child: Center(child: _buildLargePoster(news)),
                           ),
                         ),
                       ),
