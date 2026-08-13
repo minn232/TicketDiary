@@ -379,46 +379,6 @@ class _SwitchRow extends StatelessWidget {
   }
 }
 
-class _MenuRow extends StatelessWidget {
-  final String title;
-  final VoidCallback onTap;
-
-  const _MenuRow({required this.title, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return PressableScale(
-      onTap: onTap,
-      pressScale: 0.985,
-      tapScale: 1.02,
-      child: SizedBox(
-        height: 56,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: context.sp(15),
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-              Icon(
-                Icons.chevron_right,
-                color: Colors.black.withValues(alpha: 0.45),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// 설정 인덱스 최상단에서 현재 로그인 상태(게스트/닉네임)를 미리 보여주는 배지.
 /// 탭하면 "회원 설정" 시트(아래 [_MemberSettingsSheet])가 그대로 열립니다.
 class _LoginStatusBanner extends StatelessWidget {

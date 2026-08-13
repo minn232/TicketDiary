@@ -7,12 +7,16 @@ import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/services/news_cache_store.dart';
 import 'package:ticketdiary/services/news_loading_signal.dart';
 import 'package:ticketdiary/services/social_service.dart';
+import 'package:ticketdiary/widgets/checkerboard_reveal_transition.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
+import 'package:ticketdiary/widgets/magic_loading_overlay.dart';
+import 'package:ticketdiary/widgets/news_pull_tab.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart';
 
+import 'favorite_pinned_settings_screen.dart';
 import 'news_detail_overlay.dart';
 
 // =============================================================================
@@ -31,8 +35,25 @@ class NewsScreen extends StatefulWidget {
   State<NewsScreen> createState() => _NewsScreenState();
 }
 
-class _NewsScreenState extends State<NewsScreen> {
+/// 소식 페이지 ↔ 찜/아티스트 패널을 오가는 "페이지 조각(풀탭)" 전환 단계.
+///
+/// - [news]: 소식 그리드만 보임(풀탭은 왼쪽 끝).
+/// - [toFav]: 풀탭이 오른쪽으로 이동하며 체커보드로 찜 패널이 왼쪽부터 드러남.
+/// - [fav]: 찜/아티스트 패널만 보임(풀탭은 오른쪽 끝).
+/// - [loading]: 풀탭을 다시 눌러 최신 소식을 준비하는 동안. 전환은 멈추고
+///   마법 로딩 오버레이(안개+반짝이)를 찜 패널 위에 겹쳐 보여줍니다.
+/// - [toNews]: 최신 소식이 준비되면 풀탭이 왼쪽으로 돌아오며 역체커보드로
+///   최신 소식이 드러남.
+enum _FlipPhase { news, toFav, fav, loading, toNews }
+
+class _NewsScreenState extends State<NewsScreen>
+    with SingleTickerProviderStateMixin {
   static const Color _paperColor = Color(0xFFF4F1E1);
+
+  /// 소식 페이지 상단 여백을 기본(10)보다 늘려, 페이지 뒤에서 끼워 올린
+  /// 풀탭 손잡이가 상단 경계선 위로 삐져나올 공간을 만듭니다.
+  static const double _pageTop = 40;
+
   late Future<List<NewsModel>> _newsFuture;
 
   final SocialService _socialService = SocialService();
@@ -45,9 +66,29 @@ class _NewsScreenState extends State<NewsScreen> {
   /// 합니다.
   Timer? _loadingHoldTimeout;
 
+  // ─── 풀탭 전환 상태 ───────────────────────────────────────────────
+  /// 풀탭 위치이자 체커보드 진행도의 원천. 0.0=소식/왼쪽, 1.0=찜/오른쪽.
+  late final AnimationController _slide;
+
+  _FlipPhase _phase = _FlipPhase.news;
+
+  /// 찜 패널은 전환/로딩 여러 단계에 걸쳐 살아 있어야(검색어·찜 토글 유지)
+  /// 하므로, 같은 GlobalKey로 만들어 트리 위치가 바뀌어도 State가 유지되게
+  /// 합니다.
+  final GlobalKey _favPanelKey = GlobalKey();
+
+  /// 복귀 시 최신 소식 로딩이 너무 오래 걸리면(백엔드 오류 등) 기존
+  /// 데이터로라도 소식으로 되돌아오게 하는 안전 타임아웃.
+  Timer? _returnTimeout;
+
   @override
   void initState() {
     super.initState();
+    _slide = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 620),
+    )..addStatusListener(_onSlideStatus);
+
     NewsLoadingSignal.isLoading.value = true;
     _loadingHoldTimeout = Timer(const Duration(seconds: 10), () {
       NewsLoadingSignal.isLoading.value = false;
@@ -65,7 +106,75 @@ class _NewsScreenState extends State<NewsScreen> {
   @override
   void dispose() {
     _loadingHoldTimeout?.cancel();
+    _returnTimeout?.cancel();
+    _slide.dispose();
     super.dispose();
+  }
+
+  void _onSlideStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      // 오른쪽 끝 도착 → 찜 패널만 남김.
+      if (_phase == _FlipPhase.toFav) {
+        setState(() => _phase = _FlipPhase.fav);
+      }
+    } else if (status == AnimationStatus.dismissed) {
+      // 왼쪽 끝 복귀 → 소식만 남김.
+      if (_phase == _FlipPhase.toNews) {
+        setState(() => _phase = _FlipPhase.news);
+      }
+    }
+  }
+
+  /// 풀탭 조각을 눌렀을 때. 위치(단계)에 따라 앞으로 가거나 되돌아옵니다.
+  void _onPullTab() {
+    switch (_phase) {
+      case _FlipPhase.news:
+        setState(() => _phase = _FlipPhase.toFav);
+        _slide.forward(from: 0);
+      case _FlipPhase.fav:
+        _startReturnToNews();
+      case _FlipPhase.toFav:
+      case _FlipPhase.toNews:
+      case _FlipPhase.loading:
+        // 전환/로딩 중엔 눌림 무시.
+        break;
+    }
+  }
+
+  /// 찜 패널에서 풀탭을 눌러 소식으로 되돌아가는 흐름의 시작.
+  ///
+  /// 찜 변경은 이미 [FavoritesStore]에 실시간 반영돼 있으므로, 여기서 그
+  /// 변경을 기준으로 최신 소식을 새로 불러옵니다("적용"). 로딩되는 동안엔
+  /// 전환을 멈추고 마법 오버레이만 보여주다가, 준비되면 역체커보드로
+  /// 최신 소식을 드러냅니다.
+  void _startReturnToNews() {
+    setState(() => _phase = _FlipPhase.loading);
+
+    var settled = false;
+    void finish(Future<List<NewsModel>> future) {
+      if (!mounted || settled) return;
+      settled = true;
+      _returnTimeout?.cancel();
+      _revealFreshNews(future);
+    }
+
+    _returnTimeout?.cancel();
+    _returnTimeout = Timer(const Duration(seconds: 10), () {
+      // 타임아웃: 기존 데이터로라도 소식으로 복귀합니다.
+      finish(_newsFuture);
+    });
+
+    _fetchAndCacheNews()
+        .then((items) => finish(Future.value(items)))
+        .catchError((Object e) => finish(Future.error(e)));
+  }
+
+  void _revealFreshNews(Future<List<NewsModel>> future) {
+    setState(() {
+      _newsFuture = future;
+      _phase = _FlipPhase.toNews;
+    });
+    _slide.reverse(from: 1); // 1 → 0: 풀탭이 왼쪽으로 돌아오며 역체커보드.
   }
 
   /// 캐시가 있으면 즉시 그걸로 화면을 채우고, 그 뒤 조용히 최신 데이터를
@@ -187,42 +296,101 @@ class _NewsScreenState extends State<NewsScreen> {
   Widget build(BuildContext context) {
     return DiaryPageFrame(
       isTabRoot: true,
+      pageTop: _pageTop,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.news),
+      // 페이지 상단 경계에 "페이지 뒤에서" 끼워 올린 풀탭 손잡이(빨간 하트 +
+      // 방향 화살표). 우측 인덱스 탭과 같은 원리로, 경계선 위로 삐져나온
+      // 부분만 보입니다.
+      frameBehindPage: NewsPullTabOverlay(
+        slide: _slide,
+        onTap: _onPullTab,
+        pageTop: _pageTop,
+      ),
       child: Container(
         color: _paperColor,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return FutureBuilder<List<NewsModel>>(
-              future: _newsFuture,
-              builder: (context, snapshot) {
-                // [상태 1] 로딩 중
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(
-                    child: CircularProgressIndicator(color: Colors.brown),
-                  );
-                }
+        child: _buildFlipBody(),
+      ),
+    );
+  }
 
-                // [상태 2] 에러 발생: 실패 원인(오류 코드)과 재시도 버튼을
-                // 보여줍니다.
-                if (snapshot.hasError) {
-                  return _buildErrorView(snapshot.error);
-                }
+  /// 현재 전환 단계에 맞는 페이지 본문을 만듭니다.
+  Widget _buildFlipBody() {
+    switch (_phase) {
+      case _FlipPhase.news:
+        return _buildNewsBody();
+      case _FlipPhase.fav:
+        return _buildFavPanel();
+      case _FlipPhase.loading:
+        // 찜 패널을 그대로 두고 그 위에 마법 로딩 오버레이(안개+반짝이).
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            _buildFavPanel(),
+            const MagicLoadingOverlay(),
+          ],
+        );
+      case _FlipPhase.toFav:
+        return AnimatedBuilder(
+          animation: _slide,
+          builder: (context, _) => CheckerboardRevealTransition(
+            from: _buildNewsBody(),
+            to: _buildFavPanel(),
+            progress: _slide.value,
+          ),
+        );
+      case _FlipPhase.toNews:
+        return AnimatedBuilder(
+          animation: _slide,
+          builder: (context, _) => CheckerboardRevealTransition(
+            from: _buildFavPanel(),
+            to: _buildNewsBody(),
+            // 풀탭이 오른쪽(1)→왼쪽(0)으로 돌아오는 동안 최신 소식이 오른쪽
+            // 부터 드러나도록, 진행도를 뒤집고 방향도 반대로 합니다.
+            progress: 1 - _slide.value,
+            reverse: true,
+          ),
+        );
+    }
+  }
 
-                // [상태 3] 데이터 없음
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('새로운 소식이 없습니다.'));
-                }
+  /// 찜/아티스트 패널(같은 GlobalKey로 State 유지).
+  Widget _buildFavPanel() {
+    return FavoritePinnedPanel(key: _favPanelKey);
+  }
 
-                // [상태 4] 성공: 리스트 렌더링
-                return Padding(
-                  padding: const EdgeInsets.fromLTRB(32, 20, 20, 20),
-                  child: _buildNewsGrid(constraints, snapshot.data!),
-                );
-              },
+  /// 소식 그리드 본문(로딩/에러/빈 상태 포함).
+  Widget _buildNewsBody() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return FutureBuilder<List<NewsModel>>(
+          future: _newsFuture,
+          builder: (context, snapshot) {
+            // [상태 1] 로딩 중
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.brown),
+              );
+            }
+
+            // [상태 2] 에러 발생: 실패 원인(오류 코드)과 재시도 버튼.
+            if (snapshot.hasError) {
+              return _buildErrorView(snapshot.error);
+            }
+
+            // [상태 3] 데이터 없음
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return const Center(child: Text('새로운 소식이 없습니다.'));
+            }
+
+            // [상태 4] 성공: 리스트 렌더링. 손잡이는 페이지 뒤에 있어 본문을
+            // 가리지 않으므로 상단 패딩은 기본값만 둡니다.
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(32, 14, 20, 20),
+              child: _buildNewsGrid(constraints, snapshot.data!),
             );
           },
-        ),
-      ),
+        );
+      },
     );
   }
 

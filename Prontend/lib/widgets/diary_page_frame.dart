@@ -146,6 +146,22 @@ class DiaryPageFrame extends StatelessWidget {
   /// 돌아가면) 다시 나타납니다. null이면 링은 항상 그대로 보입니다.
   final ValueListenable<double>? overlayFlipProgress;
 
+  /// 우측 인덱스 탭(활성/비활성 모두)의 불투명도(0.0~1.0)를 실시간으로
+  /// 흘려보냅니다. null이면 항상 1.0(완전 불투명, 기존 동작)입니다. 소식
+  /// 탭이 찜/아티스트 패널로 전환될 때 탭을 서서히 숨겨(몰입감) 페이지
+  /// 조각(풀탭)으로만 오가도록 하려고 씁니다 — 0에 가까워지면 자동으로
+  /// 탭 눌림도 막습니다([IgnorePointer]).
+  final ValueListenable<double>? sideTabsOpacity;
+
+  /// 메인 페이지(종이) "뒤"에 끼워 넣는 자유 레이어. 우측 인덱스 탭이
+  /// 페이지 오른쪽 경계 밖으로만 삐져나와 보이듯, 이 레이어도 페이지에
+  /// 가려지고 페이지 밖(예: 상단 경계 위) 부분만 보입니다 — 페이지 뒤에서
+  /// 끼워 올린 "손잡이(풀탭 조각)"처럼 보이게 하려고 씁니다.
+  /// [Positioned.fill]로 프레임 전체 크기를 받으며, 내부에서
+  /// [DiaryPageFrame.computeRingMetrics]로 페이지 위치를 계산해 배치합니다.
+  /// 프레임 밖 여백까지 그릴 수 있도록 스택은 [Clip.none]입니다.
+  final Widget? frameBehindPage;
+
   const DiaryPageFrame({
     super.key,
     required this.child,
@@ -174,6 +190,8 @@ class DiaryPageFrame extends StatelessWidget {
     this.overlayMainPageVisibleNotifier,
     this.overlayMainPageFullFrame = false,
     this.overlayFlipProgress,
+    this.sideTabsOpacity,
+    this.frameBehindPage,
   });
 
   Widget _buildOverlayMainPage() {
@@ -452,7 +470,13 @@ class DiaryPageFrame extends StatelessWidget {
         /// 2. 기본 우측 탭들 (종이 뒤에 배치). 활성 탭은 6번 레이어에서
         /// 다시 그리므로 여기서는 그리지 않습니다.
         for (final tab in sideTabs)
-          if (!tab.isActive) buildScaledSideTab(tab, scale, marginEachSide),
+          if (!tab.isActive)
+            buildScaledSideTab(tab, scale, marginEachSide, opacity: sideTabsOpacity),
+
+        /// 2.5. 페이지 뒤 자유 레이어(풀탭 손잡이 등). 메인 페이지(3번)보다
+        /// 먼저(=아래) 그려서, 페이지에 가려지고 페이지 밖으로 삐져나온
+        /// 부분만 보이게 합니다 — 우측 인덱스 탭과 같은 원리입니다.
+        if (frameBehindPage != null) Positioned.fill(child: frameBehindPage!),
 
         /// 3. 메인 페이지 (정적 컨텐츠)
         ///
@@ -506,7 +530,8 @@ class DiaryPageFrame extends StatelessWidget {
         /// 페이지 쪽으로 더 밀어 넣지 않음). 순서만 메인 페이지(3번)·링·
         /// 오버레이(4~5번)보다 뒤에(=위에) 그려서, 제자리에 그대로 있으면서
         /// 항상 맨 위로 드러나 보이게 합니다.
-        for (final tab in activeTabs) buildScaledSideTab(tab, scale, marginEachSide),
+        for (final tab in activeTabs)
+          buildScaledSideTab(tab, scale, marginEachSide, opacity: sideTabsOpacity),
       ],
     );
   }
@@ -527,7 +552,12 @@ class DiaryPageFrame extends StatelessWidget {
   /// 붙어 별도 트리 경로로 그려지는 "다이어리" 활성 탭([diary_screen.dart]의
   /// `_buildActiveTab`)도 같은 크기·위치 규칙을 따라야 하므로 static으로
   /// 공개해 재사용합니다.
-  static Widget buildScaledSideTab(DiarySideTabSpec tab, double scale, double marginEachSide) {
+  static Widget buildScaledSideTab(
+    DiarySideTabSpec tab,
+    double scale,
+    double marginEachSide, {
+    ValueListenable<double>? opacity,
+  }) {
     final scaledWidth = DiaryIndexTab.defaultWidth * scale;
     final scaledHeight = DiaryIndexTab.defaultHeight * scale;
     final xLeftOriginal = tab.right + DiaryIndexTab.defaultWidth;
@@ -536,17 +566,33 @@ class DiaryPageFrame extends StatelessWidget {
       scaledRight = -marginEachSide;
     }
     final sizedChild = SizedBox(width: scaledWidth, height: scaledHeight, child: tab.child);
+    Widget content = tab.onTap == null
+        ? sizedChild
+        : PressableScale(
+            onTap: tab.onTap,
+            pressScale: 0.985,
+            tapScale: 1.03,
+            child: sizedChild,
+          );
+    if (opacity != null) {
+      // 불투명도가 0에 가까워지면 탭이 사실상 사라진 것이므로, 그 동안엔
+      // 눌림도 막아 실수로 다른 탭으로 전환되지 않게 합니다.
+      content = ValueListenableBuilder<double>(
+        valueListenable: opacity,
+        builder: (context, value, child) {
+          final v = value.clamp(0.0, 1.0);
+          return IgnorePointer(
+            ignoring: v < 0.05,
+            child: Opacity(opacity: v, child: child),
+          );
+        },
+        child: content,
+      );
+    }
     return Positioned(
       right: scaledRight,
       top: tab.top * scale,
-      child: tab.onTap == null
-          ? sizedChild
-          : PressableScale(
-              onTap: tab.onTap,
-              pressScale: 0.985,
-              tapScale: 1.03,
-              child: sizedChild,
-            ),
+      child: content,
     );
   }
 }

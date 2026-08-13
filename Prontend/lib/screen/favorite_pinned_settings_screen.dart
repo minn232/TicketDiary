@@ -11,7 +11,22 @@ import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart';
 
-/// 설정 > 선호 아티스트 / 찜 공연 설정 화면
+/// 선호 아티스트 / 찜 공연 검색 화면을 [DiaryPageFrame]으로 감싼 독립
+/// 화면(라우트로 진입할 때 사용). 실제 내용은 [FavoritePinnedPanel]이며,
+/// 소식 탭에서는 프레임 없이 이 패널만 페이지 안에 끼워 씁니다.
+class FavoritePinnedSettingsScreen extends StatelessWidget {
+  const FavoritePinnedSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DiaryPageFrame(
+      sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
+      child: FavoritePinnedPanel(onBack: () => Navigator.pop(context)),
+    );
+  }
+}
+
+/// 선호 아티스트 / 찜 공연 검색 패널(프레임 없음).
 ///
 /// - 검색창에 타이핑하면(별도 검색 버튼 없이) 잠깐 멈출 때마다 자동으로
 ///   백엔드(KOPIS 실시간 검색)에서 아티스트/공연을 찾아 아래에 보여줍니다.
@@ -19,16 +34,18 @@ import 'package:ticketdiary/widgets/responsive_text.dart';
 ///   기기 로컬과 서버(`/social/artists`, `/social/concerts`) 양쪽에 저장되어
 ///   소식 탭 피드 생성에 사용됩니다.
 /// - 상단 "관리" 버튼으로 현재 찜한 아티스트/공연을 한눈에 보고 해제할 수 있습니다.
-class FavoritePinnedSettingsScreen extends StatefulWidget {
-  const FavoritePinnedSettingsScreen({super.key});
+/// - [onBack]이 null이면 상단 뒤로가기 버튼을 숨깁니다(소식 탭에 끼워 쓸
+///   때처럼 풀탭 조각이 복귀를 담당하는 경우).
+class FavoritePinnedPanel extends StatefulWidget {
+  final VoidCallback? onBack;
+
+  const FavoritePinnedPanel({super.key, this.onBack});
 
   @override
-  State<FavoritePinnedSettingsScreen> createState() =>
-      _FavoritePinnedSettingsScreenState();
+  State<FavoritePinnedPanel> createState() => _FavoritePinnedPanelState();
 }
 
-class _FavoritePinnedSettingsScreenState
-    extends State<FavoritePinnedSettingsScreen> {
+class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   final ArtistSearchService _artistSearchService = BackendArtistSearchService();
   final ConcertSearchService _concertSearchService =
       BackendConcertSearchService();
@@ -225,73 +242,70 @@ class _FavoritePinnedSettingsScreenState
 
   @override
   Widget build(BuildContext context) {
-    return DiaryPageFrame(
-      sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: Colors.black.withValues(alpha: 0.12),
-              width: 1.2,
-            ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: Colors.black.withValues(alpha: 0.12),
+            width: 1.2,
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Column(
-              children: [
-                _TopBar(
-                  title: '아티스트 / 찜 공연',
-                  onBack: () => Navigator.pop(context),
-                  onManage: _openManageSheet,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Column(
+            children: [
+              _TopBar(
+                title: '아티스트 / 찜 공연',
+                onBack: widget.onBack,
+                onManage: _openManageSheet,
+              ),
+              const Divider(height: 1, thickness: 1),
+              // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
+              // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
+              // PageView 바로 위에 고정으로 둡니다.
+              _CategorySwitcher(
+                current: _currentCategory,
+                onSelect: _goToCategory,
+              ),
+              Expanded(
+                child: PageView(
+                  controller: _categoryPageController,
+                  onPageChanged: _onCategoryPageChanged,
+                  children: [
+                    _CategorySearchPage<ArtistModel>(
+                      controller: _artistQueryController,
+                      hintText: '아티스트 이름 검색',
+                      items: _artistResults,
+                      searching: _artistSearching,
+                      statusText: _artistStatusText,
+                      nameOf: (a) => a.name,
+                      imageUrlOf: (a) => a.profileImageUrl,
+                      // 아티스트 프로필 사진은 백엔드에 소스가 없어
+                      // 사람 아이콘 플레이스홀더를 보여줍니다.
+                      placeholderIcon: Icons.person_outline,
+                      isFavoritedOf: (a) =>
+                          _favorites.isArtistFavorited(a.name),
+                      onTap: (a) => _favorites.toggleArtist(a),
+                    ),
+                    _CategorySearchPage<ConcertModel>(
+                      controller: _concertQueryController,
+                      hintText: '공연 이름 검색',
+                      items: _concertResults,
+                      searching: _concertSearching,
+                      statusText: _concertStatusText,
+                      nameOf: (c) => c.name,
+                      imageUrlOf: (c) => c.posterImageUrl,
+                      isFavoritedOf: (c) =>
+                          _favorites.isConcertFavorited(c.name),
+                      onTap: (c) => _favorites.toggleConcert(c),
+                    ),
+                  ],
                 ),
-                const Divider(height: 1, thickness: 1),
-                // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
-                // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
-                // PageView 바로 위에 고정으로 둡니다.
-                _CategorySwitcher(
-                  current: _currentCategory,
-                  onSelect: _goToCategory,
-                ),
-                Expanded(
-                  child: PageView(
-                    controller: _categoryPageController,
-                    onPageChanged: _onCategoryPageChanged,
-                    children: [
-                      _CategorySearchPage<ArtistModel>(
-                        controller: _artistQueryController,
-                        hintText: '아티스트 이름 검색',
-                        items: _artistResults,
-                        searching: _artistSearching,
-                        statusText: _artistStatusText,
-                        nameOf: (a) => a.name,
-                        imageUrlOf: (a) => a.profileImageUrl,
-                        // 아티스트 프로필 사진은 백엔드에 소스가 없어
-                        // 사람 아이콘 플레이스홀더를 보여줍니다.
-                        placeholderIcon: Icons.person_outline,
-                        isFavoritedOf: (a) =>
-                            _favorites.isArtistFavorited(a.name),
-                        onTap: (a) => _favorites.toggleArtist(a),
-                      ),
-                      _CategorySearchPage<ConcertModel>(
-                        controller: _concertQueryController,
-                        hintText: '공연 이름 검색',
-                        items: _concertResults,
-                        searching: _concertSearching,
-                        statusText: _concertStatusText,
-                        nameOf: (c) => c.name,
-                        imageUrlOf: (c) => c.posterImageUrl,
-                        isFavoritedOf: (c) =>
-                            _favorites.isConcertFavorited(c.name),
-                        onTap: (c) => _favorites.toggleConcert(c),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -301,7 +315,10 @@ class _FavoritePinnedSettingsScreenState
 
 class _TopBar extends StatelessWidget {
   final String title;
-  final VoidCallback onBack;
+
+  /// null이면 뒤로가기 버튼을 숨깁니다(소식 탭 내장 모드처럼 풀탭 조각이
+  /// 복귀를 담당하는 경우).
+  final VoidCallback? onBack;
   final VoidCallback onManage;
 
   const _TopBar({
@@ -313,14 +330,15 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(10),
+      padding: EdgeInsets.fromLTRB(onBack == null ? 18 : 10, 10, 10, 10),
       child: Row(
         children: [
-          IconButton(
-            onPressed: onBack,
-            icon: const Icon(Icons.chevron_left),
-            color: Colors.black.withValues(alpha: 0.75),
-          ),
+          if (onBack != null)
+            IconButton(
+              onPressed: onBack,
+              icon: const Icon(Icons.chevron_left),
+              color: Colors.black.withValues(alpha: 0.75),
+            ),
           Expanded(
             child: Text(
               title,
