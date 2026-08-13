@@ -51,4 +51,24 @@ void main() {
 
     expect(find.text('공연 이름 검색'), findsOneWidget);
   });
+
+  // [백엔드 수정]
+  // 타이핑마다 자동 검색하던 걸 엔터(키보드 검색) 시에만 검색하도록 바꾼
+  // 회귀 테스트 - 타이핑만으로는 검색(네트워크 요청/로딩)이 시작되지 않아야 함.
+  testWidgets('타이핑만으로는 검색이 실행되지 않고 "검색을 눌러주세요" 안내만 보인다', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: FavoritePinnedSettingsScreen()),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.enterText(find.byType(TextField), '아이유');
+    // 디바운스가 있었다면 여기서 자동 검색이 걸렸을 시간을 흘려보냄.
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('키보드에서 검색을 눌러주세요.'), findsOneWidget);
+  });
 }

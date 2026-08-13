@@ -28,8 +28,9 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
 
 /// 선호 아티스트 / 찜 공연 검색 패널(프레임 없음).
 ///
-/// - 검색창에 타이핑하면(별도 검색 버튼 없이) 잠깐 멈출 때마다 자동으로
-///   백엔드(KOPIS 실시간 검색)에서 아티스트/공연을 찾아 아래에 보여줍니다.
+/// - 검색은 키보드 "검색/완료"(엔터)를 눌러야 실행됩니다. 타이핑 중간마다
+///   자동으로 백엔드(KOPIS 실시간 검색)를 부르면 한 번 검색하는 동안에도
+///   여러 번 호출돼(KOPIS 쪽 요청 급증) 차단 위험이 있어 이렇게 바꿨습니다.
 /// - 결과 카드를 누르면 찜 토글되며, 이 찜 목록은 [FavoritesStore]를 통해
 ///   기기 로컬과 서버(`/social/artists`, `/social/concerts`) 양쪽에 저장되어
 ///   소식 탭 피드 생성에 사용됩니다.
@@ -70,18 +71,17 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     );
   }
 
-  /// 매 키 입력마다 KOPIS 실시간 검색을 부르지 않도록, 타이핑이 잠깐
-  /// 멈춘 뒤에 검색을 실행합니다.
-  static const _debounce = Duration(milliseconds: 450);
-  Timer? _artistDebounce;
-  Timer? _concertDebounce;
-
   List<ArtistModel> _artistResults = const [];
   List<ConcertModel> _concertResults = const [];
   bool _artistSearching = false;
   bool _concertSearching = false;
   bool _artistSearchFailed = false;
   bool _concertSearchFailed = false;
+
+  // 마지막으로 실제 검색을 실행한 검색어. 지금 입력창 텍스트와 다르면(=아직
+  // 검색 안 누름) "결과 없음"이 아니라 검색을 눌러보라는 안내를 보여줍니다.
+  String? _lastArtistQuery;
+  String? _lastConcertQuery;
 
   @override
   void initState() {
@@ -90,14 +90,14 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     // 다른 기기/이전 세션에서 서버에 저장해둔 찜도 불러와 합칩니다.
     unawaited(_favorites.syncFromServer());
     _favorites.addListener(_onFavoritesChanged);
-    _artistQueryController.addListener(_onArtistQueryChanged);
-    _concertQueryController.addListener(_onConcertQueryChanged);
+    // 자동 검색은 안 하지만, 지웠을 때 이전 검색 결과가 남아있지 않도록
+    // 빈 텍스트가 됐는지만 감지합니다(네트워크 요청 없음).
+    _artistQueryController.addListener(_onArtistQueryTextChanged);
+    _concertQueryController.addListener(_onConcertQueryTextChanged);
   }
 
   @override
   void dispose() {
-    _artistDebounce?.cancel();
-    _concertDebounce?.cancel();
     _favorites.removeListener(_onFavoritesChanged);
     _artistQueryController.dispose();
     _concertQueryController.dispose();
@@ -110,19 +110,30 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     setState(() {});
   }
 
-  void _onArtistQueryChanged() {
-    _artistDebounce?.cancel();
-    final query = _artistQueryController.text;
-    if (query.trim().isEmpty) {
+  // 네트워크 요청은 없지만, 상태 문구("검색을 눌러주세요" 등)가 입력창과
+  // 어긋나지 않도록 매 입력마다 다시 그립니다.
+  void _onArtistQueryTextChanged() {
+    if (_artistQueryController.text.isEmpty) {
       setState(() {
         _artistResults = const [];
         _artistSearching = false;
         _artistSearchFailed = false;
       });
-      return;
+    } else {
+      setState(() {});
     }
-    setState(() => _artistSearching = true);
-    _artistDebounce = Timer(_debounce, () => _runArtistSearch(query));
+  }
+
+  // [백엔드 수정]
+  // 타이핑 중 자동 검색(디바운스)이 짧은 pause마다 KOPIS를 호출해 요청이
+  // 급증하던 문제 - 키보드 검색(엔터)을 눌렀을 때만 검색하도록 변경.
+  void _onArtistSubmitted(String query) {
+    if (query.trim().isEmpty) return;
+    setState(() {
+      _artistSearching = true;
+      _lastArtistQuery = query;
+    });
+    _runArtistSearch(query);
   }
 
   Future<void> _runArtistSearch(String query) async {
@@ -144,19 +155,25 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     }
   }
 
-  void _onConcertQueryChanged() {
-    _concertDebounce?.cancel();
-    final query = _concertQueryController.text;
-    if (query.trim().isEmpty) {
+  void _onConcertQueryTextChanged() {
+    if (_concertQueryController.text.isEmpty) {
       setState(() {
         _concertResults = const [];
         _concertSearching = false;
         _concertSearchFailed = false;
       });
-      return;
+    } else {
+      setState(() {});
     }
-    setState(() => _concertSearching = true);
-    _concertDebounce = Timer(_debounce, () => _runConcertSearch(query));
+  }
+
+  void _onConcertSubmitted(String query) {
+    if (query.trim().isEmpty) return;
+    setState(() {
+      _concertSearching = true;
+      _lastConcertQuery = query;
+    });
+    _runConcertSearch(query);
   }
 
   Future<void> _runConcertSearch(String query) async {
@@ -181,13 +198,17 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   /// 결과가 비어 있을 때 결과 영역에 보여줄 안내 문구.
   String get _artistStatusText {
     if (_artistSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
-    if (_artistQueryController.text.trim().isEmpty) return '검색어를 입력해보세요.';
+    final text = _artistQueryController.text.trim();
+    if (text.isEmpty) return '검색어를 입력해보세요.';
+    if (text != _lastArtistQuery) return '키보드에서 검색을 눌러주세요.';
     return '검색 결과가 없습니다.';
   }
 
   String get _concertStatusText {
     if (_concertSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
-    if (_concertQueryController.text.trim().isEmpty) return '검색어를 입력해보세요.';
+    final text = _concertQueryController.text.trim();
+    if (text.isEmpty) return '검색어를 입력해보세요.';
+    if (text != _lastConcertQuery) return '키보드에서 검색을 눌러주세요.';
     return '검색 결과가 없습니다.';
   }
 
@@ -299,6 +320,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                       isFavoritedOf: (a) =>
                           _favorites.isArtistFavorited(a.name),
                       onTap: (a) => _favorites.toggleArtist(a),
+                      onSubmitted: _onArtistSubmitted,
                     ),
                     _CategorySearchPage<ConcertModel>(
                       controller: _concertQueryController,
@@ -311,6 +333,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                       isFavoritedOf: (c) =>
                           _favorites.isConcertFavorited(c.name),
                       onTap: _onConcertTap,
+                      onSubmitted: _onConcertSubmitted,
                     ),
                   ],
                 ),
@@ -392,6 +415,7 @@ class _CategorySearchPage<T> extends StatelessWidget {
   final IconData placeholderIcon;
   final bool Function(T) isFavoritedOf;
   final ValueChanged<T> onTap;
+  final ValueChanged<String> onSubmitted;
 
   const _CategorySearchPage({
     super.key,
@@ -405,6 +429,7 @@ class _CategorySearchPage<T> extends StatelessWidget {
     this.placeholderIcon = Icons.broken_image_outlined,
     required this.isFavoritedOf,
     required this.onTap,
+    required this.onSubmitted,
   });
 
   @override
@@ -414,7 +439,11 @@ class _CategorySearchPage<T> extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SearchField(controller: controller, hintText: hintText),
+          _SearchField(
+            controller: controller,
+            hintText: hintText,
+            onSubmitted: onSubmitted,
+          ),
           const SizedBox(height: 14),
           Expanded(
             child: _SearchResultsGrid<T>(
@@ -533,8 +562,13 @@ class _CategoryPill extends StatelessWidget {
 class _SearchField extends StatelessWidget {
   final TextEditingController controller;
   final String hintText;
+  final ValueChanged<String> onSubmitted;
 
-  const _SearchField({required this.controller, required this.hintText});
+  const _SearchField({
+    required this.controller,
+    required this.hintText,
+    required this.onSubmitted,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -560,6 +594,8 @@ class _SearchField extends StatelessWidget {
           Expanded(
             child: TextField(
               controller: controller,
+              textInputAction: TextInputAction.search,
+              onSubmitted: onSubmitted,
               decoration: InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
