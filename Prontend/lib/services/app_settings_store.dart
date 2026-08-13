@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'auth_service.dart';
 import 'notification_settings_service.dart';
 
 /// 설정 탭의 토글들을 앱 전역에서 공유하는 저장소.
@@ -16,7 +19,12 @@ import 'notification_settings_service.dart';
 /// [NotificationSettingsService]를 통해 백엔드 `show_predicted_setlist`
 /// 필드와 동기화.
 class AppSettingsStore extends ChangeNotifier {
-  AppSettingsStore._();
+  // [백엔드 수정]
+  // 로그인 유저가 바뀌어도 load()가 다시 안 도는 문제 - AuthService를
+  // 구독해 유저 id가 바뀌면 다시 불러옴(FavoritesStore와 동일 패턴).
+  AppSettingsStore._() {
+    AuthService.instance.addListener(_onAuthChanged);
+  }
 
   static final AppSettingsStore instance = AppSettingsStore._();
 
@@ -27,6 +35,18 @@ class AppSettingsStore extends ChangeNotifier {
 
   bool _showExpectedSetlist = true;
   bool _loaded = false;
+
+  /// 마지막으로 load()를 실행했던 유저 id.
+  String? _loadedForUserId;
+
+  void _onAuthChanged() {
+    final currentUserId = AuthService.instance.userId;
+    if (currentUserId == _loadedForUserId) return;
+    _loadedForUserId = currentUserId;
+
+    _loaded = false;
+    unawaited(load());
+  }
 
   /// true(켜짐)면 "공연 전" 페이지의 예상 셋 리스트를 그대로 보여주고,
   /// false(꺼짐)면 스포일러 방지로 블러 처리.

@@ -291,51 +291,55 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   /// 마지막으로 [_tickets]를 채운 로그인 유저의 id. 로그아웃/계정 전환으로
   /// 유저가 바뀌면 이전 유저의 서버 기원 티켓을 화면에서 지우고 새 유저
-  /// 것으로 다시 불러오기 위해 씁니다([_onAuthChanged] 참고).
+  /// 것으로 다시 불러오기 위해 씁니다([_onAuthChangedStatic] 참고).
   static String? _loadedForUserId;
+
+  // [백엔드 수정]
+  // AuthService 리스너를 인스턴스(initState/dispose)에 걸려있어 설정에서는 역할을 못함.
+  // 인스턴스 대신 static으로 앱 실행 중 한 번만 등록.
+  static bool _authListenerRegistered = false;
+
+  static void _registerAuthListenerOnce() {
+    if (_authListenerRegistered) return;
+    _authListenerRegistered = true;
+    AuthService.instance.addListener(_onAuthChangedStatic);
+  }
+
+  /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.
+  /// 로그인된 유저가 마지막으로 티켓을 불러왔던 유저와 다르면, 이전 유저의
+  /// 실제 티켓을 지우고 다시 불러올 수 있도록 플래그를 리셋합니다. 다이어리
+  /// 화면이 지금 떠 있으면 [TicketRefreshBus]로 즉시 반영을 알리고, 안
+  /// 떠 있으면 리셋해둔 플래그 덕에 다음에 열릴 때 자연히 다시 불러옵니다.
+  static void _onAuthChangedStatic() {
+    final currentUserId = AuthService.instance.userId;
+    if (currentUserId == _loadedForUserId) return;
+    _loadedForUserId = currentUserId;
+    _tickets.removeWhere((t) => t.info?.ticketId != null);
+    _backendTicketsLoaded = false;
+    TicketRefreshBus.notify();
+  }
 
   @override
   void initState() {
     super.initState();
     // "공연 전" 페이지의 예상 셋 리스트 블러 여부에 쓰이는 설정값을 미리 불러옵니다.
     AppSettingsStore.instance.load();
-    AuthService.instance.addListener(_onAuthChanged);
+    _registerAuthListenerOnce();
     TicketRefreshBus.tick.addListener(_onTicketsChangedElsewhere);
     unawaited(_loadTicketsFromBackend());
   }
 
   @override
   void dispose() {
-    AuthService.instance.removeListener(_onAuthChanged);
     TicketRefreshBus.tick.removeListener(_onTicketsChangedElsewhere);
     _flipAnimating.dispose();
     super.dispose();
   }
 
-  /// 게스트→카카오 마이그레이션이 로컬 티켓을 서버로 다 옮긴 뒤 보내는
-  /// 알림. 유저 id는 이미 마이그레이션 시작 시점에 바뀌어 [_onAuthChanged]가
-  /// 한 번 지나갔으므로, 여기서는 그 가드와 무관하게 강제로 다시 불러옵니다.
+  /// [TicketRefreshBus]가 알림을 보낼 때마다(게스트→카카오 마이그레이션 완료,
+  /// 또는 위 [_onAuthChangedStatic]) 호출됩니다. 유저 id는 이미 그 시점에
+  /// 바뀌어 있으므로, 여기서는 가드 없이 강제로 다시 불러옵니다.
   void _onTicketsChangedElsewhere() {
-    if (mounted) {
-      setState(() {
-        _tickets.removeWhere((t) => t.info?.ticketId != null);
-      });
-    } else {
-      _tickets.removeWhere((t) => t.info?.ticketId != null);
-    }
-    _backendTicketsLoaded = false;
-    unawaited(_loadTicketsFromBackend());
-  }
-
-  /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.
-  /// 로그인된 유저가 마지막으로 티켓을 불러왔던 유저와 다르면, 이전 유저의
-  /// 실제 티켓(백엔드든 게스트 로컬 저장이든, `info.ticketId`가 있는 것)을
-  /// 화면에서 지우고 새 유저 것으로 다시 불러옵니다. 로컬 전용 예시 티켓은
-  /// 계정과 무관하므로 그대로 둡니다.
-  void _onAuthChanged() {
-    final currentUserId = AuthService.instance.userId;
-    if (currentUserId == _loadedForUserId) return;
-
     if (mounted) {
       setState(() {
         _tickets.removeWhere((t) => t.info?.ticketId != null);

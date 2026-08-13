@@ -8,6 +8,7 @@ import '../models/artist_model.dart';
 import '../models/concert_model.dart';
 import '../models/ticket_scan.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 import 'social_service.dart';
 
 /// 사용자가 "찜"한 아티스트/공연을 보관하는 전역 저장소.
@@ -21,7 +22,13 @@ import 'social_service.dart';
 ///   교체 반영(해제도 서버에서 지워짐). 서버가 소식 피드를 만들 때 이 목록을
 ///   사용합니다. [syncFromServer]로 다른 기기에서 등록한 찜도 로컬로 병합합니다.
 class FavoritesStore extends ChangeNotifier {
-  FavoritesStore._();
+  // [백엔드 수정]
+  // 로그인 유저가 바뀌어도(게스트→카카오, 카카오→다른 계정) load()/
+  // syncFromServer()가 한 번 실행되면 다시 안 도는 문제 - AuthService를
+  // 구독해 유저 id가 바뀌면 다시 불러옴(DiaryScreen과 동일 패턴).
+  FavoritesStore._() {
+    AuthService.instance.addListener(_onAuthChanged);
+  }
 
   static final FavoritesStore instance = FavoritesStore._();
 
@@ -35,6 +42,25 @@ class FavoritesStore extends ChangeNotifier {
 
   bool _loaded = false;
   bool _serverSynced = false;
+
+  /// 마지막으로 load()/syncFromServer()를 실행했던 유저 id.
+  String? _loadedForUserId;
+
+  void _onAuthChanged() {
+    final currentUserId = AuthService.instance.userId;
+    if (currentUserId == _loadedForUserId) return;
+    _loadedForUserId = currentUserId;
+
+    _artists.clear();
+    _concerts.clear();
+    _loaded = false;
+    _serverSynced = false;
+    _revision++;
+    notifyListeners();
+
+    unawaited(load());
+    unawaited(syncFromServer());
+  }
 
   /// 찜 목록(또는 그 표시 내용)이 바뀔 때마다 1씩 늘어납니다.
   /// [NewsCacheStore]가 이 값을 캐시와 함께 저장해뒀다가, 저장 당시 값과
