@@ -67,10 +67,21 @@ class SocialService {
 
   /// 서버 찜 공연 목록을 통째로 교체합니다(`PATCH /social/concerts`).
   /// [entries]의 각 항목은 `{'concert_id': ..., 'kopis_concert_id': ...}` 형태.
-  Future<void> replaceConcertFollows(
+  //
+  // [백엔드 수정]
+  // 이미 티켓 등록된 공연은 서버가 저장을 거부하므로, 실제로 저장된 목록을
+  // 반환해서 호출부가 요청한 목록과 비교해 뭐가 빠졌는지 알 수 있게 함.
+  Future<List<Map<String, dynamic>>> replaceConcertFollows(
     List<Map<String, dynamic>> entries,
   ) async {
-    await _client.patch('/social/concerts', body: {'concerts': entries});
+    final json = await _client.patch(
+      '/social/concerts',
+      body: {'concerts': entries},
+    );
+    final concerts = json['concerts'] as List<dynamic>? ?? const [];
+    return [
+      for (final c in concerts) (c as Map).cast<String, dynamic>(),
+    ];
   }
 
   /// 로컬 선호 아티스트를 서버 팔로우 목록에 "추가" 동기화합니다.

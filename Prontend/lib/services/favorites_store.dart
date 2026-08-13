@@ -229,7 +229,10 @@ class FavoritesStore extends ChangeNotifier {
     await _pushArtistsToServer();
   }
 
-  Future<void> toggleConcert(ConcertModel concert) async {
+  // [백엔드 수정]
+  // 이미 티켓 등록된 공연은 서버가 찜 저장을 거부. 그 경우 로컬 하트도
+  // 다시 꺼주고 true를 반환해서, 호출부가 안내 문구를 띄울 수 있게 함.
+  Future<bool> toggleConcert(ConcertModel concert) async {
     final adding = !_concerts.containsKey(concert.name);
     if (!adding) {
       _concerts.remove(concert.name);
@@ -239,12 +242,21 @@ class FavoritesStore extends ChangeNotifier {
     _revision++;
     notifyListeners();
     await _persistConcerts();
-    await _pushConcertsToServer();
+    final rejectedIds = await _pushConcertsToServer();
+    final rejected = adding && rejectedIds.contains(concert.id);
+    if (rejected) {
+      _concerts.remove(concert.name);
+      _revision++;
+      notifyListeners();
+      await _persistConcerts();
+      return true;
+    }
     // 검색 목록 응답엔 티케팅 오픈일이 항상 비어 있으므로, 방금 찜한 공연은
     // 상세 조회로 한 번 더 확인해봅니다(크롤러가 이미 수집해뒀을 수 있음).
     if (adding) {
       unawaited(_backfillMissingConcertFields(concert));
     }
+    return false;
   }
 
   /// [concert]에 공연장/기간/출연진/티케팅 오픈일 중 비어 있는 게 있으면
@@ -349,13 +361,22 @@ class FavoritesStore extends ChangeNotifier {
 
   /// 현재 공연 찜 목록을 서버에 전체 반영합니다. 백엔드가 공연 UUID를
   /// 요구하므로, UUID가 없는 항목(구버전 로컬 저장 등)은 제외됩니다.
-  Future<void> _pushConcertsToServer() async {
+  //
+  // [백엔드 수정]
+  // 서버가 이미 티켓 등록된 공연은 저장하지 않고 걸러서 돌려주므로, 보낸
+  // concert_id 중 응답에 없는 것들을 반환(호출부의 로컬 정정용).
+  Future<Set<String>> _pushConcertsToServer() async {
+    final requested = [
+      for (final c in _concerts.values)
+        if (c.id.isNotEmpty) {'concert_id': c.id, 'kopis_concert_id': c.kopisId},
+    ];
     try {
-      await _social.replaceConcertFollows([
-        for (final c in _concerts.values)
-          if (c.id.isNotEmpty)
-            {'concert_id': c.id, 'kopis_concert_id': c.kopisId},
-      ]);
-    } catch (_) {}
+      final saved = await _social.replaceConcertFollows(requested);
+      final savedIds = {for (final e in saved) e['concert_id'] as String};
+      final requestedIds = {for (final e in requested) e['concert_id'] as String};
+      return requestedIds.difference(savedIds);
+    } catch (_) {
+      return {};
+    }
   }
 }

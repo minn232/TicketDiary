@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import '../models/ticket_response.dart';
 import 'api_client.dart';
+import 'favorites_store.dart';
 
 /// 이미 그 공연에 등록된 티켓이 있을 때(백엔드가 409로 응답).
 class TicketAlreadyRegisteredException implements Exception {
@@ -62,7 +65,17 @@ class TicketService {
           if (seatType != null) 'seat_type': seatType,
         },
       );
-      return TicketWithConcert.fromJson(json);
+      final ticket = TicketWithConcert.fromJson(json);
+
+      // [백엔드 수정]
+      // 티켓을 등록시 서버가 자동으로 찜 해제.
+      // FavoritesStore 로컬 캐시는 여기서 직접 반영.
+      final concertName = ticket.concert?.name;
+      if (concertName != null) {
+        unawaited(FavoritesStore.instance.removeConcert(concertName));
+      }
+
+      return ticket;
     } on ApiException catch (e) {
       if (e.statusCode == 409) throw const TicketAlreadyRegisteredException();
       rethrow;

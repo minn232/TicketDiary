@@ -191,6 +191,16 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     return '검색 결과가 없습니다.';
   }
 
+  // [백엔드 수정]
+  // 이미 티켓 등록된 공연이면 서버가 찜을 거부하므로 안내 문구를 띄움
+  Future<void> _onConcertTap(ConcertModel c) async {
+    final rejected = await _favorites.toggleConcert(c);
+    if (!mounted || !rejected) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('이미 티켓으로 등록된 공연입니다')));
+  }
+
   void _openManageSheet() {
     showGeneralDialog(
       context: context,
@@ -300,7 +310,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                       imageUrlOf: (c) => c.posterImageUrl,
                       isFavoritedOf: (c) =>
                           _favorites.isConcertFavorited(c.name),
-                      onTap: (c) => _favorites.toggleConcert(c),
+                      onTap: _onConcertTap,
                     ),
                   ],
                 ),
