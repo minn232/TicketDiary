@@ -51,6 +51,8 @@ class NewsFeedConcert(BaseModel):
     start_date: datetime
     end_date: datetime
     venue: str | None
+    # 예매처 바로가기 버튼용 (concert.py의 ConcertResponse와 동일 형식)
+    ticketing_links: dict[str, str] | None
 
 
 class NewsFeedResponse(BaseModel):

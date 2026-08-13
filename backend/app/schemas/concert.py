@@ -30,6 +30,9 @@ class ConcertResponse(BaseModel):
     ticketing_date: datetime | None
     delivery_date: datetime | None
     food_allowed: str | None
+    # 예매처 바로가기 버튼용. KOPIS relates에서 파싱한 사이트별 URL
+    # (키: YES24/INTERPARK/TICKETLINK/MELON, site_aliases.py 참고).
+    ticketing_links: dict[str, str] | None
 
 
 class ConcertSummary(BaseModel):
