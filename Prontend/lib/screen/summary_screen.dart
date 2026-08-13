@@ -444,7 +444,7 @@ class _ArtistList extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                artist.name,
+                '• ${artist.name}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -463,7 +463,7 @@ class _ArtistList extends StatelessWidget {
   }
 }
 
-/// "n회" 스탬프 뱃지. 포스트잇 배경색과 대비되는 색으로 관람 횟수를 강조합니다.
+/// "n회" 관람 횟수 표시.
 class _VisitCountStamp extends StatelessWidget {
   final int count;
 
@@ -471,22 +471,12 @@ class _VisitCountStamp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.rs(7),
-        vertical: context.rs(2),
-      ),
-      decoration: BoxDecoration(
-        color: const Color(0xFFD64545),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        '$count회',
-        style: TextStyle(
-          fontSize: context.sp(11),
-          fontWeight: FontWeight.w800,
-          color: Colors.white,
-        ),
+    return Text(
+      '$count회',
+      style: TextStyle(
+        fontSize: context.sp(11),
+        fontWeight: FontWeight.w800,
+        color: Colors.black.withValues(alpha: 0.6),
       ),
     );
   }
