@@ -305,6 +305,9 @@ Authorization: Bearer <token>
 
 ## 셋리스트 API
 
+> `songs`의 `artist` 필드는 페스티벌(아티스트 2명 이상)에서 이 곡이 누구 소속인지 표시합니다.
+> 단독 공연이면 항상 `null`입니다.
+
 ### 실제 셋리스트 조회
 ```
 GET /concerts/{concert_id}/setlist
@@ -317,8 +320,8 @@ Authorization: Bearer <token>
   "concert_id": "uuid",
   "setlistfm_id": "abc123",
   "songs": [
-    { "name": "좋은 날", "encore": false },
-    { "name": "밤편지", "encore": true }
+    { "name": "좋은 날", "encore": false, "artist": null },
+    { "name": "밤편지", "encore": true, "artist": null }
   ],
   "is_user_edited": false,
   "edited_user_nickname": null
@@ -381,7 +384,12 @@ Authorization: Bearer <token>
 ```
 
 ### 예상 셋리스트 생성
-아티스트 과거 공연 데이터 기반으로 상위 20곡 자동 생성.
+아티스트 과거 공연 데이터 기반으로 아티스트당 상위 20곡 자동 생성. 페스티벌(아티스트 2명
+이상)이면 아티스트마다 각각 20곡씩(각 곡에 `artist` 태그) 자동으로 나눠서 생성 - 단독
+공연과 동일한 한도라 곡 수를 줄이지 않음(Setlist.fm 검색 비용은 top_n과 무관해서 넉넉히
+저장해도 API 호출이 늘지 않음). 프론트는 `artist` 태그로 그룹핑한 뒤 필요한 만큼만(예:
+미리보기 3곡) 잘라 쓰면 됨. 별도 호출/파라미터 불필요, 이 엔드포인트 하나로 단독/페스티벌
+둘 다 커버됨.
 ```
 POST /concerts/{concert_id}/setlist/pre/generate
 Authorization: Bearer <token>

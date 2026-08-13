@@ -6,6 +6,9 @@ from datetime import date
 class SongEntry(BaseModel):
     name: str
     encore: bool = False
+    # 페스티벌처럼 아티스트가 여럿인 공연에서, 이 곡이 누구 예상/실제 셋리스트
+    # 소속인지 표시. 단독 공연이면 그냥 None(불필요).
+    artist: str | None = None
 
 
 class SetlistEditRequest(BaseModel):
