@@ -206,7 +206,11 @@ async def test_summary_basic_stats():
     data = res.json()
     assert data["concert_count"] == 3
     assert data["total_spent"] == 280000
-    assert set(data["artists"]) == {"아티스트A", "아티스트B"}      # 아티스트A 중복 제거
+    # 관람 횟수 내림차순 - 아티스트A가 2번(중복 제거 대신 카운트로 반영)으로 1위
+    assert data["artists"] == [
+        {"name": "아티스트A", "count": 2},
+        {"name": "아티스트B", "count": 1},
+    ]
     assert data["first_day_count"] == 1
     assert data["last_day_count"] == 1
 

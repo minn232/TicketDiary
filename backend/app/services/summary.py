@@ -113,15 +113,22 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
                     genre_counter[genre] += 1
     top_genre = genre_counter.most_common(1)[0][0] if genre_counter else None
 
-    # 관람 아티스트 (중복 제거, 순서 유지)
+    # 관람 아티스트 (관람 횟수 내림차순, 동률이면 처음 본 순서 - "n회 관람")
+    artist_counter: Counter = Counter()
+    first_seen_order: list[str] = []
     seen: set[str] = set()
-    artists: list[str] = []
     for t in tickets:
         if t.concert and t.concert.artist_name:
             for a in t.concert.artist_name:
+                artist_counter[a] += 1
                 if a not in seen:
                     seen.add(a)
-                    artists.append(a)
+                    first_seen_order.append(a)
+
+    artists = [
+        {"name": a, "count": artist_counter[a]}
+        for a in sorted(first_seen_order, key=lambda a: -artist_counter[a])
+    ]
 
     # 스탠딩 / 좌석 (seat_type이 있는 티켓만 집계)
     standing_count = sum(1 for t in tickets if _is_standing(t.seat_type))
