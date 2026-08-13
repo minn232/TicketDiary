@@ -15,6 +15,7 @@ from app.models.notification import Notification, NotificationType
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
+from app.services.social import remove_concert_follow
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -210,6 +211,11 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
         raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
 
     await schedule_ticket_notifications(db, ticket, user)
+
+    # 찜 공연은 티켓팅 날짜 추적이 목적이라, 그 공연 티켓을 등록했으면
+    # 목적을 다한 것으로 보고 자동으로 찜 해제(안 찜한 공연이면 조용히 넘어감)
+    await remove_concert_follow(db, user.id, concert.id)
+
     return ticket
 
 

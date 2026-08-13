@@ -735,6 +735,51 @@ async def test_delete_ticket_not_found_404():
     assert response.status_code == 404
 
 
+# 찜 공연은 티켓팅 날짜 추적이 목적이라, 그 공연 티켓을 등록하면 자동으로 찜 해제되는지 테스트.
+# 아티스트 찜은 별개 목적(그 아티스트의 다음 공연들도 계속 소식 받고 싶은 것)이라 그대로 남아야 함
+@pytest.mark.asyncio
+async def test_create_ticket_removes_concert_follow():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    concert_id = await _create_concert("PF_TICKET_UNFOLLOW_001")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id}]},
+            headers=headers,
+        )
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": "테스트아티스트"}]},
+            headers=headers,
+        )
+
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+
+        concerts_res = await ac.get("/api/v1/social/concerts", headers=headers)
+        artists_res = await ac.get("/api/v1/social/artists", headers=headers)
+
+    assert concerts_res.json()["concerts"] == []
+    assert len(artists_res.json()["artists"]) == 1
+    assert artists_res.json()["artists"][0]["artist_name"] == "테스트아티스트"
+
+
+# 안 찜한 공연 티켓을 등록해도(찜 목록에 없는 상태) 에러 없이 조용히 넘어가는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_without_follow_does_not_error():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    concert_id = await _create_concert("PF_TICKET_UNFOLLOW_002")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id}, headers=headers
+        )
+
+    assert response.status_code == 201
+
+
 # upgrade_event_type_if_multi_artist 단위 테스트 (순수 함수, DB 불필요)
 
 def test_upgrade_event_type_keeps_solo_below_threshold():

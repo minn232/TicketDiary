@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.concert import Concert
 from app.models.social import ArtistFollow, ConcertFollow, NewsFeed
+from app.models.ticket import Ticket
 from app.schemas.social import ArtistEntry, ConcertEntry
 
 
@@ -100,14 +101,46 @@ async def get_or_create_concert_follow(db: AsyncSession, user_id: UUID) -> Conce
 
 
 # 찜 공연 수정 (전체 교체)
+# 이미 티켓 등록된 공연은 찜 목적(티켓팅 날짜 추적)을 다한 것이므로 제외하고 저장
+# (반대 방향은 remove_concert_follow 참고)
 async def update_concert_follow(
     db: AsyncSession, user_id: UUID, concerts: list[ConcertEntry]
 ) -> ConcertFollow:
     row = await get_or_create_concert_follow(db, user_id)
-    row.concerts = [c.model_dump(mode="json") for c in concerts]
+
+    ticketed_result = await db.execute(
+        select(Ticket.concert_id).where(
+            Ticket.user_id == user_id,
+            Ticket.concert_id.in_([c.concert_id for c in concerts]),
+        )
+    )
+    ticketed_ids = set(ticketed_result.scalars().all())
+
+    row.concerts = [
+        c.model_dump(mode="json") for c in concerts if c.concert_id not in ticketed_ids
+    ]
     await db.commit()
     await db.refresh(row)
     return row
+
+
+# 찜 공연은 티켓팅 날짜를 추적하려는 목적이라, 그 공연 티켓을 등록하면 목적을
+# 다한 것으로 보고 자동으로 찜 해제(ticket.py의 create_ticket에서 호출). 애초에
+# 안 찜한 공연이면 조용히 넘어감. 아티스트 찜은 건드리지 않음(그 아티스트의
+# 다음 공연들도 계속 소식 받고 싶은 별개 목적이라 유지).
+async def remove_concert_follow(db: AsyncSession, user_id: UUID, concert_id: UUID) -> None:
+    result = await db.execute(select(ConcertFollow).where(ConcertFollow.user_id == user_id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        return
+
+    concert_id_str = str(concert_id)
+    remaining = [c for c in row.concerts if c.get("concert_id") != concert_id_str]
+    if len(remaining) == len(row.concerts):
+        return
+
+    row.concerts = remaining
+    await db.commit()
 
 
 # 뉴스 피드 목록 조회 (안 읽은 항목 먼저)

@@ -260,6 +260,31 @@ async def test_update_concert_follow_replaces_all():
     assert res.json()["concerts"][0]["concert_id"] == concert_id_1
 
 
+# 이미 티켓 등록된 공연은 찜 목록에 저장되지 않는지 테스트
+@pytest.mark.asyncio
+async def test_update_concert_follow_excludes_ticketed_concert():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    concert_id_1 = await _fetch_concert(f"PF_CFTKT_{uuid.uuid4().hex[:8]}", "테스트아티스트", token)
+    concert_id_2 = await _fetch_concert(f"PF_CFTKT_{uuid.uuid4().hex[:8]}", "테스트아티스트", token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id_1},
+            headers=headers,
+        )
+        res = await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id_1}, {"concert_id": concert_id_2}]},
+            headers=headers,
+        )
+
+    assert res.status_code == 200
+    saved_ids = [c["concert_id"] for c in res.json()["concerts"]]
+    assert saved_ids == [concert_id_2]
+
+
 # 뉴스피드 조회 테스트
 
 # 초기 뉴스피드 빈 목록 테스트
