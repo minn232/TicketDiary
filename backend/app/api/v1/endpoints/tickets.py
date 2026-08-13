@@ -26,6 +26,7 @@ from app.services.setlist import (
     get_real_setlist,
     search_setlists_for_concert,
     fetch_and_save_real_setlist,
+    generate_real_setlist_auto,
     update_real_setlist,
 )
 from app.services.ticket import (
@@ -155,7 +156,24 @@ async def edit_ticket_real_setlist(
     return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, explicit_date)
 
 
-# [프론트 요청]
+# 아티스트별 자동 검색+병합으로 실제 셋리스트 생성(페스티벌뿐 아니라 단독 공연도 동작).
+# 위 search+POST(단독 후보 선택) 흐름과 별개 - 프론트에 다중 선택 UI가 아직 없어도
+# 바로 쓸 수 있는 자동 경로. 자세한 배경은 generate_real_setlist_auto 참고.
+@router.post(
+    "/{ticket_id}/setlist/generate-festival",
+    response_model=RealSetlistResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def generate_ticket_real_setlist_auto(
+    ticket_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ticket = await get_ticket(db, current_user.id, ticket_id)
+    concert_id, explicit_date = _ticket_concert_and_date(ticket)
+    return await generate_real_setlist_auto(db, concert_id, explicit_date)
+
+
 # show_predicted_setlist는 이제 조회 자체를 막는 스위치가 아니라 프론트 블러
 # 처리용 화면 취향 값이라(꺼도 데이터는 그대로 내려줘야 롱탭/홀드로 잠깐
 # 풀어볼 수 있는 기능을 만들 수 있음), 아래 세 엔드포인트에서 하던 403

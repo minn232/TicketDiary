@@ -34,11 +34,14 @@ def _init_firebase() -> None:
         logger.error(f"Firebase 초기화 실패: {e}")
 
 
-# 알림 목록 조회
+# 알림 목록 조회. 아직 발송 안 된(is_sent=False) 예약 항목은 "받은 알림"이
+# 아니라서 제외 — 예전엔 이 필터가 없어서 몇 주 뒤 예약된 알림까지 인앱
+# 알림함에 "오늘 공연 날이에요" 같은 문구로 떠서 이미 온 것처럼 보이는
+# 문제가 있었음(실기기 테스트로 발견).
 async def get_notifications(db: AsyncSession, user_id: UUID) -> list[Notification]:
     result = await db.execute(
         select(Notification)
-        .where(Notification.user_id == user_id)
+        .where(Notification.user_id == user_id, Notification.is_sent == True)  # noqa: E712
         .order_by(Notification.scheduled_at.desc())
     )
     return list(result.scalars().all())

@@ -114,3 +114,37 @@ def kopis_mock(content: bytes, status_code: int = 200):
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = AsyncMock(return_value=mock_response)
     return patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client)
+
+
+# GET /notifications가 이제 is_sent=True(실제 발송된 것)만 돌려주도록 바뀜(진짜
+# "받은 알림함"으로 만들어달라는 요청). 그래서 "언제/무엇이 예약됐는지" 스케줄링
+# 자체를 검증하던 기존 테스트들은 API 대신 이 헬퍼로 DB를 직접 봐야 함.
+async def _get_notifications_from_db(token: str) -> list[dict]:
+    from app.core.database import AsyncSessionLocal
+    from app.models.notification import Notification
+    from sqlalchemy import select
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        me_res = await ac.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    user_id = uuid.UUID(me_res.json()["id"])
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Notification)
+            .where(Notification.user_id == user_id)
+            .order_by(Notification.scheduled_at.desc())
+        )
+        rows = result.scalars().all()
+
+    return [
+        {
+            "id": str(n.id),
+            "type": n.type.value,
+            "title": n.title,
+            "body": n.body,
+            "scheduled_at": n.scheduled_at.isoformat(),
+            "is_sent": n.is_sent,
+            "is_read": n.is_read,
+        }
+        for n in rows
+    ]

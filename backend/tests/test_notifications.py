@@ -10,7 +10,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.notification import Notification
 from app.models.user import User
 from app.services.notification import process_pending_notifications
-from conftest import _get_token, kopis_mock
+from conftest import _get_token, kopis_mock, _get_notifications_from_db
 
 
 # 헬퍼
@@ -84,10 +84,11 @@ async def _get_user_id(token: str) -> str:
 
 
 # 해당 유저의 첫 번째 알림 ID 조회 (목록 최신순 기준)
+# GET /notifications는 이제 is_sent=True만 주므로, PATCH(읽음)/DELETE 테스트용으로
+# "아무 알림이나 id 하나"가 필요한 이 헬퍼는 API 대신 DB에서 직접 가져옴(아직
+# 미발송이어도 상관없이 id만 필요한 용도).
 async def _get_first_notification_id(token: str) -> str:
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.get("/api/v1/notifications", headers={"Authorization": f"Bearer {token}"})
-    notifications = res.json()
+    notifications = await _get_notifications_from_db(token)
     assert len(notifications) > 0
     return notifications[0]["id"]
 
@@ -107,6 +108,8 @@ async def test_list_notifications_empty():
 
 
 # 미래 공연 티켓 등록 시 알림 자동 생성 테스트 (day_before + concert_day)
+# GET /notifications가 이제 is_sent=True만 주므로, 등록 직후엔(아직 미발송)
+# 목록이 비어있는 게 맞음 - 그것부터 확인하고, 스케줄 자체는 DB로 직접 확인.
 @pytest.mark.asyncio
 async def test_list_notifications_created_by_ticket():
     concert_id = await _create_concert("PF_NOTIF_LIST_001", _make_future_xml("PF_NOTIF_LIST_001"))
@@ -117,7 +120,9 @@ async def test_list_notifications_created_by_ticket():
         res = await ac.get("/api/v1/notifications", headers={"Authorization": f"Bearer {token}"})
 
     assert res.status_code == 200
-    notifications = res.json()
+    assert res.json() == []  # 아직 발송 전이라 받은 알림함엔 안 뜸
+
+    notifications = await _get_notifications_from_db(token)
     assert len(notifications) >= 2
     types = {n["type"] for n in notifications}
     assert "day_before" in types
@@ -204,6 +209,8 @@ async def test_mark_notification_other_user_404():
 # 알림 삭제 테스트
 
 # 삭제 성공 후 목록에서 사라지는 테스트
+# 방금 등록해서 아직 미발송인 알림이라 GET /notifications(이제 is_sent=True만
+# 줌)로는 삭제 여부를 확인할 수 없음 - DB에서 직접 없어졌는지 확인.
 @pytest.mark.asyncio
 async def test_delete_notification_success():
     concert_id = await _create_concert("PF_NOTIF_DEL_001", _make_future_xml("PF_NOTIF_DEL_001"))
@@ -216,10 +223,9 @@ async def test_delete_notification_success():
             f"/api/v1/notifications/{notification_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
-        list_res = await ac.get("/api/v1/notifications", headers={"Authorization": f"Bearer {token}"})
 
     assert del_res.status_code == 204
-    ids = [n["id"] for n in list_res.json()]
+    ids = [n["id"] for n in await _get_notifications_from_db(token)]
     assert notification_id not in ids
 
 
@@ -294,9 +300,10 @@ async def test_schedule_uses_attended_date_over_concert_start_date():
             json={"attended_date": "2030-06-15T00:00:00Z"},
             headers=headers,
         )
-        res = await ac.get("/api/v1/notifications", headers=headers)
 
-    notifications = {n["type"]: n["scheduled_at"] for n in res.json()}
+    notifications = {
+        n["type"]: n["scheduled_at"] for n in await _get_notifications_from_db(token)
+    }
     concert_day_at = datetime.fromisoformat(notifications["concert_day"])
     day_before_at = datetime.fromisoformat(notifications["day_before"])
 
@@ -335,9 +342,8 @@ async def test_schedule_resets_on_ticket_update():
             json={"delivery_date": delivery_date},
             headers=headers,
         )
-        res = await ac.get("/api/v1/notifications", headers=headers)
 
-    types = {n["type"] for n in res.json()}
+    types = {n["type"] for n in await _get_notifications_from_db(token)}
     assert "delivery_day" in types
 
 
@@ -355,8 +361,7 @@ async def test_disabling_delivery_setting_cancels_pending_notification():
             json={"concert_id": concert_id, "delivery_date": "2030-05-15T00:00:00Z"},
             headers=headers,
         )
-        res = await ac.get("/api/v1/notifications", headers=headers)
-    assert "delivery_day" in {n["type"] for n in res.json()}
+    assert "delivery_day" in {n["type"] for n in await _get_notifications_from_db(token)}
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         settings_res = await ac.patch(
@@ -364,10 +369,9 @@ async def test_disabling_delivery_setting_cancels_pending_notification():
             json={"notification_settings": {"delivery": False}},
             headers=headers,
         )
-        res = await ac.get("/api/v1/notifications", headers=headers)
 
     assert settings_res.status_code == 200
-    assert "delivery_day" not in {n["type"] for n in res.json()}
+    assert "delivery_day" not in {n["type"] for n in await _get_notifications_from_db(token)}
 
 
 # process_pending_notifications 단위 테스트
@@ -470,9 +474,8 @@ async def test_delivery_notification_skipped_when_setting_off():
             json={"concert_id": concert_id, "delivery_date": "2030-05-15"},
             headers=headers,
         )
-        res = await ac.get("/api/v1/notifications", headers=headers)
 
-    types = {n["type"] for n in res.json()}
+    types = {n["type"] for n in await _get_notifications_from_db(token)}
     assert "delivery_day" not in types
     assert "day_before" in types
     assert "concert_day" in types
@@ -511,9 +514,8 @@ async def test_day_before_off_concert_day_on_only_generates_concert_day():
             headers=headers,
         )
         await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
-        res = await ac.get("/api/v1/notifications", headers=headers)
 
-    types = {n["type"] for n in res.json()}
+    types = {n["type"] for n in await _get_notifications_from_db(token)}
     assert "day_before" not in types
     assert "concert_day" in types
 
@@ -553,8 +555,7 @@ async def test_notification_reschedule_respects_updated_settings():
         ticket_id = create_res.json()["id"]
 
         # 알림 생성 확인
-        res_before = await ac.get("/api/v1/notifications", headers=headers)
-        assert len(res_before.json()) >= 2
+        assert len(await _get_notifications_from_db(token)) >= 2
 
         # day_before/concert_day off로 변경 후 티켓 수정 (재스케줄 트리거)
         await ac.patch(
@@ -563,9 +564,8 @@ async def test_notification_reschedule_respects_updated_settings():
             headers=headers,
         )
         await ac.patch(f"/api/v1/tickets/{ticket_id}", json={"seat_type": "VIP"}, headers=headers)
-        res_after = await ac.get("/api/v1/notifications", headers=headers)
 
-    assert res_after.json() == []
+    assert await _get_notifications_from_db(token) == []
 
 
 # ticketing_day 알림 테스트
@@ -602,10 +602,7 @@ async def test_ticketing_day_notification_for_concert_follower():
                 headers=_llm_headers(),
             )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.get("/api/v1/notifications", headers=headers)
-
-    types = {n["type"] for n in res.json()}
+    types = {n["type"] for n in await _get_notifications_from_db(token)}
     assert "ticketing_day" in types
 
 
@@ -692,8 +689,6 @@ async def test_ticketing_day_notification_no_duplicate_on_resend():
                 headers=_llm_headers(),
             )
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.get("/api/v1/notifications", headers=headers)
-
-    ticketing_notifs = [n for n in res.json() if n["type"] == "ticketing_day"]
+    notifications = await _get_notifications_from_db(token)
+    ticketing_notifs = [n for n in notifications if n["type"] == "ticketing_day"]
     assert len(ticketing_notifs) == 1  # 중복 없이 최신 날짜 1개만

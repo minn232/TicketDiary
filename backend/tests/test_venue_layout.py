@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.concert import Concert
-from conftest import _get_token, kopis_mock
+from conftest import _get_token, kopis_mock, _get_notifications_from_db
 
 _LLM_API_KEY = "test-llm-key"
 
@@ -623,10 +623,9 @@ async def test_crawl_result_delivery_date_backfills_existing_ticket():
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         ticket_get = await ac.get(f"/api/v1/tickets/{ticket_res.json()['id']}", headers=headers)
-        notif_res = await ac.get("/api/v1/notifications", headers=headers)
 
     assert ticket_get.json()["delivery_date"][:10] == "2030-05-10"
-    assert any(n["type"] == "delivery_day" for n in notif_res.json())
+    assert any(n["type"] == "delivery_day" for n in await _get_notifications_from_db(token))
 
 
 # 크롤링이 delivery_date를 두 번째로 다시 보내(정정) 이전 값과 다르면, 첫 번째 크롤링 값으로
@@ -727,7 +726,8 @@ async def test_crawl_result_delivery_date_backfills_multiple_tickets():
         for token, ticket_id in zip(tokens, ticket_ids):
             headers = {"Authorization": f"Bearer {token}"}
             ticket_get = await ac.get(f"/api/v1/tickets/{ticket_id}", headers=headers)
-            notif_res = await ac.get("/api/v1/notifications", headers=headers)
 
             assert ticket_get.json()["delivery_date"][:10] == "2030-05-10"
-            assert any(n["type"] == "delivery_day" for n in notif_res.json())
+            assert any(
+                n["type"] == "delivery_day" for n in await _get_notifications_from_db(token)
+            )

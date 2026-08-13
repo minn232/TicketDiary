@@ -19,7 +19,7 @@ from app.services.kopis import (
     _is_large_venue,
     sync_daily_concerts,
 )
-from conftest import _get_token, kopis_mock
+from conftest import _get_token, kopis_mock, _get_notifications_from_db
 
 
 # 헬퍼
@@ -461,11 +461,8 @@ async def test_sync_creates_new_concert_notification_for_followed_artist():
         async with AsyncSessionLocal() as db:
             await sync_daily_concerts(db)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.get("/api/v1/notifications", headers=headers)
-
-    assert res.status_code == 200
-    new_concert_notifs = [n for n in res.json() if n["type"] == "new_concert"]
+    notifications = await _get_notifications_from_db(token)
+    new_concert_notifs = [n for n in notifications if n["type"] == "new_concert"]
     assert len(new_concert_notifs) == 1
     assert artist_name in new_concert_notifs[0]["body"]
 
@@ -509,10 +506,8 @@ async def test_schedule_new_concert_notifications_does_not_duplicate():
         await schedule_new_concert_notifications(db, concert, [(user_id, artist_name)])
         await db.commit()
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.get("/api/v1/notifications", headers=headers)
-
-    new_concert_notifs = [n for n in res.json() if n["type"] == "new_concert"]
+    notifications = await _get_notifications_from_db(token)
+    new_concert_notifs = [n for n in notifications if n["type"] == "new_concert"]
     assert len(new_concert_notifs) == 1
 
 

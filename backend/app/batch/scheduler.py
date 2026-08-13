@@ -13,6 +13,7 @@ from app.services.crawler import (
     send_screenshots_to_llm,
 )
 from app.services.diary import send_diary_requests_to_llm
+from app.services.setlist import retry_real_setlist_generation
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
 from app.services.runpod import start_pod_and_launch_services, stop_pod, wait_until_llm_server_ready
@@ -123,6 +124,13 @@ async def _run_diary_send() -> None:
         logger.error(f"일기 생성 요청 전송 오류: {e}")
 
 
+async def _run_real_setlist_backfill() -> None:
+    try:
+        await retry_real_setlist_generation()
+    except Exception as e:
+        logger.error(f"실제 셋리스트 자동 채움 오류: {e}")
+
+
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
     # LLM팀 GPU pod을 배치 시작 10분 전에 미리 깨워둠 (KST 23:50 = UTC 14:50, 전날 기준).
@@ -145,6 +153,8 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_diary_send, "cron", hour=15, minute=30, id="diary_send", max_instances=1)
     # event_type=FESTIVAL 공연들의 라인업(출연진) 변경 여부를 매일 재확인 (KST 00:35)
     scheduler.add_job(_run_festival_lineup_check, "cron", hour=15, minute=35, id="festival_lineup_check", max_instances=1)
+    # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)
+    scheduler.add_job(_run_real_setlist_backfill, "cron", hour=15, minute=40, id="real_setlist_backfill", max_instances=1)
     # 그날 배치 다 끝났으면 pod 정지 (KST 01:00 = UTC 16:00)
     scheduler.add_job(_run_pod_stop, "cron", hour=16, minute=0, id="pod_stop", max_instances=1)
     # stop 실패(네트워크 오류 등) 대비 백업 - 밤새 GPU 켜진 채 방치되는 비용 누수를 막는 게

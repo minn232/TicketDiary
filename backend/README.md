@@ -305,6 +305,9 @@ Authorization: Bearer <token>
 
 ## 셋리스트 API
 
+> `songs`의 `artist` 필드는 페스티벌(아티스트 2명 이상)에서 이 곡이 누구 소속인지 표시합니다.
+> 단독 공연이면 항상 `null`입니다.
+
 ### 실제 셋리스트 조회
 ```
 GET /concerts/{concert_id}/setlist
@@ -317,8 +320,8 @@ Authorization: Bearer <token>
   "concert_id": "uuid",
   "setlistfm_id": "abc123",
   "songs": [
-    { "name": "좋은 날", "encore": false },
-    { "name": "밤편지", "encore": true }
+    { "name": "좋은 날", "encore": false, "artist": null },
+    { "name": "밤편지", "encore": true, "artist": null }
   ],
   "is_user_edited": false,
   "edited_user_nickname": null
@@ -374,6 +377,23 @@ Authorization: Bearer <token>
 }
 ```
 
+### 실제 셋리스트 자동 생성
+아티스트별로 Setlist.fm을 자동 검색해서(유저 선택 없이 후보 1순위) 하나로 병합 저장.
+단독 공연이든 페스티벌이든 동일하게 동작(단독이면 아티스트 1명만 돎). 위 검색/저장(수동
+후보 선택) API와 별개 경로 - 정확도는 수동 후보 선택보다 낮을 수 있음(동명이인/같은 날
+다른 도시 공연 등으로 후보 1순위가 틀릴 가능성).
+```
+POST /concerts/{concert_id}/setlist/generate-festival
+Authorization: Bearer <token>
+```
+티켓 기준 twin: `POST /tickets/{ticket_id}/setlist/generate-festival`(날짜는 `ticket.attended_date` 자동 사용).
+
+**자동 백필**: 콘서트 종료(그 `performance_date`가 지난 뒤) 후 14일간, 아직 안 채워진 실제
+셋리스트를 매일 자정 배치(`app/batch/scheduler.py`)가 위 로직으로 자동 재시도함. 유저가
+티켓 등록한 콘서트만 대상. 14일이 지나도 안 채워지면 포기하고 유저의 수동 편집
+(`PATCH /concerts/{concert_id}/setlist`)을 기다림 - 이 엔드포인트는 그 자동 백필이 실패했을
+때 유저가 "다시 찾기"로 수동 트리거하는 용도로도 쓸 수 있음.
+
 ### 예상 셋리스트 조회
 ```
 GET /concerts/{concert_id}/setlist/pre
@@ -381,7 +401,12 @@ Authorization: Bearer <token>
 ```
 
 ### 예상 셋리스트 생성
-아티스트 과거 공연 데이터 기반으로 상위 20곡 자동 생성.
+아티스트 과거 공연 데이터 기반으로 아티스트당 상위 20곡 자동 생성. 페스티벌(아티스트 2명
+이상)이면 아티스트마다 각각 20곡씩(각 곡에 `artist` 태그) 자동으로 나눠서 생성 - 단독
+공연과 동일한 한도라 곡 수를 줄이지 않음(Setlist.fm 검색 비용은 top_n과 무관해서 넉넉히
+저장해도 API 호출이 늘지 않음). 프론트는 `artist` 태그로 그룹핑한 뒤 필요한 만큼만(예:
+미리보기 3곡) 잘라 쓰면 됨. 별도 호출/파라미터 불필요, 이 엔드포인트 하나로 단독/페스티벌
+둘 다 커버됨.
 ```
 POST /concerts/{concert_id}/setlist/pre/generate
 Authorization: Bearer <token>

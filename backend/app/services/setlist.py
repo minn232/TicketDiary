@@ -1,14 +1,20 @@
-from datetime import date
+import asyncio
+import logging
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
+from app.models.ticket import Ticket
 from app.schemas.setlist import SongEntry
 from app.services.setlistfm import search_setlists, get_setlist_by_id, extract_songs
+
+logger = logging.getLogger(__name__)
 
 
 # concert 조회 (없으면 404)
@@ -135,3 +141,150 @@ async def fetch_and_save_real_setlist(
     await db.commit()
     await db.refresh(real_setlist)
     return real_setlist
+
+
+# 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음). concert.artist_name을
+# 그대로 순회하므로 페스티벌(2명 이상)이든 단독 공연(1명)이든 다 동작 - 단독이면 그 한 아티스트만
+# 돌고 모든 곡에 artist 태그가 붙음(문제 없음, 프론트가 이 필드를 안 읽음). 아래
+# retry_real_setlist_generation()이 매일 재시도하는 백필 잡에서 쓰는 게 주 용도.
+# 기존 수동 검색/저장 흐름(search_setlists_for_concert → 유저가 후보 하나 선택 →
+# fetch_and_save_real_setlist)은 그대로 두고 이건 완전히 별도 경로 - 아티스트마다
+# search_setlists(artist, date)로 그 날짜에 가장 근접한 후보를 골라 자동으로 합침.
+# 대신 동명이인 아티스트나 같은 날 다른 도시 공연이 섞여 있으면 후보 1번이 틀릴 수
+# 있음(수동 후보 선택 흐름보다 정확도는 낮음 - 그래서 유저가 검색으로 직접 고치는 수동 흐름도
+# 그대로 남겨둠).
+async def generate_real_setlist_auto(
+    db: AsyncSession,
+    concert_id: UUID,
+    explicit_date: date | None = None,
+) -> RealSetlist:
+    concert = await _get_concert(db, concert_id)
+    if not concert.artist_name:
+        raise HTTPException(status_code=400, detail="공연에 아티스트 정보가 없습니다.")
+    performance_date = resolve_performance_date(concert, explicit_date)
+
+    all_songs: list[dict] = []
+    matched_ids: list[str] = []
+    for i, artist in enumerate(concert.artist_name):
+        if i > 0:
+            # search_setlists_by_artist(pre_setlist.py 경로)의 페이지 간 sleep과 동일한 이유 -
+            # 아티스트 많은 페스티벌에서 Setlist.fm에 순간적으로 요청이 몰리지 않도록 간격을 둠
+            await asyncio.sleep(0.5)
+        candidates = await search_setlists(artist, performance_date)
+        if not candidates:
+            continue  # 이 아티스트만 스킵, 나머지는 계속 진행
+
+        best = candidates[0]
+        matched_ids.append(best["setlistfm_id"])
+        for song in best["songs"]:
+            all_songs.append({**song, "artist": artist})
+
+    if not all_songs:
+        raise HTTPException(status_code=404, detail="아티스트들의 셋리스트 데이터를 찾을 수 없습니다.")
+
+    # DB upsert (concert_id + performance_date 조합 기준). setlistfm_id는 단독 필드라
+    # 아티스트 여럿의 출처를 한 번에 표현 못 하므로, 1명만 매칭됐을 때만 채우고
+    # 그 외(2명 이상 매칭)는 null로 둠(어차피 songs의 artist 태그로 출처를 알 수 있음).
+    result = await db.execute(
+        select(RealSetlist).where(
+            RealSetlist.concert_id == concert_id,
+            RealSetlist.performance_date == performance_date,
+        )
+    )
+    real_setlist = result.scalar_one_or_none()
+    setlistfm_id = matched_ids[0] if len(matched_ids) == 1 else None
+
+    if real_setlist is None:
+        real_setlist = RealSetlist(
+            concert_id=concert_id,
+            performance_date=performance_date,
+            setlistfm_id=setlistfm_id,
+            songs=all_songs,
+        )
+        db.add(real_setlist)
+    else:
+        real_setlist.setlistfm_id = setlistfm_id
+        real_setlist.songs = all_songs
+        real_setlist.is_user_edited = False
+        real_setlist.edited_user_nickname = None
+
+    await db.commit()
+    await db.refresh(real_setlist)
+    return real_setlist
+
+
+# 콘서트 종료(그 performance_date가 지난 뒤) 후 이 기간 동안, Setlist.fm에 아직 안 올라온
+# 실제 셋리스트를 매일 자동으로 재시도해 채워봄. 이 기간이 지나도 안 채워지면 그냥 포기하고
+# 유저의 수동 편집(update_real_setlist)을 기다림 - 상태(시도 횟수/시작 시각)를 따로 저장하지
+# 않고, 매번 "오늘 - 그 날짜"를 계산해서 창 안인지만 판단함. RealSetlist가 이미 있는 날짜는
+# 쿼리에서 자연히 빠지므로(채워졌으니 재시도 불필요) 별도의 "포기" 플래그도 필요 없음.
+_REAL_SETLIST_BACKFILL_WINDOW = timedelta(days=14)
+_REAL_SETLIST_BACKFILL_CONCURRENCY = 4
+
+
+# 백필 대상 (concert_id, performance_date) 하나를 처리. 실패해도 나머지에 영향 없도록 여기서
+# 예외를 삼킴(generate_pre_setlist_background와 동일한 패턴) - 아티스트 데이터가 아직
+# Setlist.fm에 안 올라온 건 흔한 정상 케이스라 404는 info로만 남김.
+async def _backfill_real_setlist_limited(
+    semaphore: asyncio.Semaphore, concert_id: UUID, performance_date: date
+) -> None:
+    async with semaphore:
+        async with AsyncSessionLocal() as db:
+            try:
+                await generate_real_setlist_auto(db, concert_id, performance_date)
+            except HTTPException as e:
+                logger.info(
+                    f"실제 셋리스트 자동 채움 스킵 (concert_id={concert_id}, date={performance_date}): {e.detail}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"실제 셋리스트 자동 채움 실패 (concert_id={concert_id}, date={performance_date}): {e}"
+                )
+
+
+# 매일 스케줄러가 호출. 유저가 티켓을 등록한 콘서트만 대상으로 함(아무도 안 본 공연까지
+# Setlist.fm을 매일 두드릴 필요 없음) - 콘서트가 여러 날짜에 걸치면(페스티벌) 날짜마다 독립적으로
+# 판단(day 1이 끝난 지 14일 지났어도 day 3가 아직 창 안이면 day 3만 계속 시도).
+async def retry_real_setlist_generation() -> None:
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    earliest = today - _REAL_SETLIST_BACKFILL_WINDOW
+    # DateTime(timezone=True) 컬럼과 비교하려면 date가 아니라 datetime이어야 함
+    earliest_dt = datetime.combine(earliest, datetime.min.time(), tzinfo=timezone.utc)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Concert)
+            .join(Ticket, Ticket.concert_id == Concert.id)
+            .where(Concert.end_date >= earliest_dt, Concert.start_date <= now)
+            .distinct()
+        )
+        concerts = result.scalars().all()
+
+        if not concerts:
+            return
+
+        existing_result = await db.execute(
+            select(RealSetlist.concert_id, RealSetlist.performance_date).where(
+                RealSetlist.concert_id.in_([c.id for c in concerts])
+            )
+        )
+        existing = {(row[0], row[1]) for row in existing_result.all()}
+
+    targets: list[tuple[UUID, date]] = []
+    for concert in concerts:
+        d = concert.start_date.date()
+        end = concert.end_date.date()
+        while d <= end:
+            if earliest <= d <= today and (concert.id, d) not in existing:
+                targets.append((concert.id, d))
+            d += timedelta(days=1)
+
+    if not targets:
+        return
+
+    logger.info(f"실제 셋리스트 자동 채움 대상 {len(targets)}건")
+    semaphore = asyncio.Semaphore(_REAL_SETLIST_BACKFILL_CONCURRENCY)
+    await asyncio.gather(
+        *(_backfill_real_setlist_limited(semaphore, cid, d) for cid, d in targets)
+    )
