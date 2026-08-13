@@ -1489,7 +1489,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 36,
+            // [백엔드 수정]
+            // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈(고정 36px이라
+            // 태블릿 등에서 "공연장" 라벨이 "공연\n장"으로 줄바꿈되던 문제).
+            width: context.rs(36),
             child: Text(
               label,
               style: TextStyle(

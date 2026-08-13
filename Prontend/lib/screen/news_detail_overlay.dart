@@ -705,17 +705,30 @@ class _VenueRow extends StatelessWidget {
               color: Colors.black.withValues(alpha: 0.55),
             ),
             SizedBox(width: 3 * scale),
+            // [백엔드 수정]
+            // TextDecoration.underline은 띄어쓰기 부분에서 밑줄이 살짝 끊겨
+            // 떠 보이는 문제가 있어(폰트 글리프별로 그려짐), 텍스트 전체
+            // 아래에 실선 테두리를 긋는 방식으로 바꿔 연결된 한 줄로 보이게 함.
             Flexible(
-              child: Text(
-                venue,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: context.sp(13),
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black.withValues(alpha: 0.7),
-                  decoration: TextDecoration.underline,
-                  decorationColor: Colors.black.withValues(alpha: 0.3),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      width: 1,
+                    ),
+                  ),
+                ),
+                padding: const EdgeInsets.only(bottom: 1),
+                child: Text(
+                  venue,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: context.sp(13),
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black.withValues(alpha: 0.7),
+                  ),
                 ),
               ),
             ),
