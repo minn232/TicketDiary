@@ -35,6 +35,7 @@ void main() {
                   slide: controller,
                   onTap: () => tapCount++,
                   pageTop: 40,
+                  heartWipe: const AlwaysStoppedAnimation<double>(0.0),
                 ),
               ),
             ],
@@ -81,6 +82,7 @@ void main() {
                   slide: controller,
                   onTap: () {},
                   pageTop: 40,
+                  heartWipe: const AlwaysStoppedAnimation<double>(0.0),
                 ),
               ),
             ],
@@ -116,8 +118,14 @@ void main() {
       );
       await tester.pump();
 
-      // from은 항상 아래에 깔려 있다.
-      expect(find.text('FROM'), findsOneWidget);
+      // from은 아직 안 드러난 영역이 남아있는 동안(progress < 1)만
+      // 그려집니다 — 완전히 덮인 뒤(1.0)에는 to 배경이 비쳐 보이지
+      // 않도록 아예 그리지 않습니다.
+      if (p < 1) {
+        expect(find.text('FROM'), findsOneWidget);
+      } else {
+        expect(find.text('FROM'), findsNothing);
+      }
       // to는 progress > 0 일 때만 얹힌다(0이면 ClipPath 자체를 만들지 않음).
       if (p > 0) {
         expect(find.text('TO'), findsOneWidget);
@@ -126,6 +134,51 @@ void main() {
       }
       // 진행 중 프레임에서 렌더 예외가 없어야 한다.
       expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('로딩 중 하트 쐐기 애니메이션은 값 전체 구간에서 예외 없이 그려지고, 0/1에서 하트가 트리에 남아있다',
+      (tester) async {
+    pinDeviceSize(tester);
+    final controller = AnimationController(
+      vsync: const TestVSync(),
+      duration: const Duration(milliseconds: 300),
+    );
+    final heartWipe = AnimationController(
+      vsync: const TestVSync(),
+      duration: const Duration(milliseconds: 300),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(heartWipe.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned.fill(
+                child: NewsPullTabOverlay(
+                  slide: controller,
+                  onTap: () {},
+                  pageTop: 40,
+                  heartWipe: heartWipe,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // 사라짐(0~0.5)과 나타남(0.5~1) 양쪽 구간, 그리고 "완전히 채워진"
+    // 양 끝(0, 1)을 모두 훑어도 렌더 예외가 없어야 합니다.
+    for (final p in [0.0, 0.25, 0.5, 0.75, 1.0]) {
+      heartWipe.value = p;
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      // ClipPath로 시각적으로만 잘릴 뿐, 하트 아이콘 위젯 자체는 항상
+      // 트리에 남아 있습니다(0/1일 땐 클립 없이 온전히 보임).
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
     }
   });
 }

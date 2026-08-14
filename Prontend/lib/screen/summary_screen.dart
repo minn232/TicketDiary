@@ -197,8 +197,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
                   child: Row(
                     children: [
                       Expanded(
+                        // [백엔드 수정]
+                        // 띄어쓰기로 바꿔서 Flutter가 화면 폭에 맞게 알아서 줄바꿈.
                         child: _SummaryCard(
-                          title: '스탠딩 / 좌석\n선호도',
+                          title: '스탠딩 / 좌석 선호도',
                           value: withFallback(
                             '좌석 ${(data.seatRatio * 100).toInt()}% / 스탠딩 ${(data.standingRatio * 100).toInt()}%',
                           ),
@@ -210,7 +212,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                       const SizedBox(width: 14),
                       Expanded(
                         child: _SummaryCard(
-                          title: '첫콘 / 막콘\n선호도',
+                          title: '첫콘 / 막콘 선호도',
                           value: withFallback(
                             '첫콘 ${(data.firstConcertRatio * 100).toInt()}% / 막콘 ${(data.lastConcertRatio * 100).toInt()}%',
                           ),
@@ -417,8 +419,10 @@ class _PostItCornerClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
+// [백엔드 수정]
+// 6개로 자르던 걸 스크롤 목록으로 변경.
 class _ArtistList extends StatelessWidget {
-  final List<String> artists;
+  final List<ArtistVisit> artists;
 
   const _ArtistList({required this.artists});
 
@@ -430,22 +434,50 @@ class _ArtistList extends StatelessWidget {
         style: TextStyle(fontSize: context.sp(13), color: Colors.black38),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (final a in artists.take(6))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              '• $a',
-              style: TextStyle(
-                fontSize: context.sp(14),
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
+    return ListView.separated(
+      padding: EdgeInsets.zero,
+      itemCount: artists.length,
+      separatorBuilder: (_, _) => SizedBox(height: context.rs(6)),
+      itemBuilder: (context, index) {
+        final artist = artists[index];
+        return Row(
+          children: [
+            Expanded(
+              child: Text(
+                '• ${artist.name}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: context.sp(14),
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
               ),
             ),
-          ),
-      ],
+            SizedBox(width: context.rs(6)),
+            _VisitCountStamp(count: artist.count),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// "n회" 관람 횟수 표시.
+class _VisitCountStamp extends StatelessWidget {
+  final int count;
+
+  const _VisitCountStamp({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      '$count회',
+      style: TextStyle(
+        fontSize: context.sp(11),
+        fontWeight: FontWeight.w800,
+        color: Colors.black.withValues(alpha: 0.6),
+      ),
     );
   }
 }

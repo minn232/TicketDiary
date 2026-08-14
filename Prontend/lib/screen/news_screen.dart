@@ -9,7 +9,6 @@ import 'package:ticketdiary/services/news_loading_signal.dart';
 import 'package:ticketdiary/services/social_service.dart';
 import 'package:ticketdiary/widgets/checkerboard_reveal_transition.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
-import 'package:ticketdiary/widgets/magic_loading_overlay.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
@@ -47,7 +46,7 @@ class NewsScreen extends StatefulWidget {
 enum _FlipPhase { news, toFav, fav, loading, toNews }
 
 class _NewsScreenState extends State<NewsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static const Color _paperColor = Color(0xFFF4F1E1);
 
   /// 소식 페이지 상단 여백을 기본(10)보다 늘려, 페이지 뒤에서 끼워 올린
@@ -70,6 +69,11 @@ class _NewsScreenState extends State<NewsScreen>
   /// 풀탭 위치이자 체커보드 진행도의 원천. 0.0=소식/왼쪽, 1.0=찜/오른쪽.
   late final AnimationController _slide;
 
+  /// 로딩 중 풀탭 하트에 보여주는 시계방향 쐐기 반복 애니메이션(한 바퀴가
+  /// "사라짐 절반 + 나타남 절반"). 로딩이 아닐 때는 그냥 0에서 멈춰 있어
+  /// 하트가 평소처럼 온전히 보입니다.
+  late final AnimationController _heartWipe;
+
   _FlipPhase _phase = _FlipPhase.news;
 
   /// 찜 패널은 전환/로딩 여러 단계에 걸쳐 살아 있어야(검색어·찜 토글 유지)
@@ -81,6 +85,12 @@ class _NewsScreenState extends State<NewsScreen>
   /// 데이터로라도 소식으로 되돌아오게 하는 안전 타임아웃.
   Timer? _returnTimeout;
 
+  /// 최신 소식(또는 타임아웃 시 기존 데이터)이 준비됐는지. true가 되어도
+  /// 곧바로 전환하지 않고, 지금 돌고 있는 하트 바퀴가 끝나 하트가 온전히
+  /// 채워지는 순간([_onHeartWipeStatus])에 맞춰 전환합니다.
+  bool _returnDataReady = false;
+  Future<List<NewsModel>>? _returnReadyFuture;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +98,10 @@ class _NewsScreenState extends State<NewsScreen>
       vsync: this,
       duration: const Duration(milliseconds: 620),
     )..addStatusListener(_onSlideStatus);
+    _heartWipe = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..addStatusListener(_onHeartWipeStatus);
 
     NewsLoadingSignal.isLoading.value = true;
     _loadingHoldTimeout = Timer(const Duration(seconds: 10), () {
@@ -108,6 +122,7 @@ class _NewsScreenState extends State<NewsScreen>
     _loadingHoldTimeout?.cancel();
     _returnTimeout?.cancel();
     _slide.dispose();
+    _heartWipe.dispose();
     super.dispose();
   }
 
@@ -122,6 +137,21 @@ class _NewsScreenState extends State<NewsScreen>
       if (_phase == _FlipPhase.toNews) {
         setState(() => _phase = _FlipPhase.news);
       }
+    }
+  }
+
+  /// 하트 쐐기 바퀴가 한 번 끝날 때마다(=하트가 온전히 채워지는 순간)
+  /// 불립니다. 최신 소식이 아직 준비 안 됐으면 곧바로 새 바퀴를 돌려
+  /// 계속 로딩 표시를 이어가고, 준비됐으면 바로 이 "온전히 채워진" 순간에
+  /// 맞춰 실제 전환을 시작합니다 — 애니메이션이 어중간한 채로 뚝 끊기지
+  /// 않습니다.
+  void _onHeartWipeStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    if (!mounted || _phase != _FlipPhase.loading) return;
+    if (_returnDataReady) {
+      _revealFreshNews(_returnReadyFuture!);
+    } else {
+      _heartWipe.forward(from: 0);
     }
   }
 
@@ -145,28 +175,32 @@ class _NewsScreenState extends State<NewsScreen>
   ///
   /// 찜 변경은 이미 [FavoritesStore]에 실시간 반영돼 있으므로, 여기서 그
   /// 변경을 기준으로 최신 소식을 새로 불러옵니다("적용"). 로딩되는 동안엔
-  /// 전환을 멈추고 마법 오버레이만 보여주다가, 준비되면 역체커보드로
+  /// 전환을 멈추고 풀탭 하트를 시계방향 쐐기로 반복 회전시켜 로딩 중임을
+  /// 보여주다가, 데이터가 준비되면(또는 타임아웃되면) 지금 돌고 있는
+  /// 하트 바퀴가 끝나는 순간([_onHeartWipeStatus])에 맞춰 역체커보드로
   /// 최신 소식을 드러냅니다.
   void _startReturnToNews() {
     setState(() => _phase = _FlipPhase.loading);
+    _returnDataReady = false;
+    _returnReadyFuture = null;
+    _heartWipe.forward(from: 0);
 
-    var settled = false;
-    void finish(Future<List<NewsModel>> future) {
-      if (!mounted || settled) return;
-      settled = true;
+    void markReady(Future<List<NewsModel>> future) {
+      if (!mounted || _returnDataReady) return;
+      _returnDataReady = true;
+      _returnReadyFuture = future;
       _returnTimeout?.cancel();
-      _revealFreshNews(future);
     }
 
     _returnTimeout?.cancel();
     _returnTimeout = Timer(const Duration(seconds: 10), () {
       // 타임아웃: 기존 데이터로라도 소식으로 복귀합니다.
-      finish(_newsFuture);
+      markReady(_newsFuture);
     });
 
     _fetchAndCacheNews()
-        .then((items) => finish(Future.value(items)))
-        .catchError((Object e) => finish(Future.error(e)));
+        .then((items) => markReady(Future.value(items)))
+        .catchError((Object e) => markReady(Future.error(e)));
   }
 
   void _revealFreshNews(Future<List<NewsModel>> future) {
@@ -256,7 +290,19 @@ class _NewsScreenState extends State<NewsScreen>
         .map(NewsModel.fromFavoritedConcert)
         .toList();
 
-    return [...favoritedConcertCards, ...filteredFeed];
+    final combined = [...favoritedConcertCards, ...filteredFeed];
+    // 공연이 가까운 순(D-day 오름차순)으로 정렬합니다 — 그리드는 왼쪽
+    // 위부터 오른쪽 아래로 채워지므로, 리스트 순서가 곧 화면 배치 순서가
+    // 됩니다. 날짜 정보가 없는 카드는 맨 뒤로 밀립니다.
+    combined.sort((a, b) {
+      final da = a.concertDate;
+      final db = b.concertDate;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return da.compareTo(db);
+    });
+    return combined;
   }
 
   GlobalKey _cardKeyFor(int index) {
@@ -305,6 +351,7 @@ class _NewsScreenState extends State<NewsScreen>
         slide: _slide,
         onTap: _onPullTab,
         pageTop: _pageTop,
+        heartWipe: _heartWipe,
       ),
       child: Container(
         color: _paperColor,
@@ -321,14 +368,9 @@ class _NewsScreenState extends State<NewsScreen>
       case _FlipPhase.fav:
         return _buildFavPanel();
       case _FlipPhase.loading:
-        // 찜 패널을 그대로 두고 그 위에 마법 로딩 오버레이(안개+반짝이).
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            _buildFavPanel(),
-            const MagicLoadingOverlay(),
-          ],
-        );
+        // 찜 패널을 그대로 두고, 로딩 표시는 풀탭 하트의 쐐기 회전
+        // 애니메이션([_heartWipe])이 대신합니다.
+        return _buildFavPanel();
       case _FlipPhase.toFav:
         return AnimatedBuilder(
           animation: _slide,
@@ -513,7 +555,11 @@ class _PolaroidCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      data.artist,
+                      // 찜한 공연 카드는 좌상단에 아티스트 이름 대신 공연
+                      // D-day를 보여줍니다(며칠 남았는지 한눈에 보이도록).
+                      data.isFavoritedConcert
+                          ? data.concertDDayLabel
+                          : data.artist,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

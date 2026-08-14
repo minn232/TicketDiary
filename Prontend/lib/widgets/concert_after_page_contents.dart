@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../models/setlist.dart';
 import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/concert_detail_service.dart';
@@ -223,6 +224,57 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     }
   }
 
+  // [백엔드 수정]
+  // 사진을 꾹 눌러서 삭제할 수 있는 기능.
+  // 확인 팝업 후 서버에서 삭제.
+  Future<void> _confirmDeletePhoto(String url) async {
+    if (!_ensureEditable() || _uploadingPhoto) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('사진 삭제'),
+        content: const Text('이 사진을 삭제할까요? 되돌릴 수 없어요.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final List<String> nextUrls = [
+      ...(_ticketInfo?.concertPhotoUrls ?? const <String>[]),
+    ]..remove(url);
+
+    try {
+      final updated = await _ticketService.updateTicket(
+        _ticketId!,
+        concertPhotoUrls: nextUrls,
+      );
+      if (!mounted) return;
+      setState(() {
+        _ticketInfo = _ticketInfo?.copyWith(
+          concertPhotoUrls: updated.concertPhotoUrls ?? nextUrls,
+        );
+      });
+      if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
+      _showSnack('사진을 삭제했어요.');
+    } on TicketNotFoundException {
+      _showSnack('티켓을 찾을 수 없어요.');
+    } on ApiException catch (e) {
+      _showSnack('사진 삭제에 실패했어요: ${e.message}');
+    } catch (_) {
+      _showSnack('사진 삭제 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final grid = Column(
@@ -238,6 +290,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
                     photoUrls: _ticketInfo?.concertPhotoUrls ?? const [],
                     uploading: _uploadingPhoto,
                     onAddTap: _uploadingPhoto ? null : _addPhoto,
+                    onDeleteTap: _uploadingPhoto ? null : _confirmDeletePhoto,
                   ),
                 ),
               ),
@@ -747,11 +800,13 @@ class _PhotoBoard extends StatelessWidget {
   final List<String> photoUrls;
   final bool uploading;
   final VoidCallback? onAddTap;
+  final ValueChanged<String>? onDeleteTap;
 
   const _PhotoBoard({
     required this.photoUrls,
     required this.uploading,
     required this.onAddTap,
+    required this.onDeleteTap,
   });
 
   @override
@@ -798,6 +853,9 @@ class _PhotoBoard extends StatelessWidget {
               url: photoUrls[i],
               // 번갈아 살짝 기울여 실제로 붙인 느낌을 냅니다.
               angle: i.isEven ? -0.05 : 0.045,
+              onLongPress: onDeleteTap == null
+                  ? null
+                  : () => onDeleteTap!(photoUrls[i]),
             ),
           if (uploading)
             const SizedBox(
@@ -867,18 +925,82 @@ class _DashedBorderPainter extends CustomPainter {
 
 /// 다이어리에 직접 붙인 폴라로이드 사진. 흰 테두리(아래쪽이 더 두꺼움) +
 /// 그림자 + 위쪽 가운데 반투명 테이프로 "붙어있는" 느낌을 냅니다.
-class _PolaroidThumb extends StatelessWidget {
+//
+// [백엔드 수정]
+// 사진 프레임이 정사각형 고정이라 가로/세로로 긴 사진은 억지로 잘려
+// 보이던 문제 - 실제 이미지 비율을 읽어와 프레임 크기를 그에 맞게
+// 조절(짧은 변은 고정, 긴 변만 비율만큼 늘어나되 상한 있음).
+class _PolaroidThumb extends StatefulWidget {
   final String url;
   final double angle;
+  final VoidCallback? onLongPress;
 
-  const _PolaroidThumb({required this.url, required this.angle});
+  const _PolaroidThumb({
+    required this.url,
+    required this.angle,
+    this.onLongPress,
+  });
+
+  @override
+  State<_PolaroidThumb> createState() => _PolaroidThumbState();
+}
+
+class _PolaroidThumbState extends State<_PolaroidThumb> {
+  static const double _shortSide = 50;
+  static const double _maxLongSide = 88;
+
+  double? _aspectRatio; // width / height
+  ImageStream? _stream;
+  late ImageStreamListener _listener;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveAspectRatio();
+  }
+
+  @override
+  void dispose() {
+    _stream?.removeListener(_listener);
+    super.dispose();
+  }
+
+  void _resolveAspectRatio() {
+    final provider = _isNetworkUrl(widget.url)
+        ? NetworkImage(widget.url) as ImageProvider
+        : FileImage(File(widget.url));
+    _listener = ImageStreamListener(
+      (info, _) {
+        if (!mounted) return;
+        setState(() {
+          _aspectRatio = info.image.width / info.image.height;
+        });
+      },
+      onError: (_, _) {}, // 실패하면 정사각형 기본값 유지
+    );
+    _stream = provider.resolve(const ImageConfiguration())
+      ..addListener(_listener);
+  }
+
+  Size get _frameSize {
+    final ratio = _aspectRatio;
+    if (ratio == null || ratio == 1) return const Size(_shortSide, _shortSide);
+    if (ratio > 1) {
+      // 가로로 긴 사진: 세로를 고정하고 가로만 비율만큼 늘림
+      return Size((_shortSide * ratio).clamp(_shortSide, _maxLongSide), _shortSide);
+    }
+    // 세로로 긴 사진: 가로를 고정하고 세로만 비율만큼 늘림
+    return Size(_shortSide, (_shortSide / ratio).clamp(_shortSide, _maxLongSide));
+  }
 
   @override
   Widget build(BuildContext context) {
+    final size = _frameSize;
     return Transform.rotate(
-      angle: angle,
+      angle: widget.angle,
       child: GestureDetector(
-        onTap: () => _openFullPhoto(context, url),
+        onTap: () => _openFullPhoto(context, widget.url),
+        onLongPress: widget.onLongPress,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -894,29 +1016,29 @@ class _PolaroidThumb extends StatelessWidget {
                   ),
                 ],
               ),
-              child: _isNetworkUrl(url)
+              child: _isNetworkUrl(widget.url)
                   ? Image.network(
-                      url,
-                      width: 50,
-                      height: 50,
+                      widget.url,
+                      width: size.width,
+                      height: size.height,
                       fit: BoxFit.cover,
                       webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
                       errorBuilder: (context, error, stackTrace) => Container(
-                        width: 50,
-                        height: 50,
+                        width: size.width,
+                        height: size.height,
                         color: Colors.black12,
                         child: const Icon(Icons.broken_image_outlined, size: 18),
                       ),
                     )
                   // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
                   : Image.file(
-                      File(url),
-                      width: 50,
-                      height: 50,
+                      File(widget.url),
+                      width: size.width,
+                      height: size.height,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) => Container(
-                        width: 50,
-                        height: 50,
+                        width: size.width,
+                        height: size.height,
                         color: Colors.black12,
                         child: const Icon(Icons.broken_image_outlined, size: 18),
                       ),
@@ -1077,7 +1199,7 @@ class _RealSetlistContent extends StatefulWidget {
 
 class _RealSetlistContentState extends State<_RealSetlistContent> {
   final ConcertDetailService _service = ConcertDetailService();
-  List<String>? _songs;
+  List<SongEntry>? _songs;
 
   @override
   void initState() {
@@ -1092,9 +1214,9 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       final res = await _service.getRealSetlist(ticketId);
       if (!mounted) return;
       setState(() {
-        _songs = res.songs
-            .map((s) => s.encore ? '${s.name} (앵콜)' : s.name)
-            .toList();
+        // [백엔드 수정]
+        // 앙코르가 시작되는 지점에 구분선(build에서 처리).
+        _songs = res.songs;
       });
     } on ApiException catch (_) {
       // 아직 등록 안 됐으면(404) 조용히 안내 문구를 유지합니다.
@@ -1129,37 +1251,214 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         ),
       );
     }
+
+    // [백엔드 수정]
+    // 페스티벌(아티스트 2명 이상)이면 아티스트별 아코디언.
+    // 단독 공연이면 번호 목록.
+    final groups = <String?, List<SongEntry>>{};
+    for (final song in songs) {
+      groups.putIfAbsent(song.artist, () => []).add(song);
+    }
+    final groupList = groups.entries.toList();
+
     return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < songs.length; i++)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    (i + 1).toString().padLeft(2, '0'),
-                    style: TextStyle(
-                      fontSize: context.sp(11),
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black.withValues(alpha: 0.35),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      songs[i],
-                      style: TextStyle(
-                        fontSize: context.sp(12),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
+      child: groupList.length > 1
+          ? _RealSetlistGroupedByArtist(groups: groupList)
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _buildRealSongRows(context, songs),
+            ),
+    );
+  }
+}
+
+// [백엔드 수정]
+// 곡마다 번호 매긴 Row + 앙코르 시작 지점 구분선을 만드는 헬퍼.
+// 단독 공연 목록/아코디언 펼친 목록 둘 다 재사용
+List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
+  return [
+    for (var i = 0; i < songs.length; i++) ...[
+      if (songs[i].encore && (i == 0 || !songs[i - 1].encore))
+        const _EncoreDivider(),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              (i + 1).toString().padLeft(2, '0'),
+              style: TextStyle(
+                fontSize: context.sp(11),
+                fontWeight: FontWeight.w900,
+                color: Colors.black.withValues(alpha: 0.35),
               ),
             ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                songs[i].name,
+                style: TextStyle(
+                  fontSize: context.sp(12),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ],
+  ];
+}
+
+// [백엔드 수정]
+/// 페스티벌 실제 셋리 - 아티스트 이름을 나열해두고, 누른 아티스트만 곡
+/// 목록이 펼쳐지는 아코디언(예상 셋리와 동일한 UX). 
+/// 한 번에 하나만 펼쳐지고, 목록 순서는 그대로 유지한 채 
+/// 펼친 아티스트 위치로 화면 스크롤.
+class _RealSetlistGroupedByArtist extends StatefulWidget {
+  final List<MapEntry<String?, List<SongEntry>>> groups;
+
+  const _RealSetlistGroupedByArtist({required this.groups});
+
+  @override
+  State<_RealSetlistGroupedByArtist> createState() =>
+      _RealSetlistGroupedByArtistState();
+}
+
+class _RealSetlistGroupedByArtistState
+    extends State<_RealSetlistGroupedByArtist> {
+  int? _expandedIndex;
+  late final List<GlobalKey> _sectionKeys = [
+    for (var _ in widget.groups) GlobalKey(),
+  ];
+
+  void _toggle(int index) {
+    final willExpand = _expandedIndex != index;
+    setState(() => _expandedIndex = willExpand ? index : null);
+    if (!willExpand) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _sectionKeys[index].currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var g = 0; g < widget.groups.length; g++)
+          Padding(
+            key: _sectionKeys[g],
+            padding: EdgeInsets.only(
+              bottom: g == widget.groups.length - 1 ? 0 : 4,
+            ),
+            child: _RealSetlistArtistSection(
+              artistName: widget.groups[g].key ?? '아티스트 미상',
+              songs: widget.groups[g].value,
+              expanded: g == _expandedIndex,
+              onTap: () => _toggle(g),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _RealSetlistArtistSection extends StatelessWidget {
+  final String artistName;
+  final List<SongEntry> songs;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _RealSetlistArtistSection({
+    required this.artistName,
+    required this.songs,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(
+              children: [
+                Icon(
+                  expanded
+                      ? Icons.expand_more_rounded
+                      : Icons.chevron_right_rounded,
+                  size: 16,
+                  color: Colors.black.withValues(alpha: 0.4),
+                ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: Text(
+                    artistName,
+                    style: TextStyle(
+                      fontSize: context.sp(12.5),
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 20, top: 2, bottom: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _buildRealSongRows(context, songs),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// [백엔드 수정]
+/// 실제 셋리 곡 목록 중 앙코르가 시작되는 지점에 한 번만 표시하는 구분선.
+class _EncoreDivider extends StatelessWidget {
+  const _EncoreDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Container(height: 1, color: Colors.black.withValues(alpha: 0.15)),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+              'ENCORE',
+              style: TextStyle(
+                fontSize: context.sp(9.5),
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.2,
+                color: Colors.black.withValues(alpha: 0.4),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Container(height: 1, color: Colors.black.withValues(alpha: 0.15)),
+          ),
         ],
       ),
     );

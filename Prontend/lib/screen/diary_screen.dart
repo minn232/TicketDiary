@@ -291,51 +291,55 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   /// 마지막으로 [_tickets]를 채운 로그인 유저의 id. 로그아웃/계정 전환으로
   /// 유저가 바뀌면 이전 유저의 서버 기원 티켓을 화면에서 지우고 새 유저
-  /// 것으로 다시 불러오기 위해 씁니다([_onAuthChanged] 참고).
+  /// 것으로 다시 불러오기 위해 씁니다([_onAuthChangedStatic] 참고).
   static String? _loadedForUserId;
+
+  // [백엔드 수정]
+  // AuthService 리스너를 인스턴스(initState/dispose)에 걸려있어 설정에서는 역할을 못함.
+  // 인스턴스 대신 static으로 앱 실행 중 한 번만 등록.
+  static bool _authListenerRegistered = false;
+
+  static void _registerAuthListenerOnce() {
+    if (_authListenerRegistered) return;
+    _authListenerRegistered = true;
+    AuthService.instance.addListener(_onAuthChangedStatic);
+  }
+
+  /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.
+  /// 로그인된 유저가 마지막으로 티켓을 불러왔던 유저와 다르면, 이전 유저의
+  /// 실제 티켓을 지우고 다시 불러올 수 있도록 플래그를 리셋합니다. 다이어리
+  /// 화면이 지금 떠 있으면 [TicketRefreshBus]로 즉시 반영을 알리고, 안
+  /// 떠 있으면 리셋해둔 플래그 덕에 다음에 열릴 때 자연히 다시 불러옵니다.
+  static void _onAuthChangedStatic() {
+    final currentUserId = AuthService.instance.userId;
+    if (currentUserId == _loadedForUserId) return;
+    _loadedForUserId = currentUserId;
+    _tickets.removeWhere((t) => t.info?.ticketId != null);
+    _backendTicketsLoaded = false;
+    TicketRefreshBus.notify();
+  }
 
   @override
   void initState() {
     super.initState();
     // "공연 전" 페이지의 예상 셋 리스트 블러 여부에 쓰이는 설정값을 미리 불러옵니다.
     AppSettingsStore.instance.load();
-    AuthService.instance.addListener(_onAuthChanged);
+    _registerAuthListenerOnce();
     TicketRefreshBus.tick.addListener(_onTicketsChangedElsewhere);
     unawaited(_loadTicketsFromBackend());
   }
 
   @override
   void dispose() {
-    AuthService.instance.removeListener(_onAuthChanged);
     TicketRefreshBus.tick.removeListener(_onTicketsChangedElsewhere);
     _flipAnimating.dispose();
     super.dispose();
   }
 
-  /// 게스트→카카오 마이그레이션이 로컬 티켓을 서버로 다 옮긴 뒤 보내는
-  /// 알림. 유저 id는 이미 마이그레이션 시작 시점에 바뀌어 [_onAuthChanged]가
-  /// 한 번 지나갔으므로, 여기서는 그 가드와 무관하게 강제로 다시 불러옵니다.
+  /// [TicketRefreshBus]가 알림을 보낼 때마다(게스트→카카오 마이그레이션 완료,
+  /// 또는 위 [_onAuthChangedStatic]) 호출됩니다. 유저 id는 이미 그 시점에
+  /// 바뀌어 있으므로, 여기서는 가드 없이 강제로 다시 불러옵니다.
   void _onTicketsChangedElsewhere() {
-    if (mounted) {
-      setState(() {
-        _tickets.removeWhere((t) => t.info?.ticketId != null);
-      });
-    } else {
-      _tickets.removeWhere((t) => t.info?.ticketId != null);
-    }
-    _backendTicketsLoaded = false;
-    unawaited(_loadTicketsFromBackend());
-  }
-
-  /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.
-  /// 로그인된 유저가 마지막으로 티켓을 불러왔던 유저와 다르면, 이전 유저의
-  /// 실제 티켓(백엔드든 게스트 로컬 저장이든, `info.ticketId`가 있는 것)을
-  /// 화면에서 지우고 새 유저 것으로 다시 불러옵니다. 로컬 전용 예시 티켓은
-  /// 계정과 무관하므로 그대로 둡니다.
-  void _onAuthChanged() {
-    final currentUserId = AuthService.instance.userId;
-    if (currentUserId == _loadedForUserId) return;
-
     if (mounted) {
       setState(() {
         _tickets.removeWhere((t) => t.info?.ticketId != null);
@@ -489,6 +493,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (start >= _tickets.length) return const [];
     final end = (start + _otherPageTicketCapacity).clamp(0, _tickets.length);
     return _tickets.sublist(start, end);
+  }
+
+  // [백엔드 수정]
+  // 오버레이가 뜨는 동안, 복사본 티켓이 겹쳐보여,
+  // 각 영역의 GlobalKey로 구분해서 실제로 복사된 그 영역만 숨도록 함.
+  Key? _overlayHiddenRegionKey;
+
+  Widget _hideWhileOverlayOpen({required Key regionKey, required Widget child}) {
+    final hidden = _overlayHiddenRegionKey == regionKey;
+    return IgnorePointer(
+      ignoring: hidden,
+      child: Opacity(opacity: hidden ? 0.0 : 1.0, child: child),
+    );
   }
 
   Rect? _globalRectOf(GlobalKey key) {
@@ -1151,7 +1168,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                           duration: _promotionFadeDuration,
                           child: KeyedSubtree(
                             key: ValueKey(ticket.status),
-                            child: _buildTicketByStatus(ticket),
+                            // [백엔드 수정]
+                            // itemBuilder가 주는 context를 그대로 넘김.
+                            child: _buildTicketByStatus(context, ticket),
                           ),
                         ),
                       ),
@@ -1165,7 +1184,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Widget _buildTicketByStatus(TicketData ticket) {
+  Widget _buildTicketByStatus(BuildContext context, TicketData ticket) {
     switch (ticket.status) {
       case TicketStatus.beforeDelivery:
         return _buildTicketPocket(
@@ -1190,14 +1209,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
               // 공연 시간이 이미 지난 티켓은 눌렀을 때 "공연 후"로의 전환
               // 애니메이션을 재생합니다(공연이 끝났으니 상세 오버레이 대신).
               ? () => unawaited(_runTicketPromotionAnimation(ticket.id))
-              : () {
+              : () async {
                   final startRect = _globalRectOf(ticket.overlayKey);
                   if (startRect == null) return;
 
-                  ConcertBeforeOverlay.show(
+                  // [백엔드 수정]
+                  // 오버레이가 떠있는 동안 리스트의 진짜 티켓을 숨겨서
+                  // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함.
+                  setState(() => _overlayHiddenRegionKey = ticket.overlayKey);
+                  await ConcertBeforeOverlay.show(
                     context,
                     startRect: startRect,
-                    collapsedTicket: _buildTicketPocket(
+                    // startRect 크기로 그대로 채움.
+                    collapsedTicket: _buildTicketDecoration(
                       child: _buildTicketBeforeConcert(
                         title: ticket.title,
                         info: ticket.info,
@@ -1205,11 +1229,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     ),
                     concertTitle: ticket.title,
                     ticketInfo: ticket.info,
+                    // [백엔드 수정]
+                    // 이 리스트에서 쓰이는 배율을 그대로 넘김.
+                    frameScale:
+                        DiaryFrameScale.maybeOf(context) ??
+                        diaryScaleFromMediaQuery(context),
                   );
+                  if (mounted) setState(() => _overlayHiddenRegionKey = null);
                 },
-          child: KeyedSubtree(
-            key: ticket.overlayKey,
+          child: _hideWhileOverlayOpen(
+            regionKey: ticket.overlayKey,
             child: _buildTicketPocket(
+              contentKey: ticket.overlayKey,
               child: _buildTicketBeforeConcert(
                 title: ticket.title,
                 info: ticket.info,
@@ -1289,7 +1320,37 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Widget _buildTicketPocket({required Widget child}) {
+  // [백엔드 수정]
+  // 실제로 그려지는 티켓의 장식(테두리+그라데이션+패딩)만 따로 뺌
+  // 크기는 정하지 않고 부모가 준 만큼 그대로 채움.
+  Widget _buildTicketDecoration({required Widget child}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.8), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 5,
+            offset: const Offset(2, 2),
+          ),
+        ],
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withValues(alpha: 0.6),
+            Colors.white.withValues(alpha: 0.0),
+            Colors.white.withValues(alpha: 0.2),
+          ],
+        ),
+      ),
+      child: Padding(padding: const EdgeInsets.all(10.0), child: child),
+    );
+  }
+
+  Widget _buildTicketPocket({required Widget child, Key? contentKey}) {
     // 배치 공간(칸 크기)은 그대로 두고, 실제로 그려지는 티켓만 10% 더
     // 크게 키웁니다. Transform.scale 대신 실제 레이아웃 너비를 10% 넓혀서
     // (SizedBox+AspectRatio) 안의 글씨가 픽셀 단위로 늘어나지 않고 정상
@@ -1300,36 +1361,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
       builder: (context, constraints) {
         return Center(
           child: SizedBox(
+            key: contentKey,
             width: constraints.maxWidth * 1.1,
             child: AspectRatio(
               aspectRatio: _ticketAspectRatio,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.8),
-                    width: 2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.05),
-                      blurRadius: 5,
-                      offset: const Offset(2, 2),
-                    ),
-                  ],
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Colors.white.withValues(alpha: 0.6),
-                      Colors.white.withValues(alpha: 0.0),
-                      Colors.white.withValues(alpha: 0.2),
-                    ],
-                  ),
-                ),
-                child: Padding(padding: const EdgeInsets.all(10.0), child: child),
-              ),
+              child: _buildTicketDecoration(child: child),
             ),
           ),
         );
@@ -1485,7 +1521,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 36,
+            // [백엔드 수정]
+            // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈(고정 36px이라
+            // 태블릿 등에서 "공연장" 라벨이 "공연\n장"으로 줄바꿈되던 문제).
+            width: context.rs(36),
             child: Text(
               label,
               style: TextStyle(
@@ -1675,14 +1714,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
           child: PressableScale(
             onTap: _isAddTicketExpanded
                 ? null
-                : () {
+                : () async {
                     // "공연 전" 티켓과 동일한 로직: 일반 push 대신, 눌린
                     // 티켓 위치(Rect)에서 자연스럽게 확장되는 오버레이로
                     // 상세를 보여줍니다.
                     final startRect = _globalRectOf(posterOverlayKey);
                     if (startRect == null) return;
 
-                    ConcertAfterOverlay.show(
+                    // [백엔드 수정]
+                    // 오버레이가 떠있는 동안 리스트의 진짜 포스터만 숨겨서
+                    // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함(오른쪽
+                    // 뜯긴 조각은 이 오버레이랑 무관하니 posterOverlayKey로만 구분).
+                    setState(() => _overlayHiddenRegionKey = posterOverlayKey);
+                    await ConcertAfterOverlay.show(
                       context,
                       startRect: startRect,
                       collapsedTicket: _buildAfterConcertPosterFace(
@@ -1692,13 +1736,22 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       concertTitle: title,
                       ticketInfo: info,
                       onTicketInfoChanged: onInfoChanged,
+                      // [백엔드 수정]
+                      // 이 리스트에서 쓰이는 배율을 그대로 넘김.
+                      frameScale:
+                          DiaryFrameScale.maybeOf(context) ??
+                          diaryScaleFromMediaQuery(context),
                     );
+                    if (mounted) setState(() => _overlayHiddenRegionKey = null);
                   },
             pressScale: 0.985,
             tapScale: 1.03,
-            child: KeyedSubtree(
-              key: posterOverlayKey,
-              child: _buildAfterConcertPosterFace(title: title, info: info),
+            child: _hideWhileOverlayOpen(
+              regionKey: posterOverlayKey,
+              child: KeyedSubtree(
+                key: posterOverlayKey,
+                child: _buildAfterConcertPosterFace(title: title, info: info),
+              ),
             ),
           ),
         ),
@@ -1733,28 +1786,42 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     ),
                   ),
             // 뜯긴 뒤: 지금의 "공연전" 디자인이 남아서 눌러볼 수 있게 됨
-            revealed: KeyedSubtree(
-              key: overlayKey,
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.horizontal(
-                    right: Radius.circular(8),
+            revealed: _hideWhileOverlayOpen(
+              regionKey: overlayKey,
+              child: KeyedSubtree(
+                key: overlayKey,
+                child: Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.horizontal(
+                      right: Radius.circular(8),
+                    ),
                   ),
+                  child: _concertBeforeShortcutWidget(dark: true),
                 ),
-                child: _concertBeforeShortcutWidget(dark: true),
               ),
             ),
-            onRevealedTap: () {
+            onRevealedTap: () async {
               final startRect = _globalRectOf(overlayKey);
               if (startRect == null) return;
-              ConcertBeforeOverlay.show(
+              // [백엔드 수정]
+              // 오버레이가 떠있는 동안 리스트의 진짜 위젯(뜯긴 조각)만 숨겨서
+              // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함(왼쪽 포스터는
+              // 이 오버레이랑 무관하니 overlayKey로만 구분).
+              setState(() => _overlayHiddenRegionKey = overlayKey);
+              await ConcertBeforeOverlay.show(
                 context,
                 startRect: startRect,
                 collapsedTicket: _concertBeforeShortcutWidget(dark: true),
                 concertTitle: title,
                 ticketInfo: info,
+                // [백엔드 수정]
+                // 이 리스트에서 쓰이는 배율을 그대로 넘김.
+                frameScale:
+                    DiaryFrameScale.maybeOf(context) ??
+                    diaryScaleFromMediaQuery(context),
               );
+              if (mounted) setState(() => _overlayHiddenRegionKey = null);
             },
           ),
         ),

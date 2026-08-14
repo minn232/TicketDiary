@@ -3,10 +3,12 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
+import '../models/setlist.dart';
 import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
+import 'pressable_scale.dart';
 import 'responsive_text.dart';
 
 /// "공연 전" 페이지 콘텐츠.
@@ -143,7 +145,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   _FetchStatus _timetableStatus = _FetchStatus.loading;
   int? _timetableErrorCode;
 
-  List<String> _fetchedSetlist = const [];
+  List<SongEntry> _fetchedSetlist = const [];
   _FetchStatus _presetlistStatus = _FetchStatus.loading;
   int? _presetlistErrorCode;
 
@@ -249,9 +251,11 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       final res = await _service.getPreSetlist(ticketId);
       if (!mounted) return;
       setState(() {
-        _fetchedSetlist = res.songs
-            .map((s) => s.encore ? '${s.name} (앵콜)' : s.name)
-            .toList();
+        // [백엔드 수정]
+        // artist 태그를 그대로 들고 있어야 페스티벌일 때 아티스트별로 묶어서
+        // 보여줄 수 있어서, 여기서 문자열로 바로 뭉개지 않고 SongEntry
+        // 그대로 둠(표시 문구 변환은 위젯에서).
+        _fetchedSetlist = res.songs;
         _presetlistStatus = _FetchStatus.loaded;
       });
     } on ApiException catch (e) {
@@ -325,7 +329,13 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       final local = widget.ticketInfo?.setlist ?? const [];
       return local.isEmpty
           ? const _UndecidedText()
-          : _SetlistNumbered(setlist: local);
+          // [백엔드 수정]
+          // 로컬(오프라인) 셋리스트는 아티스트 구분이 없는 단순 문자열
+          // 목록이라, SongEntry로 감싸기만 하면 그대로 재사용 가능(항상
+          // 단독 공연처럼 평범한 번호 목록으로 보임).
+          : _SetlistNumbered(
+              setlist: [for (final name in local) SongEntry(name: name)],
+            );
     }
     if (_presetlistStatus != _FetchStatus.loaded) {
       return _statusText(_presetlistStatus, _presetlistErrorCode);
@@ -562,7 +572,9 @@ class _InfoRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 62,
+            // [백엔드 수정]
+            // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈.
+            width: context.rs(62),
             child: Text(
               label,
               style: TextStyle(
@@ -700,15 +712,17 @@ class _TimelineRow extends StatelessWidget {
 }
 
 // [백엔드 수정]
-// "꾹 눌러서 잠깐 보기" 기능 신규 추가. StatelessWidget → StatefulWidget으로
-// 바뀌었고(_peeking 상태), 블러 처리된 동안엔 GestureDetector(long press)로
-// 누르고 있는 동안만 원본을 보여줌.
-/// 예상 셋 리스트 본문(트랙리스트처럼 번호 매김). 설정 > "예상 셋리 노출
-/// 여부"가 꺼져 있으면 스포일러 방지를 위해 블러 처리해서 보여주고, 켜져
-/// 있으면 그대로 보여줍니다. 블러 처리된 동안엔 꾹 눌러서(long press) 누르고
-/// 있는 동안만 잠깐 풀어볼 수 있습니다(뗴면 다시 블러).
+// 페스티벌(아티스트 2명 이상) 예상 셋리스트 지원 - setlist가 List<String>에서
+// List<SongEntry>로 바뀜(artist 태그 포함). 아티스트별 아코디언 그룹핑은
+// 아래 _SetlistGroupedByArtist 참고.
+/// 예상 셋 리스트 본문.
+/// 아티스트가 1명(또는 없음)이면 번호만 매긴 목록,
+/// 페스티벌이면 아티스트별로 곡을 묶어서 아코디언.
+/// 설정 > "예상 셋리 노출 여부"가 꺼져 있으면 스포일러 방지를 위해 블러 처리(단독/
+/// 페스티벌 모두 동일 적용), 블러 상태에서 꾹 눌러서(long press) 누르고
+/// 있는 동안만 미리보기 가능(떼면 다시 블러).
 class _SetlistNumbered extends StatefulWidget {
-  final List<String> setlist;
+  final List<SongEntry> setlist;
 
   const _SetlistNumbered({required this.setlist});
 
@@ -725,47 +739,25 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
     setState(() => _peeking = value);
   }
 
+  /// 아티스트 태그 기준으로 곡을 묶음(첫 등장 순서 유지). artist가 전부
+  /// null이거나 서로 같으면 그룹이 1개뿐이라 단독 공연과 동일하게 취급됨.
+  List<MapEntry<String?, List<SongEntry>>> _groupByArtist() {
+    final groups = <String?, List<SongEntry>>{};
+    for (final song in widget.setlist) {
+      groups.putIfAbsent(song.artist, () => []).add(song);
+    }
+    return groups.entries.toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: AppSettingsStore.instance,
       builder: (context, _) {
-        final content = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var i = 0; i < widget.setlist.length; i++)
-              Padding(
-                padding: EdgeInsets.only(
-                  bottom: i == widget.setlist.length - 1 ? 0 : 10,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 22,
-                      child: Text(
-                        '${i + 1}',
-                        style: TextStyle(
-                          fontSize: context.sp(14),
-                          fontWeight: FontWeight.w900,
-                          color: _accent,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Text(
-                        widget.setlist[i],
-                        style: TextStyle(
-                          fontSize: context.sp(14.5),
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        );
+        final groups = _groupByArtist();
+        final content = groups.length > 1
+            ? _SetlistGroupedByArtist(groups: groups)
+            : _FlatNumberedSongs(songs: widget.setlist);
 
         if (AppSettingsStore.instance.showExpectedSetlist) return content;
 
@@ -791,6 +783,209 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
           ),
         );
       },
+    );
+  }
+}
+
+// [백엔드 수정]
+// (앵콜) 텍스트 제거. 
+List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
+  return [
+    for (var i = 0; i < songs.length; i++)
+      Padding(
+        padding: EdgeInsets.only(bottom: i == songs.length - 1 ? 0 : gap),
+        child: _SongRow(index: i + 1, song: songs[i]),
+      ),
+  ];
+}
+
+/// 단독 공연(또는 아티스트 구분이 없는) 예상 셋리 - 번호만 매긴 평범한 목록.
+class _FlatNumberedSongs extends StatelessWidget {
+  final List<SongEntry> songs;
+
+  const _FlatNumberedSongs({required this.songs});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: _buildSongRows(songs, gap: 10),
+    );
+  }
+}
+
+// [백엔드 수정]
+/// 페스티벌처럼 아티스트가 여럿일 때 - 이름을 쭉 나열해두고, 누른
+/// 아티스트만 곡 목록이 펼쳐지는 아코디언.
+/// 한 번에 하나만 펼쳐지고(다른 걸 누르면 이전 건 자동으로 접힘),
+/// 펼칠 때 그 아티스트 위치로 화면을 스크롤.
+class _SetlistGroupedByArtist extends StatefulWidget {
+  final List<MapEntry<String?, List<SongEntry>>> groups;
+
+  const _SetlistGroupedByArtist({required this.groups});
+
+  @override
+  State<_SetlistGroupedByArtist> createState() =>
+      _SetlistGroupedByArtistState();
+}
+
+class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
+  /// 지금 펼쳐진 아티스트의 인덱스(widget.groups 기준). null이면 아무도 안
+  /// 펼쳐진 상태. 같은 걸 다시 누르면 접힘(toggle), 다른 걸 누르면 그쪽만
+  /// 펼쳐짐(동시에 여러 개 펼쳐지지 않음).
+  int? _expandedIndex;
+
+  /// 아티스트 행마다 하나씩 - 펼칠 때 그 위치로 스크롤하기 위한 앵커.
+  late final List<GlobalKey> _sectionKeys = [
+    for (var _ in widget.groups) GlobalKey(),
+  ];
+
+  void _toggle(int index) {
+    final willExpand = _expandedIndex != index;
+    setState(() => _expandedIndex = willExpand ? index : null);
+    if (!willExpand) return;
+
+    // 펼침으로 인한 레이아웃 변경(곡 목록 높이만큼 늘어남)이 반영된 다음
+    // 프레임에 스크롤해야 목표 위치가 정확합니다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _sectionKeys[index].currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0, // 0 = 뷰포트 맨 위에 붙도록
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var g = 0; g < widget.groups.length; g++)
+          Padding(
+            key: _sectionKeys[g],
+            padding: EdgeInsets.only(
+              bottom: g == widget.groups.length - 1 ? 0 : 4,
+            ),
+            child: _ArtistAccordionSection(
+              artistName: widget.groups[g].key ?? '아티스트 미상',
+              songs: widget.groups[g].value,
+              expanded: g == _expandedIndex,
+              onTap: () => _toggle(g),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// [백엔드 수정]
+/// 아코디언 한 칸: 아티스트 이름(눌러서 펼치기/접기), 
+/// 펼치면 그 아래에 이 아티스트만의 번호 매긴 곡 목록
+class _ArtistAccordionSection extends StatelessWidget {
+  final String artistName;
+  final List<SongEntry> songs;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _ArtistAccordionSection({
+    required this.artistName,
+    required this.songs,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        PressableScale(
+          onTap: onTap,
+          pressScale: 0.99,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Icon(
+                  expanded
+                      ? Icons.expand_more_rounded
+                      : Icons.chevron_right_rounded,
+                  size: context.rs(18),
+                  color: _accent,
+                ),
+                const SizedBox(width: 2),
+                Expanded(
+                  child: Text(
+                    artistName,
+                    style: TextStyle(
+                      fontSize: context.sp(14.5),
+                      fontWeight: FontWeight.w900,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (expanded)
+          Padding(
+            padding: EdgeInsets.only(
+              left: context.rs(24),
+              top: 2,
+              bottom: 10,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _buildSongRows(songs, gap: 8),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 번호 + 곡 이름 한 줄(앙코르 표시는 _EncoreDivider가 대신함). 단독/
+/// 아코디언 펼친 목록 둘 다 재사용.
+class _SongRow extends StatelessWidget {
+  final int index;
+  final SongEntry song;
+
+  const _SongRow({required this.index, required this.song});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          // [백엔드 수정]
+          // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈.
+          width: context.rs(22),
+          child: Text(
+            '$index',
+            softWrap: false,
+            style: TextStyle(
+              fontSize: context.sp(14),
+              fontWeight: FontWeight.w900,
+              color: _accent,
+            ),
+          ),
+        ),
+        Expanded(
+          // [백엔드 수정]
+          // 곡마다 "(앵콜)"을 반복해서 붙이지 않음 - _buildSongRows가
+          // 앙코르 시작 지점에 _EncoreDivider를 한 번만 끼워 넣음.
+          child: Text(
+            song.name,
+            style: TextStyle(fontSize: context.sp(14.5), color: Colors.black87),
+          ),
+        ),
+      ],
     );
   }
 }

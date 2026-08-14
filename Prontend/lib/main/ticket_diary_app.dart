@@ -35,6 +35,30 @@ class TicketDiaryApp extends StatelessWidget {
     }
   }
 
+  /// [백엔드 수정]
+  /// SplashScreen 전용 라우트 - 기본 [MaterialPageRoute] 대신 아무 전환도
+  /// 하지 않는(child를 그대로 반환) [PageRouteBuilder]를 씁니다.
+  ///
+  /// SplashScreen이 끝나고 DiaryScreen으로 pushReplacement할 때, 새 라우트
+  /// 쪽은 splash_screen.dart 안의 커스텀 FadeTransition으로 직접 페이드를
+  /// 그리고 있는데, 스플래시 라우트가 기본 [MaterialPageRoute]였던 탓에
+  /// 안드로이드 기본 페이지 전환(ZoomPageTransitionsBuilder 등)이 "뒤에
+  /// 남는 라우트"에도 secondaryAnimation 기반 자체 페이드/줌을 얹고
+  /// 있었습니다 - 그 결과 커스텀 페이드와 겹쳐서 "화면 1이 페이드아웃되며
+  /// 화면 2가 페이드인되는지, 아니면 다른 무언가가 겹친 건지 구분이 안
+  /// 된다"는 제보로 이어졌습니다. 스플래시 라우트의 secondaryAnimation을
+  /// 완전히 무시해서, 화면 전환 동안 스플래시 쪽은 정지 화면처럼 고정되고
+  /// 오직 splash_screen.dart가 그리는 페이드 하나만 보이게 합니다.
+  static PageRoute<void> _buildSplashRoute(RouteSettings settings) {
+    return PageRouteBuilder<void>(
+      settings: settings,
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          const SplashScreen(),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+          child,
+    );
+  }
+
   /// 인덱스 탭 전환 라우트. 화면이 옆으로 슬라이드하는 대신, 약 1초 동안
   /// 여러 장의 속지가 넘어가는 전환([DiaryTabFlipRoute])을 씁니다 — 탭
   /// 번호(다이어리=1, 소식=2, 결산=3, 설정=4)가 커지는 이동은 앞으로,
@@ -72,9 +96,7 @@ class TicketDiaryApp extends StatelessWidget {
         return Stack(
           children: [
             ?child,
-            Positioned.fill(
-              child: TabHitCatcherOverlay(coordinator: tabNav),
-            ),
+            Positioned.fill(child: TabHitCatcherOverlay(coordinator: tabNav)),
           ],
         );
       },
@@ -89,19 +111,13 @@ class TicketDiaryApp extends StatelessWidget {
       // 무관하게 스플래시 라우트 하나만 스택에 넣도록 명시적으로 고정합니다.
       onGenerateInitialRoutes: (initialRoute) {
         return [
-          MaterialPageRoute(
-            settings: const RouteSettings(name: DiaryRoutes.splash),
-            builder: (context) => const SplashScreen(),
-          ),
+          _buildSplashRoute(const RouteSettings(name: DiaryRoutes.splash)),
         ];
       },
       onGenerateRoute: (settings) {
         switch (settings.name) {
           case DiaryRoutes.splash:
-            return MaterialPageRoute(
-              settings: settings,
-              builder: (context) => const SplashScreen(),
-            );
+            return _buildSplashRoute(settings);
           case DiaryRoutes.diary:
             return MaterialPageRoute(
               settings: settings,
@@ -129,4 +145,3 @@ class TicketDiaryApp extends StatelessWidget {
     );
   }
 }
-

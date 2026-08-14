@@ -6,6 +6,7 @@ import '../models/ticket_info.dart';
 import '../widgets/concert_before_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/poster_background.dart';
+import '../widgets/responsive_text.dart';
 
 /// 다이어리 화면 위에 "공연 전" 상세를 오버레이로 띄우는 위젯.
 ///
@@ -32,11 +33,20 @@ class ConcertBeforeOverlay extends StatefulWidget {
   /// 스캔된 티켓 정보(공연장/날짜/가격/좌석 등). 없으면 placeholder가 표시됩니다.
   final TicketInfo? ticketInfo;
 
+  /// 탭한 순간 다이어리 리스트에서 쓰이던 [DiaryFrameScale] 배율.
+  //
+  // [백엔드 수정]
+  // showGeneralDialog는 DiaryPageFrame 바깥의 새 라우트라 안에서
+  // DiaryFrameScale을 못 찾고 화면 전체 폭 기준으로 폴백함
+  // 탭 시점의 배율을 그대로 넘겨받아 오버레이 안에서도 동일하게 사용.
+  final double frameScale;
+
   const ConcertBeforeOverlay({
     super.key,
     required this.startRect,
     required this.collapsedTicket,
     required this.concertTitle,
+    required this.frameScale,
     this.ticketInfo,
   });
 
@@ -46,6 +56,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
     required Rect startRect,
     required Widget collapsedTicket,
     required String concertTitle,
+    required double frameScale,
     TicketInfo? ticketInfo,
   }) {
     return showGeneralDialog<void>(
@@ -59,6 +70,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
           startRect: startRect,
           collapsedTicket: collapsedTicket,
           concertTitle: concertTitle,
+          frameScale: frameScale,
           ticketInfo: ticketInfo,
         );
       },
@@ -77,7 +89,59 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   /// 포스트잇(콘텐츠) 페이드 인
   late final Animation<double> _postItOpacity;
 
+  // [백엔드 수정]
+  // 축소 티켓 <-> 확장 콘텐츠 크로스페이드 투명도를 매 프레임 double로
+  // 계산해서 매 프레임 다시 빌드되던걸 Animation<double>로 미리 만들어두고
+  // FadeTransition으로 씌우면 프레임마다 투명도만 갱신.
+  late final Animation<double> _expandedOpacity;
+  late final Animation<double> _collapsedOpacity;
+
   bool _isClosing = false;
+
+  // [백엔드 수정]
+  // 두 손가락 오므리기(핀치 인)로 오버레이를 닫는 기능.
+  // Listener로 직접 두 손가락 사이 거리를 계산.
+  final Map<int, Offset> _pinchPointers = {};
+  double? _pinchStartDistance;
+  bool _pinchTriggered = false;
+
+  double _pinchCurrentDistance() {
+    final points = _pinchPointers.values.toList();
+    return (points[0] - points[1]).distance;
+  }
+
+  void _onPinchPointerDown(PointerDownEvent event) {
+    _pinchPointers[event.pointer] = event.position;
+    if (_pinchPointers.length == 2) {
+      _pinchStartDistance = _pinchCurrentDistance();
+      _pinchTriggered = false;
+    } else {
+      _pinchStartDistance = null;
+    }
+  }
+
+  void _onPinchPointerMove(PointerMoveEvent event) {
+    if (!_pinchPointers.containsKey(event.pointer)) return;
+    _pinchPointers[event.pointer] = event.position;
+    final start = _pinchStartDistance;
+    if (_pinchPointers.length != 2 || start == null || _pinchTriggered) {
+      return;
+    }
+    // 다 펼쳐진 뒤에만 반응(펼쳐지는 도중엔 무시)
+    if (_controller.value < 0.95) return;
+    // 시작 거리 대비 30% 이상 오므라들면 닫기로 간주
+    if (_pinchCurrentDistance() / start < 0.7) {
+      _pinchTriggered = true;
+      _close();
+    }
+  }
+
+  void _onPinchPointerEnd(PointerEvent event) {
+    _pinchPointers.remove(event.pointer);
+    if (_pinchPointers.length < 2) {
+      _pinchStartDistance = null;
+    }
+  }
 
   @override
   void initState() {
@@ -95,6 +159,17 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
       curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic),
     );
 
+    // [백엔드 수정]
+    // 중간 지점 근처 아주 짧은 구간(약 8%)에서만 빠르게 바뀌도록 좁혀서,
+    // 겹쳐 보이는 구간을 거의 없애고 스위치되는 것처럼 보이게 함.
+    _expandedOpacity = CurvedAnimation(
+      parent: _t,
+      curve: const Interval(0.46, 0.54, curve: Curves.easeInOut),
+    );
+    _collapsedOpacity = _expandedOpacity.drive(
+      Tween<double>(begin: 1.0, end: 0.0),
+    );
+
     _controller.forward();
   }
 
@@ -109,7 +184,11 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   /// 영역, 그 영역의 중앙)을 써야 다이어리 메인 페이지와 같은 규격·위치로
   /// 보입니다(예전엔 SafeArea를 빼먹은 화면 전체 크기를 기준으로 계산해서
   /// 규격이 달랐습니다).
-  Rect _getRectForT(Size screen, EdgeInsets safePadding, double t) {
+  // [백엔드 수정]
+  // t와 무관한 최종(화면 전체로 다 커졌을 때) Rect만 따로 뽑음 - 확장
+  // 콘텐츠를 이 고정 크기로 한 번만 레이아웃하고 FittedBox로 지금 박스
+  // 크기에 맞춰 통째로 확대/축소하기 위함(아래 _getRectForT 설명 참고).
+  Rect _endRect(Size screen, EdgeInsets safePadding) {
     const ratio = DiaryPageFrame.diaryAspectRatio;
     final safeWidth = screen.width - safePadding.left - safePadding.right;
     final safeHeight = screen.height - safePadding.top - safePadding.bottom;
@@ -128,11 +207,14 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
       safePadding.left + safeWidth / 2,
       safePadding.top + safeHeight / 2,
     );
-    final end = Rect.fromCenter(
+    return Rect.fromCenter(
       center: safeCenter,
       width: endWidth,
       height: endHeight,
     );
+  }
+
+  Rect _getRectForT(Rect end, double t) {
     return Rect.lerp(widget.startRect, end, t)!;
   }
 
@@ -170,96 +252,119 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final screenSize = media.size;
+    final end = _endRect(screenSize, media.padding);
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) return;
-        _close();
-      },
-      child: Material(
-        type: MaterialType.transparency,
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) {
-            final t = _t.value;
-            final rect = _getRectForT(screenSize, media.padding, t);
-            final radius = _getRadiusForT(t);
+    // [백엔드 수정]
+    // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김.
+    final collapsedLayer = Positioned.fill(
+      child: IgnorePointer(
+        child: FadeTransition(
+          opacity: _collapsedOpacity,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: widget.startRect.width,
+              height: widget.startRect.height,
+              child: widget.collapsedTicket,
+            ),
+          ),
+        ),
+      ),
+    );
 
-            // 다이어리 화면 dim(불투명하게)
-            // - 확장 초반에는 더 약하게, 확장 후반에는 더 강하게
-            final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+    final expandedLayer = Positioned.fill(
+      child: FadeTransition(
+        opacity: _expandedOpacity,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          child: SizedBox(
+            width: end.width,
+            height: end.height,
+            child: _ExpandedConcertBefore(
+              postItOpacity: _postItOpacity,
+              concertTitle: widget.concertTitle,
+              ticketInfo: widget.ticketInfo,
+              onOutsideTap: _handleOutsideTap,
+            ),
+          ),
+        ),
+      ),
+    );
 
-            // 축소 티켓 -> 확장 콘텐츠로 자연스럽게 전환
-            final expandedOpacity = Curves.easeIn.transform(
-              ((t - 0.20) / 0.80).clamp(0.0, 1.0),
-            );
-            final collapsedOpacity = 1.0 - expandedOpacity;
-
-            return Stack(
-              children: [
-                // 아래: 다이어리 화면을 어둡게(불투명하게) 만드는 레이어
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(
-                      color: Colors.black.withValues(alpha: dimOpacity),
-                    ),
-                  ),
-                ),
-
-                // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
-                // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
-                // 제스처 경합(arena)에서 카드 안 인터랙티브 요소와 이
-                // 감지기가 항상 같이 경쟁하게 되어, 곧잘 이 감지기가 이겨서
-                // 카드 안 요소가 눌리지 않는 문제가 있습니다(공연 후
-                // 오버레이에서 실제로 발생). 아래에 두면 카드 안 인터랙티브
-                // 요소가 있는 자리는 그 요소가 먼저 히트되어 이 감지기까지
-                // 도달하지 않고, 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTapDown: (_) => _handleOutsideTap(),
-                    child: const SizedBox.expand(),
-                  ),
-                ),
-
-                // 확장되는 티켓(시작Rect -> 화면 전체)
-                Positioned.fromRect(
-                  rect: rect,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(radius),
-                    clipBehavior: Clip.antiAlias,
-                    child: Stack(
-                      children: [
-                        // (1) 축소 상태에서 보이던 티켓 UI
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: Opacity(
-                              opacity: collapsedOpacity,
-                              child: widget.collapsedTicket,
-                            ),
-                          ),
-                        ),
-
-                        // (2) 확장 상태의 공연 전 화면(포스터 배경 + 메인 페이지 + 포스트잇)
-                        Positioned.fill(
-                          child: Opacity(
-                            opacity: expandedOpacity,
-                            child: _ExpandedConcertBefore(
-                              postItOpacity: _postItOpacity,
-                              concertTitle: widget.concertTitle,
-                              ticketInfo: widget.ticketInfo,
-                              onOutsideTap: _handleOutsideTap,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            );
+    // [백엔드 수정]
+    // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
+    // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
+    // context.sp()가 리스트에서 보이던 것과 같은 배율 사용.
+    return Listener(
+      onPointerDown: _onPinchPointerDown,
+      onPointerMove: _onPinchPointerMove,
+      onPointerUp: _onPinchPointerEnd,
+      onPointerCancel: _onPinchPointerEnd,
+      child: DiaryFrameScale(
+        scale: widget.frameScale,
+        marginEachSide: 0,
+        child: PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            _close();
           },
+          child: Material(
+            type: MaterialType.transparency,
+            child: AnimatedBuilder(
+              animation: _controller,
+              child: Stack(children: [collapsedLayer, expandedLayer]),
+              builder: (context, child) {
+                final t = _t.value;
+                final rect = _getRectForT(end, t);
+                final radius = _getRadiusForT(t);
+
+                // 다이어리 화면 dim(불투명하게)
+                // - 확장 초반에는 더 약하게, 확장 후반에는 더 강하게
+                final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+
+                return Stack(
+                  children: [
+                    // 아래: 다이어리 화면을 어둡게(불투명하게) 만드는 레이어
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: dimOpacity),
+                        ),
+                      ),
+                    ),
+
+                    // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
+                    // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
+                    // 제스처 경합(arena)에서 카드 안 인터랙티브 요소와 이
+                    // 감지기가 항상 같이 경쟁하게 되어, 곧잘 이 감지기가 이겨서
+                    // 카드 안 요소가 눌리지 않는 문제가 있습니다(공연 후
+                    // 오버레이에서 실제로 발생). 아래에 두면 카드 안 인터랙티브
+                    // 요소가 있는 자리는 그 요소가 먼저 히트되어 이 감지기까지
+                    // 도달하지 않고, 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTapDown: (_) => _handleOutsideTap(),
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+
+                    // 확장되는 티켓(시작Rect -> 화면 전체) - (1)/(2) 레이어는
+                    // child(위에서 한 번만 만든 Stack)를 그대로 재사용.
+                    Positioned.fromRect(
+                      rect: rect,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(radius),
+                        clipBehavior: Clip.antiAlias,
+                        child: child,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
         ),
       ),
     );

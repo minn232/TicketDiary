@@ -8,6 +8,7 @@ import '../models/artist_model.dart';
 import '../models/concert_model.dart';
 import '../models/ticket_scan.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 import 'social_service.dart';
 
 /// 사용자가 "찜"한 아티스트/공연을 보관하는 전역 저장소.
@@ -21,7 +22,13 @@ import 'social_service.dart';
 ///   교체 반영(해제도 서버에서 지워짐). 서버가 소식 피드를 만들 때 이 목록을
 ///   사용합니다. [syncFromServer]로 다른 기기에서 등록한 찜도 로컬로 병합합니다.
 class FavoritesStore extends ChangeNotifier {
-  FavoritesStore._();
+  // [백엔드 수정]
+  // 로그인 유저가 바뀌어도(게스트→카카오, 카카오→다른 계정) load()/
+  // syncFromServer()가 한 번 실행되면 다시 안 도는 문제 - AuthService를
+  // 구독해 유저 id가 바뀌면 다시 불러옴(DiaryScreen과 동일 패턴).
+  FavoritesStore._() {
+    AuthService.instance.addListener(_onAuthChanged);
+  }
 
   static final FavoritesStore instance = FavoritesStore._();
 
@@ -35,6 +42,25 @@ class FavoritesStore extends ChangeNotifier {
 
   bool _loaded = false;
   bool _serverSynced = false;
+
+  /// 마지막으로 load()/syncFromServer()를 실행했던 유저 id.
+  String? _loadedForUserId;
+
+  void _onAuthChanged() {
+    final currentUserId = AuthService.instance.userId;
+    if (currentUserId == _loadedForUserId) return;
+    _loadedForUserId = currentUserId;
+
+    _artists.clear();
+    _concerts.clear();
+    _loaded = false;
+    _serverSynced = false;
+    _revision++;
+    notifyListeners();
+
+    unawaited(load());
+    unawaited(syncFromServer());
+  }
 
   /// 찜 목록(또는 그 표시 내용)이 바뀔 때마다 1씩 늘어납니다.
   /// [NewsCacheStore]가 이 값을 캐시와 함께 저장해뒀다가, 저장 당시 값과
@@ -122,6 +148,7 @@ class FavoritesStore extends ChangeNotifier {
               endDate: detail.endDate,
               artistName: detail.artistName,
               ticketingDate: detail.ticketingDate,
+              ticketingLinks: detail.ticketingLinks,
             );
             changed = true;
           }
@@ -181,6 +208,8 @@ class FavoritesStore extends ChangeNotifier {
         ticketingDate: ticketingDateRaw != null
             ? DateTime.tryParse(ticketingDateRaw)
             : null,
+        ticketingLinks: (map['ticketingLinks'] as Map<String, dynamic>?)
+            ?.map((key, value) => MapEntry(key, value as String)),
       );
       if (concert.name.isNotEmpty) {
         _concerts[concert.name] = concert;
@@ -200,7 +229,10 @@ class FavoritesStore extends ChangeNotifier {
     await _pushArtistsToServer();
   }
 
-  Future<void> toggleConcert(ConcertModel concert) async {
+  // [백엔드 수정]
+  // 이미 티켓 등록된 공연은 서버가 찜 저장을 거부. 그 경우 로컬 하트도
+  // 다시 꺼주고 true를 반환해서, 호출부가 안내 문구를 띄울 수 있게 함.
+  Future<bool> toggleConcert(ConcertModel concert) async {
     final adding = !_concerts.containsKey(concert.name);
     if (!adding) {
       _concerts.remove(concert.name);
@@ -210,12 +242,21 @@ class FavoritesStore extends ChangeNotifier {
     _revision++;
     notifyListeners();
     await _persistConcerts();
-    await _pushConcertsToServer();
+    final rejectedIds = await _pushConcertsToServer();
+    final rejected = adding && rejectedIds.contains(concert.id);
+    if (rejected) {
+      _concerts.remove(concert.name);
+      _revision++;
+      notifyListeners();
+      await _persistConcerts();
+      return true;
+    }
     // 검색 목록 응답엔 티케팅 오픈일이 항상 비어 있으므로, 방금 찜한 공연은
     // 상세 조회로 한 번 더 확인해봅니다(크롤러가 이미 수집해뒀을 수 있음).
     if (adding) {
       unawaited(_backfillMissingConcertFields(concert));
     }
+    return false;
   }
 
   /// [concert]에 공연장/기간/출연진/티케팅 오픈일 중 비어 있는 게 있으면
@@ -226,7 +267,8 @@ class FavoritesStore extends ChangeNotifier {
     final kopisId = concert.kopisId;
     final missingSomething = concert.venue == null ||
         concert.startDate == null ||
-        concert.ticketingDate == null;
+        concert.ticketingDate == null ||
+        concert.ticketingLinks == null;
     if (!missingSomething || kopisId == null || kopisId.isEmpty) return;
 
     try {
@@ -246,6 +288,7 @@ class FavoritesStore extends ChangeNotifier {
         artistName:
             current.artistName.isNotEmpty ? current.artistName : detail.artistName,
         ticketingDate: current.ticketingDate ?? detail.ticketingDate,
+        ticketingLinks: current.ticketingLinks ?? detail.ticketingLinks,
       );
       _revision++;
       notifyListeners();
@@ -299,6 +342,7 @@ class FavoritesStore extends ChangeNotifier {
                 'endDate': c.endDate?.toIso8601String(),
                 'artistName': c.artistName,
                 'ticketingDate': c.ticketingDate?.toIso8601String(),
+                'ticketingLinks': c.ticketingLinks,
               },
             )
             .toList(),
@@ -317,13 +361,22 @@ class FavoritesStore extends ChangeNotifier {
 
   /// 현재 공연 찜 목록을 서버에 전체 반영합니다. 백엔드가 공연 UUID를
   /// 요구하므로, UUID가 없는 항목(구버전 로컬 저장 등)은 제외됩니다.
-  Future<void> _pushConcertsToServer() async {
+  //
+  // [백엔드 수정]
+  // 서버가 이미 티켓 등록된 공연은 저장하지 않고 걸러서 돌려주므로, 보낸
+  // concert_id 중 응답에 없는 것들을 반환(호출부의 로컬 정정용).
+  Future<Set<String>> _pushConcertsToServer() async {
+    final requested = [
+      for (final c in _concerts.values)
+        if (c.id.isNotEmpty) {'concert_id': c.id, 'kopis_concert_id': c.kopisId},
+    ];
     try {
-      await _social.replaceConcertFollows([
-        for (final c in _concerts.values)
-          if (c.id.isNotEmpty)
-            {'concert_id': c.id, 'kopis_concert_id': c.kopisId},
-      ]);
-    } catch (_) {}
+      final saved = await _social.replaceConcertFollows(requested);
+      final savedIds = {for (final e in saved) e['concert_id'] as String};
+      final requestedIds = {for (final e in requested) e['concert_id'] as String};
+      return requestedIds.difference(savedIds);
+    } catch (_) {
+      return {};
+    }
   }
 }

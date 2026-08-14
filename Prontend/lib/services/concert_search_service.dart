@@ -52,6 +52,7 @@ class BackendConcertSearchService implements ConcertSearchService {
           endDate: c.endDate,
           artistName: c.artistName,
           ticketingDate: c.ticketingDate,
+          ticketingLinks: c.ticketingLinks,
         ),
     ];
   }

@@ -35,6 +35,10 @@ class ConcertResponse {
   final String eventType;
   final DateTime? ticketingDate;
 
+  // [백엔드 수정]
+  // 예매처 바로가기 버튼용(키: YES24/INTERPARK/TICKETLINK/MELON).
+  final Map<String, String>? ticketingLinks;
+
   const ConcertResponse({
     required this.id,
     this.kopisId,
@@ -49,6 +53,7 @@ class ConcertResponse {
     this.price,
     required this.eventType,
     this.ticketingDate,
+    this.ticketingLinks,
   });
 
   factory ConcertResponse.fromJson(Map<String, dynamic> json) {
@@ -72,6 +77,8 @@ class ConcertResponse {
       ticketingDate: json['ticketing_date'] != null
           ? DateTime.parse(json['ticketing_date'] as String)
           : null,
+      ticketingLinks: (json['ticketing_links'] as Map<String, dynamic>?)
+          ?.map((key, value) => MapEntry(key, value as String)),
     );
   }
 
@@ -91,6 +98,7 @@ class ConcertResponse {
     'price': price?.map((e) => e.toJson()).toList(),
     'event_type': eventType,
     'ticketing_date': ticketingDate?.toIso8601String(),
+    'ticketing_links': ticketingLinks,
   };
 }
 

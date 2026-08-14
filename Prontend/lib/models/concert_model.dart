@@ -24,6 +24,11 @@ class ConcertModel {
   /// 예매처에서 실제로 수집해 백엔드에 채워준 경우에만 값이 옵니다.
   final DateTime? ticketingDate;
 
+  // [백엔드 수정]
+  // 예매처 바로가기 버튼용(키: YES24/INTERPARK/TICKETLINK/MELON). KOPIS가
+  // 못 준 공연은 null/빈 맵.
+  final Map<String, String>? ticketingLinks;
+
   const ConcertModel({
     required this.name,
     required this.posterImageUrl,
@@ -34,5 +39,6 @@ class ConcertModel {
     this.endDate,
     this.artistName = const [],
     this.ticketingDate,
+    this.ticketingLinks,
   });
 }

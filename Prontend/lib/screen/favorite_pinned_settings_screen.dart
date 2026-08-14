@@ -28,8 +28,9 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
 
 /// 선호 아티스트 / 찜 공연 검색 패널(프레임 없음).
 ///
-/// - 검색창에 타이핑하면(별도 검색 버튼 없이) 잠깐 멈출 때마다 자동으로
-///   백엔드(KOPIS 실시간 검색)에서 아티스트/공연을 찾아 아래에 보여줍니다.
+/// - 검색은 키보드 "검색/완료"(엔터)를 눌러야 실행됩니다. 타이핑 중간마다
+///   자동으로 백엔드(KOPIS 실시간 검색)를 부르면 한 번 검색하는 동안에도
+///   여러 번 호출돼(KOPIS 쪽 요청 급증) 차단 위험이 있어 이렇게 바꿨습니다.
 /// - 결과 카드를 누르면 찜 토글되며, 이 찜 목록은 [FavoritesStore]를 통해
 ///   기기 로컬과 서버(`/social/artists`, `/social/concerts`) 양쪽에 저장되어
 ///   소식 탭 피드 생성에 사용됩니다.
@@ -70,18 +71,17 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     );
   }
 
-  /// 매 키 입력마다 KOPIS 실시간 검색을 부르지 않도록, 타이핑이 잠깐
-  /// 멈춘 뒤에 검색을 실행합니다.
-  static const _debounce = Duration(milliseconds: 450);
-  Timer? _artistDebounce;
-  Timer? _concertDebounce;
-
   List<ArtistModel> _artistResults = const [];
   List<ConcertModel> _concertResults = const [];
   bool _artistSearching = false;
   bool _concertSearching = false;
   bool _artistSearchFailed = false;
   bool _concertSearchFailed = false;
+
+  // 마지막으로 실제 검색을 실행한 검색어. 지금 입력창 텍스트와 다르면(=아직
+  // 검색 안 누름) "결과 없음"이 아니라 검색을 눌러보라는 안내를 보여줍니다.
+  String? _lastArtistQuery;
+  String? _lastConcertQuery;
 
   @override
   void initState() {
@@ -90,14 +90,14 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     // 다른 기기/이전 세션에서 서버에 저장해둔 찜도 불러와 합칩니다.
     unawaited(_favorites.syncFromServer());
     _favorites.addListener(_onFavoritesChanged);
-    _artistQueryController.addListener(_onArtistQueryChanged);
-    _concertQueryController.addListener(_onConcertQueryChanged);
+    // 자동 검색은 안 하지만, 지웠을 때 이전 검색 결과가 남아있지 않도록
+    // 빈 텍스트가 됐는지만 감지합니다(네트워크 요청 없음).
+    _artistQueryController.addListener(_onArtistQueryTextChanged);
+    _concertQueryController.addListener(_onConcertQueryTextChanged);
   }
 
   @override
   void dispose() {
-    _artistDebounce?.cancel();
-    _concertDebounce?.cancel();
     _favorites.removeListener(_onFavoritesChanged);
     _artistQueryController.dispose();
     _concertQueryController.dispose();
@@ -110,19 +110,30 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     setState(() {});
   }
 
-  void _onArtistQueryChanged() {
-    _artistDebounce?.cancel();
-    final query = _artistQueryController.text;
-    if (query.trim().isEmpty) {
+  // 네트워크 요청은 없지만, 상태 문구("검색을 눌러주세요" 등)가 입력창과
+  // 어긋나지 않도록 매 입력마다 다시 그립니다.
+  void _onArtistQueryTextChanged() {
+    if (_artistQueryController.text.isEmpty) {
       setState(() {
         _artistResults = const [];
         _artistSearching = false;
         _artistSearchFailed = false;
       });
-      return;
+    } else {
+      setState(() {});
     }
-    setState(() => _artistSearching = true);
-    _artistDebounce = Timer(_debounce, () => _runArtistSearch(query));
+  }
+
+  // [백엔드 수정]
+  // 타이핑 중 자동 검색(디바운스)이 짧은 pause마다 KOPIS를 호출해 요청이
+  // 급증하던 문제 - 키보드 검색(엔터)을 눌렀을 때만 검색하도록 변경.
+  void _onArtistSubmitted(String query) {
+    if (query.trim().isEmpty) return;
+    setState(() {
+      _artistSearching = true;
+      _lastArtistQuery = query;
+    });
+    _runArtistSearch(query);
   }
 
   Future<void> _runArtistSearch(String query) async {
@@ -144,19 +155,25 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     }
   }
 
-  void _onConcertQueryChanged() {
-    _concertDebounce?.cancel();
-    final query = _concertQueryController.text;
-    if (query.trim().isEmpty) {
+  void _onConcertQueryTextChanged() {
+    if (_concertQueryController.text.isEmpty) {
       setState(() {
         _concertResults = const [];
         _concertSearching = false;
         _concertSearchFailed = false;
       });
-      return;
+    } else {
+      setState(() {});
     }
-    setState(() => _concertSearching = true);
-    _concertDebounce = Timer(_debounce, () => _runConcertSearch(query));
+  }
+
+  void _onConcertSubmitted(String query) {
+    if (query.trim().isEmpty) return;
+    setState(() {
+      _concertSearching = true;
+      _lastConcertQuery = query;
+    });
+    _runConcertSearch(query);
   }
 
   Future<void> _runConcertSearch(String query) async {
@@ -181,63 +198,28 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   /// 결과가 비어 있을 때 결과 영역에 보여줄 안내 문구.
   String get _artistStatusText {
     if (_artistSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
-    if (_artistQueryController.text.trim().isEmpty) return '검색어를 입력해보세요.';
+    final text = _artistQueryController.text.trim();
+    if (text.isEmpty) return '검색어를 입력해보세요.';
+    if (text != _lastArtistQuery) return '키보드에서 검색을 눌러주세요.';
     return '검색 결과가 없습니다.';
   }
 
   String get _concertStatusText {
     if (_concertSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
-    if (_concertQueryController.text.trim().isEmpty) return '검색어를 입력해보세요.';
+    final text = _concertQueryController.text.trim();
+    if (text.isEmpty) return '검색어를 입력해보세요.';
+    if (text != _lastConcertQuery) return '키보드에서 검색을 눌러주세요.';
     return '검색 결과가 없습니다.';
   }
 
-  void _openManageSheet() {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: '찜 관리 닫기',
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      transitionDuration: const Duration(milliseconds: 260),
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return Stack(
-          children: [
-            // 패널 바깥(빈 공간)을 누르면 뒤로가기
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => Navigator.of(context).pop(),
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: SizedBox(
-                width: MediaQuery.of(context).size.width * 0.5,
-                height: MediaQuery.of(context).size.height * 0.5,
-                // 패널 내부 탭이 바깥 탭으로 오인되어 닫히지 않도록 흡수
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {},
-                  child: _ManageFavoritesSheet(favorites: _favorites),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(-1, 0),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        );
-      },
-    );
+  // [백엔드 수정]
+  // 이미 티켓 등록된 공연이면 서버가 찜을 거부하므로 안내 문구를 띄움
+  Future<void> _onConcertTap(ConcertModel c) async {
+    final rejected = await _favorites.toggleConcert(c);
+    if (!mounted || !rejected) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('이미 티켓으로 등록된 공연입니다')));
   }
 
   @override
@@ -257,18 +239,25 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
           borderRadius: BorderRadius.circular(18),
           child: Column(
             children: [
-              _TopBar(
-                title: '아티스트 / 찜 공연',
-                onBack: widget.onBack,
-                onManage: _openManageSheet,
-              ),
-              const Divider(height: 1, thickness: 1),
               // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
               // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
-              // PageView 바로 위에 고정으로 둡니다.
+              // PageView 바로 위에 고정으로 둡니다. 원래 이 위에 있던
+              // 제목 표시줄("아티스트 / 찜 공연" + 관리 버튼)은 없애고,
+              // 그 자리만큼 아래 내용이 위로 당겨 올라옵니다.
               _CategorySwitcher(
                 current: _currentCategory,
                 onSelect: _goToCategory,
+              ),
+              // 예전엔 "관리" 버튼을 눌러야 슬라이드 패널로 볼 수 있던
+              // 찜 목록을, 검색창 바로 위에 가로 스크롤 스트립으로 항상
+              // 보이게 옮겼습니다. 지금 선택된 카테고리(선호 아티스트/찜
+              // 공연)에 맞는 목록만 보여주고, 누르면 바로 찜 해제됩니다.
+              // (이 위젯 자체가 이미 _onFavoritesChanged로 찜 변경마다
+              // 통째로 다시 그려지므로, 별도 리스너 없이 최신 목록을
+              // 그대로 넘겨받습니다.)
+              _FavoritedStrip(
+                category: _currentCategory,
+                favorites: _favorites,
               ),
               Expanded(
                 child: PageView(
@@ -289,6 +278,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                       isFavoritedOf: (a) =>
                           _favorites.isArtistFavorited(a.name),
                       onTap: (a) => _favorites.toggleArtist(a),
+                      onSubmitted: _onArtistSubmitted,
                     ),
                     _CategorySearchPage<ConcertModel>(
                       controller: _concertQueryController,
@@ -300,7 +290,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                       imageUrlOf: (c) => c.posterImageUrl,
                       isFavoritedOf: (c) =>
                           _favorites.isConcertFavorited(c.name),
-                      onTap: (c) => _favorites.toggleConcert(c),
+                      onTap: _onConcertTap,
+                      onSubmitted: _onConcertSubmitted,
                     ),
                   ],
                 ),
@@ -308,60 +299,6 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  final String title;
-
-  /// null이면 뒤로가기 버튼을 숨깁니다(소식 탭 내장 모드처럼 풀탭 조각이
-  /// 복귀를 담당하는 경우).
-  final VoidCallback? onBack;
-  final VoidCallback onManage;
-
-  const _TopBar({
-    required this.title,
-    required this.onBack,
-    required this.onManage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(onBack == null ? 18 : 10, 10, 10, 10),
-      child: Row(
-        children: [
-          if (onBack != null)
-            IconButton(
-              onPressed: onBack,
-              icon: const Icon(Icons.chevron_left),
-              color: Colors.black.withValues(alpha: 0.75),
-            ),
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: context.sp(15),
-                fontWeight: FontWeight.w900,
-                color: Colors.black87,
-              ),
-            ),
-          ),
-          TextButton.icon(
-            onPressed: onManage,
-            icon: const Icon(Icons.tune, size: 16),
-            label: const Text('관리'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.black.withValues(alpha: 0.65),
-              textStyle: TextStyle(
-                fontSize: context.sp(13),
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -382,6 +319,7 @@ class _CategorySearchPage<T> extends StatelessWidget {
   final IconData placeholderIcon;
   final bool Function(T) isFavoritedOf;
   final ValueChanged<T> onTap;
+  final ValueChanged<String> onSubmitted;
 
   const _CategorySearchPage({
     super.key,
@@ -395,6 +333,7 @@ class _CategorySearchPage<T> extends StatelessWidget {
     this.placeholderIcon = Icons.broken_image_outlined,
     required this.isFavoritedOf,
     required this.onTap,
+    required this.onSubmitted,
   });
 
   @override
@@ -404,7 +343,11 @@ class _CategorySearchPage<T> extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SearchField(controller: controller, hintText: hintText),
+          _SearchField(
+            controller: controller,
+            hintText: hintText,
+            onSubmitted: onSubmitted,
+          ),
           const SizedBox(height: 14),
           Expanded(
             child: _SearchResultsGrid<T>(
@@ -523,8 +466,13 @@ class _CategoryPill extends StatelessWidget {
 class _SearchField extends StatelessWidget {
   final TextEditingController controller;
   final String hintText;
+  final ValueChanged<String> onSubmitted;
 
-  const _SearchField({required this.controller, required this.hintText});
+  const _SearchField({
+    required this.controller,
+    required this.hintText,
+    required this.onSubmitted,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -550,6 +498,8 @@ class _SearchField extends StatelessWidget {
           Expanded(
             child: TextField(
               controller: controller,
+              textInputAction: TextInputAction.search,
+              onSubmitted: onSubmitted,
               decoration: InputDecoration(
                 border: InputBorder.none,
                 isDense: true,
@@ -774,102 +724,78 @@ class _ThumbPlaceholder extends StatelessWidget {
   }
 }
 
-/// "관리" 버튼을 누르면 뜨는, 현재 찜한 아티스트/공연 목록 + 찜 해제 시트.
-class _ManageFavoritesSheet extends StatelessWidget {
+/// 예전엔 "관리" 버튼을 눌러야 슬라이드 패널로 볼 수 있던 찜 목록을,
+/// 카테고리 스위처 바로 아래(검색창 위)에 가로 스크롤 스트립으로 상시
+/// 노출합니다. [category]에 맞춰 선호 아티스트/찜 공연 중 하나만 보여주고,
+/// 항목을 누르면 바로 찜 해제됩니다.
+class _FavoritedStrip extends StatelessWidget {
+  final _FavCategory category;
   final FavoritesStore favorites;
 
-  const _ManageFavoritesSheet({required this.favorites});
+  const _FavoritedStrip({required this.category, required this.favorites});
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: const BorderRadius.horizontal(right: Radius.circular(20)),
-      clipBehavior: Clip.antiAlias,
-      child: SafeArea(
-        child: AnimatedBuilder(
-          animation: favorites,
-          builder: (context, _) {
-            final artists = favorites.favoriteArtists;
-            final concerts = favorites.favoriteConcerts;
+    final isArtist = category == _FavCategory.artist;
+    final artists = favorites.favoriteArtists;
+    final concerts = favorites.favoriteConcerts;
+    final isEmpty = isArtist ? artists.isEmpty : concerts.isEmpty;
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                  child: Text(
-                    '찜 관리',
-                    style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w900),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: SizedBox(
+        // 항목 썸네일의 빨간 테두리 두께(2.4)와 아래 라벨 줄까지 넉넉히
+        // 들어가도록 78 -> 88로 늘렸습니다(기존엔 위쪽이 살짝 잘려 보였음).
+        height: 88,
+        child: isEmpty
+            ? Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  isArtist ? '찜한 아티스트가 없습니다.' : '찜한 공연이 없습니다.',
+                  style: TextStyle(
+                    fontSize: context.sp(12),
+                    color: Colors.black.withValues(alpha: 0.32),
                   ),
                 ),
-                const Divider(height: 1, thickness: 1),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '선호 아티스트',
-                          style: TextStyle(
-                            fontSize: context.sp(13),
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        if (artists.isEmpty)
-                          const _EmptyManageRow(text: '찜한 아티스트가 없습니다.')
-                        else
-                          ...artists.map(
-                            (a) => _ManageListTile(
-                              label: a.name,
-                              imageUrl: a.profileImageUrl,
-                              placeholderIcon: Icons.person_outline,
-                              onRemove: () => favorites.removeArtist(a.name),
-                            ),
-                          ),
-                        const SizedBox(height: 18),
-                        Text(
-                          '찜 공연',
-                          style: TextStyle(
-                            fontSize: context.sp(13),
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        if (concerts.isEmpty)
-                          const _EmptyManageRow(text: '찜한 공연이 없습니다.')
-                        else
-                          ...concerts.map(
-                            (c) => _ManageListTile(
-                              label: c.name,
-                              imageUrl: c.posterImageUrl,
-                              onRemove: () => favorites.removeConcert(c.name),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
+              )
+            : ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: isArtist ? artists.length : concerts.length,
+                separatorBuilder: (context, index) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  if (isArtist) {
+                    final a = artists[index];
+                    return _FavoritedChip(
+                      label: a.name,
+                      imageUrl: a.profileImageUrl,
+                      placeholderIcon: Icons.person_outline,
+                      onRemove: () => favorites.removeArtist(a.name),
+                    );
+                  }
+                  final c = concerts[index];
+                  return _FavoritedChip(
+                    label: c.name,
+                    imageUrl: c.posterImageUrl,
+                    onRemove: () => favorites.removeConcert(c.name),
+                  );
+                },
+              ),
       ),
     );
   }
 }
 
-class _ManageListTile extends StatelessWidget {
+/// [_FavoritedStrip]의 항목 하나. 검색 결과 카드([_ThumbCard])가 찜된
+/// 항목에 쓰는 것과 똑같은 빨간 테두리 + 하트 배지로 "이미 찜한 상태"를
+/// 표시합니다 — 배지는 썸네일 안쪽에 둬서(바깥으로 튀어나오지 않게) 가로
+/// 스크롤 뷰포트에 잘리지 않습니다. 항목을 누르면 찜이 해제됩니다.
+class _FavoritedChip extends StatelessWidget {
   final String label;
   final String imageUrl;
   final IconData placeholderIcon;
   final VoidCallback onRemove;
 
-  const _ManageListTile({
+  const _FavoritedChip({
     required this.label,
     required this.imageUrl,
     this.placeholderIcon = Icons.broken_image_outlined,
@@ -878,60 +804,63 @@ class _ManageListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              width: 40,
-              height: 40,
-              child: imageUrl.isEmpty
-                  ? _ThumbPlaceholder(icon: placeholderIcon)
-                  : Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _ThumbPlaceholder(icon: placeholderIcon),
+    return GestureDetector(
+      onTap: onRemove,
+      child: SizedBox(
+        width: 58,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: const Color(0xFFEF4444),
+                      width: 2.4,
                     ),
+                  ),
+                  child: imageUrl.isEmpty
+                      ? _ThumbPlaceholder(icon: placeholderIcon)
+                      : Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _ThumbPlaceholder(icon: placeholderIcon),
+                        ),
+                ),
+                Positioned(
+                  top: 3,
+                  right: 3,
+                  child: Container(
+                    padding: const EdgeInsets.all(2.5),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.favorite, size: 10, color: Colors.white),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
+            const SizedBox(height: 4),
+            Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: context.sp(14), fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: context.sp(10.5),
+                fontWeight: FontWeight.w700,
+                color: Colors.black.withValues(alpha: 0.6),
+              ),
             ),
-          ),
-          IconButton(
-            onPressed: onRemove,
-            icon: const Icon(Icons.close, size: 18),
-            color: Colors.black.withValues(alpha: 0.45),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyManageRow extends StatelessWidget {
-  final String text;
-
-  const _EmptyManageRow({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: context.sp(12),
-          color: Colors.black.withValues(alpha: 0.35),
+          ],
         ),
       ),
     );

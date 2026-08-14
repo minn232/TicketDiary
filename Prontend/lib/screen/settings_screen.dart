@@ -31,7 +31,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final NotificationSettingsService _notifSettingsService =
       NotificationSettingsService();
 
-  bool pushExpanded = false;
+  // 하위 알림 5개를 바로 볼 수 있도록 기본값을 펼친 상태로 둡니다.
+  bool pushExpanded = true;
   bool pushDayBefore = false;
   bool pushOnTheDay = false;
   bool pushTicketDelivery = false;
@@ -255,18 +256,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               title: '하루전 알림',
                               value: pushDayBefore,
                               onChanged: _setDayBefore,
+                              indent: true,
                             ),
                             _divider,
                             _SwitchRow(
                               title: '당일날 알림',
                               value: pushOnTheDay,
                               onChanged: _setConcertDay,
+                              indent: true,
                             ),
                             _divider,
                             _SwitchRow(
                               title: '티켓배송일 알림',
                               value: pushTicketDelivery,
                               onChanged: _setDelivery,
+                              indent: true,
                             ),
                             _divider,
                             // [백엔드 수정]
@@ -275,6 +279,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               title: '선호 아티스트 공연 알림',
                               value: pushFavArtistConcert,
                               onChanged: _setFavArtistConcert,
+                              indent: true,
                             ),
                             _divider,
                             // [백엔드 수정]
@@ -283,6 +288,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               title: '찜 공연 알림',
                               value: pushPinnedConcert,
                               onChanged: _setPinnedConcert,
+                              indent: true,
                             ),
                           ],
                         ),
@@ -362,12 +368,15 @@ class _SwitchRow extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
   final Color? titleColor;
+  // "푸쉬 알림" 하위 항목처럼 상위 줄과 구분되게 왼쪽으로 들여써야 할 때 true.
+  final bool indent;
 
   const _SwitchRow({
     required this.title,
     required this.value,
     required this.onChanged,
     this.titleColor,
+    this.indent = false,
   });
 
   @override
@@ -375,7 +384,7 @@ class _SwitchRow extends StatelessWidget {
     return SizedBox(
       height: 56,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: EdgeInsets.only(left: indent ? 32 : 16, right: 16),
         child: Row(
           children: [
             Expanded(
