@@ -46,7 +46,7 @@ class NewsScreen extends StatefulWidget {
 enum _FlipPhase { news, toFav, fav, loading, toNews }
 
 class _NewsScreenState extends State<NewsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static const Color _paperColor = Color(0xFFF4F1E1);
 
   /// 소식 페이지 상단 여백을 기본(10)보다 늘려, 페이지 뒤에서 끼워 올린
