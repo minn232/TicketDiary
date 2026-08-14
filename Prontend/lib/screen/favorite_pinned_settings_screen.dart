@@ -191,55 +191,6 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     return '검색 결과가 없습니다.';
   }
 
-  void _openManageSheet() {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: '찜 관리 닫기',
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      transitionDuration: const Duration(milliseconds: 260),
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return Stack(
-          children: [
-            // 패널 바깥(빈 공간)을 누르면 뒤로가기
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => Navigator.of(context).pop(),
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: SizedBox(
-                width: MediaQuery.of(context).size.width * 0.5,
-                height: MediaQuery.of(context).size.height * 0.5,
-                // 패널 내부 탭이 바깥 탭으로 오인되어 닫히지 않도록 흡수
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {},
-                  child: _ManageFavoritesSheet(favorites: _favorites),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return SlideTransition(
-          position: Tween<Offset>(
-            begin: const Offset(-1, 0),
-            end: Offset.zero,
-          ).animate(curved),
-          child: child,
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -257,18 +208,25 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
           borderRadius: BorderRadius.circular(18),
           child: Column(
             children: [
-              _TopBar(
-                title: '아티스트 / 찜 공연',
-                onBack: widget.onBack,
-                onManage: _openManageSheet,
-              ),
-              const Divider(height: 1, thickness: 1),
               // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
               // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
-              // PageView 바로 위에 고정으로 둡니다.
+              // PageView 바로 위에 고정으로 둡니다. 원래 이 위에 있던
+              // 제목 표시줄("아티스트 / 찜 공연" + 관리 버튼)은 없애고,
+              // 그 자리만큼 아래 내용이 위로 당겨 올라옵니다.
               _CategorySwitcher(
                 current: _currentCategory,
                 onSelect: _goToCategory,
+              ),
+              // 예전엔 "관리" 버튼을 눌러야 슬라이드 패널로 볼 수 있던
+              // 찜 목록을, 검색창 바로 위에 가로 스크롤 스트립으로 항상
+              // 보이게 옮겼습니다. 지금 선택된 카테고리(선호 아티스트/찜
+              // 공연)에 맞는 목록만 보여주고, 누르면 바로 찜 해제됩니다.
+              // (이 위젯 자체가 이미 _onFavoritesChanged로 찜 변경마다
+              // 통째로 다시 그려지므로, 별도 리스너 없이 최신 목록을
+              // 그대로 넘겨받습니다.)
+              _FavoritedStrip(
+                category: _currentCategory,
+                favorites: _favorites,
               ),
               Expanded(
                 child: PageView(
@@ -308,60 +266,6 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  final String title;
-
-  /// null이면 뒤로가기 버튼을 숨깁니다(소식 탭 내장 모드처럼 풀탭 조각이
-  /// 복귀를 담당하는 경우).
-  final VoidCallback? onBack;
-  final VoidCallback onManage;
-
-  const _TopBar({
-    required this.title,
-    required this.onBack,
-    required this.onManage,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(onBack == null ? 18 : 10, 10, 10, 10),
-      child: Row(
-        children: [
-          if (onBack != null)
-            IconButton(
-              onPressed: onBack,
-              icon: const Icon(Icons.chevron_left),
-              color: Colors.black.withValues(alpha: 0.75),
-            ),
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: context.sp(15),
-                fontWeight: FontWeight.w900,
-                color: Colors.black87,
-              ),
-            ),
-          ),
-          TextButton.icon(
-            onPressed: onManage,
-            icon: const Icon(Icons.tune, size: 16),
-            label: const Text('관리'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.black.withValues(alpha: 0.65),
-              textStyle: TextStyle(
-                fontSize: context.sp(13),
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -774,102 +678,78 @@ class _ThumbPlaceholder extends StatelessWidget {
   }
 }
 
-/// "관리" 버튼을 누르면 뜨는, 현재 찜한 아티스트/공연 목록 + 찜 해제 시트.
-class _ManageFavoritesSheet extends StatelessWidget {
+/// 예전엔 "관리" 버튼을 눌러야 슬라이드 패널로 볼 수 있던 찜 목록을,
+/// 카테고리 스위처 바로 아래(검색창 위)에 가로 스크롤 스트립으로 상시
+/// 노출합니다. [category]에 맞춰 선호 아티스트/찜 공연 중 하나만 보여주고,
+/// 항목을 누르면 바로 찜 해제됩니다.
+class _FavoritedStrip extends StatelessWidget {
+  final _FavCategory category;
   final FavoritesStore favorites;
 
-  const _ManageFavoritesSheet({required this.favorites});
+  const _FavoritedStrip({required this.category, required this.favorites});
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: const BorderRadius.horizontal(right: Radius.circular(20)),
-      clipBehavior: Clip.antiAlias,
-      child: SafeArea(
-        child: AnimatedBuilder(
-          animation: favorites,
-          builder: (context, _) {
-            final artists = favorites.favoriteArtists;
-            final concerts = favorites.favoriteConcerts;
+    final isArtist = category == _FavCategory.artist;
+    final artists = favorites.favoriteArtists;
+    final concerts = favorites.favoriteConcerts;
+    final isEmpty = isArtist ? artists.isEmpty : concerts.isEmpty;
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                  child: Text(
-                    '찜 관리',
-                    style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w900),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: SizedBox(
+        // 항목 썸네일의 빨간 테두리 두께(2.4)와 아래 라벨 줄까지 넉넉히
+        // 들어가도록 78 -> 88로 늘렸습니다(기존엔 위쪽이 살짝 잘려 보였음).
+        height: 88,
+        child: isEmpty
+            ? Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  isArtist ? '찜한 아티스트가 없습니다.' : '찜한 공연이 없습니다.',
+                  style: TextStyle(
+                    fontSize: context.sp(12),
+                    color: Colors.black.withValues(alpha: 0.32),
                   ),
                 ),
-                const Divider(height: 1, thickness: 1),
-                Expanded(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '선호 아티스트',
-                          style: TextStyle(
-                            fontSize: context.sp(13),
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        if (artists.isEmpty)
-                          const _EmptyManageRow(text: '찜한 아티스트가 없습니다.')
-                        else
-                          ...artists.map(
-                            (a) => _ManageListTile(
-                              label: a.name,
-                              imageUrl: a.profileImageUrl,
-                              placeholderIcon: Icons.person_outline,
-                              onRemove: () => favorites.removeArtist(a.name),
-                            ),
-                          ),
-                        const SizedBox(height: 18),
-                        Text(
-                          '찜 공연',
-                          style: TextStyle(
-                            fontSize: context.sp(13),
-                            fontWeight: FontWeight.w900,
-                            color: Colors.black.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        if (concerts.isEmpty)
-                          const _EmptyManageRow(text: '찜한 공연이 없습니다.')
-                        else
-                          ...concerts.map(
-                            (c) => _ManageListTile(
-                              label: c.name,
-                              imageUrl: c.posterImageUrl,
-                              onRemove: () => favorites.removeConcert(c.name),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
+              )
+            : ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: isArtist ? artists.length : concerts.length,
+                separatorBuilder: (context, index) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  if (isArtist) {
+                    final a = artists[index];
+                    return _FavoritedChip(
+                      label: a.name,
+                      imageUrl: a.profileImageUrl,
+                      placeholderIcon: Icons.person_outline,
+                      onRemove: () => favorites.removeArtist(a.name),
+                    );
+                  }
+                  final c = concerts[index];
+                  return _FavoritedChip(
+                    label: c.name,
+                    imageUrl: c.posterImageUrl,
+                    onRemove: () => favorites.removeConcert(c.name),
+                  );
+                },
+              ),
       ),
     );
   }
 }
 
-class _ManageListTile extends StatelessWidget {
+/// [_FavoritedStrip]의 항목 하나. 검색 결과 카드([_ThumbCard])가 찜된
+/// 항목에 쓰는 것과 똑같은 빨간 테두리 + 하트 배지로 "이미 찜한 상태"를
+/// 표시합니다 — 배지는 썸네일 안쪽에 둬서(바깥으로 튀어나오지 않게) 가로
+/// 스크롤 뷰포트에 잘리지 않습니다. 항목을 누르면 찜이 해제됩니다.
+class _FavoritedChip extends StatelessWidget {
   final String label;
   final String imageUrl;
   final IconData placeholderIcon;
   final VoidCallback onRemove;
 
-  const _ManageListTile({
+  const _FavoritedChip({
     required this.label,
     required this.imageUrl,
     this.placeholderIcon = Icons.broken_image_outlined,
@@ -878,60 +758,63 @@ class _ManageListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              width: 40,
-              height: 40,
-              child: imageUrl.isEmpty
-                  ? _ThumbPlaceholder(icon: placeholderIcon)
-                  : Image.network(
-                      imageUrl,
-                      fit: BoxFit.cover,
-                      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                      errorBuilder: (context, error, stackTrace) =>
-                          _ThumbPlaceholder(icon: placeholderIcon),
+    return GestureDetector(
+      onTap: onRemove,
+      child: SizedBox(
+        width: 58,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: const Color(0xFFEF4444),
+                      width: 2.4,
                     ),
+                  ),
+                  child: imageUrl.isEmpty
+                      ? _ThumbPlaceholder(icon: placeholderIcon)
+                      : Image.network(
+                          imageUrl,
+                          fit: BoxFit.cover,
+                          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _ThumbPlaceholder(icon: placeholderIcon),
+                        ),
+                ),
+                Positioned(
+                  top: 3,
+                  right: 3,
+                  child: Container(
+                    padding: const EdgeInsets.all(2.5),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.favorite, size: 10, color: Colors.white),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
+            const SizedBox(height: 4),
+            Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: context.sp(14), fontWeight: FontWeight.w700),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: context.sp(10.5),
+                fontWeight: FontWeight.w700,
+                color: Colors.black.withValues(alpha: 0.6),
+              ),
             ),
-          ),
-          IconButton(
-            onPressed: onRemove,
-            icon: const Icon(Icons.close, size: 18),
-            color: Colors.black.withValues(alpha: 0.45),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyManageRow extends StatelessWidget {
-  final String text;
-
-  const _EmptyManageRow({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: context.sp(12),
-          color: Colors.black.withValues(alpha: 0.35),
+          ],
         ),
       ),
     );

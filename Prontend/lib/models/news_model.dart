@@ -44,6 +44,14 @@ class NewsModel {
   /// 공연장 이름. 상세 화면에서 탭하면 지도 앱으로 검색해 이동합니다.
   final String? venue;
 
+  /// 공연 시작일. 소식 탭 카드의 D-day 표시와 정렬(공연이 가까운 순)
+  /// 기준으로 씁니다. 정보가 없으면 null(정렬 시 맨 뒤로 밀림).
+  final DateTime? concertDate;
+
+  /// true면 [FavoritesStore]의 찜 공연을 그대로 보여주는 카드입니다.
+  /// 카드 좌상단 라벨을 아티스트 이름 대신 공연 D-day로 표시하는 데 씁니다.
+  final bool isFavoritedConcert;
+
   NewsModel({
     required this.artist,
     required this.concert,
@@ -56,7 +64,23 @@ class NewsModel {
     this.id,
     this.concertId,
     this.isRead = true,
+    this.concertDate,
+    this.isFavoritedConcert = false,
   });
+
+  /// 카드 좌상단에 보여줄 공연 D-day 라벨. 날짜 정보가 없으면 "미정".
+  String get concertDDayLabel => _concertDDay(concertDate);
+
+  static String _concertDDay(DateTime? date) {
+    if (date == null) return '미정';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+    final diff = target.difference(today).inDays;
+    if (diff > 0) return 'D-$diff';
+    if (diff == 0) return 'D-DAY';
+    return 'D+${-diff}';
+  }
 
   /// 백엔드 `NewsFeedResponse` JSON으로부터 생성합니다.
   ///
@@ -106,6 +130,7 @@ class NewsModel {
       contentBottom: contentBottomLines.join('\n'),
       articleImageUrl: posterUrl,
       venue: venue,
+      concertDate: DateTime.tryParse(concertJson?['start_date'] as String? ?? ''),
     );
   }
 
@@ -143,6 +168,8 @@ class NewsModel {
       contentBottom: '티케팅 날짜  $dDay',
       articleImageUrl: concert.posterImageUrl,
       venue: concert.venue,
+      concertDate: concert.startDate,
+      isFavoritedConcert: true,
     );
   }
 
@@ -161,6 +188,8 @@ class NewsModel {
     'contentBottom': contentBottom,
     'articleImageUrl': articleImageUrl,
     'venue': venue,
+    'concertDate': concertDate?.toIso8601String(),
+    'isFavoritedConcert': isFavoritedConcert,
   };
 
   factory NewsModel.fromCacheJson(Map<String, dynamic> json) {
@@ -176,6 +205,10 @@ class NewsModel {
       contentBottom: json['contentBottom'] as String? ?? '',
       articleImageUrl: json['articleImageUrl'] as String? ?? '',
       venue: json['venue'] as String?,
+      concertDate: json['concertDate'] != null
+          ? DateTime.tryParse(json['concertDate'] as String)
+          : null,
+      isFavoritedConcert: json['isFavoritedConcert'] as bool? ?? false,
     );
   }
 

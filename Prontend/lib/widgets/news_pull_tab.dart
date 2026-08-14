@@ -1,3 +1,4 @@
+import 'dart:math' show pi;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
@@ -24,11 +25,18 @@ class NewsPullTabOverlay extends StatelessWidget {
   /// 끝을 이 경계선에 맞닿게 배치하는 기준입니다.
   final double pageTop;
 
+  /// 하트 로딩 표시 진행도(0~1, 매 바퀴 반복). 0(또는 1)이면 하트가 온전히
+  /// 보이고, 그 사이에는 하트 정중앙을 중심으로 시계방향 쐐기 모양으로
+  /// 앞쪽 절반엔 사라지고 뒤쪽 절반엔 다시 나타납니다 — 최신 소식을 불러오는
+  /// 동안(로딩 중)에만 부모가 이 값을 실제로 진행시킵니다.
+  final Animation<double> heartWipe;
+
   const NewsPullTabOverlay({
     super.key,
     required this.slide,
     required this.onTap,
     required this.pageTop,
+    required this.heartWipe,
   });
 
   @override
@@ -41,7 +49,10 @@ class NewsPullTabOverlay extends StatelessWidget {
           pageTop: pageTop,
         );
 
-        final tabWidth = context.rs(66);
+        // 하트(30) + 화살표(18) + 좌우 패딩(9*2) + 테두리(1*2)를 여유 있게
+        // 담을 수 있도록 72로 잡았습니다(66이면 테두리 두께만큼 딱 맞아
+        // RenderFlex가 살짝 넘칩니다).
+        final tabWidth = context.rs(72);
         final tabHeight = context.rs(58);
         final inset = context.rs(8);
         // 조각의 아래쪽 일부는 페이지 상단 경계선 아래(페이지 뒤)로 들어가
@@ -78,6 +89,7 @@ class NewsPullTabOverlay extends StatelessWidget {
                     child: _PullTabPiece(
                       pointLeft: t > 0.5,
                       visibleFraction: visibleFraction,
+                      heartWipe: heartWipe,
                     ),
                   ),
                 ),
@@ -98,9 +110,13 @@ class _PullTabPiece extends StatelessWidget {
   /// 그 보이는 영역 안에 두기 위해 씁니다.
   final double visibleFraction;
 
+  /// 하트 로딩 표시 진행도. [NewsPullTabOverlay.heartWipe] 참고.
+  final Animation<double> heartWipe;
+
   const _PullTabPiece({
     required this.pointLeft,
     required this.visibleFraction,
+    required this.heartWipe,
   });
 
   static const Color _pieceColor = Color(0xFFF7F4E6);
@@ -137,7 +153,14 @@ class _PullTabPiece extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Icon(Icons.favorite, size: context.rs(15), color: _heartColor),
+            AnimatedBuilder(
+              animation: heartWipe,
+              builder: (context, child) => ClipPath(
+                clipper: _HeartWipeClipper(heartWipe.value),
+                child: child,
+              ),
+              child: Icon(Icons.favorite, size: context.rs(30), color: _heartColor),
+            ),
             Icon(
               pointLeft ? Icons.chevron_left : Icons.chevron_right,
               size: context.rs(18),
@@ -148,4 +171,60 @@ class _PullTabPiece extends StatelessWidget {
       ),
     );
   }
+}
+
+/// [NewsPullTabOverlay.heartWipe] 진행도(0~1)를 하트 아이콘의 시계방향
+/// 쐐기(파이) 클립으로 바꿉니다.
+///
+/// - 0.0~0.5(앞쪽 절반): 정중앙에서 12시 방향부터 시계방향으로 자라나는
+///   쐐기 "만큼" 하트에서 빼서(사라지게 해서) 보여줍니다 — 0.5에 도달하면
+///   쐐기가 원 전체를 덮어 하트가 완전히 사라집니다.
+/// - 0.5~1.0(뒤쪽 절반): 같은 자리에서 이어서 시계방향으로 자라나는 쐐기
+///   "만" 보여줍니다 — 1.0에 도달하면 쐐기가 원 전체가 되어 하트가 다시
+///   완전히 보입니다.
+///
+/// 0.0과 1.0 양 끝 모두 하트가 온전히 보이는 상태로 이어져서, 이 값을
+/// 반복시키면(0→1→0→...) 시계 방향으로 계속 회전하는 하나의 직선 단면을
+/// 따라 하트가 사라졌다 나타나기를 반복하는 것처럼 보입니다.
+class _HeartWipeClipper extends CustomClipper<Path> {
+  final double progress;
+
+  const _HeartWipeClipper(this.progress);
+
+  @override
+  Path getClip(Size size) {
+    if (progress < 0.5) {
+      final wedge = _wedgePath(size, progress / 0.5);
+      final full = Path()..addRect(Offset.zero & size);
+      return Path.combine(PathOperation.difference, full, wedge);
+    }
+    return _wedgePath(size, (progress - 0.5) / 0.5);
+  }
+
+  /// 아이콘 정중앙을 중심으로, 12시 방향에서 시계방향으로 [fraction](0~1)
+  /// 바퀴만큼 자라나는 쐐기(파이 조각) 모양. 반지름을 대각선 길이로 넉넉히
+  /// 잡아 아이콘 모양과 무관하게 항상 원하는 만큼 완전히 덮거나 비웁니다.
+  Path _wedgePath(Size size, double fraction) {
+    final path = Path();
+    if (fraction <= 0 || size.isEmpty) return path;
+    final center = Offset(size.width / 2, size.height / 2);
+    if (fraction >= 1) {
+      path.addOval(Rect.fromCircle(center: center, radius: size.longestSide));
+      return path;
+    }
+    final radius = size.longestSide;
+    path.moveTo(center.dx, center.dy);
+    path.arcTo(
+      Rect.fromCircle(center: center, radius: radius),
+      -pi / 2, // 12시 방향에서 시작.
+      fraction * 2 * pi, // 시계방향(양수)으로 자라남.
+      false,
+    );
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(_HeartWipeClipper oldClipper) =>
+      oldClipper.progress != progress;
 }
