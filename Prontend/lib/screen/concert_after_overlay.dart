@@ -103,6 +103,51 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
 
   bool _isClosing = false;
 
+  // [백엔드 수정]
+  // 두 손가락 오므리기(핀치 인)로 오버레이를 닫는 기능.
+  // Listener로 직접 두 손가락 사이 거리를 계산.
+  final Map<int, Offset> _pinchPointers = {};
+  double? _pinchStartDistance;
+  bool _pinchTriggered = false;
+
+  double _pinchCurrentDistance() {
+    final points = _pinchPointers.values.toList();
+    return (points[0] - points[1]).distance;
+  }
+
+  void _onPinchPointerDown(PointerDownEvent event) {
+    _pinchPointers[event.pointer] = event.position;
+    if (_pinchPointers.length == 2) {
+      _pinchStartDistance = _pinchCurrentDistance();
+      _pinchTriggered = false;
+    } else {
+      _pinchStartDistance = null;
+    }
+  }
+
+  void _onPinchPointerMove(PointerMoveEvent event) {
+    if (!_pinchPointers.containsKey(event.pointer)) return;
+    _pinchPointers[event.pointer] = event.position;
+    final start = _pinchStartDistance;
+    if (_pinchPointers.length != 2 || start == null || _pinchTriggered) {
+      return;
+    }
+    // 다 펼쳐진 뒤에만 반응(펼쳐지는 도중엔 무시)
+    if (_controller.value < 0.95) return;
+    // 시작 거리 대비 30% 이상 오므라들면 닫기로 간주
+    if (_pinchCurrentDistance() / start < 0.7) {
+      _pinchTriggered = true;
+      _close();
+    }
+  }
+
+  void _onPinchPointerEnd(PointerEvent event) {
+    _pinchPointers.remove(event.pointer);
+    if (_pinchPointers.length < 2) {
+      _pinchStartDistance = null;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -120,7 +165,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     );
 
     // [백엔드 수정]
-    // 중간 지점 근처 아주 짧은 구간(약 8%)에서만 빠르게 바뀌도록 좁혀서, 
+    // 중간 지점 근처 아주 짧은 구간(약 8%)에서만 빠르게 바뀌도록 좁혀서,
     // 겹쳐 보이는 구간을 거의 없애고 스위치되는 것처럼 보이게 함.
     _expandedOpacity = CurvedAnimation(
       parent: _t,
@@ -245,66 +290,72 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
     // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
     // context.sp()가 리스트에서 보이던 것과 같은 배율 사용.
-    return DiaryFrameScale(
-      scale: widget.frameScale,
-      marginEachSide: 0,
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, result) {
-          if (didPop) return;
-          _close();
-        },
-        child: Material(
-          type: MaterialType.transparency,
-          child: AnimatedBuilder(
-            animation: _controller,
-            child: Stack(children: [collapsedLayer, expandedLayer]),
-            builder: (context, child) {
-              final t = _t.value;
-              final rect = _getRectForT(end, t);
-              final radius = _getRadiusForT(t);
+    return Listener(
+      onPointerDown: _onPinchPointerDown,
+      onPointerMove: _onPinchPointerMove,
+      onPointerUp: _onPinchPointerEnd,
+      onPointerCancel: _onPinchPointerEnd,
+      child: DiaryFrameScale(
+        scale: widget.frameScale,
+        marginEachSide: 0,
+        child: PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            _close();
+          },
+          child: Material(
+            type: MaterialType.transparency,
+            child: AnimatedBuilder(
+              animation: _controller,
+              child: Stack(children: [collapsedLayer, expandedLayer]),
+              builder: (context, child) {
+                final t = _t.value;
+                final rect = _getRectForT(end, t);
+                final radius = _getRadiusForT(t);
 
-              final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+                final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        color: Colors.black.withValues(alpha: dimOpacity),
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: dimOpacity),
+                        ),
                       ),
                     ),
-                  ),
 
-                  // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
-                  // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
-                  // 제스처 경합(arena)에서 카드 안 버튼(InkWell 등)과 이
-                  // 감지기가 항상 같이 경쟁하게 되어, 곧잘 이 감지기가 이겨서
-                  // 카드 안 버튼이 눌리지 않는 문제가 있었습니다. 아래에 두면
-                  // 카드 안 인터랙티브 요소가 있는 자리는 그 요소가 먼저
-                  // 히트되어 이 감지기까지 도달하지 않고(경합 자체가 없음),
-                  // 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTapDown: (_) => _handleOutsideTap(),
-                      child: const SizedBox.expand(),
+                    // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
+                    // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
+                    // 제스처 경합(arena)에서 카드 안 버튼(InkWell 등)과 이
+                    // 감지기가 항상 같이 경쟁하게 되어, 곧잘 이 감지기가 이겨서
+                    // 카드 안 버튼이 눌리지 않는 문제가 있었습니다. 아래에 두면
+                    // 카드 안 인터랙티브 요소가 있는 자리는 그 요소가 먼저
+                    // 히트되어 이 감지기까지 도달하지 않고(경합 자체가 없음),
+                    // 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTapDown: (_) => _handleOutsideTap(),
+                        child: const SizedBox.expand(),
+                      ),
                     ),
-                  ),
 
-                  // 확장되는 티켓(시작Rect -> 화면 전체) - (1)/(2) 레이어는
-                  // child(위에서 한 번만 만든 Stack)를 그대로 재사용.
-                  Positioned.fromRect(
-                    rect: rect,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(radius),
-                      clipBehavior: Clip.antiAlias,
-                      child: child,
+                    // 확장되는 티켓(시작Rect -> 화면 전체) - (1)/(2) 레이어는
+                    // child(위에서 한 번만 만든 Stack)를 그대로 재사용.
+                    Positioned.fromRect(
+                      rect: rect,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(radius),
+                        clipBehavior: Clip.antiAlias,
+                        child: child,
+                      ),
                     ),
-                  ),
-                ],
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),

@@ -475,45 +475,59 @@ class _SplashScreenState extends State<SplashScreen>
     // 메인 페이지 종이와 같은 모서리(오른쪽만 둥근 15px 비례).
     final radius = BorderRadius.horizontal(right: Radius.circular(15 * k));
 
-    return Positioned.fromRect(
-      rect: pageRect,
+    // [백엔드 수정]
+    // 속지는 스프링 안쪽이 기준으로 잡혀있었음. 박스 왼쪽을 책등(x=0)까지 넓히고
+    // Transform.origin으로 회전축을 정확히 그 책등에 고정, 실제 종이는
+    // 그 안에서 pageRect.left만큼 들여써서 겉보기 위치는 그대로 유지.
+    final axisX = math.min(0.0, pageRect.left);
+    return Positioned(
+      left: axisX,
+      top: pageRect.top,
+      width: pageRect.right - axisX,
+      height: pageRect.height,
       child: Opacity(
         opacity: opacity,
         child: Transform.translate(
           offset: Offset(settleShiftX, 0),
           child: Transform(
             alignment: Alignment.centerLeft,
+            origin: Offset(-axisX, 0),
+            // 표지와 같은 이유로 부호 반대(_buildCover 참고) — 책등을 축으로
+            // 오른쪽 끝이 화면 뒤로 자연스럽게 젖혀지도록 함.
             transform: Matrix4.identity()
               ..setEntry(3, 2, 0.0016)
-              ..rotateY(-angle),
-            child: Transform.scale(
-              alignment: Alignment.centerLeft,
-              scale: 1.0 + lift * 0.05,
-              // 메인 페이지와 같은 순수 크림색 종이. 넘어가는 동안 책등 쪽에만
-              // 살짝 그림자를 드리워 입체감을 줍니다.
-              child: Container(
-                decoration: BoxDecoration(
-                  color: tint,
-                  borderRadius: radius,
-                  border: Border.all(
-                    color: Colors.black.withValues(alpha: 0.30),
-                    width: 0.7,
+              ..rotateY(angle),
+            child: Padding(
+              padding: EdgeInsets.only(left: pageRect.left - axisX),
+              child: Transform.scale(
+                alignment: Alignment.centerLeft,
+                scale: 1.0 + lift * 0.05,
+                // 메인 페이지와 같은 순수 크림색 종이. 넘어가는 동안 책등 쪽에만
+                // 살짝 그림자를 드리워 입체감을 줍니다.
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: tint,
+                    borderRadius: radius,
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.30),
+                      width: 0.7,
+                    ),
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [Color.lerp(tint, Colors.black, 0.08)!, tint],
+                      stops: const [0.0, 0.18],
+                    ),
                   ),
-                  gradient: LinearGradient(
-                    begin: Alignment.centerLeft,
-                    end: Alignment.centerRight,
-                    colors: [Color.lerp(tint, Colors.black, 0.08)!, tint],
-                    stops: const [0.0, 0.18],
+                  foregroundDecoration: BoxDecoration(
+                    borderRadius: radius,
+                    color: Colors.black.withValues(alpha: edgeOn * 0.22),
                   ),
+                  // 표지를 열었을 때 맨 처음 보이는 속지(첫 장)에는 메인
+                  // 화면 대신 "TICKET DIARY" 타이틀만 넣어, 이 장이 넘어간
+                  // 뒤에야 실제 다이어리 화면이 자연스럽게 이어지도록 합니다.
+                  child: i == 0 ? const _TitlePageContent() : null,
                 ),
-                foregroundDecoration: BoxDecoration(
-                  borderRadius: radius,
-                  color: Colors.black.withValues(alpha: edgeOn * 0.22),
-                ),
-                // 표지를 열었을 때 맨 처음 보이는 속지(첫 장)에는 메인
-                // 화면 대신 "TICKET DIARY" 타이틀만 넣어, 이 장이 넘어간
-                // 뒤에야 실제 다이어리 화면이 자연스럽게 이어지도록 합니다.
-                child: i == 0 ? const _TitlePageContent() : null,
               ),
             ),
           ),
@@ -537,9 +551,11 @@ class _SplashScreenState extends State<SplashScreen>
         opacity: opacity,
         child: Transform(
           alignment: Alignment.centerLeft,
+          // [백엔드 수정]
+          // 페이지 넘김과 같은 이유로 부호 반대로(아래 _buildFlipPage 참고).
           transform: Matrix4.identity()
             ..setEntry(3, 2, 0.0014)
-            ..rotateY(-angle),
+            ..rotateY(angle),
           child: DecoratedBox(
             decoration: BoxDecoration(
               // 가죽 느낌: 위가 살짝 밝고 아래로 갈수록 짙어지는 그라데이션.

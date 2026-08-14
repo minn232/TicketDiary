@@ -67,6 +67,56 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
 
   bool _isClosing = false;
 
+  // [백엔드 수정]
+  // 두 손가락 오므리기(핀치 인)로 오버레이를 닫는 기능.
+  // Listener로 직접 두 손가락 사이 거리를 계산.
+  // 포스터를 크게 보는 중엔 감지를 꺼야 포스터 확대/축소와 충돌하지 않음.
+  final Map<int, Offset> _pinchPointers = {};
+  double? _pinchStartDistance;
+  bool _pinchTriggered = false;
+  bool _posterZoomActive = false;
+
+  double _pinchCurrentDistance() {
+    final points = _pinchPointers.values.toList();
+    return (points[0] - points[1]).distance;
+  }
+
+  void _onPinchPointerDown(PointerDownEvent event) {
+    _pinchPointers[event.pointer] = event.position;
+    if (_pinchPointers.length == 2) {
+      _pinchStartDistance = _pinchCurrentDistance();
+      _pinchTriggered = false;
+    } else {
+      _pinchStartDistance = null;
+    }
+  }
+
+  void _onPinchPointerMove(PointerMoveEvent event) {
+    if (!_pinchPointers.containsKey(event.pointer)) return;
+    _pinchPointers[event.pointer] = event.position;
+    final start = _pinchStartDistance;
+    if (_pinchPointers.length != 2 ||
+        start == null ||
+        _pinchTriggered ||
+        _posterZoomActive) {
+      return;
+    }
+    // 다 펼쳐진 뒤에만 반응(펼쳐지는 도중엔 무시)
+    if (_controller.value < 0.95) return;
+    // 시작 거리 대비 30% 이상 오므라들면 닫기로 간주
+    if (_pinchCurrentDistance() / start < 0.7) {
+      _pinchTriggered = true;
+      _close();
+    }
+  }
+
+  void _onPinchPointerEnd(PointerEvent event) {
+    _pinchPointers.remove(event.pointer);
+    if (_pinchPointers.length < 2) {
+      _pinchStartDistance = null;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -136,89 +186,97 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     final media = MediaQuery.of(context);
     final screenSize = media.size;
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) return;
-        _close();
-      },
-      child: Material(
-        type: MaterialType.transparency,
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) {
-            final t = _t.value;
-            final rect = _getRectForT(screenSize, t);
-            final radius = _getRadiusForT(t);
+    return Listener(
+      onPointerDown: _onPinchPointerDown,
+      onPointerMove: _onPinchPointerMove,
+      onPointerUp: _onPinchPointerEnd,
+      onPointerCancel: _onPinchPointerEnd,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          _close();
+        },
+        child: Material(
+          type: MaterialType.transparency,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final t = _t.value;
+              final rect = _getRectForT(screenSize, t);
+              final radius = _getRadiusForT(t);
 
-            final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+              final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
-            final expandedOpacity = Curves.easeIn.transform(
-              ((t - 0.20) / 0.80).clamp(0.0, 1.0),
-            );
-            final collapsedOpacity = 1.0 - expandedOpacity;
+              final expandedOpacity = Curves.easeIn.transform(
+                ((t - 0.20) / 0.80).clamp(0.0, 1.0),
+              );
+              final collapsedOpacity = 1.0 - expandedOpacity;
 
-            return Stack(
-              children: [
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Container(
-                      color: Colors.black.withValues(alpha: dimOpacity),
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        color: Colors.black.withValues(alpha: dimOpacity),
+                      ),
                     ),
                   ),
-                ),
 
-                // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
-                // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
-                // 제스처 경합(arena)에서 카드 안 인터랙티브 요소(공연장
-                // 탭-지도 이동, 포스터 확대 등)와 이 감지기가 항상 같이
-                // 경쟁하게 되어, 곧잘 이 감지기가 이겨서 카드 안 요소가
-                // 눌리지 않는 문제가 있었습니다(concert_before/after_overlay와
-                // 동일한 문제). 아래에 두면 카드 안 인터랙티브 요소가 있는
-                // 자리는 그 요소가 먼저 히트되어 이 감지기까지 도달하지
-                // 않고, 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onTapDown: _onBackgroundTap,
-                    child: const SizedBox.expand(),
+                  // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
+                  // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
+                  // 제스처 경합(arena)에서 카드 안 인터랙티브 요소(공연장
+                  // 탭-지도 이동, 포스터 확대 등)와 이 감지기가 항상 같이
+                  // 경쟁하게 되어, 곧잘 이 감지기가 이겨서 카드 안 요소가
+                  // 눌리지 않는 문제가 있었습니다(concert_before/after_overlay와
+                  // 동일한 문제). 아래에 두면 카드 안 인터랙티브 요소가 있는
+                  // 자리는 그 요소가 먼저 히트되어 이 감지기까지 도달하지
+                  // 않고, 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTapDown: _onBackgroundTap,
+                      child: const SizedBox.expand(),
+                    ),
                   ),
-                ),
 
-                Positioned.fromRect(
-                  rect: rect,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(radius),
-                    clipBehavior: Clip.antiAlias,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: IgnorePointer(
+                  Positioned.fromRect(
+                    rect: rect,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(radius),
+                      clipBehavior: Clip.antiAlias,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: Opacity(
+                                opacity: collapsedOpacity,
+                                child: widget.collapsedCard,
+                              ),
+                            ),
+                          ),
+
+                          Positioned.fill(
                             child: Opacity(
-                              opacity: collapsedOpacity,
-                              child: widget.collapsedCard,
+                              opacity: expandedOpacity,
+                              child: _ExpandedNewsDetail(
+                                pageKey: _pageKey,
+                                contentOpacity: _contentOpacity,
+                                news: widget.news,
+                                onOutsideTap: _handleOutsideTap,
+                                onPosterZoomActiveChanged: (active) =>
+                                    _posterZoomActive = active,
+                              ),
                             ),
                           ),
-                        ),
-
-                        Positioned.fill(
-                          child: Opacity(
-                            opacity: expandedOpacity,
-                            child: _ExpandedNewsDetail(
-                              pageKey: _pageKey,
-                              contentOpacity: _contentOpacity,
-                              news: widget.news,
-                              onOutsideTap: _handleOutsideTap,
-                            ),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
-            );
-          },
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -231,11 +289,16 @@ class _ExpandedNewsDetail extends StatefulWidget {
   final NewsModel news;
   final VoidCallback onOutsideTap;
 
+  /// 포스터를 크게 보는 중(자체 핀치줌 사용 중)인지 알려줌 — 부모 오버레이의
+  /// 핀치로 닫기 감지와 충돌하지 않도록 하기 위함.
+  final ValueChanged<bool> onPosterZoomActiveChanged;
+
   const _ExpandedNewsDetail({
     required this.pageKey,
     required this.contentOpacity,
     required this.news,
     required this.onOutsideTap,
+    required this.onPosterZoomActiveChanged,
   });
 
   @override
@@ -264,8 +327,7 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
   }
 
   void _handlePosterDoubleTap() {
-    final isZoomedIn =
-        _posterZoomController.value.getMaxScaleOnAxis() > 1.01;
+    final isZoomedIn = _posterZoomController.value.getMaxScaleOnAxis() > 1.01;
     if (isZoomedIn) {
       _posterZoomController.value = Matrix4.identity();
       return;
@@ -285,6 +347,7 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
   void _collapsePoster() {
     setState(() => _posterExpanded = false);
     _posterZoomController.value = Matrix4.identity();
+    widget.onPosterZoomActiveChanged(false);
   }
 
   @override
@@ -380,8 +443,10 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
                               ),
                               SizedBox(height: 15 * k),
                               GestureDetector(
-                                onTap: () =>
-                                    setState(() => _posterExpanded = true),
+                                onTap: () {
+                                  setState(() => _posterExpanded = true);
+                                  widget.onPosterZoomActiveChanged(true);
+                                },
                                 child: ClipRRect(
                                   borderRadius: BorderRadius.circular(8 * k),
                                   child: SizedBox(
@@ -544,7 +609,10 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
 // 딥링크 스킴은 알아내기 fragile해서 안 씀. ticketingLinks가 비어있으면
 // 섹션 자체를 숨김.
 class _TicketingVendorButtons extends StatelessWidget {
-  const _TicketingVendorButtons({required this.ticketingLinks, required this.scale});
+  const _TicketingVendorButtons({
+    required this.ticketingLinks,
+    required this.scale,
+  });
 
   final Map<String, String>? ticketingLinks;
 
