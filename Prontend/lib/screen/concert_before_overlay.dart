@@ -109,7 +109,11 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   /// 영역, 그 영역의 중앙)을 써야 다이어리 메인 페이지와 같은 규격·위치로
   /// 보입니다(예전엔 SafeArea를 빼먹은 화면 전체 크기를 기준으로 계산해서
   /// 규격이 달랐습니다).
-  Rect _getRectForT(Size screen, EdgeInsets safePadding, double t) {
+  // [백엔드 수정]
+  // t와 무관한 최종(화면 전체로 다 커졌을 때) Rect만 따로 뽑음 - 확장
+  // 콘텐츠를 이 고정 크기로 한 번만 레이아웃하고 FittedBox로 지금 박스
+  // 크기에 맞춰 통째로 확대/축소하기 위함(아래 _getRectForT 설명 참고).
+  Rect _endRect(Size screen, EdgeInsets safePadding) {
     const ratio = DiaryPageFrame.diaryAspectRatio;
     final safeWidth = screen.width - safePadding.left - safePadding.right;
     final safeHeight = screen.height - safePadding.top - safePadding.bottom;
@@ -128,11 +132,10 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
       safePadding.left + safeWidth / 2,
       safePadding.top + safeHeight / 2,
     );
-    final end = Rect.fromCenter(
-      center: safeCenter,
-      width: endWidth,
-      height: endHeight,
-    );
+    return Rect.fromCenter(center: safeCenter, width: endWidth, height: endHeight);
+  }
+
+  Rect _getRectForT(Rect end, double t) {
     return Rect.lerp(widget.startRect, end, t)!;
   }
 
@@ -183,7 +186,8 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
           animation: _controller,
           builder: (context, _) {
             final t = _t.value;
-            final rect = _getRectForT(screenSize, media.padding, t);
+            final end = _endRect(screenSize, media.padding);
+            final rect = _getRectForT(end, t);
             final radius = _getRadiusForT(t);
 
             // 다이어리 화면 dim(불투명하게)
@@ -242,14 +246,24 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
                         ),
 
                         // (2) 확장 상태의 공연 전 화면(포스터 배경 + 메인 페이지 + 포스트잇)
+                        //
+                        // [백엔드 수정]
+                        // 최종 크기로 한 번만 레이아웃한 뒤 통째로 확대/축소.
                         Positioned.fill(
                           child: Opacity(
                             opacity: expandedOpacity,
-                            child: _ExpandedConcertBefore(
-                              postItOpacity: _postItOpacity,
-                              concertTitle: widget.concertTitle,
-                              ticketInfo: widget.ticketInfo,
-                              onOutsideTap: _handleOutsideTap,
+                            child: FittedBox(
+                              fit: BoxFit.fill,
+                              child: SizedBox(
+                                width: end.width,
+                                height: end.height,
+                                child: _ExpandedConcertBefore(
+                                  postItOpacity: _postItOpacity,
+                                  concertTitle: widget.concertTitle,
+                                  ticketInfo: widget.ticketInfo,
+                                  onOutsideTap: _handleOutsideTap,
+                                ),
+                              ),
                             ),
                           ),
                         ),
