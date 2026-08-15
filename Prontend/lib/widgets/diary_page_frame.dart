@@ -62,7 +62,8 @@ class DiaryPageFrame extends StatelessWidget {
     double binderLeft,
     double pivotX,
     double pageWidth,
-  }) computeRingMetrics({
+  })
+  computeRingMetrics({
     required double frameWidth,
     required double frameHeight,
     double pageTop = defaultPageTop,
@@ -77,7 +78,8 @@ class DiaryPageFrame extends StatelessWidget {
     // 중앙 정렬로 늘어나므로, 늘어난 폭의 절반만큼 pageLeft보다 왼쪽으로
     // 밀려난 지점이 페이지의 실제 렌더링된 왼쪽 끝입니다. [DiaryPageFlipper]가
     // 회전축(pivotX)으로 쓰는 값과 수학적으로 같습니다.
-    final pageActualLeft = pageLeft - (defaultPageWidthFactor - 1) / 2 * pageBoxWidth;
+    final pageActualLeft =
+        pageLeft - (defaultPageWidthFactor - 1) / 2 * pageBoxWidth;
 
     // 기존 비례 계산값에 5px을 더해 막대를 조금 더 길게 만듭니다.
     // binderLeft가 barWidth로부터 계산되므로(막대 중심이 항상 pivotX에
@@ -111,7 +113,9 @@ class DiaryPageFrame extends StatelessWidget {
   // 탭이 상대적으로 작아 보인다는 요청으로, 페이지를 살짝 줄이고 그만큼
   // 확보된 공간에 탭을 키웠습니다([DiaryIndexTab.defaultWidth]/[defaultHeight] 참고).
   static const double defaultPageWidthFactor = 1.1 * 0.95;
-  static const BorderRadius defaultPageBorderRadius = BorderRadius.horizontal(right: Radius.circular(15));
+  static const BorderRadius defaultPageBorderRadius = BorderRadius.horizontal(
+    right: Radius.circular(15),
+  );
 
   final Widget child;
   final bool isTabRoot;
@@ -162,6 +166,16 @@ class DiaryPageFrame extends StatelessWidget {
   /// 프레임 밖 여백까지 그릴 수 있도록 스택은 [Clip.none]입니다.
   final Widget? frameBehindPage;
 
+  /// [scale]/[marginEachSide]를 이 프레임 자신의 레이아웃 측정 대신 바깥에서
+  /// 넘겨준 값으로 강제합니다(null이면 기존처럼 직접 측정). 스플래시
+  /// 애니메이션이 진짜 화면 크기(실제 MediaQuery)를 기준으로 미리 정확히
+  /// 계산해둔 값을, 축소된 가짜 크기로 렌더링되는 미리보기에 그대로
+  /// 주입하기 위해 추가했습니다 - 미리보기는 항상 이미 diaryAspectRatio에
+  /// 딱 맞는 크기로 그려지므로 self-측정하면 marginEachSide가 항상 0으로
+  /// 나와(실제로 여백이 있어야 하는 기기에서도) 옆 탭 위치가 어긋났습니다.
+  final double? scaleOverride;
+  final double? marginEachSideOverride;
+
   const DiaryPageFrame({
     super.key,
     required this.child,
@@ -192,6 +206,8 @@ class DiaryPageFrame extends StatelessWidget {
     this.overlayFlipProgress,
     this.sideTabsOpacity,
     this.frameBehindPage,
+    this.scaleOverride,
+    this.marginEachSideOverride,
   });
 
   Widget _buildOverlayMainPage() {
@@ -296,7 +312,10 @@ class DiaryPageFrame extends StatelessWidget {
       );
     }
     if (overlayMainPage == null) {
-      return Stack(clipBehavior: Clip.none, children: [_buildRing(frameWidth, frameHeight)]);
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [_buildRing(frameWidth, frameHeight)],
+      );
     }
 
     final progress = overlayFlipProgress;
@@ -337,7 +356,12 @@ class DiaryPageFrame extends StatelessWidget {
                 // 시작점)에서 아래 pastHalfFraction 계산은 정확히 0이 되도록
                 // 설계돼 있어(막대가 이미 다 사라진 뒤), 여기서 1.0으로
                 // 튀는 시점과 자연스럽게 이어집니다.
-                return _buildRing(frameWidth, frameHeight, revealFraction: 1.0, showCircle: false);
+                return _buildRing(
+                  frameWidth,
+                  frameHeight,
+                  revealFraction: 1.0,
+                  showCircle: false,
+                );
               }
               final baseReveal = value >= 0 ? 1.0 - value : 0.5 * (1.0 - value);
 
@@ -349,11 +373,16 @@ class DiaryPageFrame extends StatelessWidget {
               // 리드는 무시 — 잎이 거의 다 사라져 책등에 가까워질 때는
               // bend/cornerLead도 0에 수렴해 이 근사가 실제와 거의
               // 일치합니다).
-              final uf = value >= 0 ? value / 0.5 : (1.0 + value).clamp(0.0, 1.0);
+              final uf = value >= 0
+                  ? value / 0.5
+                  : (1.0 + value).clamp(0.0, 1.0);
               final maxTranslateX = metrics.barWidth * 0.5;
               final translatePhase = ((uf - 0.5) / 0.5).clamp(0.0, 1.0);
               final translateX = -maxTranslateX * translatePhase;
-              final edgeX = metrics.pivotX + translateX + metrics.pageWidth * math.cos(uf * math.pi / 2);
+              final edgeX =
+                  metrics.pivotX +
+                  translateX +
+                  metrics.pageWidth * math.cos(uf * math.pi / 2);
 
               // 막대는 중심이 pivotX에 오도록 배치되므로(computeRingMetrics
               // 참고), 절반(중앙)은 pivotX, 왼쪽 끝은 pivotX - barWidth/2
@@ -365,13 +394,19 @@ class DiaryPageFrame extends StatelessWidget {
               final barHalfWidth = metrics.barWidth / 2;
               final pastHalfFraction = barHalfWidth <= 0
                   ? 1.0
-                  : ((edgeX - (metrics.pivotX - barHalfWidth)) / barHalfWidth).clamp(0.0, 1.0);
+                  : ((edgeX - (metrics.pivotX - barHalfWidth)) / barHalfWidth)
+                        .clamp(0.0, 1.0);
 
               // 두 효과를 곱해서 합칩니다 — 잎이 아직 막대 절반에 못
               // 미쳤으면(pastHalfFraction=1.0) 기존 페이드만 그대로 적용되고,
               // 절반을 지난 뒤부터는 지나간 비율만큼 추가로 더 사라집니다.
               final revealFraction = baseReveal * pastHalfFraction;
-              return _buildRing(frameWidth, frameHeight, revealFraction: revealFraction, showCircle: false);
+              return _buildRing(
+                frameWidth,
+                frameHeight,
+                revealFraction: revealFraction,
+                showCircle: false,
+              );
             },
           );
 
@@ -383,7 +418,9 @@ class DiaryPageFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeTabs = sideTabs.where((t) => t.isActive).toList(growable: false);
+    final activeTabs = sideTabs
+        .where((t) => t.isActive)
+        .toList(growable: false);
 
     // 바깥쪽 LayoutBuilder: AspectRatio가 실제로 제약받기 전, 이 프레임에
     // 배정된 전체 폭(availableWidth)을 잽니다. 아이패드처럼 화면 비율이
@@ -405,13 +442,23 @@ class DiaryPageFrame extends StatelessWidget {
             child: LayoutBuilder(
               builder: (context, innerConstraints) {
                 final frameWidth = innerConstraints.maxWidth;
-                final scale = (frameWidth / kReferenceFrameWidth)
-                    .clamp(kMinTextScale, kMaxTextScale);
+                // scaleOverride/marginEachSideOverride가 있으면(스플래시
+                // 미리보기 전용) 이 프레임 자신의 측정값 대신 그 값을 그대로
+                // 씁니다 - 미리보기는 항상 이미 diaryAspectRatio에 맞춰
+                // 축소된 크기로 렌더링되므로, 여기서 직접 측정하면
+                // marginEachSide가 항상 0으로 나와 실제 화면과 달라집니다.
+                final scale =
+                    scaleOverride ??
+                    (frameWidth / kReferenceFrameWidth).clamp(
+                      kMinTextScale,
+                      kMaxTextScale,
+                    );
                 // Center가 좌우로 똑같이 나눠 배치하므로, 한쪽 여백은
                 // 전체 차이의 절반입니다. 화면 비율이 diaryAspectRatio보다
                 // 좁은 기기(대부분의 폰)에서는 차이가 0(또는 음수 반올림
                 // 오차)이라 0으로 묶습니다.
                 final marginEachSide =
+                    marginEachSideOverride ??
                     math.max(0.0, (availableWidth - frameWidth) / 2);
                 return DiaryFrameScale(
                   scale: scale,
@@ -471,7 +518,12 @@ class DiaryPageFrame extends StatelessWidget {
         /// 다시 그리므로 여기서는 그리지 않습니다.
         for (final tab in sideTabs)
           if (!tab.isActive)
-            buildScaledSideTab(tab, scale, marginEachSide, opacity: sideTabsOpacity),
+            buildScaledSideTab(
+              tab,
+              scale,
+              marginEachSide,
+              opacity: sideTabsOpacity,
+            ),
 
         /// 2.5. 페이지 뒤 자유 레이어(풀탭 손잡이 등). 메인 페이지(3번)보다
         /// 먼저(=아래) 그려서, 페이지에 가려지고 페이지 밖으로 삐져나온
@@ -499,9 +551,15 @@ class DiaryPageFrame extends StatelessWidget {
                     clipBehavior: Clip.antiAlias,
                     decoration: BoxDecoration(
                       color: pageColor,
-                      borderRadius: const BorderRadius.horizontal(right: Radius.circular(15)),
+                      borderRadius: const BorderRadius.horizontal(
+                        right: Radius.circular(15),
+                      ),
                       boxShadow: [
-                        BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(5, 5)),
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 10,
+                          offset: const Offset(5, 5),
+                        ),
                       ],
                     ),
                     child: child,
@@ -519,8 +577,10 @@ class DiaryPageFrame extends StatelessWidget {
         /// 하기 때문입니다.
         Positioned.fill(
           child: LayoutBuilder(
-            builder: (context, constraints) =>
-                _buildRingAndOverlay(constraints.maxWidth, constraints.maxHeight),
+            builder: (context, constraints) => _buildRingAndOverlay(
+              constraints.maxWidth,
+              constraints.maxHeight,
+            ),
           ),
         ),
 
@@ -531,7 +591,12 @@ class DiaryPageFrame extends StatelessWidget {
         /// 오버레이(4~5번)보다 뒤에(=위에) 그려서, 제자리에 그대로 있으면서
         /// 항상 맨 위로 드러나 보이게 합니다.
         for (final tab in activeTabs)
-          buildScaledSideTab(tab, scale, marginEachSide, opacity: sideTabsOpacity),
+          buildScaledSideTab(
+            tab,
+            scale,
+            marginEachSide,
+            opacity: sideTabsOpacity,
+          ),
       ],
     );
   }
@@ -565,7 +630,11 @@ class DiaryPageFrame extends StatelessWidget {
     if (-scaledRight > marginEachSide) {
       scaledRight = -marginEachSide;
     }
-    final sizedChild = SizedBox(width: scaledWidth, height: scaledHeight, child: tab.child);
+    final sizedChild = SizedBox(
+      width: scaledWidth,
+      height: scaledHeight,
+      child: tab.child,
+    );
     Widget content = tab.onTap == null
         ? sizedChild
         : PressableScale(
@@ -589,11 +658,7 @@ class DiaryPageFrame extends StatelessWidget {
         child: content,
       );
     }
-    return Positioned(
-      right: scaledRight,
-      top: tab.top * scale,
-      child: content,
-    );
+    return Positioned(right: scaledRight, top: tab.top * scale, child: content);
   }
 }
 
@@ -650,7 +715,11 @@ class DiaryIndexTab extends StatelessWidget {
       left: Radius.circular(3),
       right: Radius.circular(6),
     ),
-    this.textStyle = const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black87),
+    this.textStyle = const TextStyle(
+      fontSize: 13,
+      fontWeight: FontWeight.bold,
+      color: Colors.black87,
+    ),
     this.pageColor = defaultPageColor,
   });
 
@@ -673,7 +742,9 @@ class DiaryIndexTab extends StatelessWidget {
       child: Stack(
         children: [
           Center(
-            child: rotateText ? RotatedBox(quarterTurns: 1, child: label) : label,
+            child: rotateText
+                ? RotatedBox(quarterTurns: 1, child: label)
+                : label,
           ),
           // 왼쪽 가장자리가 페이지 종이 밑으로 파고든 것처럼, 어둡게 대신
           // 페이지 색으로 옅어지는 그라데이션을 줍니다.
@@ -726,16 +797,25 @@ class _DiaryPageLayer extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: pageColor,
-            borderRadius: const BorderRadius.horizontal(right: Radius.circular(15)),
+            borderRadius: const BorderRadius.horizontal(
+              right: Radius.circular(15),
+            ),
             // 맨 뒤(1번째) 장은 갈색 배경과 맞닿아 있어 그림자 없이도 경계가
             // 뚜렷하지만, 2~4번째 장은 바로 앞장과 같은 페이지 색(크림)이라
             // 그림자만으로 경계를 만들어야 해서 상대적으로 흐리게 보였습니다
             // — 장마다 배경이 달라 그림자 "느낌"이 일정하지 않던 원인.
             // 얇은 테두리를 추가해 배경이 갈색이든 크림색이든 모든 장의
             // 경계가 동일하게 또렷이 보이도록 맞춥니다.
-            border: Border.all(color: Colors.black.withValues(alpha: 0.15), width: 1),
+            border: Border.all(
+              color: Colors.black.withValues(alpha: 0.15),
+              width: 1,
+            ),
             boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(4, 4)),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.2),
+                blurRadius: 8,
+                offset: const Offset(4, 4),
+              ),
             ],
           ),
         ),
@@ -810,7 +890,8 @@ class _BinderRing extends StatelessWidget {
     // (computeRingMetrics에서) 이 값을 기준으로 계산돼 있어서, 여기서도
     // 반드시 같은 식을 써야 원의 중심 위치(=막대 왼쪽 끝)가 어긋나지
     // 않습니다.
-    final circleDiameter = barHeight * DiaryPageFrame.binderCircleToBarHeightRatio;
+    final circleDiameter =
+        barHeight * DiaryPageFrame.binderCircleToBarHeightRatio;
     return Row(
       // 기본값(max)이면 Row가 부모가 주는 최대 폭을 그대로 차지해버려서,
       // _buildRing의 Align(widthFactor:)이 실제 링 폭(원 지름 + 막대 폭)이
@@ -848,7 +929,10 @@ class _BinderRing extends StatelessWidget {
                 width: circleDiameter,
                 height: circleDiameter,
                 decoration: showCircle
-                    ? const BoxDecoration(color: Color(0xFF3E2723), shape: BoxShape.circle)
+                    ? const BoxDecoration(
+                        color: Color(0xFF3E2723),
+                        shape: BoxShape.circle,
+                      )
                     : null,
               ),
             ),
@@ -872,7 +956,12 @@ class _BinderRing extends StatelessWidget {
               // 배경과 무관하게 자연스러운(오른쪽 아래로 비대칭인) 그림자만으로
               // 또렷이 보이도록 합니다.
               boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.55), blurRadius: 5, spreadRadius: 0.5, offset: const Offset(2, 2)),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.55),
+                  blurRadius: 5,
+                  spreadRadius: 0.5,
+                  offset: const Offset(2, 2),
+                ),
               ],
             ),
           ),

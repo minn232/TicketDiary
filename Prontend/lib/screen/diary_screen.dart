@@ -164,7 +164,17 @@ String _eventTypeLabel(String eventType) {
 }
 
 class DiaryScreen extends StatefulWidget {
-  const DiaryScreen({super.key});
+  const DiaryScreen({
+    super.key,
+    this.frameScaleOverride,
+    this.frameMarginOverride,
+  });
+
+  /// [DiaryPageFrame.scaleOverride]/[marginEachSideOverride]를 그대로
+  /// 전달합니다. null이면(실제 사용 시 항상 null) 기존처럼 프레임이 스스로
+  /// 측정합니다 - 스플래시 미리보기 전용 파라미터입니다.
+  final double? frameScaleOverride;
+  final double? frameMarginOverride;
 
   @override
   State<DiaryScreen> createState() => _DiaryScreenState();
@@ -500,7 +510,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
   // 각 영역의 GlobalKey로 구분해서 실제로 복사된 그 영역만 숨도록 함.
   Key? _overlayHiddenRegionKey;
 
-  Widget _hideWhileOverlayOpen({required Key regionKey, required Widget child}) {
+  Widget _hideWhileOverlayOpen({
+    required Key regionKey,
+    required Widget child,
+  }) {
     final hidden = _overlayHiddenRegionKey == regionKey;
     return IgnorePointer(
       ignoring: hidden,
@@ -701,7 +714,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               child: Text(
                 '일치하는 공연이 여러 개예요. 하나를 선택해주세요.',
-                style: TextStyle(fontSize: context.sp(15), fontWeight: FontWeight.w800),
+                style: TextStyle(
+                  fontSize: context.sp(15),
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
             for (final candidate in candidates)
@@ -733,7 +749,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 티켓을 길게 누르면 삭제를 확인합니다.
@@ -976,6 +994,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     final fixedTabs = allTabs.where((t) => !t.isActive).toList(growable: false);
     return DiaryPageFrame(
       isTabRoot: _currentPageIndex == pageIndex && pageIndex == 0,
+      scaleOverride: widget.frameScaleOverride,
+      marginEachSideOverride: widget.frameMarginOverride,
       sideTabs: fixedTabs,
       animateMainPage: true,
       // 잎에 다이어리 탭까지 포함하려면 오버레이가 페이지 박스보다 넓은
@@ -1119,7 +1139,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
               ), // 계산된 고정 상단 여백
               if (isFirstPage) ...[
                 _buildAddTicketArea(context),
-                const SizedBox(height: _ticketSpacing), // 추가 버튼과 리스트 사이 간격(티켓 간격과 동일)
+                const SizedBox(
+                  height: _ticketSpacing,
+                ), // 추가 버튼과 리스트 사이 간격(티켓 간격과 동일)
               ],
               if (pageTickets.isEmpty && isFirstPage)
                 // 티켓이 없을 때도 자리를 유지하기 위한 투명 박스 또는 안내 문구
@@ -1248,9 +1270,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
             ),
           ),
         );
-        return isDue
-            ? SparkleHighlight(child: ticketWidget)
-            : ticketWidget;
+        return isDue ? SparkleHighlight(child: ticketWidget) : ticketWidget;
       case TicketStatus.afterConcert:
         return _buildTicketPocket(
           child: _buildTicketAfterConcert(
@@ -1299,20 +1319,26 @@ class _DiaryScreenState extends State<DiaryScreen> {
     // 다른 티켓들처럼 비닐 포켓 프레임 안에, 실제 티켓 자리를 대신하는
     // 네모난 박스(흰 배경 카드)를 하나 더 넣어서 "포켓 안에 티켓이 들어있는"
     // 모양을 그대로 따라갑니다.
+    //
+    // [백엔드 수정]
+    // context.sp(26)가 DiaryFrameScale을 못 찾던 버그 - Builder로 감싸서
+    // DiaryPageFrame 하위 context로 바꿈.
     return _buildTicketPocket(
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Center(
-          child: Text(
-            "티켓  추가",
-            style: TextStyle(
-              fontSize: context.sp(26),
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-              letterSpacing: 4.0,
+      child: Builder(
+        builder: (context) => Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Center(
+            child: Text(
+              "티켓  추가",
+              style: TextStyle(
+                fontSize: context.sp(26),
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+                letterSpacing: 4.0,
+              ),
             ),
           ),
         ),
@@ -1328,7 +1354,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.4),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.8), width: 2),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.8),
+          width: 2,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.05),
@@ -1841,9 +1870,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         : Container(
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.horizontal(
-                left: Radius.circular(8),
-              ),
+              borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
             ),
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -1966,11 +1993,7 @@ List<Color> _posterFallbackGradient(String seedText) {
 /// [bigCenterText]를 주면(배송 전 티켓의 D-day) 공연명 대신 가운데 큰 텍스트
 /// 레이아웃으로 바뀝니다.
 class _PosterTicketFace extends StatelessWidget {
-  const _PosterTicketFace({
-    required this.title,
-    this.info,
-    this.bigCenterText,
-  });
+  const _PosterTicketFace({required this.title, this.info, this.bigCenterText});
 
   final String title;
   final TicketInfo? info;

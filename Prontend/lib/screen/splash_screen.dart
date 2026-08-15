@@ -13,15 +13,12 @@ import 'package:ticketdiary/widgets/diary_page_flipper.dart'
     show BentLeafPainter, DiaryPageFlipper;
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
+import 'package:ticketdiary/widgets/responsive_text.dart'
+    show kMaxTextScale, kMinTextScale, kReferenceFrameWidth;
 
 // [백엔드 수정]
-// 다이어리 탭에서 페이지 넘길 때 쓰는 곡면 렌더링(BentLeafPainter)을 그대로
-// 가져다 스플래시 인트로에도 씁니다. 예전 방식(Transform+rotateY 평면 회전)은
-// splash_screen_old.dart에 참고용으로 남겨뒀습니다(어디서도 import하지
-// 않는 죽은 코드). 실제 다이어리 페이지는 티켓 콘텐츠를 이미지로 캡처해서
-// 곡면 메시에 입히는데, 스플래시 속지는 위젯이 아니라 직접 캔버스에 그린
-// 결과라(장마다 톤이 다른 단색 + 0번 장은 타이틀 텍스트) 캡처 대신
-// 그 결과를 이미지로 한 번 떠서 재사용합니다.
+// 다이어리 탭 페이지 넘김과 같은 곡면 렌더링(BentLeafPainter)을 스플래시
+// 인트로에도 사용. 예전 방식(splash_screen_old.dart)은 죽은 코드로 남김.
 
 /// 앱 실행 시 보여주는 시작 애니메이션.
 ///
@@ -107,18 +104,19 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _flipStagger = 0.07;
   static const double _flipDuration = 0.13; // 마지막 장은 ~0.85에 끝남
 
+  /// 마지막 속지(4번 장, [_flipCount]-1)가 90도(p=0.5, 완전히 세워진 순간 -
+  /// 다 넘어가 눕는 정착까지 기다리지 않음)까지 넘어간 시각. 바인더 링을
+  /// "마지막 페이지(=[_MainPageReplica]) 나오기 직전 페이지가 90도쯤
+  /// 넘어가면 갑자기 보이도록" 하는 기준점으로 씁니다(아래 바인더 링
+  /// 렌더링 참고).
+  static const double _binderRingRevealAt =
+      _flipStart + (_flipCount - 1) * _flipStagger + 0.5 * _flipDuration;
+
   /// 4. 페이지(가운데 시선 고정)가 화면을 가득 채울 때까지 줌.
   ///
   /// [백엔드 수정]
-  /// 예전엔 [_finalFlipStart](0.86)보다도 한참 뒤(0.97)에 줌이 끝나서,
-  /// 마지막 장이 넘어가며 실제 DiaryScreen 미리보기가 뜬 뒤에도 몇 프레임
-  /// 동안 book 배율(bookGrowth)이 계속 바뀌고 있었습니다 - 미리보기
-  /// 크기가 매 프레임 bookGrowth를 따라가므로, DiaryScreen이 완전히
-  /// 자리잡기도 전에 계속 다시 레이아웃되면서 크기가 살짝 안 맞아
-  /// 보이고, 티켓 카드 일부(공연 전 예시/JUMF)가 그 와중에 자기 자리를
-  /// 못 잡고 사라져 보였습니다. 줌을 [_finalFlipStart]보다 확실히
-  /// 먼저(0.82) 끝내서, 마지막 장이 넘어가기 시작할 땐 이미 book 배율이
-  /// 완전히 고정된 뒤가 되도록 했습니다.
+  /// 줌 종료를 0.97 -> 0.82로 당김 - [_finalFlipStart](0.86)보다 확실히
+  /// 먼저 끝나 book 배율(bookGrowth)이 고정된 뒤 마지막 장이 넘어가게 함.
   static const double _zoomPageStart = 0.38;
   static const double _zoomPageEnd = 0.82;
 
@@ -132,10 +130,9 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _finalFlipDuration = 0.11;
   static const double _finalFlipAngle = math.pi * 0.56; // 약 100도.
 
-  /// 실제 화면 미리보기의 세로 크기 보정 배율(1.0=보정 없음). 가로는 실측상
-  /// 맞는다고 확인됐는데 세로만 아주 살짝 더 커 보인다는 제보가 있어서,
-  /// 이론적으로 정확해야 할 계산에 남는 잔차를 실측으로 보정합니다.
-  static const double _previewHeightCorrection = 0.985;
+  // [백엔드 수정]
+  // 미리보기 세로 보정 매직 넘버 제거, DiaryPageFrame.scaleOverride/
+  // marginEachSideOverride로 대체.
 
   /// 마지막 장이 90도를 넘어 사실상 안 보이게 된 시점에 진짜 화면으로
   /// 넘어갑니다. 정적인 페이지가 페이드로 사라지는 대신, 페이지가 실제로
@@ -143,13 +140,7 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _navigateAt = 0.96;
 
   /// [백엔드 수정]
-  /// 크로스페이드(0으로 줄고 1로 늘어나는 두 장면이 겹쳐 보이는 구간)를
-  /// 완전히 없앴습니다 - 미리보기와 실제 화면 크기를 픽셀 단위로
-  /// 맞추려 몇 차례 손봤지만 아주 미세한 차이는 남아있었고, 크로스페이드
-  /// 중엔 그 차이가 두 장면이 겹쳐 보이는 "이중 노출"로 도드라졌습니다.
-  /// 지속 시간을 0으로 둬서 겹치는 프레임 자체가 없는 즉시 전환으로
-  /// 바꿨습니다 - 미세한 크기 차이가 아직 남아있어도 "겹쳐 보이는" 순간이
-  /// 없으니 훨씬 덜 눈에 띕니다.
+  /// 크로스페이드 완전히 제거(지속 시간 0) - 겹쳐 보이는 프레임 자체를 없앰.
   static const Duration _fadeToMainDuration = Duration.zero;
 
   late final AnimationController _controller;
@@ -159,8 +150,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   // BentLeafPainter용 장별 텍스처(비동기 생성이라 준비 전엔 null - 그동안은
   // 기존 단순 회전으로 폴백). 인덱스는 cols/rows에만 의존해 전체 장이
-  // 공유하지만, 이미지/셰이더/텍스처 좌표는 장마다(0번은 타이틀이 있어
-  // 이미지 크기도 다름) 따로 갖습니다.
+  // 공유하지만, 이미지/셰이더/텍스처 좌표는 장마다 따로 갖습니다.
   final List<ui.Image?> _leafImages = List<ui.Image?>.filled(_flipCount, null);
   final List<ui.ImageShader?> _leafShaders = List<ui.ImageShader?>.filled(
     _flipCount,
@@ -183,12 +173,9 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   /// 넘어가는 속지 5장의 텍스처를 준비합니다. 장마다 미묘하게 다른 톤
-  /// (원래 [_buildFlipPage]의 `Color.lerp(_pageColor, Colors.white,
-  /// i*0.045)`)을 그대로 재현하고, 표지를 연 뒤 맨 처음 보이는 0번 장에는
-  /// 예전 `_TitlePageContent` 위젯과 같은 아이콘+"TICKET DIARY" 타이틀을
-  /// 직접 캔버스에 그려 넣습니다(실제 다이어리 페이지는 티켓 콘텐츠를
-  /// RepaintBoundary로 캡처하지만, 스플래시 속지는 위젯이 아니라 이렇게
-  /// 직접 그린 결과를 이미지로 떠서 씁니다).
+  /// (`Color.lerp(_pageColor, Colors.white, i*0.045)`)을 직접 캔버스에
+  /// 그려 넣습니다(실제 다이어리 페이지는 위젯을 캡처하지만, 스플래시
+  /// 속지는 위젯이 아니라 이렇게 그린 결과를 이미지로 떠서 씁니다).
   Future<void> _prepareLeafAssets() async {
     const cols = DiaryPageFlipper.bendColumns;
     const rows = DiaryPageFlipper.bendRows;
@@ -215,9 +202,10 @@ class _SplashScreenState extends State<SplashScreen>
     final texCoordsList = <Float32List>[];
     for (var i = 0; i < _flipCount; i++) {
       final tint = Color.lerp(_pageColor, Colors.white, i * 0.045)!;
-      final image = i == 0
-          ? await _renderTitleLeafImage(tint)
-          : await _renderSolidLeafImage(tint);
+      // [백엔드 수정]
+      // "TICKET DIARY" 로고를 0번 장에서 마지막 페이지로 이동. 이제 모든
+      // 장이 단색 속지(_renderSolidLeafImage).
+      final image = await _renderSolidLeafImage(tint);
       final shader = ui.ImageShader(
         image,
         TileMode.clamp,
@@ -258,12 +246,8 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   /// [백엔드 수정]
-  /// 실제 페이지는 오른쪽 끝만 둥근 모서리(DiaryPageFrame.
-  /// defaultPageBorderRadius)인데, 곡면 렌더링용 텍스처는 그냥 꽉 찬
-  /// 사각형이라 실제 화면과 이어질 때 모서리 모양이 달라 크기/느낌이 안
-  /// 맞아 보였습니다. 텍스처 생성 시점(initState, 레이아웃 전)엔 아직
-  /// 실제 페이지 폭을 몰라서 정확한 px(15) 대신 텍스처 폭에 비례한
-  /// 비율로 근사합니다.
+  /// 텍스처 오른쪽 끝만 둥근 모서리로(DiaryPageFrame.defaultPageBorderRadius와
+  /// 통일). 텍스처 폭 비례 비율로 근사(정확한 px는 레이아웃 전이라 모름).
   static const double _leafCornerRadiusRatio = 0.045;
 
   /// 오른쪽 끝만 둥근 단색 이미지 - 텍스트가 없는 1~4번 장용. 모서리가
@@ -286,67 +270,6 @@ class _SplashScreenState extends State<SplashScreen>
     return image;
   }
 
-  /// 예전 `_TitlePageContent` 위젯과 같은 아이콘+타이틀을 직접 그려 넣은
-  /// 이미지 - 0번 장(표지를 연 뒤 맨 처음 보이는 속지)용. 해상도가 있어야 글자가
-  /// 흐리지 않아서, 단색 장들보다 훨씬 큰 캔버스에 그립니다.
-  Future<ui.Image> _renderTitleLeafImage(Color tint) async {
-    const width = 320.0;
-    final height = width * _pageRatio;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
-    final rrect = RRect.fromRectAndCorners(
-      Rect.fromLTWH(0, 0, width, height),
-      topRight: Radius.circular(width * _leafCornerRadiusRatio),
-      bottomRight: Radius.circular(width * _leafCornerRadiusRatio),
-    );
-    canvas.drawRRect(rrect, Paint()..color = tint);
-
-    final iconPainter = TextPainter(
-      text: TextSpan(
-        text: String.fromCharCode(Icons.local_activity_outlined.codePoint),
-        style: TextStyle(
-          fontSize: 40,
-          fontFamily: Icons.local_activity_outlined.fontFamily,
-          package: Icons.local_activity_outlined.fontPackage,
-          color: _coverColor.withValues(alpha: 0.55),
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    final titlePainter = TextPainter(
-      text: TextSpan(
-        text: 'TICKET DIARY',
-        style: TextStyle(
-          fontSize: 17,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 2.5,
-          color: _coverColor.withValues(alpha: 0.75),
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-
-    const gap = 10.0;
-    final blockHeight = iconPainter.height + gap + titlePainter.height;
-    final blockTop = (height - blockHeight) / 2;
-    iconPainter.paint(
-      canvas,
-      Offset((width - iconPainter.width) / 2, blockTop),
-    );
-    titlePainter.paint(
-      canvas,
-      Offset(
-        (width - titlePainter.width) / 2,
-        blockTop + iconPainter.height + gap,
-      ),
-    );
-
-    final picture = recorder.endRecording();
-    final image = await picture.toImage(width.round(), height.round());
-    picture.dispose();
-    return image;
-  }
-
   Future<void> _loadData() async {
     // 여기서 실제 내부 데이터 로딩을 진행합니다. 나중에 추가 로딩이 필요해지면
     // 이 안에 이어서 await 하면 애니메이션과 함께 대기됩니다.
@@ -361,8 +284,7 @@ class _SplashScreenState extends State<SplashScreen>
     ]).timeout(timeout, onTimeout: () => const []);
 
     // [백엔드 수정]
-    // FCM 초기화(권한 요청)시 스플래시를 막지 않도록 fire-and-forget으로 분리.
-    // 메인 화면 진입과 동시에 백그라운드에서 실행, ensureSession이 끝난 뒤(=위 await 이후)에 호출.
+    // FCM 초기화를 fire-and-forget으로 분리 - 스플래시를 막지 않음.
     unawaited(FcmService.instance.init());
     if (!mounted) return;
     _dataReady = true;
@@ -375,13 +297,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   void _onTick() {
     // [백엔드 수정]
-    // 데이터가 아직 준비 안 됐는데 마지막 장이 넘어가기 시작할 지점
-    // ([_finalFlipStart])에 다다르면 거기서 멈춥니다(아직 안 넘어간, 멀쩡히
-    // 놓여있는 모습 그대로 대기) - 데이터가 늦게 준비되면 [_loadData]에서
-    // 이어서 재생시킵니다. 이렇게 안 하면 애니메이션은 (데이터를 기다리지
-    // 않고) 끝까지 다 넘어가 버린 채로 멈추고, 그 뒤 데이터가 늦게 오면
-    // "이미 다 넘어가 어중간해진 모습으로 가만히 있다가 화면이 툭 바뀌는"
-    // 것처럼 보였습니다.
+    // 데이터 미준비 시 [_finalFlipStart]에서 애니메이션 정지, [_loadData]에서
+    // 이어서 재생.
     if (!_dataReady &&
         _controller.isAnimating &&
         _controller.value >= _finalFlipStart) {
@@ -405,10 +322,7 @@ class _SplashScreenState extends State<SplashScreen>
         transitionDuration: _fadeToMainDuration,
         pageBuilder: (_, _, _) => const DiaryScreen(),
         // [백엔드 수정]
-        // 페이드(짧아도)가 끝나기 전까진 실제 화면이 눌리지 않게 막습니다 -
-        // 안 그러면 FadeTransition 중에도 뒤에 깔린 위젯이 터치를 받아서,
-        // 화면이 다 안 보이는 상태에서 티켓을 누르는 것 같은 일이 생길 수
-        // 있습니다.
+        // 페이드 끝나기 전까진 IgnorePointer로 터치 차단.
         transitionsBuilder: (_, animation, _, child) => IgnorePointer(
           ignoring: animation.status != AnimationStatus.completed,
           child: FadeTransition(
@@ -453,6 +367,20 @@ class _SplashScreenState extends State<SplashScreen>
           final screenH =
               constraints.maxHeight - safePadding.top - safePadding.bottom;
 
+          // 실제 DiaryPageFrame은 SafeArea 안쪽(=screenW x screenH) 박스의
+          // 한가운데에 놓입니다 - 그 박스는 전체 화면(constraints)의 정중앙이
+          // 아니라, 위/아래(또는 좌/우) 여백이 서로 다르면 그만큼 한쪽으로
+          // 치우친 자리에 있습니다(예: 상태표시줄(top)만 있고 아래(bottom)엔
+          // 제스처 인셋이 거의 없는 기기라면, 실제 프레임은 화면 정중앙보다
+          // 살짝 아래에 위치). 아래 [_buildScene]은 지금까지 이 책을 그냥
+          // 전체 화면(constraints)의 정중앙에 놓고 있어서, 실제 화면과
+          // 위아래(또는 좌우) 위치가 살짝 어긋나 보였습니다. 그 차이만큼
+          // 미리 상쇄해둡니다.
+          final centeringOffset = Offset(
+            (safePadding.left - safePadding.right) / 2,
+            (safePadding.top - safePadding.bottom) / 2,
+          );
+
           // 속지가 실제 다이어리와 같은 비율이 되도록 크기를 잡습니다.
           // _bookSizeBoost는 애니메이션이 진행되는 동안(화면을 다 채우기
           // 전까지) 보이는 겉 가죽케이스 자체를 더 크게 보이도록 키우는
@@ -473,6 +401,26 @@ class _SplashScreenState extends State<SplashScreen>
           // 다이어리 페이지보다 커 보이는 문제가 있었습니다.
           final fillScale = math.min(screenW / bookWidth, screenH / bookHeight);
 
+          // 실제 DiaryPageFrame이 이 화면에서 스스로 계산할 scale/marginEachSide와
+          // 정확히 같은 수식(diary_page_frame.dart의 계산과 동일 - frameWidth는
+          // "안에 맞추기(contain)"로 정해진 페이지 폭, marginEachSide는 그 페이지가
+          // 화면 폭을 다 못 채울 때(아이패드 등) 남는 좌우 여백의 절반)입니다.
+          // 미리보기 안 DiaryScreen이 스스로 다시 측정하지 않고 이 값을 그대로
+          // 쓰도록 [DiaryScreen.frameScaleOverride]/[frameMarginOverride]로
+          // 주입합니다 - 미리보기는 t>=_finalFlipStart일 때만 뜨는데, 그 시점엔
+          // bookGrowth가 이미 fillScale로 고정된 뒤라(_zoomPageEnd=0.82 <
+          // _finalFlipStart=0.86) 애니메이션 중 다시 계산할 필요 없이 한 번만
+          // 구하면 됩니다.
+          final frameWidthReal = bookWidth * fillScale;
+          final previewScale = (frameWidthReal / kReferenceFrameWidth).clamp(
+            kMinTextScale,
+            kMaxTextScale,
+          );
+          final previewMarginEachSide = math.max(
+            0.0,
+            (screenW - frameWidthReal) / 2,
+          );
+
           return AnimatedBuilder(
             animation: _controller,
             builder: (context, _) => _buildScene(
@@ -480,6 +428,9 @@ class _SplashScreenState extends State<SplashScreen>
               bookHeight,
               fillScale,
               _controller.value,
+              previewScale,
+              previewMarginEachSide,
+              centeringOffset,
             ),
           );
         },
@@ -492,7 +443,15 @@ class _SplashScreenState extends State<SplashScreen>
   /// "테이블에 놓여" 있고 카메라가 다가가며 화면에 들어차게 됩니다.
   static const double _bookStartScale = 0.34;
 
-  Widget _buildScene(double bookW, double bookH, double fillScale, double t) {
+  Widget _buildScene(
+    double bookW,
+    double bookH,
+    double fillScale,
+    double t,
+    double previewScale,
+    double previewMarginEachSide,
+    Offset centeringOffset,
+  ) {
     // 줌: 작게 시작 -> 화면 80%(배율 1.0 근처) -> 페이지가 화면을 가득 채울 때까지.
     final zoomIn = Curves.easeInOut.transform(_seg(t, 0.0, _zoomInEnd));
     final zoomPage = Curves.easeInOut.transform(
@@ -510,16 +469,12 @@ class _SplashScreenState extends State<SplashScreen>
     final sceneScale = bookGrowth / _bookStartScale;
 
     // [백엔드 수정]
-    // 책이 테이블로 내려와 놓이는 구간(_dropEnd까지). 위→아래로 미끄러지는
-    // 느낌 대신, 휴대폰 렌즈 바로 앞에 있던 책이 점점 멀어지며(=작아지며)
-    // 테이블로 떨어지는 느낌이 나도록 바꿨습니다 - 세로 이동/흔들림 폭은
-    // 크게 줄이고(주된 움직임이 아니게), 대신 시작 시점엔 훨씬 크게(렌즈에
-    // 가까운 크기, dropScale) 보이다가 착지할 때 원래 크기로 줄어들게
-    // 해서 "멀어지는" 원근감이 주가 되도록 했습니다.
+    // 책이 테이블로 내려오는 구간(_dropEnd까지) - 위→아래 이동 대신 렌즈
+    // 앞에서 멀어지며(dropScale 축소) 착지하는 원근감으로 구현.
     final dropT = _seg(t, 0.0, _dropEnd);
     final dropEase = Curves.easeOutQuart.transform(dropT);
-    final dropScale = 1.0 + 1.5 * (1.0 - dropEase);
-    final dropOffsetY = -bookH * 0.15 * (1.0 - dropEase);
+    final dropScale = 1.0 + 6.6 * (1.0 - dropEase);
+    final dropOffsetY = -bookH * 0.84 * (1.0 - dropEase);
     // 흔들림 진폭은 (1-dropEase)에 비례해 착지할수록 잦아듭니다.
     final swayOffsetX =
         bookW * 0.03 * math.sin(dropT * math.pi * 2.4) * (1.0 - dropEase);
@@ -527,9 +482,7 @@ class _SplashScreenState extends State<SplashScreen>
     final squash = math.sin(math.pi * squashT.clamp(0.0, 1.0)) * 0.02;
 
     // [백엔드 수정]
-    // 착지 직후 짧게, 책 주변 테이블 위로 먼지가 확 퍼졌다 가라앉는
-    // 효과. 착지 스쿼시(_dropEnd*0.85~_dropEnd)가 끝나갈 무렵부터 시작해
-    // 조금 더 오래(_dropEnd+0.07까지) 퍼지고 사라집니다.
+    // 착지 직후 먼지가 퍼졌다 가라앉는 효과 추가(_dropEnd*0.85~+0.07).
     final dustT = _seg(t, _dropEnd * 0.85, _dropEnd + 0.07);
 
     // 카메라 시선은 처음부터 끝까지 페이지 가운데에 고정합니다.
@@ -558,11 +511,23 @@ class _SplashScreenState extends State<SplashScreen>
             ),
           Center(
             child: Transform.translate(
-              offset: Offset(swayOffsetX, dropOffsetY),
+              // centeringOffset은 실제 화면 px 기준 - 바깥 Transform.scale
+              // 안쪽이라 sceneScale로 나눠서 상쇄. 배경은 영향 없이 책만 밀림.
+              offset:
+                  Offset(swayOffsetX, dropOffsetY) +
+                  centeringOffset / sceneScale,
               child: Transform.scale(
                 scaleX: _bookStartScale * dropScale * (1.0 + squash * 0.6),
                 scaleY: _bookStartScale * dropScale * (1.0 - squash),
-                child: _buildBook(bookW, bookH, t, fillScale, bookGrowth),
+                child: _buildBook(
+                  bookW,
+                  bookH,
+                  t,
+                  fillScale,
+                  bookGrowth,
+                  previewScale,
+                  previewMarginEachSide,
+                ),
               ),
             ),
           ),
@@ -577,6 +542,8 @@ class _SplashScreenState extends State<SplashScreen>
     double t,
     double fillScale,
     double bookGrowth,
+    double previewScale,
+    double previewMarginEachSide,
   ) {
     final coverT = _seg(t, _coverStart, _coverEnd);
     final zoomPage = Curves.easeInOut.transform(
@@ -600,12 +567,8 @@ class _SplashScreenState extends State<SplashScreen>
     final pageRect = _diaryPageCardRect(w, h, k);
 
     // [백엔드 수정]
-    // 왼쪽 바인더 링 치수. 실제 DiaryPageFrame.computeRingMetrics와 같은
-    // 식(막대는 페이지 폭의 7%+5px, 세로는 페이지 높이의 2%, 원 지름은
-    // 막대 세로의 1.2배)을 pageRect 기준(=이미 k 배율 적용됨)으로
-    // 재현합니다. 예전엔 막대 크기를 20x8 고정값으로, 그림자도 옅은
-    // 값으로 써서 실제 화면(그림자를 크고 진하게 키운 뒤 디자인)과
-    // 달라 보였습니다.
+    // 바인더 링 치수를 DiaryPageFrame.computeRingMetrics와 같은 식으로
+    // pageRect 기준 재현(예전 고정값 20x8, 옅은 그림자 대신).
     final binderBarWidth =
         pageRect.width * DiaryPageFrame.binderBarWidthRatio + 5 * k;
     final binderBarHeight =
@@ -640,13 +603,8 @@ class _SplashScreenState extends State<SplashScreen>
           // ---- 속지 묶음(닫혀있을 때 오른쪽으로 살짝 삐져나와 보이는 종이들) ----
           //
           // [백엔드 수정]
-          // 표지가 닫혀있을 때만 보여야 하는(책이 닫힌 채 옆으로 살짝
-          // 삐져나온 속지 단면 느낌) 레이어인데 opacity 게이팅이 없어서
-          // 항상 그려지고 있었습니다 - 표지가 열리고 속지가 다 넘어간
-          // 뒤에도 이 크림색 사각형이 그대로 남아있다가, 마지막 장이 넘어가
-          // 그 위를 덮던 게 없어지는 순간 "정체 모를 흰 카드가 남아있다"는
-          // 식으로 드러났던 원인입니다. 표지가 열리는 정도(coverT)에 맞춰
-          // 반대로 옅어지게 해서, 표지가 다 열리면 완전히 사라지게 합니다.
+          // opacity 게이팅 없이 항상 그려지던 걸 coverT 반비례로 옅어지게
+          // 수정 - 표지가 다 열리면 완전히 사라짐.
           if (coverT < 0.999)
             Positioned(
               left: w * _edgeInsetRatio,
@@ -681,11 +639,8 @@ class _SplashScreenState extends State<SplashScreen>
           // 갈피끈(리본). 속지 아래로 삐져나온 디테일.
           //
           // [백엔드 수정]
-          // book 바닥 경계(clipBehavior: Clip.none) 밖으로 삐져나오도록
-          // 일부러 bottom을 음수로 뒀는데, 그래서 마지막 장이 넘어가 book
-          // 칸을 꽉 채운 실제 화면 미리보기 위로도 이 삐져나온 부분만은
-          // 안 가려지고 계속 보였습니다(제보: "아래 빨간색 띠") - 실제
-          // 화면엔 없는 장식이라 미리보기가 뜨는 순간부터는 숨깁니다.
+          // 미리보기가 뜨는 t>=_finalFlipStart부터는 숨김(실제 화면엔 없는
+          // 장식이라 계속 삐져나와 보였음).
           if (t < _finalFlipStart)
             Positioned(
               right: w * 0.22,
@@ -704,13 +659,8 @@ class _SplashScreenState extends State<SplashScreen>
 
           // ---- 고정 가죽 배경(회전하지 않음) ----
           // [백엔드 수정]
-          // 마지막 장(_MainPageReplica)이 넘어가 사라진 뒤, 그 자리를
-          // 대신 채워줄 게 없어서 뒤쪽 테이블 무늬(_RoomTablePainter)가
-          // 그대로 비쳐 보였습니다 - "회전 뒤에 바닥 무늬가 보이다 페이드로
-          // 사라진다"는 제보의 원인입니다. _MainPageReplica의 겉가죽과
-          // 같은 색/모서리로 고정 배경을 하나 깔아서, 페이지가 넘어가도
-          // 이 배경은 그대로 남아있게 합니다(실제 DiaryPageFrame의
-          // backgroundColor 레이어와 같은 역할).
+          // _MainPageReplica가 넘어가 사라진 뒤 뒤쪽 테이블 무늬가 비쳐
+          // 보이던 문제 - 같은 색/모서리 고정 배경을 별도로 깔아 해결.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -725,44 +675,27 @@ class _SplashScreenState extends State<SplashScreen>
           // ---- 실제 화면 미리보기 ----
           //
           // [백엔드 수정]
-          // 마지막 장이 넘어가는 자리 바로 뒤에 실제 DiaryScreen을 직접
-          // 끼워 넣어서, 페이지가 넘어가는 순간 바로 그 뒤에서 진짜 화면이
-          // 드러나게 합니다(터치는 막아둠 - 실제 네비게이션은 기존대로
-          // [_navigateAt]에 따로 일어나고, 이건 그 전까지 보여주기만 하는
-          // 미리보기입니다). 애니메이션 내내 만들어두면 낭비라 이 구간에
-          // 들어와서야 생성합니다. 이 스케일된 장면 "밖"으로 빼서 정확한
-          // 실제 MediaQuery로 그리는 방법도 시도했는데, 그러면 밑에서
-          // 계속 재생 중인 페이지 회전 애니메이션을 통째로 덮어버려서
-          // "갑자기 흰 화면이 나온다"는 더 큰 문제가 생겨서 되돌렸습니다 -
-          // book 내부(페이지 바로 뒤)에 두는 편이 "페이지가 도는 만큼만
-          // 자연스럽게 드러나는" 느낌에 필수적입니다.
-          //
-          // 크기는 FittedBox로 맞춥니다 - 안쪽 SizedBox(w*bookGrowth 크기)가
-          // 실제 화면 크기 그대로 레이아웃되게(제약 없이) 두고, 그 결과물을
-          // FittedBox가 통째로 축소해 이 book 칸(w x h)에 맞춥니다.
-          // MediaQuery.size도 같이 덮어써야 DiaryPageFrame이 스스로 읽는
-          // 값과 실제 레이아웃 크기가 일치하고, padding은 0으로 지워야
-          // DiaryPageFrame의 SafeArea가 또 빼지 않습니다(w*bookGrowth
-          // 자체가 이미 SafeArea 안쪽 크기이므로).
-          //
-          // 이렇게 해도 세로만 아주 살짝 더 커 보인다는 제보가 있어서,
-          // [_previewHeightCorrection]으로 실측 보정합니다.
+          // 마지막 장 뒤에 실제 DiaryScreen을 끼워 넣어 페이지가 도는 만큼
+          // 드러나게 함(FittedBox+MediaQuery로 book 칸에 크기 맞춤). scene
+          // 밖으로 빼는 방법은 화면이 통째로 덮여버려서 되돌림 - 재시도 금지.
           if (t >= _finalFlipStart && _dataReady)
             Positioned.fill(
               child: FittedBox(
                 fit: BoxFit.fill,
                 child: SizedBox(
                   width: w * bookGrowth,
-                  height: h * bookGrowth * _previewHeightCorrection,
+                  height: h * bookGrowth,
                   child: MediaQuery(
                     data: MediaQuery.of(context).copyWith(
-                      size: Size(
-                        w * bookGrowth,
-                        h * bookGrowth * _previewHeightCorrection,
-                      ),
+                      size: Size(w * bookGrowth, h * bookGrowth),
                       padding: EdgeInsets.zero,
                     ),
-                    child: const IgnorePointer(child: DiaryScreen()),
+                    child: IgnorePointer(
+                      child: DiaryScreen(
+                        frameScaleOverride: previewScale,
+                        frameMarginOverride: previewMarginEachSide,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -775,10 +708,8 @@ class _SplashScreenState extends State<SplashScreen>
           // [_buildBook]의 pageRect와 정확히 같은 기준으로 계산됩니다.
           //
           // [백엔드 수정]
-          // 마지막 장으로서 다른 속지들처럼 [_finalFlipStart]~+[_finalFlipDuration]
-          // 구간에 넘어가 사라집니다. 이 페이지는 이미 book(w x h) 전체를
-          // 꽉 채워 왼쪽 끝이 책등(x=0)과 같으므로, 넘어가는 속지처럼 박스를
-          // 넓히는 pivotX 트릭 없이 alignment만으로 책등 기준 회전이 됩니다.
+          // 다른 속지들처럼 [_finalFlipStart]~+[_finalFlipDuration]에 넘어가
+          // 사라짐. book 전체를 꽉 채워 왼쪽 끝=책등이라 pivotX 트릭 불필요.
           Positioned.fill(
             child: Transform(
               alignment: Alignment.centerLeft,
@@ -844,52 +775,74 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
 
+          // ---- 남은 속지가 쌓여있는 듯한 느낌을 주는 배경 레이어 ----
+          //
           // [백엔드 수정]
-          // 표지/속지 각각을 "먼저 넘어간 순" 그대로 그려야 왼쪽에 쌓이는
-          // 더미가 실제로 넘어간 순서와 맞게 보입니다(안 그러면 나중에
-          // 넘어간 장이 먼저 넘어간 장 밑에 깔리는 식으로 서로 침범해
-          // 보임). 아직 활발히 넘어가는 중(또는 시작 전)인 것들은 "아직
-          // 정착 안 함" 취급해서, 정착한 것들보다 항상 위(=지금 움직이는
-          // 것이 맨 위)에 그리고, 그중에서도 기존 순서(표지가 가장 위,
-          // 그다음 0번 장 ... 4번 장 순)를 그대로 유지합니다. 매 프레임
-          // 이 순서 자체를 다시 계산합니다.
+          // DiaryPageFrame.pageLayers처럼 페이지 뒤로 크림색 사각형이 오른쪽에
+          // 살짝씩 다르게 삐져나오는 배경 레이어 추가. [_MainPageReplica]보다
+          // 뒤(z-order상 앞)에 둬야 표지~마지막 장 전까지 계속 드러나 보임.
+          //
+          // [백엔드 수정]
+          // rect가 pageRect.left부터 시작해 pageRect 전체를 가리던 버그
+          // 수정(로고까지 같이 가려짐) - pageRect.right부터만 그리도록 좁힘.
+          if (t < _finalFlipStart)
+            for (final stickOut in const [10.0, 7.0, 4.0, 1.0])
+              Positioned.fromRect(
+                rect: Rect.fromLTRB(
+                  pageRect.right,
+                  pageRect.top,
+                  pageRect.right + stickOut * k,
+                  pageRect.bottom,
+                ),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: _pageColor,
+                    borderRadius: BorderRadius.horizontal(
+                      right: Radius.circular(15 * k),
+                    ),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.15),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.2),
+                        blurRadius: 8 * k,
+                        offset: Offset(4 * k, 4 * k),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+          // [백엔드 수정]
+          // 정착한 순서대로 그려야 쌓이는 더미가 침범 안 함 - 아직 안 정착한
+          // 건 항상 위(표지>0번>...>4번 순)로, 매 프레임 재계산.
           ..._buildCoverAndPagesInSettleOrder(t, w, h, pageRect, k, coverT),
 
           // ---- 왼쪽 바인더 링 ----
           //
           // [백엔드 수정]
-          // 실제 DiaryPageFrame처럼 링은 항상 페이지(+넘어가는 속지)보다
-          // 위에 그려야 가려지지 않습니다. 예전엔 속지들보다 먼저(=아래)
-          // 그려서, 속지가 넘어가거나 왼쪽에 쌓이는 동안(표지가 열린 뒤
-          // 실제 메인 화면에 도착하기 전까지 내내) 링이 속지에 덮여 안
-          // 보였습니다 - 표지가 열리기 시작할 때 잠깐, 그리고 맨 마지막
-          // 메인 화면에서만 보였던 이유입니다. _MainPageReplica 안에도
-          // 같은 링이 있지만, 그 안에서는 페이지 자체가 폭 대부분을
-          // 차지해 여백이 거의 없어 페이지 가장자리에 살짝 겹쳐 아주
-          // 작게만 보이므로, 여기서 pageRect 기준으로 직접 그려 표지가
-          // 열리는 순간부터 끝까지 계속 또렷이 보이게 합니다. 표지가 아직
-          // 닫혀있는 동안(coverT=0)엔 안 보이도록 페이드로 감쌉니다.
+          // 링을 페이지/속지보다 항상 위에 그리도록 pageRect 기준으로 직접
+          // 그림(예전엔 속지에 가려짐).
           //
-          // 위치도 실제 DiaryPageFrame._buildRing과 같은 식(binderLeft,
-          // 프레임 상하 여백 50 기준)으로 바꿨습니다 - 예전엔 pageRect
-          // 기준 임의 비율(8%)이라 실제 화면과 높이가 달랐습니다.
-          if (coverT > 0.001)
+          // [백엔드 수정]
+          // coverT 페이드인 대신 마지막 속지 90도([_binderRingRevealAt])에서
+          // 즉시(컷) 등장. 위치도 DiaryPageFrame._buildRing과 같은 식으로 수정.
+          if (t >= _binderRingRevealAt)
             Positioned(
               left: binderLeft,
               top: DiaryPageFrame.defaultBinderTop * k,
               bottom: DiaryPageFrame.defaultBinderBottom * k,
-              child: Opacity(
-                opacity: coverT,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: List.generate(
-                    DiaryPageFrame.defaultBinderRingCount,
-                    (_) => _buildMiniBinderRing(
-                      k,
-                      binderBarWidth,
-                      binderBarHeight,
-                      binderCircleShiftX,
-                    ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: List.generate(
+                  DiaryPageFrame.defaultBinderRingCount,
+                  (_) => _buildMiniBinderRing(
+                    k,
+                    binderBarWidth,
+                    binderBarHeight,
+                    binderCircleShiftX,
                   ),
                 ),
               ),
@@ -919,13 +872,7 @@ class _SplashScreenState extends State<SplashScreen>
     final entries = <MapEntry<double, Widget>>[];
 
     // [백엔드 수정]
-    // t >= _coverStart로 감싸뒀던 게 버그였습니다 - 그러면 열리기 시작하는
-    // 시점(_coverStart) 전에는 표지가 아예 안 그려져서, 낙하하는 동안
-    // (그리고 그 뒤 표지가 열리기 전까지) 항상 그려지고 있던 0번 장(로고
-    // 있는 페이지)이 맨 위로 그대로 드러나 보였습니다. 표지는 처음부터
-    // (닫힌 채로도) 항상 그려야 낙하하는 동안에도 "덮여있는 책"으로
-    // 보입니다 - _buildCover 내부에서 t<_coverStart일 땐 angle이 0으로
-    // 계산돼 자연스럽게 완전히 닫힌 모양이 됩니다.
+    // 표지를 t>=_coverStart일 때만 그리던 걸 제거, 처음부터 항상 그림.
     {
       // _buildCover가 튕김 없이 coverT 한 구간(_coverStart~_coverEnd)
       // 만에 최종 각도까지 다 돌므로, 정착 시각도 그와 같은 _coverEnd.
@@ -956,13 +903,8 @@ class _SplashScreenState extends State<SplashScreen>
   /// progress로 사용) 같은 느낌이 나도록 했습니다.
   ///
   /// [백엔드 수정]
-  /// 90도(p=0.5)를 넘으면 사라지던 걸(실제 다이어리 페이지 넘김과 동일)
-  /// 바꿔서, 계속 눕듯이 돌다가(p=1.0에서 [_settleRestAngle]에 도달) 그
-  /// 자리에 멈춰 남아있게 했습니다 - 표지처럼 이미 넘어간 장들이 왼쪽에
-  /// 계속 쌓여 보이다가, 실제 화면으로 넘어가는 마지막 크로스페이드 때
-  /// 다같이 자연스럽게 사라지는 걸 노렸습니다. 장마다 몇 도씩 다르게
-  /// 눕도록 살짝 흩트려서(jitter) 한 장짜리 판이 아니라 쌓인 더미처럼
-  /// 보이게 했습니다.
+  /// 90도 넘으면 사라지던 걸, 계속 눕다가 [_settleRestAngle]에서 멈춰
+  /// 남아있게 변경(왼쪽에 쌓인 더미처럼). 장마다 jitter로 각도 흩뜨림.
   Widget _buildFlipPage(int i, double t, Rect pageRect, double k) {
     final start = _flipStart + i * _flipStagger;
     final p = _seg(t, start, start + _flipDuration);
@@ -1050,23 +992,13 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   /// [백엔드 수정]
-  /// 다 열리면 사라지던 걸(opacity 0으로 페이드) 바꿔서, 표지도 넘어가는
-  /// 속지들처럼 눕듯이 [_settleRestAngle]에서 그 자리에 남아있게 했습니다
-  /// - 표지가 가장 먼저 넘어갔으니 쌓이는 더미의 맨 아래가 됩니다
-  /// (z-order도 [_buildBook]에서 속지들보다 먼저/아래에 그리도록
-  /// 옮겼습니다).
-  ///
-  /// 처음엔 "열림(easeOutBack 튕김) + 다 연 뒤 추가로 눕는 정착" 두
-  /// 단계로 나눠뒀는데, easeOutBack 자체가 목표각을 살짝 넘겼다 되돌아오는
-  /// 곡선이라 그 되돌아오는 움직임이 "흔들흔들"거리는 것처럼 보였고,
-  /// 하필 그 시점이 첫 속지가 넘어가기 시작하는 시점과 겹쳐서 서로
-  /// 간섭하는 것처럼 보였습니다. 튕김 없이 [_coverStart]~[_coverEnd]
-  /// 한 구간 동안 곧장 최종 각도까지 매끄럽게(easeOutCubic) 돌게 해서,
-  /// coverT가 1에 도달하는 순간(=_coverEnd) 더 이상의 움직임 없이 바로
-  /// 고정되도록 했습니다.
+  /// 다 열리면 페이드아웃되던 걸, 속지들처럼 [_settleRestAngle]에서 멈춰
+  /// 남아있게 변경. 튕김 없이 easeOutCubic으로 매끄럽게 회전.
   Widget _buildCover(double w, double h, double coverT) {
     final angle = Curves.easeOutCubic.transform(coverT) * _settleRestAngle;
 
+    // [백엔드 수정]
+    // 표지 힌지를 책등 밖으로 옮기는 시도 했으나 원복(책등에 그대로 붙임).
     return Positioned(
       left: 0,
       right: 4, // 오른쪽으로 속지가 살짝 보이도록 표지를 약간 짧게.
@@ -1207,7 +1139,8 @@ class _DustBurstPainter extends CustomPainter {
     required this.bookH,
   });
 
-  static const int _count = 9;
+  // [백엔드 수정] 먼지를 더 많이 원해서 9 -> 18로 늘림.
+  static const int _count = 18;
   static const Color _dustColor = Color(0xFFD9C39A);
 
   @override
@@ -1224,10 +1157,8 @@ class _DustBurstPainter extends CustomPainter {
       final reach = 0.35 + rng.nextDouble() * 0.65;
       final dist = reach * maxRadius * spread;
       // [백엔드 수정]
-      // 여기 세로 오프셋(+ bookH*0.32)이 실제 반지름(dist, 0.45배로
-      // 눌러도)보다 훨씬 커서, 사방으로 퍼지는 게 아니라 전부 아래로
-      // 몰려 튀는 것처럼 보였습니다. 오프셋을 빼고 책 중심 기준으로
-      // 고르게 사방으로 퍼지게 했습니다(세로만 살짝 눌러 원근감만 유지).
+      // 세로 오프셋 제거, 책 중심 기준 고르게 사방으로 퍼지게 수정(세로만
+      // 살짝 눌러 원근감 유지).
       final pos =
           center + Offset(math.cos(angle) * dist, math.sin(angle) * dist * 0.6);
       final speckSize = (bookW * 0.012) * (0.6 + rng.nextDouble() * 0.8);
@@ -1631,17 +1562,6 @@ class _MainPageReplica extends StatelessWidget {
     // pageRect도 같은 식을 쓰므로, 넘어가는 속지 → 이 예시 페이지 → 실제
     // 메인 페이지로 이어질 때 크기가 자연스럽게 이어집니다.
     final cardRect = _diaryPageCardRect(w, h, k);
-    // DiaryScreen._ticketAspectRatio(156/60)와 동일한 비율로 카드 높이를
-    // 실제 렌더링 너비(defaultPageWidthFactor 적용된 폭)에서 역산합니다
-    // (DiaryScreen._buildPageContent와 동일).
-    final itemW = cardRect.width - 50 * k; // 가로 Padding 25*2
-    final itemH = itemW / (156 / 60);
-    // 버튼 1개 + 티켓 3개(모두 같은 높이) + 항목 사이 간격 3곳(50).
-    final targetTotalHeight = itemH * 4 + 50 * k * 3;
-    final topPad = ((cardRect.height - targetTotalHeight) / 2).clamp(
-      20.0 * k,
-      double.infinity,
-    );
 
     return Stack(
       clipBehavior: Clip.none,
@@ -1682,19 +1602,32 @@ class _MainPageReplica extends StatelessWidget {
               ],
             ),
             padding: EdgeInsets.symmetric(horizontal: 25 * k),
-            child: Column(
-              children: [
-                SizedBox(height: topPad),
-                // [백엔드 수정]
-                // "티켓 추가" 버튼(흰 포켓+글씨)까지 마저 뺐습니다 - 아이콘/
-                // 문구를 뺀 것과 같은 이유로, 애니메이션이 끝나고 실제
-                // 화면으로 이어질 때 둘 사이 크기가 딱 안 맞으면 이 버튼도
-                // "남아있는" 것처럼 눈에 띄었습니다. 카드 안쪽은 통째로
-                // 빈 여백으로 남겨서, 실제 화면(진짜 버튼 포함)이 그 위로
-                // 자연스럽게 페이드인되도록 합니다.
-                SizedBox(height: itemH * 3 + 100 * k),
-              ],
+            // [임시 주석처리] 로고 없는 모습 비교용 - 원래는 아래 child:
+            // Center(...)에 아이콘+"TICKET DIARY" 로고가 있었습니다.
+            /*
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.local_activity_outlined,
+                    size: 105 * k,
+                    color: _leatherColor.withValues(alpha: 0.55),
+                  ),
+                  SizedBox(height: 18 * k),
+                  Text(
+                    'TICKET DIARY',
+                    style: TextStyle(
+                      fontSize: 39 * k,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 4.5 * k,
+                      color: _leatherColor.withValues(alpha: 0.75),
+                    ),
+                  ),
+                ],
+              ),
             ),
+            */
           ),
         ),
       ],
@@ -1713,14 +1646,8 @@ class _MainPageReplica extends StatelessWidget {
 /// 이어집니다.
 ///
 /// [백엔드 수정]
-/// 여백 4개(10/20/30/45)와 widthFactor를 여기 직접 하드코딩해뒀었는데,
-/// widthFactor가 실제로는 1.1이 아니라 [DiaryPageFrame.defaultPageWidthFactor]
-/// (=1.1*0.95=1.045, 인덱스 탭을 키우려고 나중에 5% 줄인 값)로 이미
-/// 바뀌어 있었습니다 - 이 함수만 옛날 값(1.1)을 그대로 쓰고 있어서,
-/// 애니메이션이 끝난 뒤 실제 화면과 이어질 때 카드 폭이 5%가량 안 맞는
-/// 게 지금까지의 크기 차이 중 하나였습니다. 매직 넘버 대신 실제
-/// [DiaryPageFrame]의 상수를 직접 참조하도록 바꿔서, 앞으로 그쪽 값이
-/// 또 바뀌어도 이 함수가 자동으로 따라가게 했습니다.
+/// 여백/widthFactor 하드코딩(옛 값 1.1) 대신 [DiaryPageFrame] 상수를 직접
+/// 참조하도록 변경 - 카드 폭이 5%가량 안 맞던 문제 해결.
 Rect _diaryPageCardRect(double w, double h, double k) {
   const insetTop = DiaryPageFrame.defaultPageTop;
   const insetBottom = DiaryPageFrame.defaultPageBottom;
@@ -1741,13 +1668,8 @@ Rect _diaryPageCardRect(double w, double h, double k) {
 /// 펼침 애니메이션이 씁니다.
 ///
 /// [백엔드 수정]
-/// 실제 [_BinderRing](diary_page_frame.dart)과 같은 구조로 다시 맞췄습니다
-/// - 막대 크기를 20x8 고정값 대신 [barWidth]/[barHeight](페이지 크기에
-/// 비례, _buildBook에서 계산)로 받고, 원 지름도 막대 세로의 1.2배로
-/// 맞췄습니다(고정 15가 아님). 그림자도 실제 쪽이 나중에 더 크고
-/// 진하게(막대 색이 페이지색과 밝기가 비슷해 옅은 그림자로는 거의 안
-/// 보였던 문제 때문에) 바뀐 걸 여기는 못 따라가서 옅은 채로 남아있었던
-/// 게 "디자인이 다르다"는 제보의 실제 원인이었습니다.
+/// 실제 [_BinderRing](diary_page_frame.dart)과 같은 구조로 재조정 - 막대
+/// 크기 고정값(20x8) 대신 [barWidth]/[barHeight] 사용, 원 지름/그림자도 통일.
 Widget _buildMiniBinderRing(
   double k,
   double barWidth,
