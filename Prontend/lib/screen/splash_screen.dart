@@ -130,6 +130,10 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _finalFlipDuration = 0.11;
   static const double _finalFlipAngle = math.pi * 0.56; // 약 100도.
 
+  /// 마지막 속지가 이 각도(도)를 넘으면 실제 화면 미리보기(탭 포함)를
+  /// 그리기 시작합니다.
+  static const double _tabRevealAngleDeg = 20.0;
+
   // [백엔드 수정]
   // 미리보기 세로 보정 매직 넘버 제거, DiaryPageFrame.scaleOverride/
   // marginEachSideOverride로 대체.
@@ -594,6 +598,21 @@ class _SplashScreenState extends State<SplashScreen>
     // 메인 페이지(외곽선 없음)와 자연스럽게 겹쳐집니다.
     final outlineAlpha = 0.30 * (1.0 - zoomPage);
 
+    // _MainPageReplica 자신의 회전각(도). 아래 rotateY에 그대로 씀.
+    final finalFlipAngleDeg =
+        _seg(t, _finalFlipStart, _finalFlipStart + _finalFlipDuration) *
+        _finalFlipAngle *
+        180 /
+        math.pi;
+
+    // [백엔드 수정]
+    // 탭 등장 기준을 _MainPageReplica 회전각 대신 마지막 속지(i=4)
+    // 회전각으로 변경.
+    final lastRegularLeafStart = _flipStart + (_flipCount - 1) * _flipStagger;
+    final lastRegularLeafAngleDeg =
+        _seg(t, lastRegularLeafStart, lastRegularLeafStart + _flipDuration) *
+        180;
+
     return SizedBox(
       width: w,
       height: h,
@@ -678,7 +697,11 @@ class _SplashScreenState extends State<SplashScreen>
           // 마지막 장 뒤에 실제 DiaryScreen을 끼워 넣어 페이지가 도는 만큼
           // 드러나게 함(FittedBox+MediaQuery로 book 칸에 크기 맞춤). scene
           // 밖으로 빼는 방법은 화면이 통째로 덮여버려서 되돌림 - 재시도 금지.
-          if (t >= _finalFlipStart && _dataReady)
+          //
+          // [백엔드 수정]
+          // 시간 기준 대신 마지막 속지 회전각(_tabRevealAngleDeg 이상)
+          // 기준으로 그리기 시작하게 변경.
+          if (lastRegularLeafAngleDeg >= _tabRevealAngleDeg && _dataReady)
             Positioned.fill(
               child: FittedBox(
                 fit: BoxFit.fill,
@@ -715,14 +738,7 @@ class _SplashScreenState extends State<SplashScreen>
               alignment: Alignment.centerLeft,
               transform: Matrix4.identity()
                 ..setEntry(3, 2, 0.00016)
-                ..rotateY(
-                  _seg(
-                        t,
-                        _finalFlipStart,
-                        _finalFlipStart + _finalFlipDuration,
-                      ) *
-                      _finalFlipAngle,
-                ),
+                ..rotateY(finalFlipAngleDeg * math.pi / 180),
               child: _MainPageReplica(
                 bookW: w,
                 bookH: h,
@@ -774,46 +790,6 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               ),
             ),
-
-          // ---- 남은 속지가 쌓여있는 듯한 느낌을 주는 배경 레이어 ----
-          //
-          // [백엔드 수정]
-          // DiaryPageFrame.pageLayers처럼 페이지 뒤로 크림색 사각형이 오른쪽에
-          // 살짝씩 다르게 삐져나오는 배경 레이어 추가. [_MainPageReplica]보다
-          // 뒤(z-order상 앞)에 둬야 표지~마지막 장 전까지 계속 드러나 보임.
-          //
-          // [백엔드 수정]
-          // rect가 pageRect.left부터 시작해 pageRect 전체를 가리던 버그
-          // 수정(로고까지 같이 가려짐) - pageRect.right부터만 그리도록 좁힘.
-          if (t < _finalFlipStart)
-            for (final stickOut in const [10.0, 7.0, 4.0, 1.0])
-              Positioned.fromRect(
-                rect: Rect.fromLTRB(
-                  pageRect.right,
-                  pageRect.top,
-                  pageRect.right + stickOut * k,
-                  pageRect.bottom,
-                ),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: _pageColor,
-                    borderRadius: BorderRadius.horizontal(
-                      right: Radius.circular(15 * k),
-                    ),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.15),
-                      width: 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.2),
-                        blurRadius: 8 * k,
-                        offset: Offset(4 * k, 4 * k),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
 
           // [백엔드 수정]
           // 정착한 순서대로 그려야 쌓이는 더미가 침범 안 함 - 아직 안 정착한
@@ -1537,9 +1513,11 @@ class _MainPageReplica extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final k = 1 / fillScale;
+    // [백엔드 수정]
+    // 갈색 배경(color: _leatherColor)을 뺌 - 페이지 넘김 때 배경까지
+    // 같이 돌아가 보이던 문제 수정.
     return Container(
       decoration: BoxDecoration(
-        color: _leatherColor,
         borderRadius: const BorderRadius.horizontal(right: Radius.circular(5)),
         border: Border.all(
           color: Colors.black.withValues(alpha: outlineAlpha),
