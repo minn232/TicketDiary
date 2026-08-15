@@ -94,20 +94,9 @@ async def _is_unavailable_page(page) -> bool:
     return any(keyword in text for keyword in _UNAVAILABLE_PAGE_KEYWORDS)
 
 
-# NOL(야놀자, nol.yanolja.com) 상세 페이지의 "상품 상세"/"공지사항" 섹션은 기본적으로 접혀있고
-# 각각 "상품 상세 더보기"/"공지사항 더보기" 버튼을 직접 눌러야 전체 내용(라인업 포스터 이미지,
-# 공지 전문)이 펼쳐짐(실측 확인, 2026-08-05 - nol.yanolja.com/ticket/products/26010721). 안
-# 누르면 전체 페이지 스크린샷에서 뒷부분이 잘려서 나온다. 둘 다 순수 인라인 확장이라(모달·페이지
-# 이동 없음, 실측으로 role=dialog 없음/body overflow 안 바뀜 확인) 같은 방식으로 처리 가능.
-# "가격 전체보기"는 이 둘과 달리 모달 팝업이라(role=dialog, 배경 스크롤 잠김) 같은 전체 페이지
-# 스크린샷에 끼워 넣으면 배경을 덮어 오히려 다른 내용을 가리므로 여기서는 다루지 않음 - 별도 캡처가
-# 필요한 기능이라 스코프 밖으로 둔다(가격이 날짜별로 다른 경우에만 의미 있고, 대표가는 보통 본문에
-# 이미 나와 있음).
-#
-# 인터파크의 "NOL 티켓"이 2026-09-08부로 서비스를 종료하고 이 nol.yanolja.com으로 예매가
-# 이관되는 중이라(해당 페이지 공지사항에서 확인), ticketing_links의 INTERPARK 키에 이 도메인
-# URL이 들어오기 시작함 - 그래서 별도 크롤러를 새로 만들지 않고 crawl_interpark 안에서 같이
-# 처리한다. 구 인터파크 페이지엔 이 버튼들 자체가 없어 count()==0으로 조용히 넘어감
+# NOL 상세페이지의 "상품 상세"/"공지사항"은 기본 접힘 상태라 안 누르면 스크린샷이 잘림.
+# "가격 전체보기"는 모달이라 스코프 밖(구 인터파크엔 이 버튼이 없어 count()==0으로 넘어감).
+# 인터파크 NOL 서비스 이관으로 crawl_interpark 안에서 같이 처리함.
 _SHOW_MORE_BUTTON_TEXTS = ("상품 상세 더보기", "공지사항 더보기")
 
 
@@ -124,11 +113,8 @@ async def _expand_collapsed_sections(page) -> None:
             logger.warning(f"'{text}' 버튼 클릭 실패 (무시하고 계속): {e}")
 
     if clicked:
-        # 버튼 클릭 시 Playwright가 요소를 뷰포트 안으로 자동 스크롤시키는데, 그 상태로 바로
-        # full_page 스크린샷을 찍으면 position:fixed인 상단 헤더가 원래 위치(맨 위)가 아니라
-        # 스크롤된 지점에 고정된 채로 캡처되어 본문 이미지 중간에 겹쳐 나옴(실측 확인, 2026-08-05
-        # - 헤더가 "더보기" 버튼이 있던 자리에 그대로 끼어들어옴). 스크린샷 직전에 항상 맨 위로
-        # 스크롤을 되돌려 이 문제를 방지한다
+        # 버튼 클릭 시 자동 스크롤된 상태로 스크린샷을 찍으면 position:fixed 헤더가 스크롤된
+        # 지점에 고정된 채 본문 중간에 찍힘(실측 확인) - 스크린샷 직전 항상 맨 위로 되돌림.
         try:
             await page.evaluate("window.scrollTo(0, 0)")
             await page.wait_for_timeout(200)
@@ -136,20 +122,13 @@ async def _expand_collapsed_sections(page) -> None:
             logger.warning(f"스크롤 리셋 실패 (무시하고 계속): {e}")
 
 
-# 연령확인/이벤트배너/쿠키동의/"예매 안내" 같은 팝업이 스크린샷 위에 그대로 찍히는 걸 막기
-# 위한 범용 닫기 로직. 실측(2026-08-06)에서 "예매 안내" 제목까지는 찾았는데도 안 닫히는
-# 경우가 있었음 - 닫기 버튼이 <button> 태그가 아니거나(div/span 등으로 만든 "버튼"이 흔함),
-# ×가 텍스트가 아니라 아이콘/이미지/CSS content라 선택자로 못 잡는 경우가 원인으로 추정됨.
-# 그래서 클릭이 예외 없이 끝났다고 성공으로 치지 않고, 매 시도 후 컨테이너가 실제로 안
-# 보이게 됐는지 재확인하면서 여러 방법을 순서대로 시도한다. 전부 실패해도 예외 없이 조용히
-# 넘어감(크롤링 자체를 막으면 안 됨)
+# 팝업이 스크린샷에 찍히는 걸 막는 범용 닫기 로직 - 닫기 버튼이 <button> 태그가 아니거나
+# ×가 아이콘/이미지라 선택자로 못 잡는 경우가 많아서(실측 확인), 클릭 후 매번 컨테이너가
+# 실제로 사라졌는지 재확인하며 여러 방법을 순서대로 시도. 전부 실패해도 조용히 넘어감.
 
-# "예매 안내" 팝업의 흔한 컨테이너 class 패턴(사이트마다 정확한 이름은 다를 수 있어 대략적으로만).
-# `alert`처럼 구체적인 키워드를 먼저 시도하고, `pop`(YES24가 "pop-alert"/"movie-pop"처럼
-# "popup"이 아니라 "pop"만 쓰는 걸 실측으로 확인, 2026-08-06)처럼 넓은 패턴은 맨 뒤로 미룸 -
-# "pop"은 예고편 재생 팝업/쿠폰 아이콘 등 무관한 요소가 훨씬 많이 섞여서(YES24 실측: 29개 중
-# 진짜 공지 팝업은 뒤쪽에 있었고, 앞쪽 매치를 잘못 클릭했다가 엉뚱한 쿠폰 팝업을 열어버린 사고가
-# 실제로 있었음) 우선순위를 낮게 둠
+# 팝업 컨테이너 class 패턴(대략적, 사이트마다 다름) - 구체적 키워드(alert)를 먼저 시도하고
+# 넓은 패턴("pop")은 맨 뒤로 미룸. "pop"은 무관한 요소가 많이 섞여(YES24 실측) 잘못된
+# 쿠폰 팝업을 클릭한 사고가 실제로 있었음.
 _POPUP_CONTAINER_SELECTORS = (
     '[role="dialog"]',
     '[class*="alert" i]',
@@ -212,12 +191,9 @@ async def _try_close_container(page, container, allow_position_click: bool) -> b
         except Exception:
             continue
 
-    # 2) 텍스트 기반 - 부분 일치로 후보를 여러 개(최대 5개) 뽑되, 텍스트 길이가 짧은 것만
-    # 실제 "버튼"으로 인정(본문 문단처럼 긴 텍스트 안에 우연히 같은 단어가 포함된 경우를 배제).
-    # 텍스트 노드 자신은 스크린리더 전용이라 시각적으로 숨겨져 있고(예: 인터파크의
-    # <button><span class="blind">닫기</span></button>) 실제 클릭 가능한 건 그 부모(버튼/링크/
-    # role=button)인 경우가 흔함(실측 확인, 2026-08-06) - 텍스트 요소 자체가 안 보이면
-    # 가장 가까운 버튼류 조상을 대신 찾아서 클릭한다
+    # 2) 텍스트 기반 - 짧은 텍스트만 실제 "버튼"으로 인정(긴 본문에 우연히 같은 단어가 섞인
+    # 경우 배제). 텍스트 노드 자신은 스크린리더 전용이라 숨겨진 경우가 흔해서(실측 확인),
+    # 안 보이면 가장 가까운 버튼류 조상을 대신 찾아 클릭함.
     for text in _CLOSE_TEXT_CANDIDATES:
         try:
             candidates = container.get_by_text(text, exact=False)
@@ -245,12 +221,9 @@ async def _try_close_container(page, container, allow_position_click: bool) -> b
         except Exception:
             continue
 
-    # 3) 최후 수단 - 텍스트/속성/시맨틱 마커 어디에도 안 걸릴 정도로 순수 좌표 기반 클릭
-    # 핸들러만 있는 경우 대응(실측 확인, 2026-08-06 - 멜론은 닫기 아이콘이 배경이미지고 클릭
-    # 핸들러가 헤더 div 전체에 걸려있어 텍스트/속성으로 전혀 못 찾음). "닫기 버튼은 보통 팝업
-    # 우측 상단 모서리 근처에 있다"는 흔한 UI 관례에 기대 그 근방 여러 지점을 순서대로 클릭.
-    # container가 실제 팝업 박스로 특정된 경우에만 의미가 있어서(페이지 전체를 좁게 클릭하면
-    # 안 되므로) allow_position_click=True일 때만 시도
+    # 3) 최후 수단 - 텍스트/속성 어디에도 안 걸리는 좌표 기반 클릭(멜론은 닫기 아이콘이
+    # 배경이미지라 이 방법밖에 안 통함, 실측 확인). "닫기 버튼은 우측 상단 근처"라는 UI
+    # 관례로 그 근방 여러 지점을 순서대로 클릭 - container가 실제 팝업으로 특정된 경우에만 시도.
     if allow_position_click:
         try:
             box = await container.bounding_box()
@@ -329,11 +302,9 @@ async def _dismiss_popups(page) -> None:
 # 완벽하진 않음(날짜처럼 진짜 의미있는 숫자도 같이 지워짐) - 라인업 변경 판단 목적으론 괜찮은 트레이드오프
 _DIGIT_RE = re.compile(r"\d+")
 
-# 인터파크 상세 페이지의 "캐스팅" 섹션 바로 아래에 붙는 "{아티스트명} 더 알아보기" 한 줄이
-# 방문할 때마다 라인업 중 무작위 한 명으로 로테이션되는 걸 실측으로 확인함(2026-07-29,
-# scripts/test_lineup_diff.py로 goods/26009383을 8초 간격 두 번 방문 - 실제 라인업 목록
-# 자체는 완전히 동일했는데 이 줄 하나 때문에 해시가 달라짐). 숫자가 아닌 노이즈라 위 digit
-# 제거만으론 못 잡아서 별도로 걸러냄
+# 인터파크 상세 페이지의 "{아티스트명} 더 알아보기" 한 줄이 방문할 때마다 무작위로 바뀌는
+# 걸 실측 확인(같은 라인업인데 이 줄 때문에 해시가 달라짐) - 숫자가 아닌 노이즈라 위 digit
+# 제거로는 못 잡아서 별도로 거름.
 _LEARN_MORE_LINE_RE = re.compile(r"^.*더\s*알아보기.*$", re.MULTILINE)
 
 
@@ -635,15 +606,10 @@ _CRAWL_RETRY_COOLDOWN = timedelta(hours=24)
 _MAX_CRAWL_ATTEMPTS = 30
 
 
-# 티켓 등록 또는 공연 찜(follow) 시 백그라운드 태스크로 호출: 크롤링 후 Concert.crawl_screenshot_url 갱신
-# ticketing_site는 티켓 등록 경로에서만 값이 있고, 찜 경로에서는 아직 아무도 티켓을 안 샀을 수 있어
-# None으로 넘어옴 - 이 경우 concert.ticketing_links(KOPIS 상세조회로 이미 채워져 있음)만으로 크롤링을
-# 시도하므로, ticketing_site 유효성 검사를 DB 조회(및 ticketing_links 확인)보다 먼저 하지 않는다
-#
-# "크롤링 완료"는 스크린샷 존재 여부가 아니라 ticketing_date를 실제로 얻었는지로 판단한다.
-# KOPIS는 티켓팅 오픈 전에도 공연을 먼저 등록하는 경우가 흔해서, 그 시점에 예매 사이트 페이지를
-# 크롤링하면 "오픈 예정" 같은 빈 페이지만 찍힐 수 있는데, 예전엔 스크린샷이 한 번이라도 찍히면
-# 영구히 재크롤링을 안 해서 나중에 진짜 정보가 채워져도 절대 못 얻어오는 문제가 있었음
+# 티켓등록/찜(follow) 시 백그라운드 호출 - 크롤링 후 crawl_screenshot_url 갱신. 찜 경로는
+# ticketing_site가 None일 수 있어(아직 아무도 안 삼) ticketing_links만으로 시도.
+# "완료" 판단은 스크린샷 존재가 아니라 ticketing_date 확보 여부 - 예전엔 오픈 전 빈 페이지가
+# 한 번 찍히면 영구히 재시도를 안 해서 나중에 진짜 정보를 못 얻는 문제가 있었음.
 async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
     if ticketing_site and normalize_site_key(ticketing_site) not in _KNOWN_SITE_KEYS:
         logger.info(f"크롤링 미지원 사이트: {ticketing_site}")
@@ -755,12 +721,10 @@ async def send_screenshots_to_llm() -> None:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
 
-# 자정 배치: 아티스트 정보 없는 공연의 포스터를 VLM팀에 보내 아티스트 추출 요청
-# (포스터 내용은 시간이 지나도 안 바뀌므로 크롤링과 달리 쿨다운/재시도 없이 한 번만 시도함 -
-# 전송 자체가 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에서 다시 시도됨)
-# limit: scripts/send_artist_extraction_now.py 같은 수동 트리거에서 소규모로 먼저
-# 테스트해보고 싶을 때만 씀 - 자정 배치 호출부는 안 넘기므로 기존 동작(전체 전송) 그대로.
-# 반환값은 실제로 전송(=attempted_at 마킹)된 건수(전송 실패/대상 없음이면 0).
+# 자정 배치: 아티스트 정보 없는 공연의 포스터를 VLM팀에 전송 - 포스터는 안 바뀌므로 한
+# 번만 시도(실패하면 artist_extraction_attempted_at을 안 남겨 다음 배치에 재시도됨).
+# limit은 수동 트리거(scripts/send_artist_extraction_now.py)용 - 자정 배치는 안 넘겨 전체
+# 전송 그대로. 반환값은 실제 전송(=attempted_at 마킹)된 건수.
 async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     if not settings.LLM_ARTIST_URL:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
@@ -861,11 +825,10 @@ async def retry_pending_crawls() -> None:
 _FESTIVAL_LINEUP_CHECK_COOLDOWN = timedelta(hours=24)
 
 
-# event_type=FESTIVAL 공연 하나의 라인업이 직전 방문과 달라졌는지 확인하고, 달라졌으면(최초 방문
-# 포함) 새 스크린샷을 버전별 키로 업로드해 crawl_screenshot_url을 갱신한다.
-# ticketing_date 유무를 안 보는 게 crawl_and_save와의 핵심 차이 - 페스티벌은 1차 라인업 공개 직후
-# ticketing_date가 바로 채워지는 경우가 많아, 그 기준으로 완료 판단하면 정작 봐야 할 시점부터
-# 재크롤링 대상에서 영영 빠짐
+# FESTIVAL 공연 하나의 라인업이 직전 방문과 달라졌는지 확인, 달라졌으면(최초 방문 포함)
+# 새 스크린샷을 버전별 키로 업로드해 crawl_screenshot_url 갱신.
+# ticketing_date 유무를 안 보는 게 crawl_and_save와의 차이 - 페스티벌은 1차 라인업 공개
+# 직후 ticketing_date가 바로 채워져서, 그 기준이면 봐야 할 시점부터 재크롤링 대상에서 빠짐.
 async def _check_festival_lineup(concert_id) -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.id == concert_id))

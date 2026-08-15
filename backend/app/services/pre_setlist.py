@@ -82,18 +82,11 @@ async def _top_songs_for_artist(artist_name: str, n: int) -> list[dict]:
     ]
 
 
-# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성 및 저장.
-# 페스티벌(아티스트 2명 이상)이면 concert.artist_name[0]만 보던 걸 배열 전체로 순회 -
-# 아티스트마다 top_n(기본 20곡, 단독 공연과 동일)씩 뽑아서 곡마다 artist 태그를 붙여 합침.
-# 페스티벌이라고 곡 수를 줄이지 않는 이유: _top_songs_for_artist의 비용은 Setlist.fm
-# 검색+집계(search_setlists_by_artist)에서 다 발생하고 top_n은 그 결과를 자르는 것뿐이라,
-# 넉넉히 20곡씩 저장해도 API 호출은 늘지 않음. 대신 "미리보기엔 몇 곡만" 같은 표시 개수
-# 조절은 프론트가 artist 태그로 그룹핑한 뒤 원하는 만큼만 잘라 쓰면 됨 - 나중에 타임테이블
-# 기반 날짜별 아티스트 매핑이 갖춰지면, 이미 저장된 후보 중 그 아티스트분만 다시 자르면
-# 되므로 재수집 없이 날짜별 예상 셋리로 확장 가능. 단독 공연(아티스트 1명)은 기존과 완전히
-# 동일하게 동작(artist 태그 없음) - 이미 티켓 등록 때마다 자동 호출되는 함수라
-# (generate_pre_setlist_background) 별도 엔드포인트 없이 이 함수 하나만 고치면 페스티벌도
-# 자동으로 커버됨.
+# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트
+# 전체를 순회해 각자 top_n(기본 20곡)씩 뽑아 artist 태그를 붙여 합침. 곡 수를 안 줄이는
+# 이유는 비용이 Setlist.fm 검색/집계에서 다 발생하고 top_n은 자르는 것뿐이라(넉넉히
+# 저장해도 API 호출 안 늘어남), 나중에 날짜별 매핑이 갖춰지면 재수집 없이 확장 가능.
+# 단독 공연은 기존과 동일(artist 태그 없음), 이 함수만 고치면 페스티벌도 자동 커버됨.
 async def generate_pre_setlist(
     db: AsyncSession, concert_id: UUID, top_n: int = 20
 ) -> PreSetlist:

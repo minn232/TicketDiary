@@ -8,11 +8,13 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+# 유저 로그인 방식 (카카오 계정 / 게스트)
 class UserRole(str, enum.Enum):
     KAKAO_USER = "kakao_user"
     GUEST = "guest"
 
 
+# 유저 계정 (카카오 로그인/게스트 로그인 공용 - role로 구분)
 class User(Base):
     __tablename__ = "users"
 

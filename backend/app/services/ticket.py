@@ -47,11 +47,10 @@ def _detect_first_last_day(
     return attended == concert.start_date.date(), attended == concert.end_date.date()
 
 
-# concert.event_type(SOLO/FESTIVAL) 초기값은 공연명 키워드 추측(kopis.py _classify_event_type)이라
-# 부정확할 수 있음(예: "워터밤"은 실제 다중 아티스트 공연인데 이름에 페스티벌 키워드가 없어 SOLO로 분류됨).
-# 아티스트 추출 결과(포스터 VLM/크롤링 웹훅)로 실제 인원이 확인되면 이 값으로 SOLO->FESTIVAL만 승격.
-# 반대(FESTIVAL->SOLO 강등)는 안 함 - 페스티벌 1차 라인업은 소수만 공개되는 경우가 흔해서 낮은
-# 인원수가 "페스티벌 아님"의 근거가 될 수 없음(2차/3차 발표를 기다려야 함)
+# concert.event_type 초기값은 공연명 키워드 추측이라 부정확할 수 있음(예: "워터밤"은 다중
+# 아티스트인데 SOLO로 분류됨) - 아티스트 추출 결과로 실제 인원이 확인되면 SOLO→FESTIVAL만
+# 승격. 반대(강등)는 안 함 - 페스티벌 1차 라인업은 소수만 공개되는 경우가 흔해 낮은 인원수가
+# "페스티벌 아님"의 근거가 될 수 없음.
 _MULTI_ARTIST_FESTIVAL_THRESHOLD = 5
 
 
@@ -95,12 +94,10 @@ def _at_9am_kst(dt: datetime) -> datetime:
 _SEAT_GRADE_TOKEN_RE = re.compile(r"[A-Z가-힣]{1,5}석")
 
 
-# OCR/사용자가 입력한 seat_type의 등급 부분을 concert.price(크롤링으로 받은 실제 가격표
-# 등급명 목록)와 대조해서 다르면 크롤링 값으로 교정. 사진 OCR은 화질/각도 때문에 글자가
-# 깨지기 쉬운 반면(예: "지정석"이 "아지정석"으로 잘못 인식) 크롤링은 예매 사이트 가격표를
-# 그대로 읽으므로 등급명 표기가 더 정확하다고 보고 크롤링 쪽을 신뢰함
-# (반대로 start_time은 OCR을 신뢰함 - 실물 티켓이 실제 회차를 증명하는 자료이기 때문.
-# 필드 성격이 달라 신뢰 방향도 반대)
+# OCR/사용자 입력 seat_type을 concert.price(크롤링 가격표 등급명)와 대조해서 다르면 크롤링
+# 값으로 교정 - 사진 OCR은 글자가 깨지기 쉬운 반면(예: "지정석"→"아지정석") 크롤링은 가격표를
+# 그대로 읽어 더 정확함. 반대로 start_time은 OCR을 신뢰함(실물 티켓이 실제 회차를 증명하는
+# 자료라 필드 성격이 반대).
 def _correct_seat_type(seat_type: str | None, concert: Concert) -> str | None:
     if not seat_type or not concert.price:
         return seat_type

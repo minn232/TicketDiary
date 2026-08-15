@@ -21,12 +21,10 @@ async def get_known_artist_names(db: AsyncSession) -> set[str]:
     return names
 
 
-# 새 아티스트명들을 기존 DB의 유사 표기와 매칭해 정규화 (공백/오탈자/대소문자 정도의 흔들림만 흡수 -
-# 한글/영문처럼 스크립트가 완전히 다른 별칭(예: "방탄소년단" vs "BTS")은 문자열 유사도로 못 잡는
-# 알려진 한계가 있음, 이 경우는 자동화 대상이 아니라 확인 필요 케이스로 남겨둠
-#
-# known_names를 넘기면 재조회 없이 재사용하고 새로 확정된 이름을 그 자리에서 추가함(배치 호출용),
-# 없으면 단발 호출로 간주해 빈 집합에서 시작함
+# 새 아티스트명들을 기존 DB의 유사 표기와 매칭해 정규화(공백/오탈자/대소문자 흔들림만 흡수) -
+# 한글/영문처럼 스크립트가 완전히 다른 별칭("방탄소년단" vs "BTS")은 문자열 유사도로 못 잡는
+# 알려진 한계라 자동화 대상 아님. known_names를 넘기면 재조회 없이 재사용(배치 호출용),
+# 없으면 빈 집합에서 시작.
 def normalize_artist_names(names: list[str], known_names: set[str] | None = None) -> list[str]:
     if known_names is None:
         known_names = set()

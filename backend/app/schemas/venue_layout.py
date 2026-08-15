@@ -6,11 +6,13 @@ from app.schemas.timetable import TimeTableEntry
 
 
 class VenueLayoutInput(BaseModel):
+    # 좌석 배치도 입력 (크롤링 결과 웹훅 전용)
     image_url: str | None = None
     layout_data: dict | None = None
 
 
 class VenueLayoutResponse(BaseModel):
+    # 좌석 배치도 조회 응답
     model_config = {"from_attributes": True}
 
     id: UUID
@@ -20,6 +22,7 @@ class VenueLayoutResponse(BaseModel):
 
 
 class CrawlResultRequest(BaseModel):
+    # 크롤링 결과 웹훅 요청 - 필드는 있는 것만 갱신, 안 보낸 필드는 기존값 유지
     timetable: list[TimeTableEntry] | None = None
     prices: list[dict] | None = None
     venue_layout: VenueLayoutInput | None = None
@@ -33,4 +36,5 @@ class CrawlResultRequest(BaseModel):
 
 
 class CrawlResultResponse(BaseModel):
+    # 크롤링 결과 웹훅 응답 - 실제로 갱신된 필드명 목록
     updated: list[str]

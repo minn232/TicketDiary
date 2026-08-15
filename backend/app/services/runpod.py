@@ -53,11 +53,9 @@ async def stop_pod() -> bool:
         return False
 
 
-# pod을 깨운 직후엔 vLLM 모델 로딩 시간이 있어서, llm_server 헬스체크가 응답할 때까지
-# 폴링한다. LLM_CRAWL_URL("https://llm.ticket-diary.com/crawl-analyze")에서 base URL만
-# 뽑아 "/health"를 붙이는 방식이라 헬스체크용 설정을 따로 추가할 필요 없음.
-# 타임아웃 안에 준비 안 되면 False를 반환하고, 호출부(크롤링/아티스트 전송)는 이번 배치를
-# 건너뛰면 됨 - 기존에도 실패 시 다음날 재시도되는 설계라 안전하게 맞물림
+# pod을 깨운 직후엔 vLLM 로딩 시간이 있어 llm_server 헬스체크가 응답할 때까지 폴링함
+# (LLM_CRAWL_URL에서 base만 뽑아 "/health" 붙임, 별도 설정 불필요). 타임아웃 안에 준비
+# 안 되면 False - 호출부는 이번 배치를 건너뛰고 다음날 재시도되는 기존 설계와 맞물림.
 async def wait_until_llm_server_ready(timeout_seconds: float = 300.0, interval_seconds: float = 10.0) -> bool:
     if not settings.LLM_CRAWL_URL:
         return False
@@ -80,11 +78,9 @@ async def wait_until_llm_server_ready(timeout_seconds: float = 300.0, interval_s
     return False
 
 
-# LLM팀 Container Start Command 자동화가 리스크 때문에 무산돼서(pod 편집 자체가 리셋을
-# 유발함, 2026-08-06) 백엔드가 SSH로 직접 원격 실행하는 방식으로 대체함.
-# known_hosts=None으로 호스트키 검증을 생략함 - pod IP/포트가 우리가 통제하는 전용 pod
-# 하나뿐이고(RUNPOD_POD_ID로 지정된 그 pod), "정지/재시작" 방식이라 재생성이 아니면 호스트키가
-# 안 바뀔 걸로 보이지만 100% 확신은 못 해서, 매번 바뀌어도 자동화가 안 끊기게 일부러 검증을 뺌
+# Container Start Command 자동화가 리스크로 무산돼(pod 편집이 리셋 유발) SSH 원격 실행으로
+# 대체함. known_hosts=None으로 호스트키 검증 생략 - 우리가 통제하는 전용 pod 하나뿐이라
+# 안 바뀔 걸로 보이지만 100% 확신은 못 해서, 바뀌어도 자동화가 안 끊기게 일부러 뺌.
 async def _ssh_connect(**overrides):
     return await asyncssh.connect(
         settings.RUNPOD_SSH_HOST,
@@ -116,11 +112,9 @@ async def _wait_for_ssh_ready(timeout_seconds: float = 180.0, interval_seconds: 
     return False
 
 
-# pod에 SSH로 접속해서 start_all.sh(vLLM+llm_server+cloudflared 기동)를 원격 실행한다.
-# 스크립트 자체가 vLLM 준비될 때까지 폴링하느라 몇 분씩 걸릴 수 있어서, nohup + & + 표준
-# 입출력 리다이렉트로 완전히 백그라운드에 떼어놓고 SSH 세션은 바로 반환하게 함(안 그러면
-# SSH 채널이 자식 프로세스의 fd가 다 닫힐 때까지 안 끝남). 실제로 준비됐는지는 이 함수가
-# 아니라 wait_until_llm_server_ready()가 별도로 확인함
+# pod에 SSH로 접속해 start_all.sh(vLLM+llm_server+cloudflared 기동)를 원격 실행 - 스크립트가
+# vLLM 준비까지 폴링하느라 오래 걸려서 nohup+&+리다이렉트로 완전히 백그라운드에 떼고 SSH
+# 세션은 바로 반환함. 실제 준비 확인은 wait_until_llm_server_ready()가 별도로 함.
 async def run_start_script_via_ssh() -> bool:
     if not settings.RUNPOD_SSH_HOST or not settings.RUNPOD_SSH_KEY_PATH:
         logger.info("RUNPOD_SSH_* 미설정, 원격 실행 건너뜀")

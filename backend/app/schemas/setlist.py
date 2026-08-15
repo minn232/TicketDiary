@@ -4,6 +4,7 @@ from datetime import date
 
 
 class SongEntry(BaseModel):
+    # 셋리스트 곡 하나
     name: str
     encore: bool = False
     # 페스티벌처럼 아티스트가 여럿인 공연에서, 이 곡이 누구 예상/실제 셋리스트
@@ -12,10 +13,12 @@ class SongEntry(BaseModel):
 
 
 class SetlistEditRequest(BaseModel):
+    # 실제 셋리스트 유저 수정 요청
     songs: list[SongEntry]
 
 
 class FetchSetlistRequest(BaseModel):
+    # Setlist.fm ID로 셋리스트 가져와 저장 요청
     setlistfm_id: str
 
 

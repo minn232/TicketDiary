@@ -28,6 +28,7 @@ class TicketCreate(BaseModel):
 
     _normalize_dates = field_validator("delivery_date", "attended_date", mode="after")(_ensure_utc)
 
+    # concert_id/kopis_id 둘 다 없으면 검증 실패 (클래스 주석 참고)
     @model_validator(mode="after")
     def check_concert_provided(self) -> "TicketCreate":
         if self.concert_id is None and self.kopis_id is None:
@@ -59,6 +60,7 @@ class TicketUpdate(BaseModel):
 
 
 class TicketResponse(BaseModel):
+    # 티켓 조회 응답 (concert 상세는 서브클래스 TicketWithConcert/TicketListItem에서 추가)
     model_config = {"from_attributes": True}
 
     id: UUID

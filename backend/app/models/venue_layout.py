@@ -7,6 +7,7 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+# 공연장 좌석 배치도 (크롤링 결과로 채워짐, concert당 1개)
 class VenueLayout(Base):
     __tablename__ = "venue_layouts"
 

@@ -143,16 +143,11 @@ async def fetch_and_save_real_setlist(
     return real_setlist
 
 
-# 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음). concert.artist_name을
-# 그대로 순회하므로 페스티벌(2명 이상)이든 단독 공연(1명)이든 다 동작 - 단독이면 그 한 아티스트만
-# 돌고 모든 곡에 artist 태그가 붙음(문제 없음, 프론트가 이 필드를 안 읽음). 아래
-# retry_real_setlist_generation()이 매일 재시도하는 백필 잡에서 쓰는 게 주 용도.
-# 기존 수동 검색/저장 흐름(search_setlists_for_concert → 유저가 후보 하나 선택 →
-# fetch_and_save_real_setlist)은 그대로 두고 이건 완전히 별도 경로 - 아티스트마다
-# search_setlists(artist, date)로 그 날짜에 가장 근접한 후보를 골라 자동으로 합침.
-# 대신 동명이인 아티스트나 같은 날 다른 도시 공연이 섞여 있으면 후보 1번이 틀릴 수
-# 있음(수동 후보 선택 흐름보다 정확도는 낮음 - 그래서 유저가 검색으로 직접 고치는 수동 흐름도
-# 그대로 남겨둠).
+# 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음) - concert.artist_name을
+# 순회해서 페스티벌/단독 공연 다 동작. retry_real_setlist_generation()의 매일 백필 잡용,
+# 기존 수동 검색/선택 흐름과는 완전히 별도 경로.
+# search_setlists(artist, date)로 가장 근접한 후보를 자동으로 고르는 방식이라 동명이인/
+# 같은 날 다른 도시 공연이 섞이면 틀릴 수 있음(정확도 낮음) - 그래서 수동 흐름도 남겨둠.
 async def generate_real_setlist_auto(
     db: AsyncSession,
     concert_id: UUID,
@@ -213,11 +208,10 @@ async def generate_real_setlist_auto(
     return real_setlist
 
 
-# 콘서트 종료(그 performance_date가 지난 뒤) 후 이 기간 동안, Setlist.fm에 아직 안 올라온
-# 실제 셋리스트를 매일 자동으로 재시도해 채워봄. 이 기간이 지나도 안 채워지면 그냥 포기하고
-# 유저의 수동 편집(update_real_setlist)을 기다림 - 상태(시도 횟수/시작 시각)를 따로 저장하지
-# 않고, 매번 "오늘 - 그 날짜"를 계산해서 창 안인지만 판단함. RealSetlist가 이미 있는 날짜는
-# 쿼리에서 자연히 빠지므로(채워졌으니 재시도 불필요) 별도의 "포기" 플래그도 필요 없음.
+# 콘서트 종료 후 이 기간 동안, Setlist.fm에 아직 안 올라온 실제 셋리스트를 매일 자동
+# 재시도해 채워봄. 기간이 지나면 포기하고 유저 수동 편집을 기다림 - 시도 횟수/시작 시각을
+# 따로 안 저장하고 매번 "오늘-그날짜"로 창 안인지만 판단. 이미 채워진 날짜는 쿼리에서
+# 자연히 빠져서 별도 "포기" 플래그도 불필요.
 _REAL_SETLIST_BACKFILL_WINDOW = timedelta(days=14)
 _REAL_SETLIST_BACKFILL_CONCURRENCY = 4
 
