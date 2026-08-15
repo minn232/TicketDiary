@@ -1,10 +1,15 @@
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import update
 
 from app.main import app
+from app.core.database import AsyncSessionLocal
+from app.models.concert import Concert
+from app.services.social import cleanup_ended_concert_follows
 from conftest import _get_token, kopis_mock
 
 
@@ -283,6 +288,61 @@ async def test_update_concert_follow_excludes_ticketed_concert():
     assert res.status_code == 200
     saved_ids = [c["concert_id"] for c in res.json()["concerts"]]
     assert saved_ids == [concert_id_2]
+
+
+# 찜 공연 자동 해제 (배치) 테스트
+
+# 이미 종료된 공연은 cleanup_ended_concert_follows가 돌면 찜 목록에서 빠지는지 테스트
+@pytest.mark.asyncio
+async def test_cleanup_ended_concert_follows_removes_ended():
+    token = await _get_token()
+    concert_id = await _fetch_concert(f"PF_CFEND_{uuid.uuid4().hex[:8]}", "테스트아티스트", token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id}]},
+            headers=headers,
+        )
+
+    # 공연이 이미 끝난 것처럼 end_date를 과거로 직접 조작
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(end_date=datetime(2020, 1, 1, tzinfo=timezone.utc))
+        )
+        await db.commit()
+        await cleanup_ended_concert_follows(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/concerts", headers=headers)
+
+    assert res.json()["concerts"] == []
+
+
+# 아직 안 끝난 공연은 cleanup_ended_concert_follows가 돌아도 그대로 남는지 테스트
+@pytest.mark.asyncio
+async def test_cleanup_ended_concert_follows_keeps_upcoming():
+    token = await _get_token()
+    concert_id = await _fetch_concert(f"PF_CFKEEP_{uuid.uuid4().hex[:8]}", "테스트아티스트", token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": concert_id}]},
+            headers=headers,
+        )
+
+    async with AsyncSessionLocal() as db:
+        await cleanup_ended_concert_follows(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/concerts", headers=headers)
+
+    assert res.json()["concerts"][0]["concert_id"] == concert_id
 
 
 # 뉴스피드 조회 테스트

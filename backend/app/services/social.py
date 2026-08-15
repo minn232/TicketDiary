@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -10,6 +11,8 @@ from app.models.concert import Concert
 from app.models.social import ArtistFollow, ConcertFollow, NewsFeed
 from app.models.ticket import Ticket
 from app.schemas.social import ArtistEntry, ConcertEntry
+
+logger = logging.getLogger(__name__)
 
 
 # 선호 아티스트 조회 (없으면 생성)
@@ -141,6 +144,49 @@ async def remove_concert_follow(db: AsyncSession, user_id: UUID, concert_id: UUI
 
     row.concerts = remaining
     await db.commit()
+
+
+# 찜 공연 중 종료된 공연을 매일 배치로 자동 해제 (스케줄러 호출).
+# "종료" 기준은 sync_ticket_statuses와 동일(end_date+15h < now). 전체 콘서트
+# 대신 찜된 concert_id만 모아 대조해 스캔량을 줄임.
+async def cleanup_ended_concert_follows(db: AsyncSession) -> None:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(select(ConcertFollow))
+    rows = result.scalars().all()
+
+    concert_ids: set[UUID] = set()
+    for row in rows:
+        for entry in row.concerts or []:
+            raw_id = entry.get("concert_id")
+            if not raw_id:
+                continue
+            try:
+                concert_ids.add(UUID(raw_id))
+            except ValueError:
+                continue
+    if not concert_ids:
+        return
+
+    ended_result = await db.execute(
+        select(Concert.id).where(
+            Concert.id.in_(concert_ids),
+            Concert.end_date + timedelta(hours=15) < now,
+        )
+    )
+    ended_ids = {str(cid) for cid in ended_result.scalars().all()}
+    if not ended_ids:
+        return
+
+    affected_users = 0
+    for row in rows:
+        remaining = [c for c in row.concerts if c.get("concert_id") not in ended_ids]
+        if len(remaining) != len(row.concerts):
+            row.concerts = remaining
+            affected_users += 1
+
+    if affected_users:
+        await db.commit()
+        logger.info(f"찜 공연 자동 해제: {affected_users}명, 종료 공연 {len(ended_ids)}건")
 
 
 # 뉴스 피드 목록 조회 (안 읽은 항목 먼저)

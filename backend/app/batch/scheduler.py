@@ -14,6 +14,7 @@ from app.services.crawler import (
 )
 from app.services.diary import send_diary_requests_to_llm
 from app.services.setlist import retry_real_setlist_generation
+from app.services.social import cleanup_ended_concert_follows
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
 from app.services.runpod import start_pod_and_launch_services, stop_pod, wait_until_llm_server_ready
@@ -75,6 +76,14 @@ async def _run_ticket_status_sync() -> None:
             await sync_ticket_statuses(db)
     except Exception as e:
         logger.error(f"티켓 상태 자동 전환 오류: {e}")
+
+
+async def _run_concert_follow_cleanup() -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            await cleanup_ended_concert_follows(db)
+    except Exception as e:
+        logger.error(f"찜 공연 자동 해제 오류: {e}")
 
 
 async def _run_crawl_retry() -> None:
@@ -141,6 +150,8 @@ def start_scheduler() -> None:
     # KOPIS 동기화와 부하가 겹치지 않도록 5분 뒤로 미룸 (KST 00:05)
     scheduler.add_job(_run_crawl_send, "cron", hour=15, minute=5, id="midnight_crawl_send", max_instances=1)
     scheduler.add_job(_run_ticket_status_sync, "cron", hour=15, minute=10, id="ticket_status_sync", max_instances=1)
+    # 찜한 공연 중 이미 종료된 공연 자동 해제 (KST 00:12)
+    scheduler.add_job(_run_concert_follow_cleanup, "cron", hour=15, minute=12, id="concert_follow_cleanup", max_instances=1)
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 (KST 00:15)
     scheduler.add_job(_run_crawl_retry, "cron", hour=15, minute=15, id="crawl_retry", max_instances=1)
     # 신규 아티스트 Last.fm 유사 아티스트 캐싱 (KST 00:20)
