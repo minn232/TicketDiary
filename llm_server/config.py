@@ -29,5 +29,13 @@ class Settings(BaseSettings):
     # vLLM은 보통 임의 문자열이면 충분
     VLLM_API_KEY: str = "EMPTY"
 
+    # 배치 처리 시 모델 호출을 동시에 몇 건까지 허용할지 (crawl/artist/diary 배치 전부
+    # 공유하는 값 - 셋 다 결국 같은 GPU/vLLM 인스턴스를 두고 경쟁하기 때문). 평소
+    # 트래픽(하루 수십 건)은 기본값으로도 충분하고, 최초 아티스트 백필처럼 한 번에
+    # 수천 건을 몰아서 보낼 때만 일시적으로 올리는 용도. vLLM 쪽 GPU 메모리 여유에
+    # 따라 감당 가능한 동시 요청 수가 다르므로, 낮은 값으로 먼저 테스트하고 점진적으로
+    # 올릴 것 (너무 높이면 vLLM이 OOM 날 수 있음).
+    BATCH_CONCURRENCY: int = 3
+
 
 settings = Settings()
