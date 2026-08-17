@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../services/news_loading_signal.dart';
 import 'diary_route.dart';
 
 /// 인덱스 탭(다이어리/소식/결산/설정) 전환을 조율합니다.
@@ -109,17 +108,10 @@ class TabNavCoordinator {
     // 라우트를 넣어주므로 안전합니다.
     navigator.pushAndRemoveUntil(route, (r) => false);
 
-    // 소식 탭으로 갈 때는 route.animation이 끝나도(고정 시간) 화면이
-    // 실제로는 DiaryTabFlipTransition의 홀드 루프로 계속 대기 중일 수
-    // 있습니다(NewsLoadingSignal 참고 — 로딩이 안 끝났으면 잎 넘김
-    // 애니메이션이 계속 재생됨). route.animation만 보고 잠금을 풀면, 아직
-    // 화면이 홀드 중인데 다음 탭 전환을 새로 시작해버려 두 전환이 겹쳐
-    // GlobalKey 충돌 등으로 위젯 트리가 깨지는 문제가 있었습니다(탭을
-    // 빠르게 연속으로 눌렀을 때 재현됨). route.animation 완료 + (있다면)
-    // 홀드 신호가 꺼질 때까지 둘 다 기다린 뒤에만 잠금을 풉니다.
-    final holdSignal = tab == DiaryTab.news ? NewsLoadingSignal.isLoading : null;
-    var animDone = false;
-
+    // 전환(진입) 애니메이션이 고정 시간만 재생되고 끝나면 곧바로 잠금을
+    // 풀고, 그 사이 대기 중이던 다음 탭이 있으면 이어서 시작합니다. 소식
+    // 탭도 더 이상 로딩을 기다리지 않으므로(진입 즉시 목적지를 드러냄)
+    // 특별 취급 없이 모든 탭이 동일하게 애니메이션 완료 시점에 풀립니다.
     void unlockAndMaybeAdvance() {
       isTransitioning.value = false;
       final next = _queuedTab;
@@ -128,24 +120,12 @@ class TabNavCoordinator {
       }
     }
 
-    late final VoidCallback onHoldChanged;
-    onHoldChanged = () {
-      if (holdSignal!.value) return;
-      holdSignal.removeListener(onHoldChanged);
-      if (animDone) unlockAndMaybeAdvance();
-    };
-
     late final AnimationStatusListener animListener;
     animListener = (status) {
       if (status != AnimationStatus.completed) return;
       route.animation?.removeStatusListener(animListener);
-      animDone = true;
-      if (holdSignal == null || !holdSignal.value) {
-        holdSignal?.removeListener(onHoldChanged);
-        unlockAndMaybeAdvance();
-      }
+      unlockAndMaybeAdvance();
     };
     route.animation?.addStatusListener(animListener);
-    holdSignal?.addListener(onHoldChanged);
   }
 }

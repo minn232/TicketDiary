@@ -98,13 +98,12 @@ void main() {
   );
 
   testWidgets(
-    '소식 탭 로딩이 안 끝났으면 route.animation이 끝나도 잠금이 안 풀린다',
+    '소식 탭도 로딩(NewsLoadingSignal)과 무관하게 전환 애니메이션이 끝나면 바로 잠금이 풀린다',
     (tester) async {
-      // 실제 버그 재현: NewsScreen이 아직 로딩 중(NewsLoadingSignal.isLoading
-      // =true)인데 route.animation만 끝났다고 잠금을 풀면, 사용자가 그 사이
-      // 다른 탭을 연속으로 눌렀을 때 아직 DiaryTabFlipTransition이 홀드
-      // 루프로 대기 중인 화면 위에 새 전환이 겹쳐 시작돼 위젯 트리가 깨졌던
-      // 문제(GlobalKey 중복 등)의 원인입니다.
+      // 진입 시 페이지 넘김이 소식 로딩을 기다리지 않도록 바꿨으므로,
+      // NewsLoadingSignal.isLoading이 여전히 true여도 route.animation이
+      // 끝나면 곧바로 잠금이 풀리고, 목적지(소식 화면의 자체 로딩 스피너)가
+      // 드러나야 합니다. 이어서 다른 탭도 즉시 전환됩니다.
       NewsLoadingSignal.isLoading.value = true;
       final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -127,21 +126,16 @@ void main() {
       ));
 
       coordinator.requestTab(DiaryTab.news);
-      // route.animation은 끝까지 진행시키되, NewsLoadingSignal은 아직
-      // true라 잠금이 풀리면 안 됩니다.
       await tester.pumpAndSettle();
-      expect(coordinator.isTransitioning.value, isTrue);
 
-      // 이 상태에서 다른 탭을 연달아 눌러도(빠른 연속 탭) 즉시 새 전환을
-      // 시작하지 않고 큐에만 쌓여야 합니다.
-      coordinator.requestTab(DiaryTab.settings);
+      // 로딩이 아직 true여도 전환은 이미 끝나 잠금이 풀려 있어야 합니다.
+      expect(coordinator.isTransitioning.value, isFalse);
       expect(coordinator.currentTab.value, DiaryTab.news);
-      expect(coordinator.isTransitioning.value, isTrue);
+      expect(find.text(DiaryTab.news.toString()), findsOneWidget);
 
-      // 로딩이 끝나면 그제서야 잠금이 풀리고, 큐에 쌓여있던 요청이 이어서 실행됩니다.
-      NewsLoadingSignal.isLoading.value = false;
+      // 잠금이 풀린 상태이므로 다른 탭 요청도 곧장 전환됩니다.
+      coordinator.requestTab(DiaryTab.settings);
       await tester.pumpAndSettle();
-
       expect(coordinator.currentTab.value, DiaryTab.settings);
       expect(coordinator.isTransitioning.value, isFalse);
       expect(find.text(DiaryTab.settings.toString()), findsOneWidget);

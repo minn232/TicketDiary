@@ -5,9 +5,8 @@ import 'package:ticketdiary/models/news_model.dart';
 import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/services/news_cache_store.dart';
-import 'package:ticketdiary/services/news_loading_signal.dart';
 import 'package:ticketdiary/services/social_service.dart';
-import 'package:ticketdiary/widgets/checkerboard_reveal_transition.dart';
+import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
@@ -35,18 +34,19 @@ class NewsScreen extends StatefulWidget {
 }
 
 /// 소식 페이지 ↔ 찜/아티스트 패널을 오가는 "페이지 조각(풀탭)" 전환 단계.
+/// 전환은 액자 창 안에서 아래 페이지만 가로로 밀려 넘어가는 캐러셀 방식.
 ///
 /// - [news]: 소식 그리드만 보임(풀탭은 왼쪽 끝).
-/// - [toFav]: 풀탭이 오른쪽으로 이동하며 체커보드로 찜 패널이 왼쪽부터 드러남.
+/// - [toFav]: 풀탭이 오른쪽으로 이동하며 소식 페이지가 오른쪽으로 밀려나가고
+///   왼쪽부터 찜 패널이 들어옴.
 /// - [fav]: 찜/아티스트 패널만 보임(풀탭은 오른쪽 끝).
 /// - [loading]: 풀탭을 다시 눌러 최신 소식을 준비하는 동안. 전환은 멈추고
-///   마법 로딩 오버레이(안개+반짝이)를 찜 패널 위에 겹쳐 보여줍니다.
-/// - [toNews]: 최신 소식이 준비되면 풀탭이 왼쪽으로 돌아오며 역체커보드로
-///   최신 소식이 드러남.
+///   로딩 표시는 풀탭 하트의 시계방향 쐐기 회전이 대신함.
+/// - [toNews]: 최신 소식이 준비되면 풀탭이 왼쪽으로 돌아오며 찜 패널이
+///   왼쪽으로 나가고 오른쪽에서 소식 페이지가 들어옴.
 enum _FlipPhase { news, toFav, fav, loading, toNews }
 
-class _NewsScreenState extends State<NewsScreen>
-    with TickerProviderStateMixin {
+class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   static const Color _paperColor = Color(0xFFF4F1E1);
 
   /// 소식 페이지 상단 여백을 기본(10)보다 늘려, 페이지 뒤에서 끼워 올린
@@ -60,11 +60,6 @@ class _NewsScreenState extends State<NewsScreen>
   /// 카드 확장 애니메이션의 시작 Rect를 구하기 위한, 카드 인덱스별 key.
   final List<GlobalKey> _cardKeys = [];
 
-  /// 로딩이 10초를 넘으면(혹시 모를 무한 로딩 오류 대비) 인덱스 탭 전환
-  /// 애니메이션의 대기를 강제로 풀어, 화면 자체의 로딩 스피너로 넘어가게
-  /// 합니다.
-  Timer? _loadingHoldTimeout;
-
   // ─── 풀탭 전환 상태 ───────────────────────────────────────────────
   /// 풀탭 위치이자 체커보드 진행도의 원천. 0.0=소식/왼쪽, 1.0=찜/오른쪽.
   late final AnimationController _slide;
@@ -74,12 +69,26 @@ class _NewsScreenState extends State<NewsScreen>
   /// 하트가 평소처럼 온전히 보입니다.
   late final AnimationController _heartWipe;
 
+  /// 소식 로딩 중 "유리에 강한 빛 반사가 껴서 내용이 안 보이는" 백색 글레어
+  /// 오버레이의 페이드. 0.0=글레어가 꽉 차 하얗게 가림(로딩 중), 1.0=글레어가
+  /// 완전히 걷혀 카드가 보임. 로딩이 끝나면 0→1로 부드럽게 걷습니다.
+  late final AnimationController _glassReveal;
+
   _FlipPhase _phase = _FlipPhase.news;
 
   /// 찜 패널은 전환/로딩 여러 단계에 걸쳐 살아 있어야(검색어·찜 토글 유지)
   /// 하므로, 같은 GlobalKey로 만들어 트리 위치가 바뀌어도 State가 유지되게
   /// 합니다.
   final GlobalKey _favPanelKey = GlobalKey();
+
+  /// 소식 본문(FutureBuilder)도 같은 이유로 GlobalKey를 씁니다 — 없으면
+  /// toNews(체커보드 전환 안, AnimatedBuilder 아래)에서 news(바로 반환)로
+  /// 단계가 바뀔 때 부모 트리 모양이 완전히 달라져 Flutter가 기존
+  /// FutureBuilder를 재사용하지 못하고 새로 마운트합니다. 새로 마운트된
+  /// FutureBuilder는 future가 이미 resolve된 상태여도 첫 프레임엔 항상
+  /// "로딩 중"으로 시작해(다음 프레임에야 데이터로 갱신) — 소식으로 돌아온
+  /// 직후 카드들이 아주 잠깐 사라졌다 나타나는 깜빡임의 원인이었습니다.
+  final GlobalKey _newsBodyKey = GlobalKey();
 
   /// 복귀 시 최신 소식 로딩이 너무 오래 걸리면(백엔드 오류 등) 기존
   /// 데이터로라도 소식으로 되돌아오게 하는 안전 타임아웃.
@@ -102,28 +111,39 @@ class _NewsScreenState extends State<NewsScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1000),
     )..addStatusListener(_onHeartWipeStatus);
-
-    NewsLoadingSignal.isLoading.value = true;
-    _loadingHoldTimeout = Timer(const Duration(seconds: 10), () {
-      NewsLoadingSignal.isLoading.value = false;
-    });
-    // 화면 초기화 시 데이터 호출 시작
-    _newsFuture = _loadNewsWithCache();
-    unawaited(
-      _newsFuture.whenComplete(() {
-        _loadingHoldTimeout?.cancel();
-        NewsLoadingSignal.isLoading.value = false;
-      }),
+    // 0.0에서 시작 = 진입하자마자 유리가 하얗게 껴 있는 상태.
+    _glassReveal = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
     );
+
+    // 화면 초기화 시 데이터 호출 시작. 진입 시 페이지 넘김은 이제 이
+    // 로딩을 기다리지 않고 곧바로 이 화면을 드러내며, 로딩 중에는 아래
+    // 소식 본문 위에 백색 유리 글레어를 씌웠다가 로딩이 끝나면 걷어냅니다.
+    _newsFuture = _loadNewsWithCache();
+    _armGlassReveal(_newsFuture);
   }
 
   @override
   void dispose() {
-    _loadingHoldTimeout?.cancel();
     _returnTimeout?.cancel();
     _slide.dispose();
     _heartWipe.dispose();
+    _glassReveal.dispose();
     super.dispose();
+  }
+
+  /// [future] 조회가 진행되는 동안 유리 글레어를 꽉 채웠다가(값 0), 조회가
+  /// 끝나면 부드럽게 걷어냅니다(0→1). 첫 진입과 "다시 시도"에서만 씁니다 —
+  /// 백그라운드 갱신·찜 복귀는 각자의 방식이 있어 글레어를 다시 씌우지
+  /// 않습니다.
+  void _armGlassReveal(Future<List<NewsModel>> future) {
+    _glassReveal.value = 0.0;
+    unawaited(
+      future.whenComplete(() {
+        if (mounted) _glassReveal.forward();
+      }),
+    );
   }
 
   void _onSlideStatus(AnimationStatus status) {
@@ -325,9 +345,7 @@ class _NewsScreenState extends State<NewsScreen>
     final feedId = item.id;
     if (feedId != null && !item.isRead) {
       setState(() => item.isRead = true);
-      unawaited(
-        _socialService.markFeedRead(feedId).catchError((_) {}),
-      );
+      unawaited(_socialService.markFeedRead(feedId).catchError((_) {}));
     }
 
     NewsDetailOverlay.show(
@@ -353,41 +371,45 @@ class _NewsScreenState extends State<NewsScreen>
         pageTop: _pageTop,
         heartWipe: _heartWipe,
       ),
-      child: Container(
-        color: _paperColor,
-        child: _buildFlipBody(),
-      ),
+      child: Container(color: _paperColor, child: _buildFlipBody()),
     );
   }
 
-  /// 현재 전환 단계에 맞는 페이지 본문을 만듭니다.
+  /// 페이지 여백을 고정된 "액자 테두리"로 남기고, 그 안쪽 창에서만 내용이
+  /// 캐러셀로 슬라이드하도록 감쌉니다.
   Widget _buildFlipBody() {
+    return _NewsFrame(child: _buildWindowContent());
+  }
+
+  /// 액자 창 안에 들어갈, 현재 전환 단계별 내용.
+  Widget _buildWindowContent() {
     switch (_phase) {
       case _FlipPhase.news:
         return _buildNewsBody();
       case _FlipPhase.fav:
-        return _buildFavPanel();
       case _FlipPhase.loading:
         // 찜 패널을 그대로 두고, 로딩 표시는 풀탭 하트의 쐐기 회전
         // 애니메이션([_heartWipe])이 대신합니다.
         return _buildFavPanel();
       case _FlipPhase.toFav:
+        // 소식 카드 페이지가 오른쪽으로 밀려나가고, 왼쪽부터 찜/아티스트
+        // 검색이 들어옵니다.
         return AnimatedBuilder(
           animation: _slide,
-          builder: (context, _) => CheckerboardRevealTransition(
+          builder: (context, _) => CarouselSlideTransition(
             from: _buildNewsBody(),
             to: _buildFavPanel(),
             progress: _slide.value,
           ),
         );
       case _FlipPhase.toNews:
+        // 반대로 찜 패널이 왼쪽으로 나가고, 오른쪽에서 소식 페이지가
+        // 들어옵니다(풀탭이 1→0으로 돌아오는 동안 진행도는 0→1).
         return AnimatedBuilder(
           animation: _slide,
-          builder: (context, _) => CheckerboardRevealTransition(
+          builder: (context, _) => CarouselSlideTransition(
             from: _buildFavPanel(),
             to: _buildNewsBody(),
-            // 풀탭이 오른쪽(1)→왼쪽(0)으로 돌아오는 동안 최신 소식이 오른쪽
-            // 부터 드러나도록, 진행도를 뒤집고 방향도 반대로 합니다.
             progress: 1 - _slide.value,
             reverse: true,
           ),
@@ -395,44 +417,72 @@ class _NewsScreenState extends State<NewsScreen>
     }
   }
 
-  /// 찜/아티스트 패널(같은 GlobalKey로 State 유지).
+  /// 찜/아티스트 패널(같은 GlobalKey로 State 유지). 액자 창 안에 들어가므로
+  /// 자체 박스 없이 창에 꽉 차는 모드로 그립니다.
   Widget _buildFavPanel() {
-    return FavoritePinnedPanel(key: _favPanelKey);
+    return FavoritePinnedPanel(key: _favPanelKey, windowMode: true);
   }
 
-  /// 소식 그리드 본문(로딩/에러/빈 상태 포함).
+  /// 소식 그리드 본문(로딩/에러/빈 상태 포함). GlobalKey 이유는
+  /// [_newsBodyKey] 참고.
   Widget _buildNewsBody() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return FutureBuilder<List<NewsModel>>(
-          future: _newsFuture,
-          builder: (context, snapshot) {
-            // [상태 1] 로딩 중
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: CircularProgressIndicator(color: Colors.brown),
+    return KeyedSubtree(
+      key: _newsBodyKey,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return FutureBuilder<List<NewsModel>>(
+                future: _newsFuture,
+                builder: (context, snapshot) {
+                  // [상태 1] 로딩 중: 내용은 비워 두고(빈 화면), 위에 덮인
+                  // 백색 유리 글레어가 "빛 반사로 안 보이는" 상태를 대신
+                  // 보여줍니다(스피너 없음).
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const SizedBox.expand();
+                  }
+
+                  // [상태 2] 에러 발생: 실패 원인(오류 코드)과 재시도 버튼.
+                  if (snapshot.hasError) {
+                    return _buildErrorView(snapshot.error);
+                  }
+
+                  // [상태 3] 데이터 없음
+                  if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    return const Center(child: Text('새로운 소식이 없습니다.'));
+                  }
+
+                  // [상태 4] 성공: 리스트 렌더링. 바깥 여백은 이제 액자
+                  // 테두리([_NewsFrame])가 담당하므로, 창 안쪽에서는 카드가
+                  // 테두리에 딱 붙지 않을 정도의 작은 여백만 둡니다.
+                  return Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: _buildNewsGrid(constraints, snapshot.data!),
+                  );
+                },
               );
-            }
-
-            // [상태 2] 에러 발생: 실패 원인(오류 코드)과 재시도 버튼.
-            if (snapshot.hasError) {
-              return _buildErrorView(snapshot.error);
-            }
-
-            // [상태 3] 데이터 없음
-            if (!snapshot.hasData || snapshot.data!.isEmpty) {
-              return const Center(child: Text('새로운 소식이 없습니다.'));
-            }
-
-            // [상태 4] 성공: 리스트 렌더링. 손잡이는 페이지 뒤에 있어 본문을
-            // 가리지 않으므로 상단 패딩은 기본값만 둡니다.
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(32, 14, 20, 20),
-              child: _buildNewsGrid(constraints, snapshot.data!),
-            );
-          },
-        );
-      },
+            },
+          ),
+          // 로딩 중 백색 유리 글레어(내용 위). 로딩이 끝나면 0→1로 걷혀
+          // 내용이 자연스럽게 뿌옇게 → 선명하게 드러납니다.
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _glassReveal,
+                builder: (context, _) {
+                  final revealed = Curves.easeOutCubic.transform(
+                    _glassReveal.value,
+                  );
+                  final glare = 1.0 - revealed; // 1=완전 백색, 0=완전 투명
+                  if (glare <= 0.001) return const SizedBox.shrink();
+                  return Opacity(opacity: glare, child: const _GlassGlaze());
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -467,7 +517,10 @@ class _NewsScreenState extends State<NewsScreen>
           ),
           const SizedBox(height: 14),
           OutlinedButton(
-            onPressed: () => setState(() => _newsFuture = _fetchAndCacheNews()),
+            onPressed: () {
+              setState(() => _newsFuture = _fetchAndCacheNews());
+              _armGlassReveal(_newsFuture);
+            },
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.brown,
               side: const BorderSide(color: Colors.brown),
@@ -520,6 +573,297 @@ class _NewsScreenState extends State<NewsScreen>
           ),
         );
       },
+    );
+  }
+}
+
+/// 소식 페이지의 "액자" 프레임. 페이지의 크림 여백을 두껍게 남겨 고정된
+/// 테두리로 삼고, 그 안쪽 창([child])에서만 내용이 캐러셀로 슬라이드합니다.
+/// 창 가장자리에 진한 안쪽 그림자 + 얇은 테두리선을 얹어, 마치 액자 창
+/// 아래로 페이지가 끼워져 있는 듯한 깊이감을 줍니다.
+class _NewsFrame extends StatelessWidget {
+  final Widget child;
+
+  const _NewsFrame({required this.child});
+
+  /// 액자 테두리(여백). 왼쪽은 바인더 링을 피하려 조금 더 둡니다. 위·아래는
+  /// 기본(22)보다 50% 키워(33) "뚫려 보이는" 창을 세로로 더 작게 만듭니다 —
+  /// 창 높이가 줄면 아래 소식 카드 그리드도 그만큼 자동으로 작아집니다
+  /// ([_buildNewsGrid]가 창 높이에 맞춰 카드 크기를 계산).
+  static const EdgeInsets _insets = EdgeInsets.fromLTRB(30, 33, 22, 33);
+  static const double _windowRadius = 6;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: _insets,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 창: 슬라이드되는 내용(창 밖으로 넘친 부분은 잘라냄).
+          ClipRRect(
+            borderRadius: BorderRadius.circular(_windowRadius),
+            child: child,
+          ),
+          // 유리 광택(내용 위, 프레임의 일부라 슬라이드해도 고정). 그 아래로
+          // 내용이 지나가서 "유리 낀 액자"처럼 보입니다.
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: _GlassGloss(radius: _windowRadius),
+            ),
+          ),
+          // 액자 안쪽 그림자 + 얇은 테두리(가장 위, 터치는 통과).
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: _InnerShadowFrame(radius: _windowRadius),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 로딩 중 창 전체를 덮는 "강한 백색 유리 글레어". 빛 반사가 너무 커서
+/// 유리 너머 내용이 안 보이는 상태를 표현합니다 — 거의 불투명한 백색 위에
+/// 더 밝은 대각선 반사 띠와 살짝의 하늘색 유리 기운을 얹습니다. 로딩이
+/// 끝나면 이 위젯을 감싼 [Opacity]가 1→0으로 걷혀 내용이 드러납니다.
+class _GlassGlaze extends StatelessWidget {
+  const _GlassGlaze();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Stack(
+      fit: StackFit.expand,
+      children: [
+        // 1) 거의 불투명한 백색 반사(내용이 비치지 않을 정도).
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFFFFFFFF),
+                Color(0xFAFFFFFF),
+                Color(0xF5FFFFFF),
+              ],
+              stops: [0.0, 0.55, 1.0],
+            ),
+          ),
+        ),
+        // 2) 더 밝은(순백) 대각선 반사 띠.
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topRight,
+              end: Alignment.bottomLeft,
+              colors: [
+                Color(0x00FFFFFF),
+                Color(0x00FFFFFF),
+                Color(0xFFFFFFFF),
+                Color(0xFFFFFFFF),
+                Color(0x00FFFFFF),
+              ],
+              stops: [0.0, 0.32, 0.42, 0.52, 0.86],
+            ),
+          ),
+        ),
+        // 3) 가장자리에 살짝 도는 하늘색 유리 기운.
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: Alignment(-0.5, -0.6),
+              radius: 1.3,
+              colors: [Color(0x33BFE1FF), Color(0x00BFE1FF)],
+              stops: [0.0, 1.0],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 창 위에 얹는 유리 광택 오버레이. 왼쪽 위에서 은은하게 번지는 반사광 +
+/// 대각선으로 지나가는 얇은 광택 줄을 겹쳐, 액자에 유리가 끼워진 느낌을
+/// 냅니다. 순수 장식이라 터치는 통과합니다.
+class _GlassGloss extends StatelessWidget {
+  final double radius;
+
+  const _GlassGloss({required this.radius});
+
+  /// 유리 광택의 색조 — 순수 흰색 대신 살짝 하늘색을 섞어 유리처럼 보이게.
+  static const Color _tint = Color(0xFFBFE1FF);
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1) 왼쪽 위 코너에서 부드럽게 번지는 반사광.
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  _tint.withValues(alpha: 0.3),
+                  _tint.withValues(alpha: 0.12),
+                  _tint.withValues(alpha: 0.02),
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.08),
+                ],
+                stops: const [0.0, 0.24, 0.52, 0.8, 1.0],
+              ),
+            ),
+          ),
+          // 2) 오른쪽 위 → 왼쪽 아래로 지나가는, 경계가 또렷한 대각선 광택 띠.
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+                colors: [
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.6),
+                  _tint.withValues(alpha: 0.6),
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.0),
+                ],
+                // 램프 구간(0.35↔0.37, 0.44↔0.46)을 좁혀 띠 양 끝이 선명하게.
+                stops: const [0.0, 0.35, 0.37, 0.44, 0.46, 1.0],
+              ),
+            ),
+          ),
+          // 3) 그 옆에 나란히 지나가는 두 번째(더 얇은) 광택 띠.
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+                colors: [
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.4),
+                  _tint.withValues(alpha: 0.4),
+                  _tint.withValues(alpha: 0.0),
+                  _tint.withValues(alpha: 0.0),
+                ],
+                stops: const [0.0, 0.57, 0.585, 0.62, 0.635, 1.0],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 창 안쪽 네 변에 그림자를 드리워(안쪽으로 파인) 액자 느낌을 내는 오버레이.
+/// Flutter에 내장된 inset 그림자가 없어, 각 변에 검정→투명 그라데이션 띠를
+/// 얹어 흉내 냅니다.
+class _InnerShadowFrame extends StatelessWidget {
+  final double radius;
+
+  const _InnerShadowFrame({required this.radius});
+
+  /// 그림자가 안쪽으로 번지는 두께(px)와 진하기(alpha). "두껍고 뚜렷하게"에
+  /// 맞춰 넉넉히 잡았습니다.
+  static const double _reach = 14;
+  static const double _alpha = 0.34;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget edge({
+      double? left,
+      double? top,
+      double? right,
+      double? bottom,
+      double? width,
+      double? height,
+      required Alignment begin,
+      required Alignment end,
+    }) {
+      return Positioned(
+        left: left,
+        top: top,
+        right: right,
+        bottom: bottom,
+        width: width,
+        height: height,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: begin,
+              end: end,
+              colors: [
+                Colors.black.withValues(alpha: _alpha),
+                Colors.black.withValues(alpha: 0),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        // 그라데이션 띠는 창 모서리 둥근 부분 밖으로 삐져나오지 않게 클립합니다.
+        ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: Stack(
+            children: [
+              edge(
+                left: 0,
+                top: 0,
+                right: 0,
+                height: _reach,
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+              edge(
+                left: 0,
+                bottom: 0,
+                right: 0,
+                height: _reach,
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+              ),
+              edge(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: _reach,
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              edge(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: _reach,
+                begin: Alignment.centerRight,
+                end: Alignment.centerLeft,
+              ),
+            ],
+          ),
+        ),
+        // 창 경계를 또렷하게 하는 얇은 테두리선.
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(
+                color: Colors.black.withValues(alpha: 0.2),
+                width: 1,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

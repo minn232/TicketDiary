@@ -40,7 +40,11 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
 class FavoritePinnedPanel extends StatefulWidget {
   final VoidCallback? onBack;
 
-  const FavoritePinnedPanel({super.key, this.onBack});
+  /// true면 소식 탭의 "액자 창" 안에 끼워 쓰는 모드 — 자체 둥근 반투명
+  /// 박스/바깥 여백을 없애고 창에 꽉 차게 그립니다(테두리는 액자가 담당).
+  final bool windowMode;
+
+  const FavoritePinnedPanel({super.key, this.onBack, this.windowMode = false});
 
   @override
   State<FavoritePinnedPanel> createState() => _FavoritePinnedPanelState();
@@ -224,6 +228,12 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final content = _buildContent();
+    if (widget.windowMode) {
+      // 소식 탭 액자 창 안에 끼워 쓰는 모드: 자체 박스/바깥 여백 없이 창에
+      // 꽉 차게. 카드가 창 테두리에 딱 붙지 않도록 작은 여백만 둡니다.
+      return Padding(padding: const EdgeInsets.all(4), child: content);
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
       child: Container(
@@ -237,69 +247,65 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(18),
-          child: Column(
+          child: content,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    return Column(
+      children: [
+        // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
+        // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
+        // PageView 바로 위에 고정으로 둡니다. 원래 이 위에 있던
+        // 제목 표시줄("아티스트 / 찜 공연" + 관리 버튼)은 없애고,
+        // 그 자리만큼 아래 내용이 위로 당겨 올라옵니다.
+        _CategorySwitcher(current: _currentCategory, onSelect: _goToCategory),
+        // 예전엔 "관리" 버튼을 눌러야 슬라이드 패널로 볼 수 있던
+        // 찜 목록을, 검색창 바로 위에 가로 스크롤 스트립으로 항상
+        // 보이게 옮겼습니다. 지금 선택된 카테고리(선호 아티스트/찜
+        // 공연)에 맞는 목록만 보여주고, 누르면 바로 찜 해제됩니다.
+        // (이 위젯 자체가 이미 _onFavoritesChanged로 찜 변경마다
+        // 통째로 다시 그려지므로, 별도 리스너 없이 최신 목록을
+        // 그대로 넘겨받습니다.)
+        _FavoritedStrip(category: _currentCategory, favorites: _favorites),
+        Expanded(
+          child: PageView(
+            controller: _categoryPageController,
+            onPageChanged: _onCategoryPageChanged,
             children: [
-              // 좌우 스와이프로 두 검색 페이지를 넘나든다는 걸 알기 쉽도록,
-              // 탭처럼 누를 수도 있는 알약 모양 스위처 + 화살표 힌트를
-              // PageView 바로 위에 고정으로 둡니다. 원래 이 위에 있던
-              // 제목 표시줄("아티스트 / 찜 공연" + 관리 버튼)은 없애고,
-              // 그 자리만큼 아래 내용이 위로 당겨 올라옵니다.
-              _CategorySwitcher(
-                current: _currentCategory,
-                onSelect: _goToCategory,
+              _CategorySearchPage<ArtistModel>(
+                controller: _artistQueryController,
+                hintText: '아티스트 이름 검색',
+                items: _artistResults,
+                searching: _artistSearching,
+                statusText: _artistStatusText,
+                nameOf: (a) => a.name,
+                imageUrlOf: (a) => a.profileImageUrl,
+                // 아티스트 프로필 사진은 백엔드에 소스가 없어
+                // 사람 아이콘 플레이스홀더를 보여줍니다.
+                placeholderIcon: Icons.person_outline,
+                isFavoritedOf: (a) => _favorites.isArtistFavorited(a.name),
+                onTap: (a) => _favorites.toggleArtist(a),
+                onSubmitted: _onArtistSubmitted,
               ),
-              // 예전엔 "관리" 버튼을 눌러야 슬라이드 패널로 볼 수 있던
-              // 찜 목록을, 검색창 바로 위에 가로 스크롤 스트립으로 항상
-              // 보이게 옮겼습니다. 지금 선택된 카테고리(선호 아티스트/찜
-              // 공연)에 맞는 목록만 보여주고, 누르면 바로 찜 해제됩니다.
-              // (이 위젯 자체가 이미 _onFavoritesChanged로 찜 변경마다
-              // 통째로 다시 그려지므로, 별도 리스너 없이 최신 목록을
-              // 그대로 넘겨받습니다.)
-              _FavoritedStrip(
-                category: _currentCategory,
-                favorites: _favorites,
-              ),
-              Expanded(
-                child: PageView(
-                  controller: _categoryPageController,
-                  onPageChanged: _onCategoryPageChanged,
-                  children: [
-                    _CategorySearchPage<ArtistModel>(
-                      controller: _artistQueryController,
-                      hintText: '아티스트 이름 검색',
-                      items: _artistResults,
-                      searching: _artistSearching,
-                      statusText: _artistStatusText,
-                      nameOf: (a) => a.name,
-                      imageUrlOf: (a) => a.profileImageUrl,
-                      // 아티스트 프로필 사진은 백엔드에 소스가 없어
-                      // 사람 아이콘 플레이스홀더를 보여줍니다.
-                      placeholderIcon: Icons.person_outline,
-                      isFavoritedOf: (a) =>
-                          _favorites.isArtistFavorited(a.name),
-                      onTap: (a) => _favorites.toggleArtist(a),
-                      onSubmitted: _onArtistSubmitted,
-                    ),
-                    _CategorySearchPage<ConcertModel>(
-                      controller: _concertQueryController,
-                      hintText: '공연 이름 검색',
-                      items: _concertResults,
-                      searching: _concertSearching,
-                      statusText: _concertStatusText,
-                      nameOf: (c) => c.name,
-                      imageUrlOf: (c) => c.posterImageUrl,
-                      isFavoritedOf: (c) =>
-                          _favorites.isConcertFavorited(c.name),
-                      onTap: _onConcertTap,
-                      onSubmitted: _onConcertSubmitted,
-                    ),
-                  ],
-                ),
+              _CategorySearchPage<ConcertModel>(
+                controller: _concertQueryController,
+                hintText: '공연 이름 검색',
+                items: _concertResults,
+                searching: _concertSearching,
+                statusText: _concertStatusText,
+                nameOf: (c) => c.name,
+                imageUrlOf: (c) => c.posterImageUrl,
+                isFavoritedOf: (c) => _favorites.isConcertFavorited(c.name),
+                onTap: _onConcertTap,
+                onSubmitted: _onConcertSubmitted,
               ),
             ],
           ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -454,7 +460,9 @@ class _CategoryPill extends StatelessWidget {
           style: TextStyle(
             fontSize: context.sp(13),
             fontWeight: FontWeight.w900,
-            color: selected ? Colors.white : Colors.black.withValues(alpha: 0.55),
+            color: selected
+                ? Colors.white
+                : Colors.black.withValues(alpha: 0.55),
           ),
         ),
       ),
@@ -564,7 +572,10 @@ class _SearchResultsGrid<T> extends StatelessWidget {
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.brown),
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: Colors.brown,
+          ),
         ),
       );
     }
@@ -829,7 +840,8 @@ class _FavoritedChip extends StatelessWidget {
                       : Image.network(
                           imageUrl,
                           fit: BoxFit.cover,
-                          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                          webHtmlElementStrategy:
+                              WebHtmlElementStrategy.fallback,
                           errorBuilder: (context, error, stackTrace) =>
                               _ThumbPlaceholder(icon: placeholderIcon),
                         ),
@@ -843,7 +855,11 @@ class _FavoritedChip extends StatelessWidget {
                       color: Color(0xFFEF4444),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.favorite, size: 10, color: Colors.white),
+                    child: const Icon(
+                      Icons.favorite,
+                      size: 10,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
               ],
