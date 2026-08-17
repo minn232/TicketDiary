@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
-import '../services/news_loading_signal.dart';
 import 'diary_page_flipper.dart' show BentLeafPainter, DiaryPageFlipper;
 import 'diary_page_frame.dart';
 import 'diary_route.dart';
@@ -34,11 +33,11 @@ class DiaryTabFlipRoute extends PageRouteBuilder<void> {
             return DiaryTabFlipTransition(
               animation: animation,
               forward: to.index > from.index,
-              // 소식 탭으로 이동할 때만, 소식 데이터 로딩이 끝날 때까지
-              // 전환 애니메이션이 (로딩 화면 대신) 계속 재생되도록 신호를
-              // 넘깁니다. 다른 탭은 null이라 기존과 동일하게 동작합니다.
-              holdSignal:
-                  to == DiaryTab.news ? NewsLoadingSignal.isLoading : null,
+              // 진입 시 페이지 넘김은 어느 탭이든 로딩을 기다리지 않고
+              // 고정 시간만 재생한 뒤 곧바로 목적지를 드러냅니다(소식 탭도
+              // 자체 로딩 스피너로 넘어감). holdSignal 메커니즘 자체는
+              // 남겨두되 여기서는 쓰지 않습니다.
+              holdSignal: null,
               child: child,
             );
           },

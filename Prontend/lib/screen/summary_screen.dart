@@ -12,44 +12,45 @@ class SummaryScreen extends StatefulWidget {
   State<SummaryScreen> createState() => _SummaryScreenState();
 }
 
-/// 결산 조회 기간. 백엔드 `GET /summary?period=`가 받는 값(`apiValue`)과
-/// 화면에 보여줄 라벨을 함께 묶어둡니다.
-///
-/// 백엔드가 지원하는 기간은 6개월/1년/전체뿐이라(1개월 단위 집계는 없음),
-/// 화면 라벨도 "6개월"로 둡니다.
+/// 결산 조회 기간. 무대 안 날짜 버튼을 누를 때마다 순환합니다(6개월→1년→전체).
 enum _SummaryPeriod {
-  sixMonths('6m', '6개월'),
-  oneYear('1y', '1년'),
-  all('all', '전체');
+  sixMonths('6개월', '6m'),
+  oneYear('1년', '1y'),
+  all('전체', 'all');
 
-  const _SummaryPeriod(this.apiValue, this.label);
+  const _SummaryPeriod(this.label, this.api);
 
-  final String apiValue;
   final String label;
+  final String api;
+
+  _SummaryPeriod get next =>
+      _SummaryPeriod.values[(index + 1) % _SummaryPeriod.values.length];
 }
 
 class _SummaryScreenState extends State<SummaryScreen> {
   static const Color _paperColor = Color(0xFFF4F1E1);
-  static const double _periodTagReservedHeight = 62;
-  final SummaryService _summaryService = SummaryService();
-  late Future<SummaryModel> _summaryFuture;
-  _SummaryPeriod _selectedPeriod = _SummaryPeriod.all;
+  final SummaryService _service = SummaryService();
+
+  _SummaryPeriod _period = _SummaryPeriod.sixMonths;
+  late Future<SummaryModel> _future;
+  bool _showSummary = false;
 
   @override
   void initState() {
     super.initState();
-    _summaryFuture = _summaryService.fetchSummary(
-      period: _selectedPeriod.apiValue,
-    );
+    _future = _service.fetchSummary(period: _period.api);
   }
 
-  void _selectPeriod(_SummaryPeriod period) {
-    if (period == _selectedPeriod) return;
+  /// 무대 안 날짜 버튼: 다음 기간으로 순환하고 그 기간의 결산을 다시 불러옵니다.
+  void _cyclePeriod() {
     setState(() {
-      _selectedPeriod = period;
-      _summaryFuture = _summaryService.fetchSummary(period: period.apiValue);
+      _period = _period.next;
+      _future = _service.fetchSummary(period: _period.api);
     });
   }
+
+  void _openSummary() => setState(() => _showSummary = true);
+  void _closeSummary() => setState(() => _showSummary = false);
 
   @override
   Widget build(BuildContext context) {
@@ -58,343 +59,292 @@ class _SummaryScreenState extends State<SummaryScreen> {
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.summary),
       child: Container(
         color: _paperColor,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // 기간 선택 탭은 데이터 로딩 상태와 무관하게 항상 눌러서 다른
-              // 기간으로 바꿀 수 있어야 하므로, FutureBuilder 바깥(위)에
-              // 별도로 둡니다.
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned.fill(
-                    child: FutureBuilder<SummaryModel>(
-                      future: _summaryFuture,
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState == ConnectionState.waiting) {
-                          return const Center(child: CircularProgressIndicator(color: Colors.brown));
-                        }
-                        if (snapshot.hasError) {
-                          return Center(child: Text('결산을 불러오지 못했습니다.\n${snapshot.error}', textAlign: TextAlign.center));
-                        }
-                        if (!snapshot.hasData) {
-                          return const Center(child: Text('데이터가 없습니다.'));
-                        }
-
-                        final data = snapshot.data!;
-                        return _buildSummaryContent(constraints, data);
-                      },
-                    ),
-                  ),
-                  Positioned(
-                    top: 6,
-                    left: 6,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final period in _SummaryPeriod.values) ...[
-                          if (period != _SummaryPeriod.values.first)
-                            const SizedBox(width: 6),
-                          _PeriodTag(
-                            text: period.label,
-                            selected: period == _selectedPeriod,
-                            onTap: () => _selectPeriod(period),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSummaryContent(BoxConstraints constraints, SummaryModel data) {
-    // 공연 기록 자체가 없으면(AFTER_CONCERT 티켓 0건) 모든 집계값이 무의미한
-    // 0이므로, 숫자 대신 "기록 없음"을 보여줍니다.
-    final bool hasData = data.concertCount > 0;
-    String withFallback(String value) => hasData ? value : '기록 없음';
-
-    return SizedBox(
-      height: constraints.maxHeight,
-      child: Column(
-        children: [
-          const SizedBox(height: _periodTagReservedHeight),
-          Expanded(
-            child: Column(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: _SummaryCard(
-                                title: '간 공연 수',
-                                value: withFallback('${data.concertCount}회'),
-                                noteColor: const Color(0xFFFFF6A6),
-                                angle: -0.010,
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              child: _SummaryCard(
-                                title: '소비 금액',
-                                value: withFallback('${data.totalSpending.toString().replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]},')}원'),
-                                noteColor: const Color(0xFFFFD6E8),
-                                angle: 0.012,
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              child: _SummaryCard(
-                                title: '선호 장르',
-                                value: withFallback(data.favoriteGenre),
-                                noteColor: const Color(0xFFCFF5E7),
-                                angle: -0.008,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: _SummaryCard(
-                                title: '들은 음악 수',
-                                value: withFallback('${data.songCount}곡'),
-                                noteColor: const Color(0xFFD9E8FF),
-                                angle: 0.010,
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            Expanded(
-                              flex: 2,
-                              child: _SummaryCard(
-                                title: '관람한 아티스트',
-                                noteColor: const Color(0xFFFFF1C9),
-                                angle: -0.012,
-                                child: _ArtistList(artists: data.visitedArtists),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  height: 120,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        // [백엔드 수정]
-                        // 띄어쓰기로 바꿔서 Flutter가 화면 폭에 맞게 알아서 줄바꿈.
-                        child: _SummaryCard(
-                          title: '스탠딩 / 좌석 선호도',
-                          value: withFallback(
-                            '좌석 ${(data.seatRatio * 100).toInt()}% / 스탠딩 ${(data.standingRatio * 100).toInt()}%',
-                          ),
-                          center: true,
-                          noteColor: const Color(0xFFE7E2FF),
-                          angle: 0.010,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: _SummaryCard(
-                          title: '첫콘 / 막콘 선호도',
-                          value: withFallback(
-                            '첫콘 ${(data.firstConcertRatio * 100).toInt()}% / 막콘 ${(data.lastConcertRatio * 100).toInt()}%',
-                          ),
-                          center: true,
-                          noteColor: const Color(0xFFFFE7C7),
-                          angle: -0.010,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(
+              child: _StageCollage(
+                periodLabel: _period.label,
+                onCyclePeriod: _cyclePeriod,
+                onVocalTap: _openSummary,
+              ),
             ),
-          ),
-        ],
+            // 보컬을 누르면: 현재 기간의 결산 텍스트가 확대되며 나옵니다.
+            if (_showSummary)
+              _SummaryOverlay(
+                periodLabel: _period.label,
+                future: _future,
+                onClose: _closeSummary,
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// 기간 선택 탭 하나(washi tape 느낌의 라벨). [selected]면 진한 가죽색으로
-/// 채워 눌려있음을 보여주고, 아닌 쪽은 기존처럼 반투명 흰색으로 둡니다.
-class _PeriodTag extends StatelessWidget {
-  final String text;
-  final bool selected;
-  final VoidCallback? onTap;
+/// 무대 공연 장면(스티커 콜라주). 무대 스티커 안쪽 빈 공간에 날짜 순환 버튼을
+/// 얹고, 밴드(기타·드럼·보컬)는 무대 플랫폼 위에 발을 맞춰 세웁니다. 보컬을
+/// 누르면 [onVocalTap]이 불립니다.
+class _StageCollage extends StatelessWidget {
+  final String periodLabel;
+  final VoidCallback onCyclePeriod;
+  final VoidCallback onVocalTap;
 
-  const _PeriodTag({required this.text, this.selected = false, this.onTap});
+  const _StageCollage({
+    required this.periodLabel,
+    required this.onCyclePeriod,
+    required this.onVocalTap,
+  });
 
-  static const Color _selectedColor = Color(0xFF5C4033);
+  static const String _dir = 'assets/images/summary';
+
+  /// 무대 스티커 안에서 공연자가 서는 플랫폼 상단(발이 놓일 높이, 0~1).
+  static const double _feetFrac = 0.73;
+
+  static const _Sticker _stage = _Sticker('stage', 0.50, 0.30, 1.00, 0.881);
+
+  /// 무대 위 밴드(플랫폼에 발을 맞춰 세움). 보컬은 최상단 + 탭 대상.
+  static const List<_Sticker> _band = [
+    _Sticker('guitar', 0.20, 0, 0.30, 0.688, band: true),
+    _Sticker('drum', 0.74, 0, 0.42, 1.154, band: true),
+    _Sticker('vocal', 0.50, 0, 0.364, 0.669, band: true, vocal: true),
+  ];
+
+  /// 관객: 관객 영역 안 무작위 위치(뒤→앞). fx≥0.5면 좌우반전(안쪽을 보게).
+  static const List<_Sticker> _fans = [
+    _Sticker('fan7', 0.333, 0.624, 0.189, 0.577, crowd: true),
+    _Sticker('fan8', 0.909, 0.625, 0.203, 0.420, crowd: true),
+    _Sticker('fan5', 0.744, 0.659, 0.220, 0.511, crowd: true),
+    _Sticker('fan2', 0.572, 0.661, 0.220, 0.488, crowd: true),
+    _Sticker('fan3', 0.167, 0.700, 0.226, 0.541, crowd: true),
+    _Sticker('fan1', 0.461, 0.785, 0.292, 0.574, crowd: true),
+    _Sticker('fan4', 0.754, 0.829, 0.287, 0.534, crowd: true),
+    _Sticker('fan9', 0.594, 0.904, 0.330, 0.700, crowd: true),
+    _Sticker('fan6', 0.311, 0.920, 0.354, 0.502, crowd: true),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, full) {
+        // 배치 영역 여백: 좌·우·하 = 바인더 은색 막대 길이의 절반, 상단은 3배.
+        final halfBar =
+            (full.maxWidth * DiaryPageFrame.binderBarWidthRatio + 5) / 2;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: halfBar,
+            right: halfBar,
+            bottom: halfBar,
+            top: halfBar * 3,
+          ),
+          child: ClipRect(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final w = c.maxWidth;
+                final h = c.maxHeight;
+                // 무대 기하 → 플랫폼 발 높이 + 날짜 버튼 위치.
+                final stageHpx = _stage.wf * w / _stage.aspect;
+                final stageTop = _stage.fy * h - stageHpx / 2;
+                final feetY = stageTop + _feetFrac * stageHpx;
+                final dateBtnTop = stageTop + 0.25 * stageHpx - 24;
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _positioned(_stage, w, h),
+                    // 무대 빈 공간의 날짜 순환 버튼.
+                    Positioned(
+                      top: dateBtnTop,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: _DateButton(
+                          label: periodLabel,
+                          onTap: onCyclePeriod,
+                        ),
+                      ),
+                    ),
+                    for (final s in _band) _positionedBand(s, w, feetY),
+                    for (final s in _fans) _positioned(s, w, h),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 일반 배치(무대·관객): 중심 fx/fy. 관객이면서 오른쪽이면 좌우반전.
+  Widget _positioned(_Sticker s, double w, double h) {
+    final wpx = s.wf * w;
+    final hpx = wpx / s.aspect;
+    return Positioned(
+      left: s.fx * w - wpx / 2,
+      top: s.fy * h - hpx / 2,
+      width: wpx,
+      height: hpx,
+      child: _image(s),
+    );
+  }
+
+  /// 밴드 배치: 가로는 fx, 세로는 발(스티커 하단)이 무대 플랫폼 [feetY]에 닿게.
+  Widget _positionedBand(_Sticker s, double w, double feetY) {
+    final wpx = s.wf * w;
+    final hpx = wpx / s.aspect;
+    Widget child = _image(s);
+    if (s.vocal) {
+      child = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onVocalTap,
+        child: child,
+      );
+    }
+    return Positioned(
+      left: s.fx * w - wpx / 2,
+      top: feetY - hpx,
+      width: wpx,
+      height: hpx,
+      child: child,
+    );
+  }
+
+  Widget _image(_Sticker s) {
+    Widget img = Image.asset(
+      '$_dir/${s.name}.png',
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.medium,
+    );
+    if (s.crowd && s.fx >= 0.5) {
+      img = Transform(
+        alignment: Alignment.center,
+        transform: Matrix4.identity()..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
+        child: img,
+      );
+    }
+    return img;
+  }
+}
+
+/// 무대 안 날짜 순환 버튼. 현재 기간 라벨을 보여주고, 누르면 다음 기간으로.
+class _DateButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _DateButton({required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: Transform.rotate(
-        angle: -0.10,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          decoration: BoxDecoration(
-            color: selected
-                ? _selectedColor
-                : Colors.white.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: Colors.black.withValues(alpha: selected ? 0.20 : 0.35),
-              width: 1.2,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: context.rs(16),
+          vertical: context.rs(9),
+        ),
+        decoration: BoxDecoration(
+          color: const Color(0xFF5C4033),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.85), width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.35),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: selected ? 0.20 : 0.10),
-                blurRadius: 8,
-                offset: const Offset(2, 3),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.calendar_today_rounded,
+                size: context.sp(14), color: Colors.white),
+            SizedBox(width: context.rs(7)),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: context.sp(15),
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
               ),
-            ],
-          ),
-          child: Text(
-            text,
-            style: TextStyle(
-              fontSize: context.sp(13),
-              fontWeight: FontWeight.w800,
-              color: selected ? Colors.white : Colors.black87,
             ),
-          ),
+            SizedBox(width: context.rs(5)),
+            Icon(Icons.unfold_more_rounded,
+                size: context.sp(14),
+                color: Colors.white.withValues(alpha: 0.8)),
+          ],
         ),
       ),
     );
   }
 }
 
-class _SummaryCard extends StatelessWidget {
-  final String title;
-  final String? value;
-  final Widget? child;
-  final bool center;
-  final Color noteColor;
-  final double angle;
+/// 콜라주 스티커 하나. [fx],[fy] 중심 위치(0~1), [wf] 영역 너비 대비 너비,
+/// [aspect] 고유 비율(w/h). [band]는 무대 위 밴드(발 정렬), [vocal]은 탭 대상,
+/// [crowd]는 관객(오른쪽이면 좌우반전).
+class _Sticker {
+  final String name;
+  final double fx;
+  final double fy;
+  final double wf;
+  final double aspect;
+  final bool band;
+  final bool vocal;
+  final bool crowd;
 
-  const _SummaryCard({
-    required this.title,
-    this.value,
-    this.child,
-    this.center = false,
-    this.noteColor = const Color(0xFFFFF6A6),
-    this.angle = 0.0,
+  const _Sticker(
+    this.name,
+    this.fx,
+    this.fy,
+    this.wf,
+    this.aspect, {
+    this.band = false,
+    this.vocal = false,
+    this.crowd = false,
+  });
+}
+
+/// 보컬을 눌렀을 때 확대되며 나오는 결산 오버레이. 어두운 배경 + 가운데에서
+/// 팝 하고 커지는 결산 카드. 배경(또는 닫기 버튼)을 누르면 닫힙니다.
+class _SummaryOverlay extends StatelessWidget {
+  final String periodLabel;
+  final Future<SummaryModel> future;
+  final VoidCallback onClose;
+
+  const _SummaryOverlay({
+    required this.periodLabel,
+    required this.future,
+    required this.onClose,
   });
 
   @override
   Widget build(BuildContext context) {
-    final content =
-        child ??
-        Text(
-          value ?? '',
-          textAlign: center ? TextAlign.center : TextAlign.left,
-          style: TextStyle(
-            fontSize: context.sp(16),
-            fontWeight: FontWeight.w800,
-            color: Colors.black87,
-          ),
-        );
-
-    return Transform.rotate(
-      angle: angle,
+    return Positioned.fill(
       child: Stack(
-        clipBehavior: Clip.none,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              color: noteColor,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: Colors.black.withValues(alpha: 0.12),
-                width: 1.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.18),
-                  blurRadius: 12,
-                  offset: const Offset(3, 5),
-                ),
-              ],
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
-              child: Column(
-                crossAxisAlignment: center
-                    ? CrossAxisAlignment.center
-                    : CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    textAlign: center ? TextAlign.center : TextAlign.left,
-                    style: TextStyle(
-                      fontSize: context.sp(12),
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: Align(
-                      alignment: center
-                          ? Alignment.center
-                          : Alignment.centerLeft,
-                      child: content,
-                    ),
-                  ),
-                ],
-              ),
+          // 어두운 배경(탭하면 닫힘).
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: onClose,
+              child: Container(color: Colors.black.withValues(alpha: 0.55)),
             ),
           ),
-
-          /// 상단 테이프 느낌
-          Positioned(
-            top: -8,
-            left: 22,
-            right: 22,
-            child: Container(
-              height: 16,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.50),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  width: 1,
-                ),
+          // 확대되며 나오는 결산 카드.
+          Center(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 340),
+              curve: Curves.easeOutBack,
+              builder: (context, t, child) => Opacity(
+                opacity: t.clamp(0.0, 1.0),
+                child: Transform.scale(scale: 0.4 + 0.6 * t, child: child),
               ),
-            ),
-          ),
-
-          /// 접힌 모서리 (오른쪽 위)
-          Positioned(
-            top: 0,
-            right: 0,
-            child: ClipPath(
-              clipper: _PostItCornerClipper(),
-              child: Container(
-                width: 28,
-                height: 28,
-                color: Colors.white.withValues(alpha: 0.35),
+              child: _SummaryCard(
+                periodLabel: periodLabel,
+                future: future,
+                onClose: onClose,
               ),
             ),
           ),
@@ -404,79 +354,157 @@ class _SummaryCard extends StatelessWidget {
   }
 }
 
-/// 포스트잇 접힌 모서리(오른쪽 위) 모양을 만들기 위한 클리퍼
-class _PostItCornerClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    return Path()
-      ..moveTo(size.width, 0)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, 0)
-      ..close();
-  }
+/// 결산 내용 카드(단순·직관적). 기간 제목 + 핵심 통계 몇 줄.
+class _SummaryCard extends StatelessWidget {
+  final String periodLabel;
+  final Future<SummaryModel> future;
+  final VoidCallback onClose;
 
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
-}
-
-// [백엔드 수정]
-// 6개로 자르던 걸 스크롤 목록으로 변경.
-class _ArtistList extends StatelessWidget {
-  final List<ArtistVisit> artists;
-
-  const _ArtistList({required this.artists});
+  const _SummaryCard({
+    required this.periodLabel,
+    required this.future,
+    required this.onClose,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (artists.isEmpty) {
-      return Text(
-        '기록 없음',
-        style: TextStyle(fontSize: context.sp(13), color: Colors.black38),
-      );
-    }
-    return ListView.separated(
-      padding: EdgeInsets.zero,
-      itemCount: artists.length,
-      separatorBuilder: (_, _) => SizedBox(height: context.rs(6)),
-      itemBuilder: (context, index) {
-        final artist = artists[index];
-        return Row(
-          children: [
-            Expanded(
-              child: Text(
-                '• ${artist.name}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+    return Container(
+      width: (MediaQuery.sizeOf(context).width * 0.8).clamp(240.0, 360.0),
+      padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFBF7EC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF5C4033).withValues(alpha: 0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                '$periodLabel 결산',
                 style: TextStyle(
-                  fontSize: context.sp(14),
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black87,
+                  fontSize: context.sp(20),
+                  fontWeight: FontWeight.w900,
+                  color: const Color(0xFF5C4033),
                 ),
               ),
-            ),
-            SizedBox(width: context.rs(6)),
-            _VisitCountStamp(count: artist.count),
-          ],
-        );
-      },
+              const Spacer(),
+              GestureDetector(
+                onTap: onClose,
+                behavior: HitTestBehavior.opaque,
+                child: Icon(Icons.close_rounded,
+                    size: context.sp(22), color: Colors.black45),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          FutureBuilder<SummaryModel>(
+            future: future,
+            builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(
+                    child: CircularProgressIndicator(color: Colors.brown),
+                  ),
+                );
+              }
+              if (snap.hasError) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Text(
+                    '결산을 불러오지 못했어요.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: context.sp(14),
+                      color: Colors.black54,
+                    ),
+                  ),
+                );
+              }
+              final data = snap.data;
+              if (data == null || data.concertCount == 0) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Text(
+                    '아직 이 기간의 공연 기록이 없어요.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: context.sp(14),
+                      color: Colors.black54,
+                    ),
+                  ),
+                );
+              }
+              return _stats(context, data);
+            },
+          ),
+        ],
+      ),
     );
   }
-}
 
-/// "n회" 관람 횟수 표시.
-class _VisitCountStamp extends StatelessWidget {
-  final int count;
+  Widget _stats(BuildContext context, SummaryModel d) {
+    final spending = d.totalSpending.toString().replaceAllMapped(
+          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+          (m) => '${m[1]},',
+        );
+    final topArtist = d.visitedArtists.isNotEmpty ? d.visitedArtists.first : null;
+    final standing = (d.standingRatio * 100).round();
+    final seat = (d.seatRatio * 100).round();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _row(context, '🎫', '본 공연', '${d.concertCount}회'),
+        _row(context, '🎤', '관람 아티스트',
+            '${d.visitedArtists.length}팀${topArtist != null ? ' · 최애 ${topArtist.name}' : ''}'),
+        _row(context, '🎵', '들은 곡', '${d.songCount}곡'),
+        _row(context, '💰', '쓴 금액', '$spending원'),
+        _row(context, '🎸', '최애 장르', d.favoriteGenre),
+        _row(context, '🧍', '스탠딩 · 좌석', '$standing% · $seat%'),
+      ],
+    );
+  }
 
-  const _VisitCountStamp({required this.count});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      '$count회',
-      style: TextStyle(
-        fontSize: context.sp(11),
-        fontWeight: FontWeight.w800,
-        color: Colors.black.withValues(alpha: 0.6),
+  Widget _row(BuildContext context, String emoji, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Text(emoji, style: TextStyle(fontSize: context.sp(17))),
+          const SizedBox(width: 10),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: context.sp(14),
+              fontWeight: FontWeight.w700,
+              color: Colors.black.withValues(alpha: 0.6),
+            ),
+          ),
+          const Spacer(),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: context.sp(15),
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF3E2C22),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
