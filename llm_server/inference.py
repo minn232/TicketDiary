@@ -1,15 +1,14 @@
 """
 LLM팀이 채울 부분은 이 파일뿐입니다. 라우팅/인증/ACK/백그라운드 처리/콜백 전송/중복
-방지는 이미 전부 구현되어 있어서 신경 쓸 필요 없습니다.
+방지는 이미 구현되어 있어 신경 쓸 필요 없습니다.
 
-analyze_crawl_screenshot/extract_artists_from_poster는 LLM팀 실제 코드(extract_poster.py,
-파일명 그대로 옮겨옴)의 extract_poster_info()를 공유해서 씁니다 - 크롤링 스크린샷이든
-포스터든 같은 이미지 분석 모델을 쓰기 때문입니다. 반환값은 poster_info 스키마(schema.py의
-POSTER_INFO_SCHEMA) 전체 dict 그대로이고, 백엔드가 기대하는 필드명으로 바꾸는 것/아티스트명만
-뽑아내는 것은 normalize.py가 담당합니다(이 파일은 손댈 필요 없음).
+analyze_crawl_screenshot은 extract_poster.py, extract_artists_from_poster는 아티스트명
+전용 프롬프트로 분리한 extract_artist.py를 씁니다(오추출 패턴 4가지 겨냥, 2026-08-18~).
+둘 다 반환은 lineup 배열이고 normalize.py가 아티스트명만 뽑아 씀 - 이 파일은 안 건드려도 됩니다.
 """
 
 from config import settings
+from extract_artist import extract_artist_info
 from extract_poster import extract_poster_info
 from schemas import ArtistExtractItem, CrawlAnalyzeItem, DiaryGenerateItem
 
@@ -21,10 +20,11 @@ def analyze_crawl_screenshot(item: CrawlAnalyzeItem) -> dict:
 
 
 def extract_artists_from_poster(item: ArtistExtractItem) -> dict:
-    """공연 포스터(item.poster_url)에서 정보를 뽑아낸다. analyze_crawl_screenshot과 같은
-    함수를 재사용하므로 반환값도 동일한 poster_info 스키마 dict - normalize.py가 그 안에서
-    아티스트명만 뽑아 쓴다."""
-    return extract_poster_info(item.poster_url, base_url=settings.VLLM_BASE_URL, api_key=settings.VLLM_API_KEY)
+    """공연 포스터에서 아티스트명만 뽑는다. concert_name도 같이 넘겨서, 포스터에 이름이
+    없고 부제만 있을 때("아티스트명: 부제" 형식) 힌트로 쓸 수 있게 한다."""
+    return extract_artist_info(
+        item.poster_url, item.concert_name, base_url=settings.VLLM_BASE_URL, api_key=settings.VLLM_API_KEY
+    )
 
 
 def generate_diary_text(item: DiaryGenerateItem) -> str:
