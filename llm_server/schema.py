@@ -48,6 +48,12 @@ POSTER_INFO_SCHEMA = {
             "type": "array",
             "items": LINEUP_ENTRY_SCHEMA,
         },
+        "ticketing_date": {
+            "anyOf": [
+                {"type": "string", "pattern": DATE_PATTERN},
+                {"type": "null"},
+            ]
+        },
         "ticket_delivery_date": {
             "anyOf": [
                 {"type": "string", "pattern": DATE_PATTERN},
@@ -74,6 +80,6 @@ POSTER_INFO_SCHEMA = {
             "additionalProperties": False,
         },
     },
-    "required": ["timetable", "lineup", "ticket_delivery_date", "ticket_prices", "other_info"],
+    "required": ["timetable", "lineup", "ticketing_date", "ticket_delivery_date", "ticket_prices", "other_info"],
     "additionalProperties": False,
 }

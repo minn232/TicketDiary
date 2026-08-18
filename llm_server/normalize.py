@@ -6,21 +6,20 @@
 보고 나서 손댈 곳은 inference.py가 아니라 이 파일이 되어야 한다.
 
 LLM팀 실제 SYSTEM_PROMPT(Qwen2.5-VL) + vLLM response_format(json_schema, POSTER_INFO_SCHEMA)
-강제 출력 포맷 기준(2026-08-06):
+강제 출력 포맷 기준(2026-08-18 ticketing_date 추가):
 {
     "timetable": [{"performance_date": "2026-09-19", "time": "18:00", "artist": "...", "stage": "MAIN"}] | null,
     "lineup": [{"artist": "...", "performance_date": "2026-09-19"}],   # 항상 배열(null 아님)
+    "ticketing_date": "2026-08-25" | null,
     "ticket_delivery_date": "2026-09-10" | null,
     "ticket_prices": [{"seat_type": "VIP", "price": 198000}] | null,
     "other_info": {"food_allowed": "가능"|"불가능"|"일부허용"|null},   # 객체 자체는 항상 존재
 }
-POSTER_INFO_SCHEMA는 최상위에 additionalProperties: False + 위 5개 키만 required라서
-venue_layout/ticketing_date는 지금 이 경로로는 나올 수 없음(vLLM 구조화 출력 제약).
-- venue_layout: 안 쓰기로 결정해 매핑 자체를 없앰
-- ticketing_date: LLM팀이 현재 누락한 것뿐이고 추후 스키마에 추가될 예정이라, 매핑은 미리
-  살려둠(지금은 raw에 키가 없어 그냥 안 타는 코드지만, LLM팀이 필드를 추가하는 순간 별도
-  수정 없이 바로 반영됨). 크롤링 "완료" 판정에 쓰이는 필드라 추가되기 전까지는 크롤링이
-  계속 미완료로 남는다는 점 참고
+POSTER_INFO_SCHEMA는 최상위에 additionalProperties: False + 위 6개 키만 required라서
+venue_layout은 지금 이 경로로는 나올 수 없음(안 쓰기로 결정해 매핑 자체를 없앰).
+ticketing_date는 크롤링 "완료" 판정에 쓰이는 필드라(crawler.py의 Concert.ticketing_date)
+이게 안 채워지면 같은 공연이 24시간 쿨다운마다 계속 재크롤링됨 - 이번에 스키마에 추가되기
+전까지 실제로 그런 상태였음.
 """
 
 from datetime import date, datetime
@@ -79,8 +78,7 @@ def normalize_crawl_result(raw: dict) -> dict:
 
     # venue_layout은 안 쓰기로 결정해 매핑 없음 (POSTER_INFO_SCHEMA에도 없는 키)
 
-    # ticketing_date는 LLM팀이 아직 프롬프트/스키마에 추가하기 전이라 지금은 raw에 안 들어있지만,
-    # 추가되는 대로 바로 반영되게 매핑을 미리 살려둠 (크롤링 "완료" 판정에 쓰이는 필드)
+    # 크롤링 "완료" 판정에 쓰이는 필드(crawler.py) - 없으면 계속 재크롤링 대상으로 남음
     if raw.get("ticketing_date") is not None:
         body["ticketing_date"] = _to_date_string(raw["ticketing_date"])
 
