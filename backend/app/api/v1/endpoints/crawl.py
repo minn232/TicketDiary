@@ -160,7 +160,11 @@ async def receive_artist_extraction_result(
 
     if body.artist_name:
         known_artist_names = await get_known_artist_names(db)
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        # KOPIS 원본이 채운 소규모(단독 추정, 4명 미만) 공연이면 포스터 결과를 더 신뢰해서
+        # 교체(KOPIS prfcast가 본명/멤버명인 경우가 많아서) - 이미 4명 이상(페스티벌 등)이면
+        # 라인업 유실 방지를 위해 기존처럼 합집합 유지
+        replace = concert.kopis_detail_synced_at is not None and len(concert.artist_name or []) < 4
+        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names, replace=replace)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)

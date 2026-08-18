@@ -72,6 +72,40 @@ def test_normalize_reuses_within_same_batch():
     assert result == ["10cm", "10cm"]
 
 
+# 한글↔로마자 표기 매칭 (통용 표기: 김→Kim, 현→Hyun, 정→Jung 등)
+
+def test_normalize_matches_hangul_to_informal_romanization():
+    known = {"Kim Hyunjung"}
+    result = normalize_artist_names(["김현정"], known)
+    assert result == ["Kim Hyunjung"]
+
+
+def test_normalize_matches_hangul_to_formal_romanization():
+    known = {"Jin Hyeon Jun"}
+    result = normalize_artist_names(["진현준"], known)
+    assert result == ["Jin Hyeon Jun"]
+
+
+def test_normalize_matches_romanization_reverse_direction():
+    known = {"김현정"}
+    result = normalize_artist_names(["Kim Hyunjung"], known)
+    assert result == ["김현정"]
+
+
+def test_normalize_romanization_does_not_false_positive_different_person():
+    known = {"김현정"}
+    result = normalize_artist_names(["박보검"], known)
+    assert result == ["박보검"]
+    assert "박보검" in known
+
+
+def test_normalize_romanization_still_misses_semantic_alias():
+    # 로마자 변환은 발음 표기 차이만 잡음 - 의미가 다른 별칭(방탄소년단 vs BTS)은 여전히 못 잡힘
+    known = {"방탄소년단"}
+    result = normalize_artist_names(["BTS"], known)
+    assert result == ["BTS"]
+
+
 # KOPIS 상세 조회 경로에 정규화가 반영되는지 통합 테스트
 
 @pytest.mark.asyncio
@@ -126,6 +160,56 @@ async def test_artist_result_normalizes_and_saves():
 
     assert res.status_code == 200
     assert res.json()["artist_name"] == [existing, "신규아티스트"]
+
+
+# KOPIS 원본(실명/멤버명일 수 있음)이 채운 소규모 공연에 포스터 결과가 오면 합집합이 아니라
+# 교체되는지 테스트 (예: 존박→박성규 케이스 - 포스터가 더 신뢰할 수 있는 활동명을 준다고 가정)
+@pytest.mark.asyncio
+async def test_artist_result_replaces_small_kopis_sourced_artist():
+    token = await _get_token()
+    kopis_name = f"KOPIS실명_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_AR_REPLACE_{uuid.uuid4().hex[:6]}", kopis_name, token)
+
+    poster_name = f"포스터활동명_{uuid.uuid4().hex[:6]}"
+    body = {"artist_name": [poster_name]}
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert res.status_code == 200
+    # KOPIS 이름은 사라지고 포스터 결과로 교체됨 (합집합이었다면 둘 다 남았을 것)
+    assert res.json()["artist_name"] == [poster_name]
+
+
+# 이미 4명 이상(페스티벌 추정)이면 라인업 유실 방지를 위해 교체 대신 기존처럼 합집합 유지
+@pytest.mark.asyncio
+async def test_artist_result_keeps_union_when_already_multi_artist():
+    token = await _get_token()
+    existing_names = [f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(4)]
+    concert_id = await _create_concert(
+        f"PF_AR_UNION_{uuid.uuid4().hex[:6]}", ",".join(existing_names), token
+    )
+
+    new_name = f"추가아티스트_{uuid.uuid4().hex[:6]}"
+    body = {"artist_name": [new_name]}
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert res.status_code == 200
+    assert set(res.json()["artist_name"]) == set(existing_names) | {new_name}
 
 
 # 포스터 추출로 아티스트가 임계치(5명) 이상 확인되면 event_type이 SOLO->FESTIVAL로 승격되는지 테스트

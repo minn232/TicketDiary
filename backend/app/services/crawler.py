@@ -9,7 +9,7 @@ from uuid import UUID
 import httpx
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -755,12 +755,12 @@ async def send_screenshots_to_llm() -> None:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
 
-# 자정 배치: 아티스트 정보 없는 공연의 포스터를 VLM팀에 보내 아티스트 추출 요청
-# (포스터 내용은 시간이 지나도 안 바뀌므로 크롤링과 달리 쿨다운/재시도 없이 한 번만 시도함 -
-# 전송 자체가 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에서 다시 시도됨)
-# limit: scripts/send_artist_extraction_now.py 같은 수동 트리거에서 소규모로 먼저
-# 테스트해보고 싶을 때만 씀 - 자정 배치 호출부는 안 넘기므로 기존 동작(전체 전송) 그대로.
-# 반환값은 실제로 전송(=attempted_at 마킹)된 건수(전송 실패/대상 없음이면 0).
+# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청 (포스터는 안 바뀌므로 한 번만 시도 -
+# 전송 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에 재시도됨).
+# KOPIS가 이미 채운 공연도 대상에 포함 - prfcast가 예명 대신 본명/그룹명 대신 멤버명인 경우가
+# 많아서(merge는 합집합이라 기존 값은 안 지워짐). 다만 이미 4명 이상이면(ticket.py의
+# _MULTI_ARTIST_FESTIVAL_THRESHOLD=5 코앞이라 1명만 추가돼도 SOLO->FESTIVAL 오승격 위험) 제외.
+# limit: scripts/send_artist_extraction_now.py 같은 수동 트리거용, 자정 배치는 안 넘김.
 async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     if not settings.LLM_ARTIST_URL:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
@@ -768,7 +768,8 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
 
     async with AsyncSessionLocal() as db:
         query = select(Concert).where(
-            Concert.artist_name == [],
+            Concert.genre.contains(["대중음악"]),  # DB에 다른 장르도 섞여 있어 명시적으로 걸러야 함
+            func.cardinality(Concert.artist_name) < 4,
             Concert.poster_url.isnot(None),
             Concert.artist_extraction_attempted_at.is_(None),
         )
