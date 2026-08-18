@@ -45,9 +45,9 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- 소식탭 "예매처 바로가기" 버튼이 intent:// + package로 예매처 앱을
-             직접 지정해서 열 때, Android 11+ 패키지 가시성 제한 때문에 앱이
-             설치돼 있어도 못 찾는 문제를 막기 위해 명시. -->
+        <!-- 예매처 앱 package 지정 실행(android_intent_plus)용 - Android 11+
+             패키지 가시성 제한 회피. news_detail_overlay.dart 참고. -->
+        <package android:name="com.cultsotry.yanolja.nativeapp"/>
         <package android:name="com.interpark.app.ticket"/>
         <package android:name="com.yes24.ticket"/>
         <package android:name="kr.co.ticketlink.cne"/>

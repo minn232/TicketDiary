@@ -1,6 +1,7 @@
 import 'dart:io' show Platform;
 import 'dart:ui';
 
+import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -604,18 +605,10 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
 }
 
 // [백엔드 수정]
-// KOPIS가 실제로 준 예매처만(ticketingLinks) 버튼으로 보여주고, 눌렀을 때
-// 진짜 예매 링크로 이동. ticketingLinks가 비어있으면 섹션 자체를 숨김.
-//
-// 원래는 externalApplication 모드 + 일반 launchUrl만으로 그 사이트가 앱
-// 링크(Android App Links/iOS Universal Links)를 지원하면 자동으로 앱으로
-// 연결될 거라 가정했는데, 실기기 확인 결과 4사(인터파크/예스24/티켓링크/
-// 멜론) 전부 앱이 깔려 있어도 브라우저로만 열림 - 4사 다 이 URL 패턴에
-// 대한 앱 링크를 검증해두지 않은 것으로 보임(2026-08-18). Android는
-// intent:// + package로 설치된 앱을 직접 지정해서 우회(안 깔려있으면
-// browser_fallback_url로 폴백). iOS는 각 앱의 커스텀 URL 스킴을 알아낼
-// 방법이 없어(공식 문서 없음, fragile) 기존처럼 브라우저로 열림 - 나중에
-// 스킴을 확인하면 추가.
+// KOPIS가 실제로 준 예매처만(ticketingLinks) 버튼으로 보여주고, 눌렀을 때 진짜
+// 예매 링크로 이동. Android는 android_intent_plus로 package 지정해 앱 우선
+// 실행 시도(launch() 전에 canResolveActivity()로 먼저 확인), 실패하면 브라우저로
+// 폴백. ticketingLinks가 비어있으면 섹션 자체를 숨김.
 class _TicketingVendorButtons extends StatelessWidget {
   const _TicketingVendorButtons({
     required this.ticketingLinks,
@@ -634,41 +627,35 @@ class _TicketingVendorButtons extends StatelessWidget {
     'MELON': '멜론티켓',
   };
 
-  /// Android intent:// 우회에 쓰는 각 예매처 앱의 실제 패키지명
-  /// (AndroidManifest.xml `<queries>`에도 같은 목록이 있어야 Android 11+
-  /// 패키지 가시성 제한에 안 걸림).
-  static const Map<String, String> _androidPackages = {
-    'INTERPARK': 'com.interpark.app.ticket',
-    'YES24': 'com.yes24.ticket',
-    'TICKETLINK': 'kr.co.ticketlink.cne',
-    'MELON': 'com.iloen.melonticket',
+  /// 각 예매처 앱의 실제 Android 패키지명(여러 개면 순서대로 시도).
+  /// AndroidManifest.xml `<queries>`에도 같은 목록 필요. 인터파크는 야놀자 앱
+  /// 우선 + 구버전 NOL 티켓 폴백.
+  static const Map<String, List<String>> _androidPackages = {
+    'INTERPARK': ['com.cultsotry.yanolja.nativeapp', 'com.interpark.app.ticket'],
+    'YES24': ['com.yes24.ticket'],
+    'TICKETLINK': ['kr.co.ticketlink.cne'],
+    'MELON': ['com.iloen.melonticket'],
   };
 
   Future<void> _openVendor(String vendorKey, String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) return;
 
-    // KOPIS가 인터파크/티켓링크 링크를 http://로 주는 경우가 대부분인데,
-    // http는 애초에 앱 링크 대상에서 제외되므로 https로 보정.
+    // http로 오는 링크가 많아서 https로 보정.
     final httpsUri = uri.scheme == 'http' ? uri.replace(scheme: 'https') : uri;
+    final urlString = httpsUri.toString();
 
-    final package = _androidPackages[vendorKey];
-    if (!kIsWeb && Platform.isAndroid && package != null) {
-      final query = httpsUri.hasQuery ? '?${httpsUri.query}' : '';
-      final fallback = Uri.encodeComponent(httpsUri.toString());
-      final intentUri = Uri.parse(
-        'intent://${httpsUri.host}${httpsUri.path}$query'
-        '#Intent;scheme=https;package=$package;'
-        'S.browser_fallback_url=$fallback;end',
-      );
-      try {
-        final launched = await launchUrl(
-          intentUri,
-          mode: LaunchMode.externalApplication,
+    if (!kIsWeb && Platform.isAndroid) {
+      for (final package in _androidPackages[vendorKey] ?? const <String>[]) {
+        final intent = AndroidIntent(
+          action: 'action_view',
+          data: urlString,
+          package: package,
         );
-        if (launched) return;
-      } catch (_) {
-        // intent:// 처리 실패 시 아래 일반 링크로 폴백.
+        if (await intent.canResolveActivity() == true) {
+          await intent.launch();
+          return;
+        }
       }
     }
 
