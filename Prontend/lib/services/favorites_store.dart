@@ -112,12 +112,24 @@ class FavoritesStore extends ChangeNotifier {
     var changed = false;
     try {
       final entries = await _social.getArtistFollowEntries();
-      for (final e in entries) {
-        final name = (e['artist_name'] as String?)?.trim() ?? '';
-        if (name.isNotEmpty && !_artists.containsKey(name)) {
+      final serverNames = {
+        for (final e in entries)
+          if (((e['artist_name'] as String?)?.trim() ?? '').isNotEmpty)
+            (e['artist_name'] as String).trim(),
+      };
+      for (final name in serverNames) {
+        if (!_artists.containsKey(name)) {
           _artists[name] = ArtistModel(name: name, profileImageUrl: '');
           changed = true;
         }
+      }
+      // 서버에서 이미 빠진 항목(자동 정리 배치, 다른 기기에서의 해제 등)은
+      // 로컬에도 그대로 남아있지 않도록 맞춰서 지웁니다.
+      final staleArtists =
+          _artists.keys.where((n) => !serverNames.contains(n)).toList();
+      for (final name in staleArtists) {
+        _artists.remove(name);
+        changed = true;
       }
     } catch (_) {
       _serverSynced = false;
@@ -125,6 +137,11 @@ class FavoritesStore extends ChangeNotifier {
 
     try {
       final entries = await _social.getConcertFollowEntries();
+      final serverIds = {
+        for (final e in entries)
+          if ((e['concert_id'] as String? ?? '').isNotEmpty)
+            e['concert_id'] as String,
+      };
       final localIds = {
         for (final c in _concerts.values)
           if (c.id.isNotEmpty) c.id,
@@ -155,6 +172,17 @@ class FavoritesStore extends ChangeNotifier {
         } catch (_) {
           // 개별 공연 복원 실패는 건너뜁니다.
         }
+      }
+      // 서버에서 이미 빠진 항목(자동 정리 배치, 다른 기기에서의 해제 등)은
+      // 로컬에도 그대로 남아있지 않도록 맞춰서 지웁니다. id가 없는 옛날
+      // 로컬 데이터는 애초에 서버로 push된 적이 없으므로 대조 대상에서 제외.
+      final staleConcerts = [
+        for (final c in _concerts.values)
+          if (c.id.isNotEmpty && !serverIds.contains(c.id)) c.name,
+      ];
+      for (final name in staleConcerts) {
+        _concerts.remove(name);
+        changed = true;
       }
     } catch (_) {
       _serverSynced = false;

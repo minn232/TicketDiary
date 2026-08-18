@@ -38,10 +38,15 @@ def resolve_performance_date(concert: Concert, explicit_date: date | None) -> da
     raise HTTPException(status_code=400, detail="여러 날짜에 걸친 공연입니다. 날짜를 지정해주세요.")
 
 
-# DB에서 real setlist 조회
+# DB에서 real setlist 조회. row가 없어도(Setlist.fm에서 아직 못 찾음 등) 404 대신
+# concert.artist_name을 채운 빈 응답을 돌려줌 - 프론트가 "아티스트는 등록돼 있는데
+# 셋리스트만 아직 없음"을 구분해서 아티스트별 placeholder를 보여줄 수 있게 하기 위함
+# (기존엔 404라 프론트가 아티스트 목록 자체를 몰라 통째로 안내 문구만 표시했음).
+# 반환 타입이 RealSetlist | dict로 갈리는데, 둘 다 response_model(RealSetlistResponse,
+# from_attributes=True)이 그대로 직렬화하므로 호출부(엔드포인트)는 신경 쓸 필요 없음.
 async def get_real_setlist(
     db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
-) -> RealSetlist:
+) -> RealSetlist | dict:
     concert = await _get_concert(db, concert_id)
     performance_date = resolve_performance_date(concert, explicit_date)
 
@@ -53,7 +58,19 @@ async def get_real_setlist(
     )
     real_setlist = result.scalar_one_or_none()
     if real_setlist is None:
-        raise HTTPException(status_code=404, detail="셋리스트를 찾을 수 없습니다.")
+        return {
+            "id": None,
+            "concert_id": concert_id,
+            "performance_date": performance_date,
+            "setlistfm_id": None,
+            "songs": [],
+            "is_user_edited": False,
+            "edited_user_nickname": None,
+            "artist_names": concert.artist_name or [],
+        }
+
+    # RealSetlist 테이블엔 없는 필드라, 응답 직렬화 때만 쓰도록 인스턴스에 임시로 붙임.
+    real_setlist.artist_names = concert.artist_name or []
     return real_setlist
 
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ticketdiary/widgets/checkerboard_reveal_transition.dart';
+import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
 
 /// 소식 페이지 풀탭 전환을 구성하는 두 위젯을 네트워크 없이 순수하게
@@ -102,39 +102,43 @@ void main() {
     expect(find.byIcon(Icons.chevron_right), findsNothing);
   });
 
-  testWidgets('체커보드 전환: progress 0이면 to 미표시, >0이면 두 자식 모두 트리에 있고 예외 없이 그려진다',
-      (tester) async {
-    for (final p in [0.0, 0.5, 1.0]) {
+  testWidgets('캐러셀 전환: 정방향은 from이 오른쪽으로, to가 왼쪽에서 들어온다', (tester) async {
+    Future<Offset> offsetAt(double progress, {required bool reverse}) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: CheckerboardRevealTransition(
-              from: const Text('FROM'),
-              to: const Text('TO'),
-              progress: p,
+            body: SizedBox(
+              width: 300,
+              height: 200,
+              child: CarouselSlideTransition(
+                from: const Text('FROM'),
+                to: const Text('TO'),
+                progress: progress,
+                reverse: reverse,
+              ),
             ),
           ),
         ),
       );
       await tester.pump();
-
-      // from은 아직 안 드러난 영역이 남아있는 동안(progress < 1)만
-      // 그려집니다 — 완전히 덮인 뒤(1.0)에는 to 배경이 비쳐 보이지
-      // 않도록 아예 그리지 않습니다.
-      if (p < 1) {
-        expect(find.text('FROM'), findsOneWidget);
-      } else {
-        expect(find.text('FROM'), findsNothing);
-      }
-      // to는 progress > 0 일 때만 얹힌다(0이면 ClipPath 자체를 만들지 않음).
-      if (p > 0) {
-        expect(find.text('TO'), findsOneWidget);
-      } else {
-        expect(find.text('TO'), findsNothing);
-      }
-      // 진행 중 프레임에서 렌더 예외가 없어야 한다.
-      expect(tester.takeException(), isNull);
+      return tester.getTopLeft(find.text('FROM'));
     }
+
+    // 두 자식 모두 항상 트리에 존재(밀어내기라 동시에 보임) + 렌더 예외 없음.
+    await offsetAt(0.5, reverse: false);
+    expect(find.text('FROM'), findsOneWidget);
+    expect(find.text('TO'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // 정방향: progress가 커질수록 from(소식)이 오른쪽으로 이동한다.
+    final f0 = await offsetAt(0.0, reverse: false);
+    final f1 = await offsetAt(1.0, reverse: false);
+    expect(f1.dx, greaterThan(f0.dx));
+
+    // 역방향: progress가 커질수록 from(찜)이 왼쪽으로 이동한다.
+    final r0 = await offsetAt(0.0, reverse: true);
+    final r1 = await offsetAt(1.0, reverse: true);
+    expect(r1.dx, lessThan(r0.dx));
   });
 
   testWidgets('로딩 중 하트 쐐기 애니메이션은 값 전체 구간에서 예외 없이 그려지고, 0/1에서 하트가 트리에 남아있다',
