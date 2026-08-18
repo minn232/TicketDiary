@@ -444,8 +444,6 @@ async def test_get_real_setlist_success():
 
 
 # 셋리스트 없는 공연 조회 시, 404 대신 아티스트 목록만 채운 빈 응답 테스트
-# (프론트가 "아직 채워지지 않았어요" placeholder를 보여줄 수 있도록 - artist_extraction_prompt_overhaul
-# 이후 아티스트는 채워지는데 Setlist.fm 매칭만 실패하는 경우를 위함)
 @pytest.mark.asyncio
 async def test_get_real_setlist_not_found_returns_empty_with_artist_names():
     concert_id = await _create_concert("PF_SL_GET_002")

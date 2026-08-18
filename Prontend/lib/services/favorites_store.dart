@@ -58,8 +58,9 @@ class FavoritesStore extends ChangeNotifier {
     _revision++;
     notifyListeners();
 
-    unawaited(load());
-    unawaited(syncFromServer());
+    // [백엔드 수정]
+    // load() 완료 후 syncFromServer()가 이어서 돌도록 순서 고정.
+    unawaited(load().then((_) => syncFromServer()));
   }
 
   /// 찜 목록(또는 그 표시 내용)이 바뀔 때마다 1씩 늘어납니다.
@@ -123,8 +124,8 @@ class FavoritesStore extends ChangeNotifier {
           changed = true;
         }
       }
-      // 서버에서 이미 빠진 항목(자동 정리 배치, 다른 기기에서의 해제 등)은
-      // 로컬에도 그대로 남아있지 않도록 맞춰서 지웁니다.
+      // [백엔드 수정]
+      // 서버에서 지워진 항목은 로컬에서도 삭제.
       final staleArtists =
           _artists.keys.where((n) => !serverNames.contains(n)).toList();
       for (final name in staleArtists) {
@@ -173,9 +174,8 @@ class FavoritesStore extends ChangeNotifier {
           // 개별 공연 복원 실패는 건너뜁니다.
         }
       }
-      // 서버에서 이미 빠진 항목(자동 정리 배치, 다른 기기에서의 해제 등)은
-      // 로컬에도 그대로 남아있지 않도록 맞춰서 지웁니다. id가 없는 옛날
-      // 로컬 데이터는 애초에 서버로 push된 적이 없으므로 대조 대상에서 제외.
+      // [백엔드 수정]
+      // 서버에서 지워진 공연은 로컬에서도 삭제(id 없는 옛 데이터는 제외).
       final staleConcerts = [
         for (final c in _concerts.values)
           if (c.id.isNotEmpty && !serverIds.contains(c.id)) c.name,

@@ -1218,8 +1218,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         // [백엔드 수정]
         // 앙코르가 시작되는 지점에 구분선(build에서 처리).
         _songs = res.songs;
-        // row가 아직 없어도(Setlist.fm 매칭 실패) 채워져 있을 수 있음 - 아래
-        // build()가 이걸로 못 찾은 아티스트도 placeholder로 보여줌.
+        // [백엔드 수정] artistNames도 같이 저장(build()에서 아티스트별 그룹핑에 사용).
         _artistNames = res.artistNames;
       });
     } on ApiException catch (_) {
@@ -1269,12 +1268,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       }
     }
 
-    // [백엔드 수정]
-    // concert.artist_name(artistNames)이 아티스트 추출 누락 등으로 songs에 실제
-    // 태그된 아티스트보다 적을 수 있으므로(예: 백엔드가 아직 이 필드를 안 내려주는
-    // 구버전 응답이면 항상 빈 배열), songs의 아티스트 태그를 항상 합쳐서 그룹
-    // 뼈대를 만듦 - concert.artist_name 쪽에만 있고 songs엔 없는 아티스트는
-    // "아직 채워지지 않았어요" placeholder로 표시됨.
+    // [백엔드 수정] artistNames와 songs의 아티스트 태그를 합쳐서 그룹 뼈대를 만듦.
     final allArtists = [
       ..._artistNames,
       for (final name in songsByArtist.keys)
@@ -1455,10 +1449,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
         if (expanded)
           Padding(
             padding: const EdgeInsets.only(left: 20, top: 2, bottom: 8),
-            // [백엔드 수정]
-            // Setlist.fm에서 이 아티스트만 못 찾은 경우(songs가 빔) - 나중에
-            // 유저가 채울 수 있다는 걸 알 수 있도록 아예 아무것도 안 보여주는
-            // 대신 안내 문구를 표시.
+            // [백엔드 수정] songs가 비면 빈 공간 대신 안내 문구 표시.
             child: songs.isEmpty
                 ? Text(
                     '아직 채워지지 않았어요',

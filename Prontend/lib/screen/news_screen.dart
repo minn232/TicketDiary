@@ -235,10 +235,11 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 다시 불러와 캐시와 화면을 함께 갱신합니다("stale while revalidate").
   /// 캐시가 없으면(첫 방문 등) 기존처럼 네트워크 응답을 기다립니다.
   Future<List<NewsModel>> _loadNewsWithCache() async {
-    // FavoritesStore.load()는 이미 로드됐으면 곧장 반환하므로(멱등),
-    // 여기서 먼저 호출해도 안전합니다 — 캐시가 "지금" 찜 목록 기준으로
-    // 여전히 유효한지 판단하려면 revision이 최신 상태여야 합니다.
+    // FavoritesStore.load()/syncFromServer()는 이미 로드/동기화됐으면 곧장
+    // 반환하므로(멱등), 여기서 먼저 호출해도 안전합니다.
+    // [백엔드 수정] syncFromServer() 호출 추가.
     await FavoritesStore.instance.load();
+    await FavoritesStore.instance.syncFromServer();
     final cached = await NewsCacheStore.instance.load(
       favoritesRevision: FavoritesStore.instance.revision,
     );
@@ -273,7 +274,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   Future<List<NewsModel>> _loadNews() async {
     // 백엔드 피드는 서버에 저장된 팔로우 목록 기준으로 생성되므로,
     // 로컬 찜 아티스트 목록을 먼저 서버에 동기화한 뒤 피드를 조회합니다.
+    // [백엔드 수정] syncFromServer() 호출 추가.
     await FavoritesStore.instance.load();
+    await FavoritesStore.instance.syncFromServer();
     final artistNames = FavoritesStore.instance.favoriteArtists
         .map((a) => a.name)
         .toList();
