@@ -26,25 +26,33 @@ class SongEntry {
 /// 백엔드 `RealSetlistResponse`와 대응.
 @immutable
 class RealSetlistResponse {
-  final String id;
+  /// row가 아직 없으면(Setlist.fm에서 못 찾음 등) null - 그래도 [artistNames]는
+  /// 채워져 있을 수 있음.
+  final String? id;
   final String concertId;
   final String? setlistfmId;
   final List<SongEntry> songs;
   final bool isUserEdited;
   final String? editedUserNickname;
 
+  /// 콘서트에 등록된 아티스트 전원(페스티벌이면 여럿). [songs]에 없는 아티스트도
+  /// 여기엔 포함될 수 있어서(Setlist.fm 매칭 실패), 프론트가 "아직 채워지지
+  /// 않았어요" placeholder를 보여주는 데 씀.
+  final List<String> artistNames;
+
   const RealSetlistResponse({
-    required this.id,
+    this.id,
     required this.concertId,
     this.setlistfmId,
     required this.songs,
     required this.isUserEdited,
     this.editedUserNickname,
+    this.artistNames = const [],
   });
 
   factory RealSetlistResponse.fromJson(Map<String, dynamic> json) {
     return RealSetlistResponse(
-      id: json['id'] as String,
+      id: json['id'] as String?,
       concertId: json['concert_id'] as String,
       setlistfmId: json['setlistfm_id'] as String?,
       songs: (json['songs'] as List<dynamic>? ?? const [])
@@ -52,6 +60,9 @@ class RealSetlistResponse {
           .toList(),
       isUserEdited: json['is_user_edited'] as bool,
       editedUserNickname: json['edited_user_nickname'] as String?,
+      artistNames: (json['artist_names'] as List<dynamic>? ?? const [])
+          .map((e) => e as String)
+          .toList(),
     );
   }
 }

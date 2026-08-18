@@ -1200,6 +1200,7 @@ class _RealSetlistContent extends StatefulWidget {
 class _RealSetlistContentState extends State<_RealSetlistContent> {
   final ConcertDetailService _service = ConcertDetailService();
   List<SongEntry>? _songs;
+  List<String> _artistNames = const [];
 
   @override
   void initState() {
@@ -1217,57 +1218,91 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         // [백엔드 수정]
         // 앙코르가 시작되는 지점에 구분선(build에서 처리).
         _songs = res.songs;
+        // row가 아직 없어도(Setlist.fm 매칭 실패) 채워져 있을 수 있음 - 아래
+        // build()가 이걸로 못 찾은 아티스트도 placeholder로 보여줌.
+        _artistNames = res.artistNames;
       });
     } on ApiException catch (_) {
-      // 아직 등록 안 됐으면(404) 조용히 안내 문구를 유지합니다.
+      // 조회 자체가 실패하면(네트워크 오류 등) 조용히 안내 문구를 유지합니다.
     } catch (_) {}
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.music_note_outlined,
+            size: 22,
+            color: Colors.black.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '아직 등록되지\n않았어요',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: context.sp(12),
+              fontWeight: FontWeight.w700,
+              color: Colors.black.withValues(alpha: 0.35),
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final songs = _songs;
-    if (songs == null || songs.isEmpty) {
-      return Center(
+    final songs = _songs ?? const <SongEntry>[];
+    if (songs.isEmpty && _artistNames.length <= 1) return _buildEmptyState();
+
+    final songsByArtist = <String, List<SongEntry>>{};
+    final untaggedSongs = <SongEntry>[];
+    for (final song in songs) {
+      final artist = song.artist;
+      if (artist != null && artist.isNotEmpty) {
+        songsByArtist.putIfAbsent(artist, () => []).add(song);
+      } else {
+        untaggedSongs.add(song);
+      }
+    }
+
+    // [백엔드 수정]
+    // concert.artist_name(artistNames)이 아티스트 추출 누락 등으로 songs에 실제
+    // 태그된 아티스트보다 적을 수 있으므로(예: 백엔드가 아직 이 필드를 안 내려주는
+    // 구버전 응답이면 항상 빈 배열), songs의 아티스트 태그를 항상 합쳐서 그룹
+    // 뼈대를 만듦 - concert.artist_name 쪽에만 있고 songs엔 없는 아티스트는
+    // "아직 채워지지 않았어요" placeholder로 표시됨.
+    final allArtists = [
+      ..._artistNames,
+      for (final name in songsByArtist.keys)
+        if (!_artistNames.contains(name)) name,
+    ];
+
+    // 아티스트가 1명 이하(단독 공연, 또는 아티스트 태그 정보 자체가 없는 옛날
+    // 데이터)면 기존처럼 번호 목록.
+    if (allArtists.length <= 1 && untaggedSongs.isEmpty) {
+      final only = allArtists.isEmpty ? songs : songsByArtist[allArtists.first]!;
+      if (only.isEmpty) return _buildEmptyState();
+      return SingleChildScrollView(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.music_note_outlined,
-              size: 22,
-              color: Colors.black.withValues(alpha: 0.3),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '아직 등록되지\n않았어요',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: context.sp(12),
-                fontWeight: FontWeight.w700,
-                color: Colors.black.withValues(alpha: 0.35),
-                height: 1.4,
-              ),
-            ),
-          ],
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _buildRealSongRows(context, only),
         ),
       );
     }
 
-    // [백엔드 수정]
-    // 페스티벌(아티스트 2명 이상)이면 아티스트별 아코디언.
-    // 단독 공연이면 번호 목록.
-    final groups = <String?, List<SongEntry>>{};
-    for (final song in songs) {
-      groups.putIfAbsent(song.artist, () => []).add(song);
-    }
-    final groupList = groups.entries.toList();
+    final groupList = [
+      for (final name in allArtists)
+        MapEntry<String?, List<SongEntry>>(name, songsByArtist[name] ?? const []),
+      if (untaggedSongs.isNotEmpty)
+        MapEntry<String?, List<SongEntry>>(null, untaggedSongs),
+    ];
 
     return SingleChildScrollView(
-      child: groupList.length > 1
-          ? _RealSetlistGroupedByArtist(groups: groupList)
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: _buildRealSongRows(context, songs),
-            ),
+      child: _RealSetlistGroupedByArtist(groups: groupList),
     );
   }
 }
@@ -1420,10 +1455,23 @@ class _RealSetlistArtistSection extends StatelessWidget {
         if (expanded)
           Padding(
             padding: const EdgeInsets.only(left: 20, top: 2, bottom: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: _buildRealSongRows(context, songs),
-            ),
+            // [백엔드 수정]
+            // Setlist.fm에서 이 아티스트만 못 찾은 경우(songs가 빔) - 나중에
+            // 유저가 채울 수 있다는 걸 알 수 있도록 아예 아무것도 안 보여주는
+            // 대신 안내 문구를 표시.
+            child: songs.isEmpty
+                ? Text(
+                    '아직 채워지지 않았어요',
+                    style: TextStyle(
+                      fontSize: context.sp(11.5),
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black.withValues(alpha: 0.35),
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _buildRealSongRows(context, songs),
+                  ),
           ),
       ],
     );

@@ -22,14 +22,18 @@ class FetchSetlistRequest(BaseModel):
 class RealSetlistResponse(BaseModel):
     model_config = {"from_attributes": True}
 
-    # 실제 셋리스트 조회 응답
-    id: UUID
+    # 실제 셋리스트 조회 응답. 아직 DB에 row가 없어도(Setlist.fm에서 못 찾은 경우 포함)
+    # id=None에 songs=[]인 채로 200을 내려줄 수 있음 - artist_names(콘서트에 등록된
+    # 아티스트 전원)는 그 경우에도 채워져서, 프론트가 "아티스트는 있는데 아직 못
+    # 찾음"을 구분해 안내 문구를 보여줄 수 있음.
+    id: UUID | None = None
     concert_id: UUID
     performance_date: date
     setlistfm_id: str | None
     songs: list[SongEntry]
     is_user_edited: bool
     edited_user_nickname: str | None
+    artist_names: list[str] = []
 
 
 class SetlistFmCandidate(BaseModel):
