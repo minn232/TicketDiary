@@ -5,6 +5,7 @@ LLM팀이 채울 부분은 이 파일뿐입니다. 라우팅/인증/ACK/백그�
 analyze_crawl_screenshot은 extract_poster.py, extract_artists_from_poster는 아티스트명
 전용 프롬프트로 분리한 extract_artist.py를 씁니다(오추출 패턴 4가지 겨냥, 2026-08-18~).
 둘 다 반환은 lineup 배열이고 normalize.py가 아티스트명만 뽑아 씀 - 이 파일은 안 건드려도 됩니다.
+extract_artist.py 쪽 결과에만 event_type(SOLO/FESTIVAL/UNKNOWN)이 추가로 들어있음
 """
 
 from config import settings

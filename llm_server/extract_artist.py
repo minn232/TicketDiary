@@ -43,11 +43,17 @@ TALL_IMAGE_RATIO = 1.6
 USER_PROMPT = "이 공연 포스터에서 위 규칙에 따라 출연 아티스트명을 추출해줘."
 
 
-def _build_system_prompt(concert_name: str | None) -> str:
-    concert_line = f'이 공연의 제목은 "{concert_name}"입니다.\n\n' if concert_name else ""
-    return f"""\
+# concert_name을 받지 않는 완전 고정 문자열로 둔다(공연마다 안 바뀜). vLLM의 prefix
+# caching은 요청 간 동일한 접두어(토큰 0번부터)만 재사용하는데, 예전엔 concert_name이
+# 이 프롬프트 맨 앞쪽(첫 문장 바로 뒤)에 끼어 있어서 공연마다 그 지점부터 뒤에 오는
+# "핵심 원칙" 고정 블록 전체(이 프롬프트에서 제일 큰 부분)가 매번 캐시 미스로 처음부터
+# 재계산됐다. concert_name은 대신 extract_artist_info의 user 메시지 쪽으로 옮겼다 -
+# 이러면 system 메시지가 항상 바이트 단위로 동일해서 그 캐시를 매 요청 재사용할 수 있고,
+# 실제로 매번 바뀌는 부분(공연 제목 + 포스터 이미지)만 user 메시지에 남는다.
+def _build_system_prompt() -> str:
+    return """\
 당신은 공연 포스터에서 출연 아티스트명만 정확히 추출하는 어시스턴트입니다.
-{concert_line}핵심 원칙 (반드시 순서대로 따르세요):
+핵심 원칙 (반드시 순서대로 따르세요):
 1. 아티스트명은 반드시 이미지 안에 실제로 인쇄되거나 표시된 텍스트에서만 가져오세요.
    인물의 얼굴, 스타일, 분위기를 보고 당신이 이미 알고 있는 실제 이름(본명 등)이나
    배경지식으로 답하지 마세요 - 그 이름이 이미지 안에 글자로 쓰여 있지 않다면 절대 쓰지
@@ -104,6 +110,10 @@ def _build_system_prompt(concert_name: str | None) -> str:
 """
 
 
+# 백엔드 app/models/concert.py의 EventType enum과 값을 정확히 맞춰야 함(변환 없이 그대로
+# 웹훅에 실어 보냄) - 값을 바꾸면 그쪽도 같이 바꿀 것
+EVENT_TYPES = ["SOLO", "FESTIVAL", "UNKNOWN"]
+
 ARTIST_LINEUP_SCHEMA = {
     "type": "object",
     "properties": {
@@ -111,8 +121,9 @@ ARTIST_LINEUP_SCHEMA = {
             "type": "array",
             "items": LINEUP_ENTRY_SCHEMA,
         },
+        "event_type": {"type": "string", "enum": EVENT_TYPES},
     },
-    "required": ["lineup"],
+    "required": ["lineup", "event_type"],
     "additionalProperties": False,
 }
 
@@ -163,7 +174,11 @@ def extract_artist_info(image: str, concert_name: str | None, base_url: str, api
     im = load_image(image)
     tiles = split_into_tiles(im)
 
-    content = [{"type": "text", "text": USER_PROMPT}]
+    user_text = USER_PROMPT
+    if concert_name:
+        user_text = f'이 공연의 제목은 "{concert_name}"입니다.\n\n{USER_PROMPT}'
+
+    content = [{"type": "text", "text": user_text}]
     if len(tiles) > 1:
         content.append({
             "type": "text",
@@ -179,7 +194,7 @@ def extract_artist_info(image: str, concert_name: str | None, base_url: str, api
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
-            {"role": "system", "content": _build_system_prompt(concert_name)},
+            {"role": "system", "content": _build_system_prompt()},
             {"role": "user", "content": content},
         ],
         temperature=0,

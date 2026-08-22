@@ -50,6 +50,9 @@ class CrawlResultCallback(BaseModel):
 
 class ArtistResultCallback(BaseModel):
     artist_name: list[str]
+    # 포스터를 보고 판단한 단독/페스티벌 분류.
+    # 백엔드 app/models/concert.py EventType과 값을 정확히 맞출 것("SOLO"/"FESTIVAL"/"UNKNOWN")
+    event_type: str | None = None
 
 
 class DiaryResultCallback(BaseModel):
