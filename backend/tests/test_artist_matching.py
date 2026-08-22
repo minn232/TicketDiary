@@ -234,6 +234,49 @@ async def test_artist_result_upgrades_event_type_at_threshold():
     assert concert.event_type == "FESTIVAL"
 
 
+# VLM이 event_type=FESTIVAL로 판단하고 artist_name도 2명 이상이면, 5명 임계치 전이라도 승격됨
+@pytest.mark.asyncio
+async def test_artist_result_llm_festival_hint_upgrades_below_threshold():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_LLMFES_{uuid.uuid4().hex[:6]}", "", token)
+
+    artists = [f"아티스트{uuid.uuid4().hex}" for _ in range(2)]
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": artists, "event_type": "FESTIVAL"},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.event_type == "FESTIVAL"
+
+
+# VLM이 FESTIVAL이라고 판단해도 artist_name이 1명뿐이면(자기모순) 무시하고 승격 안 됨
+@pytest.mark.asyncio
+async def test_artist_result_llm_festival_hint_ignored_without_corroboration():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_LLMFESNO_{uuid.uuid4().hex[:6]}", "", token)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": ["단독아티스트"], "event_type": "FESTIVAL"},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.event_type == "SOLO"
+
+
 @pytest.mark.asyncio
 async def test_artist_result_generates_news_feed_for_existing_follower():
     token = await _get_token()

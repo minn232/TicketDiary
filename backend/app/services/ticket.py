@@ -53,14 +53,25 @@ def _detect_first_last_day(
 # "페스티벌 아님"의 근거가 될 수 없음.
 _MULTI_ARTIST_FESTIVAL_THRESHOLD = 5
 
+# VLM이 포스터를 직접 보고 "FESTIVAL"이라고 판단해도(llm_server event_type, 2026-08-22 추가)
+# 그 판단만으로 바로 승격하지 않고, 같은 응답의 artist_name 결과가 서로 다른 이름 최소 이 개수
+# 이상이어야 반영한다(교차검증) - 모델이 화려한 콜라보 포스터를 페스티벌로 착각했는데 실제로는
+# lineup을 1명만 뽑았다면 그 FESTIVAL 판단은 무시한다. 대신 위 5명 임계치보다 낮게 잡아서,
+# 초반 라인업이 2~3팀만 공개된 실제 페스티벌을 더 일찍 잡아낼 수 있게 한다(이게 이 기능의 목적)
+_LLM_FESTIVAL_MIN_ARTISTS = 2
 
-def upgrade_event_type_if_multi_artist(concert: Concert) -> bool:
+
+def upgrade_event_type_if_multi_artist(concert: Concert, llm_event_type: str | None = None) -> bool:
     if concert.event_type == EventType.FESTIVAL.value:
         return False
-    if len(concert.artist_name or []) < _MULTI_ARTIST_FESTIVAL_THRESHOLD:
-        return False
-    concert.event_type = EventType.FESTIVAL.value
-    return True
+    artist_count = len(concert.artist_name or [])
+    if artist_count >= _MULTI_ARTIST_FESTIVAL_THRESHOLD:
+        concert.event_type = EventType.FESTIVAL.value
+        return True
+    if llm_event_type == EventType.FESTIVAL.value and artist_count >= _LLM_FESTIVAL_MIN_ARTISTS:
+        concert.event_type = EventType.FESTIVAL.value
+        return True
+    return False
 
 
 # event_type이 SOLO->FESTIVAL로 승격됐을 때, 그 사이 잘못된 event_type 기준으로 계산되어 있던

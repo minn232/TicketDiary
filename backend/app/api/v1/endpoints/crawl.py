@@ -167,7 +167,7 @@ async def receive_artist_extraction_result(
         merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names, replace=replace)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
-            upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+            upgraded_to_festival = upgrade_event_type_if_multi_artist(concert, body.event_type)
             await db.commit()
             await db.refresh(concert)
             # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
