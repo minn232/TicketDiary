@@ -34,12 +34,6 @@ from schema import LINEUP_ENTRY_SCHEMA
 
 MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 
-# 타일링 상수는 extract_poster.py와 동일(같은 포스터 이미지를 다룸) - 바꾸면 그쪽도 맞출 것
-MAX_PIXELS_PER_TILE = 1_500_000
-TILE_OVERLAP_PX = 100
-MAX_TILES = 18
-TALL_IMAGE_RATIO = 1.6
-
 USER_PROMPT = "이 공연 포스터에서 위 규칙에 따라 출연 아티스트명을 추출해줘."
 
 
@@ -136,31 +130,6 @@ def load_image(image: str) -> Image.Image:
     return Image.open(image).convert("RGB")
 
 
-def split_into_tiles(im: Image.Image) -> list[Image.Image]:
-    """세로로 매우 긴 이미지를 겹치는 구간을 둔 여러 조각으로 자른다. extract_poster.py와
-    동일 로직(중복이지만, 이 파일을 독립적으로 유지·동기화하기 위해 그대로 복사)."""
-    w, h = im.size
-    if h / w < TALL_IMAGE_RATIO and w * h <= MAX_PIXELS_PER_TILE:
-        return [im]
-
-    tile_h = max(200, MAX_PIXELS_PER_TILE // w)
-    step = max(1, tile_h - TILE_OVERLAP_PX)
-
-    if -(-h // step) > MAX_TILES:  # 타일 수가 너무 많아지면 타일을 키워서 개수를 제한
-        tile_h = -(-h // MAX_TILES) + TILE_OVERLAP_PX
-        step = max(1, tile_h - TILE_OVERLAP_PX)
-
-    tiles = []
-    top = 0
-    while top < h:
-        bottom = min(h, top + tile_h)
-        tiles.append(im.crop((0, top, w, bottom)))
-        if bottom >= h:
-            break
-        top += step
-    return tiles
-
-
 def image_to_data_uri(im: Image.Image) -> str:
     buf = io.BytesIO()
     im.save(buf, format="PNG")
@@ -172,24 +141,15 @@ def extract_artist_info(image: str, concert_name: str | None, base_url: str, api
     client = OpenAI(base_url=base_url, api_key=api_key)
 
     im = load_image(image)
-    tiles = split_into_tiles(im)
 
     user_text = USER_PROMPT
     if concert_name:
         user_text = f'이 공연의 제목은 "{concert_name}"입니다.\n\n{USER_PROMPT}'
 
-    content = [{"type": "text", "text": user_text}]
-    if len(tiles) > 1:
-        content.append({
-            "type": "text",
-            "text": (
-                f"아래 {len(tiles)}장의 이미지는 세로로 긴 하나의 상세페이지를 "
-                "위에서 아래 순서대로 자른 조각들이다(경계 부근은 겹칠 수 있음). "
-                "전체를 하나의 이미지로 간주하고 정보를 종합해서 답해라."
-            ),
-        })
-    for tile in tiles:
-        content.append({"type": "image_url", "image_url": {"url": image_to_data_uri(tile)}})
+    content = [
+        {"type": "text", "text": user_text},
+        {"type": "image_url", "image_url": {"url": image_to_data_uri(im)}},
+    ]
 
     response = client.chat.completions.create(
         model=MODEL_NAME,
