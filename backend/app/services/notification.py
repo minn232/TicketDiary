@@ -155,12 +155,10 @@ async def schedule_ticketing_day_notifications(db: AsyncSession, concert_id: UUI
     logger.info(f"티켓팅 알림 생성: {concert.name} ({len(rows)}명)")
 
 
-# 팔로우한 아티스트의 신규 공연에 대해 NEW_CONCERT 알림 생성
-# (KOPIS 일별 배치가 "진짜 신규" 공연을 발견했을 때만 호출 - 이미 알던 공연에 아티스트 정보가
-# 뒤늦게 채워지는 경우나 검색/상세조회 같은 온디맨드 경로에서는 호출하지 않음. 그래야 알림이
-# "오늘 새로 뜬 공연"에 대해서만 가고, 무관한 유저의 조회 행위로 뜻하지 않게 발송되지 않음)
-# matched는 kopis.py에서 이미 계산해둔 (팔로워 user_id, 매칭된 아티스트명) 목록을 그대로 받음
-# (뉴스피드용으로 이미 아티스트 매칭을 한 번 계산해뒀으므로 여기서 다시 계산하지 않음)
+# 팔로우한 아티스트의 신규 공연에 NEW_CONCERT 알림 생성 - KOPIS 일별 배치가 "진짜 신규"
+# 공연을 발견했을 때만 호출(온디맨드 조회/검색 경로에선 호출 안 함, 무관한 조회로 뜻하지
+# 않게 발송되는 걸 막기 위함). matched는 kopis.py가 뉴스피드용으로 이미 계산해둔 (팔로워
+# user_id, 매칭된 아티스트명) 목록을 그대로 받아 재계산 안 함.
 async def schedule_new_concert_notifications(
     db: AsyncSession, concert: Concert, matched: list[tuple[UUID, str]]
 ) -> None:

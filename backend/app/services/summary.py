@@ -84,11 +84,10 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
         if isinstance(setlist.songs, list):
             song_count += len(setlist.songs)
 
-    # 선호 장르 (가장 많이 관람한 장르)
-    # KOPIS의 Concert.genre는 이 앱 전체가 "대중음악" 한 값뿐이라 무의미해서 대신 씀
-    # (Last.fm 아티스트 태그를 화이트리스트로 정규화해 캐싱해둔 값, services/lastfm.py 참고).
-    # 아티스트 한 명이 여러 장르에 걸릴 수 있어서(예: 힙합+K-pop), 그 티켓에서 두 장르 모두에게
-    # 표를 준다 - "1티켓 1표"가 아니라 "1티켓의 아티스트가 가진 장르 개수만큼 표"
+    # 선호 장르(가장 많이 관람한 장르) - KOPIS의 Concert.genre는 앱 전체가 "대중음악" 한
+    # 값뿐이라 무의미해서 대신 씀(Last.fm 아티스트 태그를 정규화해 캐싱한 값). 아티스트 한
+    # 명이 여러 장르에 걸릴 수 있어(힙합+K-pop) 그 티켓에서 두 장르 다 표를 줌 - "1티켓
+    # 1표"가 아니라 "아티스트가 가진 장르 개수만큼 표".
     ticket_artist_names: set[str] = {
         artist
         for t in tickets

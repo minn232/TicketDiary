@@ -8,14 +8,14 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+# 티켓 상태 (배송 전 / 공연 전 / 공연 후)
 class TicketStatus(str, enum.Enum):
     BEFORE_DELIVERY = "before_delivery"
     BEFORE_CONCERT = "before_concert"
     AFTER_CONCERT = "after_concert"
 
-"""
-concert_photo_urls JSON 형식: ["https://example.com/photo1.jpg", "https://example.com/photo2.jpg"]
-"""
+
+# concert_photo_urls JSON 형식: ["https://example.com/photo1.jpg", "https://example.com/photo2.jpg"]
 class Ticket(Base):
     __tablename__ = "tickets"
 

@@ -7,4 +7,5 @@ class DiaryResultRequest(BaseModel):
 
 
 class DiaryResultResponse(BaseModel):
+    # 저장된 일기 텍스트 응답
     diary: str

@@ -288,11 +288,9 @@ def _bounding_box(bbox: dict) -> tuple[float, float, float, float]:
 _MULTI_LINE_HEIGHT_RATIO = 1.6
 
 
-# 문단(paragraph) 하나가 실제로는 세로로 여러 줄(예: 관람일/공연장소/매수처럼 서로 다른
-# 값이 각각 다른 줄인데 Vision이 한 덩어리로 묶어버린 경우)을 담고 있으면, 그 문단의
-# word bbox들을 Y좌표로 재클러스터링해서 줄 단위로 쪼갠다. 대부분의 문단(한 줄짜리)은
-# 평균 단어 높이 대비 문단 높이가 크지 않아 이 함수를 그대로 통과하므로, 정상 케이스엔
-# 영향이 없고 실제로 여러 줄이 뭉친 비정상 케이스만 국소적으로 보정된다
+# 문단 하나가 실제론 여러 줄(관람일/장소/매수 등이 Vision에 한 덩어리로 묶인 경우)을
+# 담고 있으면, word bbox를 Y좌표로 재클러스터링해 줄 단위로 쪼갬. 한 줄짜리 정상 문단은
+# 영향 없고, 여러 줄이 뭉친 비정상 케이스만 국소적으로 보정됨.
 def _split_multiline_paragraph(paragraph: dict) -> list[dict]:
     words = paragraph.get("words", [])
     if len(words) < 2:
@@ -390,12 +388,10 @@ def _normalize_row_label(text: str) -> str:
     return _ROW_LABEL_SUFFIX_RE.sub("", text).strip()
 
 
-# 행 리스트에서 라벨 사전에 매칭되는 행만 골라 {필드: 값} 딕셔너리로 변환. 라벨은
-# 행의 첫 블록만 보지 않고 위치 무관하게 찾음 - 포스터 썸네일 텍스트 등 무관한 블록이
-# 라벨보다 왼쪽(먼저)에 섞여 들어와도(실사용 캡처로 확인된 케이스) 인식이 깨지지 않게
-# 하기 위함. 매칭된 라벨 뒤(오른쪽)의 블록들을 값으로 채택.
-# 같은 필드가 여러 행에 매칭되면 문서 순서상 먼저 나온 값을 채택(기존 _extract_price의
-# "첫 번째 값 채택" 관례와 동일). 격자가 시작된 첫 행 인덱스도 함께 반환(제목 탐색 범위 한정용)
+# 행 리스트에서 라벨 사전에 매칭되는 행만 골라 {필드: 값}으로 변환 - 라벨은 위치 무관하게
+# 찾음(포스터 썸네일 텍스트 등이 라벨보다 앞에 섞여도 인식 안 깨지게, 실사용 캡처로 확인).
+# 같은 필드가 여러 행에 매칭되면 먼저 나온 값 채택. 격자 시작 행 인덱스도 함께 반환(제목
+# 탐색 범위 한정용).
 def _extract_fields_from_rows(rows: list[list[dict]]) -> tuple[dict, int | None]:
     fields: dict = {}
     grid_start_row_index = None
@@ -436,12 +432,10 @@ def _parse_datetime_value(value: str) -> tuple[str | None, str | None]:
 _MIN_TITLE_WIDTH_RATIO = 0.5
 
 
-# 제목이 화면 폭 제약으로 2줄에 걸쳐 줄바꿈되는 경우, 바로 다음 행이 제목 행과 좌측
-# 정렬이 비슷하고 폭도 어느 정도 있으면 줄바꿈 연속으로 보고 이어붙인 후보를 만든다.
-# 줄바꿈이 항상 단어 경계에서 일어나는 게 아니라서(실사용 샘플에서 "...HORO" I" +
-# "N SEOUL" -> "...HORO" IN SEOUL"처럼 단어 중간에 끊긴 경우가 확인됨) 공백 포함/미포함
-# 두 버전 다 만들어서 title_candidates에 넘기고, 어느 쪽이 맞는지는 KOPIS 부분검색+
-# 날짜 교차검증(기존 재시도 메커니즘)에 맡긴다 - 원본 title 자체는 바꾸지 않고 보강만 함
+# 제목이 2줄로 줄바꿈되면, 다음 행이 좌측 정렬·폭이 비슷할 때 이어붙인 후보를 만듦.
+# 줄바꿈이 항상 단어 경계는 아니라서(실사용 샘플에서 확인) 공백 포함/미포함 두 버전 다
+# title_candidates에 넘기고, 어느 쪽이 맞는지는 KOPIS 검색+날짜 교차검증에 맡김 - 원본
+# title은 바꾸지 않고 보강만 함.
 _WRAP_X_TOLERANCE = 60
 _WRAP_MIN_WIDTH_RATIO = 0.15
 
@@ -552,11 +546,9 @@ def _parse_ticket_fields_from_layout(annotation: dict, raw_text: str) -> dict | 
         "time": time,
         "shipping_date": _extract_shipping_date(raw_text),
         "location": fields.get("location"),
-        # 예매내역 캡처는 좌석 라벨 자체가 없는 경우가 많아 자연히 None이 되는데, 그건
-        # 그대로 둠(자유 텍스트 입력 없이 실제 배송된 티켓 스캔으로 나중에 채우기로 결정).
-        # 다만 좌석 라벨이 실제로 인식되면(그리드 구조상 드물게 실물 티켓이 이 경로를 타는
-        # 경우 포함) 그 값을 버리지 않고 그대로 사용 - 인식된 정확한 값을 일부러 폐기할
-        # 이유가 없다고 확인함(사용자 확인, 2026-08-04)
+        # 예매내역 캡처는 좌석 라벨이 없어 자연히 None인 게 정상(자유 텍스트 입력 없이 나중에
+        # 티켓 스캔으로 채우기로 결정). 다만 실제로 인식되면 그대로 사용 - 정확한 값을 일부러
+        # 폐기할 이유 없음(사용자 확인).
         "seat": fields.get("seat"),
         "platform": platform,
         "price": price,

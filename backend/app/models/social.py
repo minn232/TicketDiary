@@ -14,6 +14,7 @@ class ArtistFollow(Base):
     artists = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
 
+# 찜 공연 (concerts JSON 형식은 위 ArtistFollow 주석 참고)
 class ConcertFollow(Base):
     __tablename__ = "concert_follows"
     # 티켓팅 알림 발송 시 concerts.contains([...])로 매 웹훅마다 전체 유저를 훑는데,
@@ -27,6 +28,7 @@ class ConcertFollow(Base):
     concerts = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
 
+# 팔로우 아티스트의 매칭 공연에 대한 유저별 뉴스피드 항목
 class NewsFeed(Base):
     __tablename__ = "news_feeds"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

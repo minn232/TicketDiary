@@ -12,6 +12,7 @@ from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.models.ticket import Ticket
 from app.schemas.setlist import SongEntry
+from app.services.lineup import get_lineup_artists_for_date
 from app.services.setlistfm import search_setlists, get_setlist_by_id, extract_songs
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,13 @@ def resolve_performance_date(concert: Concert, explicit_date: date | None) -> da
     raise HTTPException(status_code=400, detail="여러 날짜에 걸친 공연입니다. 날짜를 지정해주세요.")
 
 
+# 그 날짜에 concert_lineups 배정이 있으면 그걸로 좁히고, 없으면(도입 전 옛날 공연이거나 그
+# 날짜에 배정 정보가 아예 없으면) 기존처럼 전체 아티스트로 폴백
+async def _artist_names_for_date(db: AsyncSession, concert: Concert, performance_date: date) -> list[str]:
+    lineup_artists = await get_lineup_artists_for_date(db, concert.id, performance_date)
+    return lineup_artists if lineup_artists is not None else (concert.artist_name or [])
+
+
 # DB에서 real setlist 조회. row가 없어도(Setlist.fm 매칭 실패 등) 404 대신
 # concert.artist_name을 채운 빈 응답을 반환 - 프론트가 아티스트별 placeholder를
 # 보여줄 수 있게 함. RealSetlist | dict 둘 다 response_model이 그대로 직렬화함.
@@ -46,6 +54,7 @@ async def get_real_setlist(
 ) -> RealSetlist | dict:
     concert = await _get_concert(db, concert_id)
     performance_date = resolve_performance_date(concert, explicit_date)
+    artist_names = await _artist_names_for_date(db, concert, performance_date)
 
     result = await db.execute(
         select(RealSetlist).where(
@@ -63,11 +72,11 @@ async def get_real_setlist(
             "songs": [],
             "is_user_edited": False,
             "edited_user_nickname": None,
-            "artist_names": concert.artist_name or [],
+            "artist_names": artist_names,
         }
 
     # RealSetlist 테이블엔 없는 필드라, 응답 직렬화 때만 쓰도록 인스턴스에 임시로 붙임.
-    real_setlist.artist_names = concert.artist_name or []
+    real_setlist.artist_names = artist_names
     return real_setlist
 
 
@@ -157,16 +166,11 @@ async def fetch_and_save_real_setlist(
     return real_setlist
 
 
-# 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음). concert.artist_name을
-# 그대로 순회하므로 페스티벌(2명 이상)이든 단독 공연(1명)이든 다 동작 - 단독이면 그 한 아티스트만
-# 돌고 모든 곡에 artist 태그가 붙음(문제 없음, 프론트가 이 필드를 안 읽음). 아래
-# retry_real_setlist_generation()이 매일 재시도하는 백필 잡에서 쓰는 게 주 용도.
-# 기존 수동 검색/저장 흐름(search_setlists_for_concert → 유저가 후보 하나 선택 →
-# fetch_and_save_real_setlist)은 그대로 두고 이건 완전히 별도 경로 - 아티스트마다
-# search_setlists(artist, date)로 그 날짜에 가장 근접한 후보를 골라 자동으로 합침.
-# 대신 동명이인 아티스트나 같은 날 다른 도시 공연이 섞여 있으면 후보 1번이 틀릴 수
-# 있음(수동 후보 선택 흐름보다 정확도는 낮음 - 그래서 유저가 검색으로 직접 고치는 수동 흐름도
-# 그대로 남겨둠).
+# 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음) - concert.artist_name을
+# 순회해서 페스티벌/단독 공연 다 동작. retry_real_setlist_generation()의 매일 백필 잡용,
+# 기존 수동 검색/선택 흐름과는 완전히 별도 경로.
+# search_setlists(artist, date)로 가장 근접한 후보를 자동으로 고르는 방식이라 동명이인/
+# 같은 날 다른 도시 공연이 섞이면 틀릴 수 있음(정확도 낮음) - 그래서 수동 흐름도 남겨둠.
 async def generate_real_setlist_auto(
     db: AsyncSession,
     concert_id: UUID,
@@ -176,10 +180,12 @@ async def generate_real_setlist_auto(
     if not concert.artist_name:
         raise HTTPException(status_code=400, detail="공연에 아티스트 정보가 없습니다.")
     performance_date = resolve_performance_date(concert, explicit_date)
+    # 그 날짜에 배정된 아티스트만 검색 - 배정 정보가 없으면(폴백) 기존처럼 전체를 순회
+    artists = await _artist_names_for_date(db, concert, performance_date)
 
     all_songs: list[dict] = []
     matched_ids: list[str] = []
-    for i, artist in enumerate(concert.artist_name):
+    for i, artist in enumerate(artists):
         if i > 0:
             # search_setlists_by_artist(pre_setlist.py 경로)의 페이지 간 sleep과 동일한 이유 -
             # 아티스트 많은 페스티벌에서 Setlist.fm에 순간적으로 요청이 몰리지 않도록 간격을 둠
@@ -227,11 +233,10 @@ async def generate_real_setlist_auto(
     return real_setlist
 
 
-# 콘서트 종료(그 performance_date가 지난 뒤) 후 이 기간 동안, Setlist.fm에 아직 안 올라온
-# 실제 셋리스트를 매일 자동으로 재시도해 채워봄. 이 기간이 지나도 안 채워지면 그냥 포기하고
-# 유저의 수동 편집(update_real_setlist)을 기다림 - 상태(시도 횟수/시작 시각)를 따로 저장하지
-# 않고, 매번 "오늘 - 그 날짜"를 계산해서 창 안인지만 판단함. RealSetlist가 이미 있는 날짜는
-# 쿼리에서 자연히 빠지므로(채워졌으니 재시도 불필요) 별도의 "포기" 플래그도 필요 없음.
+# 콘서트 종료 후 이 기간 동안, Setlist.fm에 아직 안 올라온 실제 셋리스트를 매일 자동
+# 재시도해 채워봄. 기간이 지나면 포기하고 유저 수동 편집을 기다림 - 시도 횟수/시작 시각을
+# 따로 안 저장하고 매번 "오늘-그날짜"로 창 안인지만 판단. 이미 채워진 날짜는 쿼리에서
+# 자연히 빠져서 별도 "포기" 플래그도 불필요.
 _REAL_SETLIST_BACKFILL_WINDOW = timedelta(days=14)
 _REAL_SETLIST_BACKFILL_CONCURRENCY = 4
 

@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
 
+# 알림 종류 (하루 전/당일/배송일/티켓팅 오픈일/팔로우 아티스트 신규 공연)
 class NotificationType(str, enum.Enum):
     DAY_BEFORE = "day_before"
     CONCERT_DAY = "concert_day"
@@ -15,6 +16,7 @@ class NotificationType(str, enum.Enum):
     NEW_CONCERT = "new_concert"
 
 
+# 유저에게 예약 발송되는 알림 한 건 (티켓/공연 이벤트 기준으로 생성)
 class Notification(Base):
     __tablename__ = "notifications"
 

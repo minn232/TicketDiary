@@ -1,12 +1,15 @@
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select, update
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.concert import Concert
+from app.models.lineup import ConcertLineup
 from app.models.social import ArtistFollow
 from app.services.artist_matching import normalize_artist_names
 from conftest import _get_token, kopis_mock
@@ -234,6 +237,49 @@ async def test_artist_result_upgrades_event_type_at_threshold():
     assert concert.event_type == "FESTIVAL"
 
 
+# VLM이 event_type=FESTIVAL로 판단하고 artist_name도 2명 이상이면, 5명 임계치 전이라도 승격됨
+@pytest.mark.asyncio
+async def test_artist_result_llm_festival_hint_upgrades_below_threshold():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_LLMFES_{uuid.uuid4().hex[:6]}", "", token)
+
+    artists = [f"아티스트{uuid.uuid4().hex}" for _ in range(2)]
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": artists, "event_type": "FESTIVAL"},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.event_type == "FESTIVAL"
+
+
+# VLM이 FESTIVAL이라고 판단해도 artist_name이 1명뿐이면(자기모순) 무시하고 승격 안 됨
+@pytest.mark.asyncio
+async def test_artist_result_llm_festival_hint_ignored_without_corroboration():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_LLMFESNO_{uuid.uuid4().hex[:6]}", "", token)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": ["단독아티스트"], "event_type": "FESTIVAL"},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.event_type == "SOLO"
+
+
 @pytest.mark.asyncio
 async def test_artist_result_generates_news_feed_for_existing_follower():
     token = await _get_token()
@@ -265,6 +311,28 @@ async def test_artist_result_generates_news_feed_for_existing_follower():
     assert feed_res.status_code == 200
     matched = [f for f in feed_res.json() if f["artist_name"] == artist and f["concert_id"] == concert_id]
     assert len(matched) == 1
+
+
+# 이미 확정된 브랜드/공연장명 오탐(artist_blocklist.py)이 재발해도 DB엔 안 박히는지 확인
+@pytest.mark.asyncio
+async def test_artist_result_filters_blocklisted_names():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_BLOCK_{uuid.uuid4().hex[:6]}", "", token)
+
+    real_name = f"진짜아티스트_{uuid.uuid4().hex[:6]}"
+    body = {"artist_name": ["NOL", "Various Artists", real_name]}
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [real_name]
 
 
 @pytest.mark.asyncio
@@ -386,3 +454,168 @@ async def test_send_posters_respects_limit():
     # 둘 중 하나만 attempted_at이 찍혀야 함(어느 쪽이 뽑히는지는 정렬 순서에 안 묶어둠)
     attempted_count = sum(1 for c in (c1, c2) if c.artist_extraction_attempted_at is not None)
     assert attempted_count == 1
+
+
+# 콜백 유실 재시도 테스트 (artist_extraction_attempted_at/attempt_count 쿨다운)
+
+async def _set_attempted(concert_id: str, attempted_at, attempt_count: int) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(artist_extraction_attempted_at=attempted_at, artist_extraction_attempt_count=attempt_count)
+        )
+        await db.commit()
+
+
+def _mock_llm_client():
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    return mock_client
+
+
+# 이 테스트 모듈이 만든 다른 콘서트들이 같은 세션 DB에 남아 있어 같이 전송 대상에 잡힐 수
+# 있으므로(파일 전체에서 DB를 공유), "아무것도 안 보냈다/딱 하나만 보냈다" 같은 전역 카운트
+# 대신 특정 concert_id가 실제로 보내진 페이로드에 포함됐는지만 확인한다
+def _sent_concert_ids(mock_client) -> set[str]:
+    ids: set[str] = set()
+    for call in mock_client.post.call_args_list:
+        for item in call.kwargs["json"]:
+            ids.add(item["concert_id"])
+    return ids
+
+
+# 쿨다운(24h) 이내에 이미 시도한 공연은 콜백이 안 왔어도 다시 대상이 되면 안 됨
+# (매 배치마다 계속 재전송하면 낭비이므로 최소 간격을 둠)
+@pytest.mark.asyncio
+async def test_send_posters_skips_within_cooldown():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RETRY_COOLDOWN_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=1), 1)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.artist_extraction_attempt_count == 1  # 안 바뀜 - 재전송 안 됐다는 뜻
+
+
+# 콜백이 유실된 것으로 보이는 경우(쿨다운 지남 + 시도 횟수 상한 미만) 재전송되고,
+# attempt_count가 증가하는지 테스트 - 이게 이번에 고친 핵심 동작
+@pytest.mark.asyncio
+async def test_send_posters_retries_after_cooldown_when_callback_lost():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RETRY_OK_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=25), 1)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id in _sent_concert_ids(mock_client)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.artist_extraction_attempt_count == 2
+
+
+# 시도 횟수가 상한(5회)에 도달하면 쿨다운이 지났어도 더 이상 재시도 대상이 아닌지 테스트
+# (콜백이 계속 유실되는 구조적으로 안 되는 공연에 무한정 GPU 자원을 쓰지 않기 위한 상한)
+@pytest.mark.asyncio
+async def test_send_posters_gives_up_after_max_attempts():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RETRY_GIVEUP_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=25), 5)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.artist_extraction_attempt_count == 5  # 안 바뀜
+
+
+# artist-result의 lineup으로 concert_lineups가 source="poster"로 채워지는지 테스트
+@pytest.mark.asyncio
+async def test_artist_result_lineup_upserts_with_poster_source():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_LINEUP_{uuid.uuid4().hex[:6]}", "", token)
+
+    body = {
+        "artist_name": ["아티스트A"],
+        "lineup": [{"artist": "아티스트A", "performance_date": "2030-06-01"}],
+    }
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
+        row = result.scalar_one()
+    assert row.artist == "아티스트A"
+    assert row.performance_date == date(2030, 6, 1)
+    assert row.source == "poster"
+
+
+# 포스터 추출(source=poster)이 먼저 배정을 채운 뒤, 크롤링 결과(source=crawl)가 같은
+# (아티스트,날짜)를 다시 확인하면 source가 crawl로 승격되는지 테스트(병합 우선순위 확인)
+@pytest.mark.asyncio
+async def test_crawl_result_lineup_upgrades_poster_source():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_CR_LINEUP_UPG_{uuid.uuid4().hex[:6]}", "", token)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={
+                    "artist_name": ["아티스트A"],
+                    "lineup": [{"artist": "아티스트A", "performance_date": "2030-06-01"}],
+                },
+                headers=_llm_headers(),
+            )
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={
+                    "artist_name": ["아티스트A"],
+                    "lineup": [{"artist": "아티스트A", "performance_date": "2030-06-01"}],
+                },
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+    assert "lineup" in res.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
+        row = result.scalar_one()
+    assert row.source == "crawl"

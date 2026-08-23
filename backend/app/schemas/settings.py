@@ -29,17 +29,12 @@ class UserSettingsResponse(BaseModel):
     show_predicted_setlist: bool
     notification_settings: NotificationSettings
 
+    # users.notification_settings 컬럼이 NOT NULL이라(마이그레이션 d4e5f6a7b8c9로 확정) v가
+    # None으로 올 일은 이제 없음 - 컬럼 추가 초기(마이그레이션 전) 방어코드였던 None 분기는 제거함.
+    # v가 문자열로 오는 경우만 남겨서 json.loads로 파싱.
     @field_validator("notification_settings", mode="before")
     @classmethod
     def _parse_notification_settings(cls, v):
-        if v is None:
-            return {
-                "delivery": True,
-                "day_before": True,
-                "concert_day": True,
-                "ticketing": True,
-                "new_concert": True,
-            }
         if isinstance(v, str):
             return json.loads(v)
         return v

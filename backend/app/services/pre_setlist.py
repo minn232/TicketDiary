@@ -1,5 +1,6 @@
 import logging
 from collections import Counter
+from datetime import date
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry
+from app.services.lineup import get_lineup_artists_for_date
 from app.services.setlistfm import search_setlists_by_artist
 
 logger = logging.getLogger(__name__)
@@ -24,12 +26,45 @@ async def _get_concert(db: AsyncSession, concert_id: UUID) -> Concert:
     return concert
 
 
-# DB에서 예상 셋리스트 조회
-async def get_pre_setlist(db: AsyncSession, concert_id: UUID) -> PreSetlist:
+# DB에서 예상 셋리스트 조회. 날짜를 특정할 수 있고 그 날짜에 concert_lineups 배정이 있으면
+# songs를 그 아티스트로 좁혀서 반환(원본 row는 안 건드리고 서빙 시점에만 좁힘 - 다른 날짜
+# 조회에도 같은 row를 재사용해야 함). 날짜/배정 정보가 없으면 전체 반환(폴백).
+async def get_pre_setlist(
+    db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
+) -> PreSetlist | dict:
     result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
     pre_setlist = result.scalar_one_or_none()
     if pre_setlist is None:
         raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
+
+    performance_date = explicit_date
+    if performance_date is None:
+        concert = await _get_concert(db, concert_id)
+        if concert.start_date.date() == concert.end_date.date():
+            performance_date = concert.start_date.date()
+        # 여러 날짜에 걸친 공연인데 날짜를 특정할 수 없으면 필터링 없이 전체 반환(실제
+        # 셋리스트와 달리 여긴 400을 안 던짐 - 날짜 힌트가 없으면 "일단 전체 보여주기"가
+        # 더 유용한 기본값이라고 판단)
+
+    if performance_date is not None:
+        lineup_artists = await get_lineup_artists_for_date(db, concert_id, performance_date)
+        if lineup_artists:
+            allowed = set(lineup_artists)
+            filtered_songs = [
+                song for song in pre_setlist.songs if not song.get("artist") or song["artist"] in allowed
+            ]
+            # 필터링 결과가 하나도 안 남으면(그 날짜 아티스트의 예상 데이터가 아직 없는 등)
+            # 빈 화면보다 전체를 보여주는 쪽이 나으니 폴백
+            if filtered_songs:
+                return {
+                    "id": pre_setlist.id,
+                    "concert_id": pre_setlist.concert_id,
+                    "setlistfm_id": pre_setlist.setlistfm_id,
+                    "songs": filtered_songs,
+                    "is_user_edited": pre_setlist.is_user_edited,
+                    "edited_user_nickname": pre_setlist.edited_user_nickname,
+                }
+
     return pre_setlist
 
 
@@ -82,18 +117,11 @@ async def _top_songs_for_artist(artist_name: str, n: int) -> list[dict]:
     ]
 
 
-# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성 및 저장.
-# 페스티벌(아티스트 2명 이상)이면 concert.artist_name[0]만 보던 걸 배열 전체로 순회 -
-# 아티스트마다 top_n(기본 20곡, 단독 공연과 동일)씩 뽑아서 곡마다 artist 태그를 붙여 합침.
-# 페스티벌이라고 곡 수를 줄이지 않는 이유: _top_songs_for_artist의 비용은 Setlist.fm
-# 검색+집계(search_setlists_by_artist)에서 다 발생하고 top_n은 그 결과를 자르는 것뿐이라,
-# 넉넉히 20곡씩 저장해도 API 호출은 늘지 않음. 대신 "미리보기엔 몇 곡만" 같은 표시 개수
-# 조절은 프론트가 artist 태그로 그룹핑한 뒤 원하는 만큼만 잘라 쓰면 됨 - 나중에 타임테이블
-# 기반 날짜별 아티스트 매핑이 갖춰지면, 이미 저장된 후보 중 그 아티스트분만 다시 자르면
-# 되므로 재수집 없이 날짜별 예상 셋리로 확장 가능. 단독 공연(아티스트 1명)은 기존과 완전히
-# 동일하게 동작(artist 태그 없음) - 이미 티켓 등록 때마다 자동 호출되는 함수라
-# (generate_pre_setlist_background) 별도 엔드포인트 없이 이 함수 하나만 고치면 페스티벌도
-# 자동으로 커버됨.
+# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트
+# 전체를 순회해 각자 top_n(기본 20곡)씩 뽑아 artist 태그를 붙여 합침. 곡 수를 안 줄이는
+# 이유는 비용이 Setlist.fm 검색/집계에서 다 발생하고 top_n은 자르는 것뿐이라(넉넉히
+# 저장해도 API 호출 안 늘어남), 나중에 날짜별 매핑이 갖춰지면 재수집 없이 확장 가능.
+# 단독 공연은 기존과 동일(artist 태그 없음), 이 함수만 고치면 페스티벌도 자동 커버됨.
 async def generate_pre_setlist(
     db: AsyncSession, concert_id: UUID, top_n: int = 20
 ) -> PreSetlist:

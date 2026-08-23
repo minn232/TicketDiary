@@ -249,11 +249,10 @@ def _venue_overlaps(a: str, b: str) -> bool:
     return match.size >= 4
 
 
-# OCR 공연장 텍스트에서 KOPIS 시설 검색(/prfplc)에 걸릴 만한 후보를 순서대로 생성
-# KOPIS는 "인터파크 유니플렉스 2관" 같은 전체 문구로는 안 걸리고 "유니플렉스"처럼 시설 본체
-# 이름만으로 걸리는 경우가 많아 -> 끝의 세부관(N관/N홀 등) 제거 + 단어 단위 접미사를 순서대로 시도
-# 숫자가 붙은 경우만 세부관으로 보고 제거함("2관") - 숫자 없이 관/홀/층/실로 끝나는 이름은
-# "세종문화회관"처럼 시설 본체 이름 자체인 경우가 많아 그대로 두지 않으면 엉뚱한 시설이 걸릴 수 있음
+# OCR 공연장 텍스트에서 KOPIS 시설 검색(/prfplc)에 걸릴 후보를 순서대로 생성 - "인터파크
+# 유니플렉스 2관" 전체가 아니라 "유니플렉스"처럼 시설 본체 이름만 걸리는 경우가 많아, 끝의
+# 세부관(N관/N홀) 제거 + 접미사를 순서대로 시도. 숫자 붙은 것만 세부관으로 봄(숫자 없이
+# 관/홀로 끝나면 "세종문화회관"처럼 본체 이름일 수 있어 그대로 둠).
 def _venue_candidates(location: str) -> list[str]:
     location = location.strip()
     if not location:
@@ -356,14 +355,10 @@ def _sort_by_date_match(
     return sorted(concerts, key=_key)
 
 
-# 검색 결과가 OCR로 뽑은 날짜와 실제로 겹치는지 확인 (추가 API 호출 없이 이미 받아온
-# concert.start_date/end_date만으로 교차검증).
-#
-# 장소는 확신 여부의 필수 조건으로 쓰지 않는다 - KOPIS 목록 검색(/pblprfr)이 돌려주는 fcltynm은
-# "잠실종합운동장"처럼 상위 시설명만 주는 경우가 많아, OCR이 뽑은 "잠실실내체육관"(구체적 홀 이름
-# 포함) 같은 표기와는 실제로 같은 장소여도 텍스트가 거의 안 겹칠 수 있다 (상세 API를 호출해야만
-# "잠실종합운동장 (실내체육관)"처럼 홀 이름까지 나옴 - 그런데 이건 후보를 이미 고른 뒤에나 부르는
-# API라 여기서는 쓸 수 없음). 장소는 _sort_by_date_match의 동률 tie-break 용도로만 사용한다.
+# 검색 결과가 OCR로 뽑은 날짜와 겹치는지 확인(이미 받아온 start_date/end_date로 교차검증).
+# 장소는 확신 조건으로 안 씀 - KOPIS 목록 검색의 fcltynm은 "잠실종합운동장"처럼 상위 시설명만
+# 주는 경우가 많아, OCR의 "잠실실내체육관" 같은 구체적 표기와는 같은 장소여도 텍스트가 안
+# 겹칠 수 있음. tie-break 용도로만 사용.
 def _is_confident_match(concert: Concert, target_date: date) -> bool:
     return concert.start_date.date() <= target_date <= concert.end_date.date()
 
@@ -428,17 +423,10 @@ def _strip_parenthetical(s: str) -> str:
 _MAX_TITLE_KEYWORDS = 6
 
 
-# 제목 후보를 순서대로 시도. 이미 받아온 응답의 날짜+장소만으로(추가 API 호출 없이) 교차검증해서
-# 실제로 일치하는("확신 가능한") 결과가 나오면 즉시 반환하고, 그렇지 않으면(예: "우리들의 이야기다"
-# -> "우리들의"처럼 흔한 구절이라 무관한 결과만 걸리거나, 날짜만 우연히 겹치고 장소가 전혀 다른 경우)
-# 다음 후보로 계속 넘어감 (예: "빨래는 오늘을 살아가는" 실패 -> 원본 텍스트 뒷줄의 "빨래"로 재시도).
-# 끝까지 확신 가능한 결과가 없으면 틀린 결과를 성공으로 오인하지 않도록 폴백 없이 실패 처리.
-# 날짜 정보가 아예 없으면 교차검증 자체가 불가능하므로("아이유 콘서트"라고만 적힌 메모도 실제
-# 등록된 공연과 우연히 제목이 겹치면 검증 없이 통과해버리는 문제가 있었음) 첫 매칭을 그대로
-# 받아들이지 않고 실패 처리(빈 목록) - 실사용 샘플 54개 중 53개(98%)가 날짜를 정상 추출해서
-# 실질적인 인식률 손실은 거의 없는 것으로 확인함.
-# 중복 키워드는 한 번만 시도해서 불필요한 KOPIS 호출을 줄임.
-# 후보들 전체가 KOPIS HTTP client 하나를 공유해서 매 시도마다 새 연결을 맺지 않도록 함
+# 제목 후보를 순서대로 시도, 날짜+장소로 교차검증해 확신 가능한 결과가 나오면 즉시 반환하고
+# 아니면 다음 후보로 넘어감(끝까지 없으면 폴백 없이 실패). 날짜 정보가 없으면 교차검증이
+# 불가능해 첫 매칭도 실패 처리함(실사용 샘플 98%가 날짜 추출돼 손실 거의 없음 확인).
+# 중복 키워드는 한 번만 시도, 후보 전체가 HTTP client 하나를 공유.
 async def search_concerts_multi(
     db: AsyncSession,
     keywords: list[str],
@@ -794,18 +782,12 @@ async def get_concert_detail(
     return concert
 
 
-# 다중 아티스트로 확정된(FESTIVAL) 공연의 예매처 링크(concert.ticketing_links)를 KOPIS에서
-# 다시 받아와 갱신한다. concerts.py의 GET 상세조회는 kopis_detail_synced_at이 한 번이라도
-# 채워지면 두 번 다시 KOPIS를 호출하지 않으므로, ticketing_links는 유저가 최초로 조회/등록한
-# 시점의 스냅샷에 영원히 고정된다. 그런데 그 최초 시점이 페스티벌 1차 라인업 공개 직후(얼리버드/
-# 블라인드 판매가 시작되는 시점과 겹칠 수 있음)라면, 이후 실제 예매가 열리며 KOPIS 쪽 relate
-# 링크가 바뀌어도 우리 DB는 그 변화를 영원히 못 보게 된다. 이 함수는 crawler.py의 라인업
-# 재확인 배치(retry_festival_lineup_checks)에서 같이 호출되어 ticketing_links만 최신값으로
-# 덮어쓴다 - artist_name 등 다른 필드는 건드리지 않는다(artist_name은 크롤링/포스터 추출 결과와의
-# 합집합 병합 로직이 따로 있어([[festival_lineup_recrawl_plan]] 참고), 여기서 KOPIS prfcast로
-# 그냥 덮어쓰면 이미 병합된 아티스트 목록을 되돌려버리는 회귀가 생긴다).
-# KOPIS가 새 값을 안 주면(빈 응답/API 실패) 기존 링크를 그대로 유지 - 크롤링 대상을 아예 잃는
-# 회귀를 방지.
+# 다중 아티스트로 확정된(FESTIVAL) 공연의 ticketing_links를 KOPIS에서 다시 받아와 갱신 -
+# GET 상세조회는 kopis_detail_synced_at이 채워지면 재호출 안 해서, ticketing_links가 유저
+# 최초 조회 시점(라인업 공개 직후, 얼리버드 시점과 겹칠 수 있음)에 영원히 고정되는 문제가 있음.
+# crawler.py의 라인업 재확인 배치에서 같이 호출돼 ticketing_links만 덮어씀 - artist_name은
+# 안 건드림(병합 로직이 따로 있어, KOPIS prfcast로 덮으면 이미 병합된 목록이 되돌아감).
+# KOPIS가 새 값을 안 주면 기존 링크 유지(크롤링 대상을 잃는 회귀 방지).
 async def refresh_ticketing_links(concert: Concert) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

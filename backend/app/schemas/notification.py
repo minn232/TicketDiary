@@ -5,6 +5,7 @@ from app.models.notification import NotificationType
 
 
 class NotificationResponse(BaseModel):
+    # 알림 조회 응답
     model_config = {"from_attributes": True}
 
     id: UUID

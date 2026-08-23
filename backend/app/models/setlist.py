@@ -7,6 +7,7 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
+# 실제 셋리스트 (공연 날짜별로 저장, Setlist.fm 연동 또는 유저 직접 수정)
 class RealSetlist(Base):
     __tablename__ = "real_setlists"
 
@@ -27,6 +28,7 @@ class RealSetlist(Base):
     concert = relationship("Concert", back_populates="real_setlists")
 
 
+# 예상 셋리스트 (공연 전 아티스트 과거 공연 데이터 기반 자동 생성, concert당 1개)
 class PreSetlist(Base):
     __tablename__ = "pre_setlists"
 

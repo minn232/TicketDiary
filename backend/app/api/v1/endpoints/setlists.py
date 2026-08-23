@@ -88,21 +88,21 @@ async def generate_real_setlist_auto_endpoint(
     return await generate_real_setlist_auto(db, concert_id, performance_date)
 
 
-# show_predicted_setlist는 이제 "조회 자체를 막는 스위치"가 아니라, 프론트에서
-# 블러 처리 여부만 결정하는 화면 취향 값으로 재정의됨(꺼도 데이터는 그대로
-# 내려줘야 프론트가 롱탭/홀드로 블러를 잠깐 풀어 보여주는 기능을 만들 수 있음).
-# 그래서 여기서 하던 403 게이팅은 제거함 — 값 자체(GET/PATCH /settings)는
-# 그대로 유지.
+# show_predicted_setlist는 조회를 막는 스위치가 아니라 블러 처리 여부만 결정하는 화면
+# 취향 값으로 재정의됨(꺼도 데이터는 그대로 내려가야 롱탭으로 블러를 풀어보는 기능이 됨) -
+# 그래서 여기 403 게이팅은 제거함.
 
 
-# 저장된 예상 셋리스트 조회
+# 저장된 예상 셋리스트 조회. date를 주면(페스티벌 등) 그 날짜에 배정된 아티스트로 좁혀서
+# 반환 - 생략 가능(하루짜리 공연이거나, 날짜 모르면 전체 반환)
 @router.get("/{concert_id}/setlist/pre", response_model=PreSetlistResponse)
 async def get_pre_setlist_endpoint(
     concert_id: UUID,
+    performance_date: date | None = Query(None, alias="date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_pre_setlist(db, concert_id)
+    return await get_pre_setlist(db, concert_id, performance_date)
 
 
 # 아티스트 과거 공연 기반 예상 셋리스트 생성

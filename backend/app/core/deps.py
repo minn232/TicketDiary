@@ -102,11 +102,10 @@ async def rate_limit_guest_login(request: Request) -> None:
     _check_rate_limit(f"guest_login:{client_ip}", max_calls=20, period_seconds=3600)
 
 
-# 티켓 스캔(Vision OCR 호출, 비용 발생) 남용 방지: 유저당 시간당 30회.
-# 프론트 카메라 화면의 "정렬 인식"이 실제 사각형/문서 검출이 아니라 밝기·대비·흔들림만
-# 보는 휴리스틱이라, 티켓이 아닌 걸 오인식해서 자동 촬영·전송하는 경우가 흔함. 그런
-# 오탐까지 다 포함해서 순수 어뷰징(무한 요청으로 비용 유발)만 막는 널널한 상한이고,
-# 실제로 티켓처럼 보이는 스캔에 대한 더 빡빡한 카운트는 record_meaningful_ticket_scan 참고
+# 티켓 스캔(Vision OCR, 비용 발생) 남용 방지: 유저당 시간당 30회. 프론트 카메라의 "정렬
+# 인식"이 실제 문서 검출이 아니라 밝기/대비/흔들림만 보는 휴리스틱이라 오인식 자동촬영이
+# 흔함 - 그런 오탐까지 포함한 순수 어뷰징 방지용 널널한 상한. 실제 티켓 스캔의 빡빡한
+# 카운트는 record_meaningful_ticket_scan 참고.
 async def rate_limit_ticket_scan(current_user: User = Depends(get_current_user)) -> None:
     _check_rate_limit(f"scan:{current_user.id}", max_calls=30, period_seconds=3600)
 
@@ -114,14 +113,10 @@ async def rate_limit_ticket_scan(current_user: User = Depends(get_current_user))
 _SCAN_COOLDOWN_SECONDS = 2.0
 
 
-# 카메라 정렬 인식이 사용자가 티켓을 갖다 대기 전(포지셔닝 중)에도 몇 프레임 안에 계속
-# "정렬됨"으로 오판해서, 짧은 시간에 여러 장이 연달아 자동 촬영·전송되는 경우가 실측됨
-# (테스트 몇 번 만에 Vision 요청 200건 이상 소진). 이 유형은 위 시간당 상한(하드 상한 30회,
-# meaningful 10회)만으로는 못 막음 - 몇 초 안에 다 소진돼버릴 수 있음. 그래서 Vision을
-# 실제로 호출하기 전에, 같은 유저의 직전 스캔 요청과 이 요청 사이 간격이 너무 짧으면
-# (연사성 오탐일 가능성이 높음) Vision 호출 자체를 건너뛰고 빈 결과를 바로 반환한다.
-# 반환값 True면 "쿨다운 중이니 Vision 호출 생략" 의미. 호출할 때마다 마지막 호출 시각을
-# 갱신하므로, 연달아 여러 번 호출해도 매번 쿨다운이 걸리는 게 아니라 마지막 시도 기준으로만 판단.
+# 카메라 정렬 인식이 포지셔닝 중에도 "정렬됨"으로 오판해서 짧은 시간에 여러 장이 연달아
+# 자동 촬영·전송되는 경우가 실측됨(몇 번 테스트에 Vision 요청 200건 이상 소진) - 시간당
+# 상한만으론 몇 초 안에 다 소진돼 못 막음. 그래서 직전 스캔과 간격이 너무 짧으면 Vision
+# 호출 자체를 생략하고 빈 결과를 반환함(True=쿨다운 중, 매 호출마다 마지막 시각 갱신).
 def is_within_scan_cooldown(user_id: UUID) -> bool:
     key = f"scan_cooldown:{user_id}"
     now = time.monotonic()

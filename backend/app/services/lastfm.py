@@ -139,13 +139,10 @@ async def _fetch_and_cache_artist_genre(artist_name: str) -> None:
         await db.commit()
 
 
-# 아직 캐싱 안 된 아티스트만 골라 Last.fm 태그를 가져와 화이트리스트로 정규화한 장르를 저장
-# (한 번 캐싱된 아티스트는 재조회하지 않음 - genres가 None인 행도 "확인해봤지만 분류 가능한
-# 장르 태그가 없었다"는 결과로 그대로 캐싱해서 매 배치 재조회 안 함)
-#
-# 이 배치는 "안전망" 역할 - 실제로는 티켓 등록 시점에 ensure_artist_genres_cached가 그 자리에서
-# 바로 캐싱하므로 평소엔 여기서 처리할 대상이 거의 없어야 정상. 즉시 캐싱이 API 순간 장애 등으로
-# 실패했거나, 즉시 캐싱 로직이 붙기 전에 등록된 오래된 티켓의 아티스트를 위한 뒤처리용.
+# 아직 캐싱 안 된 아티스트만 Last.fm 태그를 가져와 화이트리스트로 정규화한 장르로 저장
+# (genres=None도 "확인했지만 태그 없었음"으로 캐싱해 재조회 안 함).
+# "안전망" 역할 - 실제론 티켓 등록 시점에 ensure_artist_genres_cached가 즉시 캐싱해서
+# 평소 처리 대상이 거의 없어야 정상. 즉시 캐싱 실패/로직 붙기 전 오래된 티켓 뒤처리용.
 async def sync_artist_genres() -> None:
     async with AsyncSessionLocal() as db:
         concert_result = await db.execute(select(Concert.artist_name).where(Concert.artist_name != []))
