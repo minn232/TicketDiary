@@ -42,10 +42,9 @@ def _is_null_literal(name: str) -> bool:
     return name.strip().lower() in _NULL_LITERALS
 
 
-# lineup(우선) 또는 timetable에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
+# entries(lineup 또는 timetable)에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
 # 반환. 블라인드 라인업(artist=None)은 자연히 걸러짐 - 순서는 처음 등장한 순서 유지
-def _extract_artist_names(raw: dict) -> list[str]:
-    entries = raw.get("lineup") or raw.get("timetable") or []
+def _unique_artist_names(entries: list[dict]) -> list[str]:
     seen: set[str] = set()
     names: list[str] = []
     for entry in entries:
@@ -53,6 +52,21 @@ def _extract_artist_names(raw: dict) -> list[str]:
         if name and not _is_null_literal(name) and name not in seen:
             seen.add(name)
             names.append(name)
+    return names
+
+
+# 원칙 6(event_type-라인업 개수 일치)을 프롬프트로만 지시했을 때 모델이 안 지켜서 생기던
+# 자기모순(전수조사 확정 버그 37건 중 21건)을 여기서 결정론적으로 강제 - 진짜 페스티벌이면
+# 서로 다른 이름이 1개만 나올 수 없음. extract_poster.py 쪽은 event_type이 없어 영향 없음.
+def _is_untrustworthy_single_festival_artist(raw: dict, names: list[str]) -> bool:
+    return raw.get("event_type") == "FESTIVAL" and len(names) == 1
+
+
+def _extract_artist_names(raw: dict) -> list[str]:
+    entries = raw.get("lineup") or raw.get("timetable") or []
+    names = _unique_artist_names(entries)
+    if _is_untrustworthy_single_festival_artist(raw, names):
+        return []
     return names
 
 
@@ -85,6 +99,8 @@ def normalize_lineup_entries(raw) -> list[dict]:
     if not isinstance(raw, dict):
         return []
     entries = raw.get("lineup") or []
+    if _is_untrustworthy_single_festival_artist(raw, _unique_artist_names(entries)):
+        return []
     seen: set[tuple[str, str]] = set()
     result: list[dict] = []
     for entry in entries:
