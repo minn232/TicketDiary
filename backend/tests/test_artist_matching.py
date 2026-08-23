@@ -313,6 +313,28 @@ async def test_artist_result_generates_news_feed_for_existing_follower():
     assert len(matched) == 1
 
 
+# 이미 확정된 브랜드/공연장명 오탐(artist_blocklist.py)이 재발해도 DB엔 안 박히는지 확인
+@pytest.mark.asyncio
+async def test_artist_result_filters_blocklisted_names():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_BLOCK_{uuid.uuid4().hex[:6]}", "", token)
+
+    real_name = f"진짜아티스트_{uuid.uuid4().hex[:6]}"
+    body = {"artist_name": ["NOL", "Various Artists", real_name]}
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [real_name]
+
+
 @pytest.mark.asyncio
 async def test_artist_result_empty_body_no_change():
     token = await _get_token()
