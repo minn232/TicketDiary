@@ -10,7 +10,13 @@ from auth import verify_backend_api_key
 from callback import send_artist_result, send_crawl_result, send_diary_result
 from config import settings
 from dedup import is_processed, mark_processed
-from normalize import normalize_artist_list, normalize_crawl_result, normalize_diary_text, normalize_event_type
+from normalize import (
+    normalize_artist_list,
+    normalize_crawl_result,
+    normalize_diary_text,
+    normalize_event_type,
+    normalize_lineup_entries,
+)
 from schemas import ArtistExtractItem, CrawlAnalyzeItem, DiaryGenerateItem
 
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +85,9 @@ async def _process_artist_batch(items: list[ArtistExtractItem]) -> None:
             event_type = normalize_event_type(raw)
             if event_type is not None:
                 body["event_type"] = event_type
+            lineup = normalize_lineup_entries(raw)
+            if lineup:
+                body["lineup"] = lineup
             await send_artist_result(item.concert_id, body)
             mark_processed("artist", item.concert_id)
         except Exception:

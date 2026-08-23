@@ -76,6 +76,30 @@ def _to_timetable_entry(entry: dict) -> dict:
     }
 
 
+# lineup에서 아티스트명+출연일이 둘 다 채워진 항목만 뽑아 백엔드 concert_lineups 웹훅
+# 페이로드로 만든다. 날짜를 모르는 항목(performance_date=null)은 여기서 버림 - 백엔드
+# 테이블은 "날짜가 있는 배정"만 저장하고, 날짜 모르는 아티스트는 저장 안 해도 항상 폴백(전체
+# 표시)되니 보낼 필요가 없음. 같은 (artist,date) 조합 중복도 제거. crawl/artist 두 경로가
+# 공유(analyze_crawl_screenshot/extract_artists_from_poster 둘 다 lineup을 이 형태로 반환).
+def normalize_lineup_entries(raw) -> list[dict]:
+    if not isinstance(raw, dict):
+        return []
+    entries = raw.get("lineup") or []
+    seen: set[tuple[str, str]] = set()
+    result: list[dict] = []
+    for entry in entries:
+        name = entry.get("artist")
+        perf_date = entry.get("performance_date")
+        if not name or _is_null_literal(name) or not perf_date:
+            continue
+        key = (name, perf_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"artist": name, "performance_date": perf_date})
+    return result
+
+
 def normalize_crawl_result(raw: dict) -> dict:
     body: dict = {}
 
@@ -97,6 +121,10 @@ def normalize_crawl_result(raw: dict) -> dict:
     artist_names = _extract_artist_names(raw)
     if artist_names:
         body["artist_name"] = artist_names
+
+    lineup = normalize_lineup_entries(raw)
+    if lineup:
+        body["lineup"] = lineup
 
     food_allowed = (raw.get("other_info") or {}).get("food_allowed")
     if food_allowed is not None:
