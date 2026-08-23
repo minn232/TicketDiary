@@ -1,9 +1,12 @@
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.services.lineup import upsert_concert_lineup
 from conftest import _get_token, kopis_mock
 
 
@@ -34,6 +37,39 @@ def _make_kopis_xml(kopis_id: str, artist: str = "테스트아티스트") -> byt
 async def _create_concert(kopis_id: str, artist: str = "테스트아티스트") -> str:
     token = await _get_token()
     with kopis_mock(_make_kopis_xml(kopis_id, artist)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                f"/api/v1/concerts/{kopis_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.status_code == 200
+    return response.json()["id"]
+
+
+# 여러 날짜(2030.06.01~2030.06.03)에 걸친 공연 생성 - 날짜별 lineup 필터링 테스트용
+def _make_kopis_xml_multiday(kopis_id: str, artist: str = "테스트아티스트") -> bytes:
+    cast = f"<prfcast>{artist}</prfcast>" if artist else ""
+    return (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f"<dbs><db>"
+        f"<mt20id>{kopis_id}</mt20id>"
+        f"<prfnm>{kopis_id} 공연</prfnm>"
+        f"<prfpdfrom>2030.06.01</prfpdfrom>"
+        f"<prfpdto>2030.06.03</prfpdto>"
+        f"<fcltynm>테스트공연장</fcltynm>"
+        f'<poster>https://example.com/poster.jpg</poster>'
+        f"<genrenm>대중음악</genrenm>"
+        f"<prfstate>공연예정</prfstate>"
+        f"{cast}"
+        f"<pcseguidance>R석 110,000원</pcseguidance>"
+        f"<sty>공연 소개</sty>"
+        f"</db></dbs>"
+    ).encode("utf-8")
+
+
+async def _create_multiday_concert(kopis_id: str, artist: str = "테스트아티스트") -> str:
+    token = await _get_token()
+    with kopis_mock(_make_kopis_xml_multiday(kopis_id, artist)):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 f"/api/v1/concerts/{kopis_id}",
@@ -267,6 +303,51 @@ async def test_generate_pre_setlist_festival_partial_artist_data_missing():
     songs = response.json()["songs"]
     assert {s["name"] for s in songs} == {"에이곡1"}
     assert songs[0]["artist"] == artist_a
+
+
+# concert_lineups에 날짜별 배정이 생기면, 저장된 예상 셋리스트(둘 다 섞여 있음)를 그 날짜에
+# 배정된 아티스트로만 좁혀서 응답하는지 테스트. PreSetlist 원본 row는 안 바뀌어야 하므로
+# 배정 정보가 없을 때(생성 직후) 조회하면 여전히 전체가 나오는지도 같이 확인.
+@pytest.mark.asyncio
+async def test_get_pre_setlist_scoped_to_date_lineup():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_multiday_concert("PF_PRE_DATE_001", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    data_a = _make_artist_setlists([["에이곡1"]], artist=artist_a)
+    data_b = _make_artist_setlists([["비곡1"]], artist=artist_b)
+    with _setlistfm_artist_mock_multi({artist_a: data_a, artist_b: data_b}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            gen_res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers
+            )
+    assert gen_res.status_code == 201
+    assert {s["name"] for s in gen_res.json()["songs"]} == {"에이곡1", "비곡1"}
+
+    # 배정 정보가 아직 없으면(폴백) 날짜를 줘도 전체가 나옴
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        before_res = await ac.get(
+            f"/api/v1/concerts/{concert_id}/setlist/pre?date=2030-06-01", headers=headers
+        )
+    assert {s["name"] for s in before_res.json()["songs"]} == {"에이곡1", "비곡1"}
+
+    # artist_a는 06-01에만 배정
+    async with AsyncSessionLocal() as db:
+        await upsert_concert_lineup(
+            db, uuid.UUID(concert_id), [{"artist": artist_a, "performance_date": "2030-06-01"}], source="crawl"
+        )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        day1_res = await ac.get(
+            f"/api/v1/concerts/{concert_id}/setlist/pre?date=2030-06-01", headers=headers
+        )
+
+    assert day1_res.status_code == 200
+    day1_songs = day1_res.json()["songs"]
+    assert {s["name"] for s in day1_songs} == {"에이곡1"}
+    assert all(s["artist"] == artist_a for s in day1_songs)
 
 
 # 아티스트가 1명뿐이면(단독 공연) 기존과 완전히 동일하게 동작(artist 태그 없음, top_n=20) 테스트

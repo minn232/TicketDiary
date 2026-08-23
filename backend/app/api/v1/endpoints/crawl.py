@@ -14,6 +14,7 @@ from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtracti
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.services.artist_matching import get_known_artist_names, merge_artist_names
 from app.services.kopis import _create_news_feeds_for_concert
+from app.services.lineup import upsert_concert_lineup
 from app.services.notification import schedule_ticketing_day_notifications
 from app.services.ticket import (
     backfill_delivery_date_from_concert,
@@ -112,13 +113,28 @@ async def receive_crawl_result(
     # 크롤링 결과와 포스터 기반 추출(artist-result 웹훅) 양쪽에서 아티스트가 들어올 수 있고,
     # 페스티벌은 1차/2차/3차로 시간차를 두고 라인업이 늘어나므로 덮어쓰지 않고 합집합으로 병합
     upgraded_to_festival = False
-    if body.artist_name:
+    known_artist_names: set[str] | None = None
+    if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)
+
+    if body.artist_name:
         merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             updated.append("artist_name")
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+
+    # 아티스트별 실제 출연일 upsert(union-only, 삭제 없음) - source="crawl"이 포스터 추출보다
+    # 우선순위 높음(app/services/lineup.py). concert.artist_name(방금 병합된 값 포함)까지
+    # known_names에 섞어서 표기를 최대한 맞춤
+    if body.lineup:
+        lineup_known_names = set(known_artist_names or set()) | set(concert.artist_name or [])
+        entries = [e.model_dump() for e in body.lineup]
+        lineup_changed = await upsert_concert_lineup(
+            db, concert_id, entries, source="crawl", known_names=lineup_known_names, commit=False
+        )
+        if lineup_changed:
+            updated.append("lineup")
 
     if updated:
         await db.commit()
@@ -158,8 +174,11 @@ async def receive_artist_extraction_result(
     if concert is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
 
-    if body.artist_name:
+    known_artist_names: set[str] | None = None
+    if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)
+
+    if body.artist_name:
         # KOPIS 원본이 채운 소규모(단독 추정, 4명 미만) 공연이면 포스터 결과를 더 신뢰해서
         # 교체(KOPIS prfcast가 본명/멤버명인 경우가 많아서) - 이미 4명 이상(페스티벌 등)이면
         # 라인업 유실 방지를 위해 기존처럼 합집합 유지
@@ -176,6 +195,14 @@ async def receive_artist_extraction_result(
             # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
             if upgraded_to_festival:
                 await backfill_first_last_day_from_concert(db, concert_id)
+
+    # 아티스트별 실제 출연일 upsert(union-only, 삭제 없음) - 크롤링 쪽(source="crawl")이 이미
+    # 같은 (아티스트,날짜)를 확인해뒀으면 포스터 쪽(source="poster")은 그 row를 안 밀어냄
+    # (app/services/lineup.py)
+    if body.lineup:
+        lineup_known_names = set(known_artist_names or set()) | set(concert.artist_name or [])
+        entries = [e.model_dump() for e in body.lineup]
+        await upsert_concert_lineup(db, concert_id, entries, source="poster", known_names=lineup_known_names)
 
     logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)

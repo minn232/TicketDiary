@@ -10,6 +10,7 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
+from app.services.lineup import upsert_concert_lineup
 from app.services.setlist import retry_real_setlist_generation
 from conftest import _get_token, kopis_mock
 
@@ -409,6 +410,83 @@ async def test_generate_real_setlist_for_festival_no_match_404():
             )
 
     assert response.status_code == 404
+
+
+# concert_lineups에 날짜별 배정이 있으면(같은 아티스트가 여러 날 아니라 날짜마다 다른
+# 아티스트), 그 날짜에 배정 안 된 아티스트는 자동 생성에서 아예 검색 대상에서 빠지는지 테스트.
+# artist_b도 Setlist.fm 데이터를 주지만(모킹), 배정된 아티스트가 artist_a뿐인 날짜라 결과에
+# artist_b 곡이 안 섞여야 함 - 필터링이 실제로 걸린다는 증거.
+@pytest.mark.asyncio
+async def test_generate_real_setlist_scoped_to_date_lineup():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_multiday_concert("PF_SL_FEST_DATE_001", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+
+    async with AsyncSessionLocal() as db:
+        await upsert_concert_lineup(
+            db, uuid.UUID(concert_id), [{"artist": artist_a, "performance_date": "2030-06-01"}], source="crawl"
+        )
+        await upsert_concert_lineup(
+            db, uuid.UUID(concert_id), [{"artist": artist_b, "performance_date": "2030-06-02"}], source="crawl"
+        )
+
+    search_a = _make_setlistfm_search("SF_FEST_DATE_A", artist=artist_a)
+    search_b = _make_setlistfm_search("SF_FEST_DATE_B", artist=artist_b)
+
+    with _setlistfm_search_mock_multi({artist_a: search_a, artist_b: search_b}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/generate-festival?date=2030-06-01",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 201
+    data = response.json()
+    # 1명만 매칭됐다는 뜻으로 setlistfm_id가 채워짐 - artist_b까지 검색했다면 2명 매칭돼서 null이어야 함
+    assert data["setlistfm_id"] == "SF_FEST_DATE_A"
+    assert all(s["artist"] == artist_a for s in data["songs"])
+
+
+# get_real_setlist(placeholder 응답)의 artist_names도 날짜 배정으로 좁혀지는지 테스트
+@pytest.mark.asyncio
+async def test_get_real_setlist_artist_names_scoped_to_date_lineup():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_multiday_concert("PF_SL_GET_DATE_001", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+
+    async with AsyncSessionLocal() as db:
+        await upsert_concert_lineup(
+            db, uuid.UUID(concert_id), [{"artist": artist_a, "performance_date": "2030-06-01"}], source="crawl"
+        )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get(
+            f"/api/v1/concerts/{concert_id}/setlist?date=2030-06-01",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["artist_names"] == [artist_a]
+
+
+# 이 콘서트에 배정 정보가 아예 없으면(도입 전 옛날 공연 등) 기존처럼 전체 아티스트로 폴백하는지 테스트
+@pytest.mark.asyncio
+async def test_get_real_setlist_artist_names_falls_back_without_lineup_data():
+    artist_a = "우주여행자밴드"
+    artist_b = "산책하는고양이"
+    concert_id = await _create_multiday_concert("PF_SL_GET_FALLBACK_001", artist=f"{artist_a},{artist_b}")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get(
+            f"/api/v1/concerts/{concert_id}/setlist?date=2030-06-01",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert set(response.json()["artist_names"]) == {artist_a, artist_b}
 
 
 # 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist)

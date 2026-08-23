@@ -68,3 +68,5 @@ class Concert(Base):
     real_setlists = relationship("RealSetlist", back_populates="concert")
     pre_setlist = relationship("PreSetlist", back_populates="concert", uselist=False)
     venue_layout = relationship("VenueLayout", back_populates="concert", uselist=False)
+    # 아티스트별 실제 출연일 매핑 (날짜별 셋리스트 필터링용, app/models/lineup.py 참고)
+    lineups = relationship("ConcertLineup", back_populates="concert")

@@ -93,14 +93,16 @@ async def generate_real_setlist_auto_endpoint(
 # 그래서 여기 403 게이팅은 제거함.
 
 
-# 저장된 예상 셋리스트 조회
+# 저장된 예상 셋리스트 조회. date를 주면(페스티벌 등) 그 날짜에 배정된 아티스트로 좁혀서
+# 반환 - 생략 가능(하루짜리 공연이거나, 날짜 모르면 전체 반환)
 @router.get("/{concert_id}/setlist/pre", response_model=PreSetlistResponse)
 async def get_pre_setlist_endpoint(
     concert_id: UUID,
+    performance_date: date | None = Query(None, alias="date"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_pre_setlist(db, concert_id)
+    return await get_pre_setlist(db, concert_id, performance_date)
 
 
 # 아티스트 과거 공연 기반 예상 셋리스트 생성

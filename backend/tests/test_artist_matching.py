@@ -1,12 +1,15 @@
 import uuid
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.concert import Concert
+from app.models.lineup import ConcertLineup
 from app.models.social import ArtistFollow
 from app.services.artist_matching import normalize_artist_names
 from conftest import _get_token, kopis_mock
@@ -429,3 +432,66 @@ async def test_send_posters_respects_limit():
     # 둘 중 하나만 attempted_at이 찍혀야 함(어느 쪽이 뽑히는지는 정렬 순서에 안 묶어둠)
     attempted_count = sum(1 for c in (c1, c2) if c.artist_extraction_attempted_at is not None)
     assert attempted_count == 1
+
+
+# artist-result의 lineup으로 concert_lineups가 source="poster"로 채워지는지 테스트
+@pytest.mark.asyncio
+async def test_artist_result_lineup_upserts_with_poster_source():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AR_LINEUP_{uuid.uuid4().hex[:6]}", "", token)
+
+    body = {
+        "artist_name": ["아티스트A"],
+        "lineup": [{"artist": "아티스트A", "performance_date": "2030-06-01"}],
+    }
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
+        row = result.scalar_one()
+    assert row.artist == "아티스트A"
+    assert row.performance_date == date(2030, 6, 1)
+    assert row.source == "poster"
+
+
+# 포스터 추출(source=poster)이 먼저 배정을 채운 뒤, 크롤링 결과(source=crawl)가 같은
+# (아티스트,날짜)를 다시 확인하면 source가 crawl로 승격되는지 테스트(병합 우선순위 확인)
+@pytest.mark.asyncio
+async def test_crawl_result_lineup_upgrades_poster_source():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_CR_LINEUP_UPG_{uuid.uuid4().hex[:6]}", "", token)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={
+                    "artist_name": ["아티스트A"],
+                    "lineup": [{"artist": "아티스트A", "performance_date": "2030-06-01"}],
+                },
+                headers=_llm_headers(),
+            )
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={
+                    "artist_name": ["아티스트A"],
+                    "lineup": [{"artist": "아티스트A", "performance_date": "2030-06-01"}],
+                },
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+    assert "lineup" in res.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
+        row = result.scalar_one()
+    assert row.source == "crawl"
