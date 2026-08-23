@@ -5,12 +5,9 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
-# 페스티벌 등 여러 날짜에 걸친 공연에서 "이 아티스트가 구체적으로 어느 날 출연하는지" 매핑.
-# Concert.artist_name(날짜 구분 없는 플랫 배열)만으로는 날짜별 셋리스트 필터링이 안 돼서
-# 별도로 둠 - LLM팀 크롤링(/crawl-result)·포스터 추출(/artist-result) 웹훅의
-# lineup[].performance_date로 채워짐(app/services/lineup.py 참고). 이 테이블에 배정이 없는
-# (concert_id, date) 조합은 "모른다"는 뜻이라, 서빙 쪽(setlist.py/pre_setlist.py)이 항상
-# 전체 아티스트로 폴백함 - 값이 없다고 아무도 출연 안 한다는 뜻이 아님.
+# 페스티벌 등 여러 날짜에 걸친 공연에서 아티스트별 실제 출연일 매핑. Concert.artist_name(날짜
+# 구분 없는 플랫 배열)만으론 날짜별 셋리스트 필터링이 안 돼서 별도로 둠 - 배정 없는 조합은
+# "모른다"는 뜻이라 서빙 쪽(setlist.py/pre_setlist.py)이 전체 아티스트로 폴백함
 class ConcertLineup(Base):
     __tablename__ = "concert_lineups"
 

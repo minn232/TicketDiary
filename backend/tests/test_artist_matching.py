@@ -1,10 +1,10 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
@@ -432,6 +432,108 @@ async def test_send_posters_respects_limit():
     # 둘 중 하나만 attempted_at이 찍혀야 함(어느 쪽이 뽑히는지는 정렬 순서에 안 묶어둠)
     attempted_count = sum(1 for c in (c1, c2) if c.artist_extraction_attempted_at is not None)
     assert attempted_count == 1
+
+
+# 콜백 유실 재시도 테스트 (artist_extraction_attempted_at/attempt_count 쿨다운)
+
+async def _set_attempted(concert_id: str, attempted_at, attempt_count: int) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(artist_extraction_attempted_at=attempted_at, artist_extraction_attempt_count=attempt_count)
+        )
+        await db.commit()
+
+
+def _mock_llm_client():
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=mock_response)
+    return mock_client
+
+
+# 이 테스트 모듈이 만든 다른 콘서트들이 같은 세션 DB에 남아 있어 같이 전송 대상에 잡힐 수
+# 있으므로(파일 전체에서 DB를 공유), "아무것도 안 보냈다/딱 하나만 보냈다" 같은 전역 카운트
+# 대신 특정 concert_id가 실제로 보내진 페이로드에 포함됐는지만 확인한다
+def _sent_concert_ids(mock_client) -> set[str]:
+    ids: set[str] = set()
+    for call in mock_client.post.call_args_list:
+        for item in call.kwargs["json"]:
+            ids.add(item["concert_id"])
+    return ids
+
+
+# 쿨다운(24h) 이내에 이미 시도한 공연은 콜백이 안 왔어도 다시 대상이 되면 안 됨
+# (매 배치마다 계속 재전송하면 낭비이므로 최소 간격을 둠)
+@pytest.mark.asyncio
+async def test_send_posters_skips_within_cooldown():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RETRY_COOLDOWN_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=1), 1)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.artist_extraction_attempt_count == 1  # 안 바뀜 - 재전송 안 됐다는 뜻
+
+
+# 콜백이 유실된 것으로 보이는 경우(쿨다운 지남 + 시도 횟수 상한 미만) 재전송되고,
+# attempt_count가 증가하는지 테스트 - 이게 이번에 고친 핵심 동작
+@pytest.mark.asyncio
+async def test_send_posters_retries_after_cooldown_when_callback_lost():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RETRY_OK_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=25), 1)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id in _sent_concert_ids(mock_client)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.artist_extraction_attempt_count == 2
+
+
+# 시도 횟수가 상한(5회)에 도달하면 쿨다운이 지났어도 더 이상 재시도 대상이 아닌지 테스트
+# (콜백이 계속 유실되는 구조적으로 안 되는 공연에 무한정 GPU 자원을 쓰지 않기 위한 상한)
+@pytest.mark.asyncio
+async def test_send_posters_gives_up_after_max_attempts():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RETRY_GIVEUP_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=25), 5)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select_concert_by_id(concert_id))
+        concert = result.scalar_one()
+    assert concert.artist_extraction_attempt_count == 5  # 안 바뀜
 
 
 # artist-result의 lineup으로 concert_lineups가 source="poster"로 채워지는지 테스트

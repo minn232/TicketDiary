@@ -26,12 +26,9 @@ async def _get_concert(db: AsyncSession, concert_id: UUID) -> Concert:
     return concert
 
 
-# DB에서 예상 셋리스트 조회. explicit_date(티켓의 attended_date 등)가 있거나 하루짜리
-# 공연이면, 그 날짜에 concert_lineups 배정이 있는 경우에 한해 songs를 그 날짜 아티스트로
-# 좁혀서 반환한다(페스티벌에서 다른 날 아티스트의 예상 곡까지 섞여 보이는 걸 방지). 날짜를
-# 특정 못 하거나 배정 정보가 없거나 필터링 결과가 텅 비면 - 전부 기존처럼 전체 반환(폴백).
-# PreSetlist 자체는 concert당 1개(날짜 구분 없이 저장)라 원본 row는 안 건드리고 서빙
-# 시점에만 좁힌다 - 다른 날짜 조회에도 같은 row를 재사용해야 하기 때문.
+# DB에서 예상 셋리스트 조회. 날짜를 특정할 수 있고 그 날짜에 concert_lineups 배정이 있으면
+# songs를 그 아티스트로 좁혀서 반환(원본 row는 안 건드리고 서빙 시점에만 좁힘 - 다른 날짜
+# 조회에도 같은 row를 재사용해야 함). 날짜/배정 정보가 없으면 전체 반환(폴백).
 async def get_pre_setlist(
     db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
 ) -> PreSetlist | dict:

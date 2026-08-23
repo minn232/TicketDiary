@@ -9,7 +9,7 @@ from uuid import UUID
 import httpx
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -721,8 +721,28 @@ async def send_screenshots_to_llm() -> None:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
 
-# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청 (포스터는 안 바뀌므로 한 번만 시도 -
-# 전송 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에 재시도됨).
+# 콜백(/artist-result)이 타임아웃/522로 유실되면 attempted_at만 찍히고 영영 재시도가 안 되던
+# 구조적 갭 수정용 - 포스터 내용은 안 바뀌므로 crawl_and_save처럼 오래 재시도할 이유는 없어
+# 상한을 크롤링(24h/최대 30회)보다 훨씬 낮게 잡는다
+_ARTIST_EXTRACTION_RETRY_COOLDOWN = timedelta(hours=24)
+_MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
+
+
+# send_posters_for_artist_extraction과 scripts/send_artist_extraction_now.py(대상 카운트
+# 미리보기)가 동일한 조건을 써야 해서 공유 함수로 뺌 - 둘 중 하나만 고치고 잊어버리는 걸 방지
+def artist_extraction_target_filter(now: datetime):
+    cutoff = now - _ARTIST_EXTRACTION_RETRY_COOLDOWN
+    return or_(
+        Concert.artist_extraction_attempted_at.is_(None),
+        and_(
+            Concert.artist_extraction_attempted_at < cutoff,
+            Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+        ),
+    )
+
+
+# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 보낸 적
+# 있어도 쿨다운이 지났고 시도 횟수가 상한 미만이면 다시 대상(artist_extraction_target_filter).
 # KOPIS가 이미 채운 공연도 대상에 포함 - prfcast가 예명 대신 본명/그룹명 대신 멤버명인 경우가
 # 많아서(merge는 합집합이라 기존 값은 안 지워짐). 다만 이미 4명 이상이면(ticket.py의
 # _MULTI_ARTIST_FESTIVAL_THRESHOLD=5 코앞이라 1명만 추가돼도 SOLO->FESTIVAL 오승격 위험) 제외.
@@ -732,12 +752,14 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
         return 0
 
+    now = datetime.now(timezone.utc)
+
     async with AsyncSessionLocal() as db:
         query = select(Concert).where(
             Concert.genre.contains(["대중음악"]),  # DB에 다른 장르도 섞여 있어 명시적으로 걸러야 함
             func.cardinality(Concert.artist_name) < 4,
             Concert.poster_url.isnot(None),
-            Concert.artist_extraction_attempted_at.is_(None),
+            artist_extraction_target_filter(now),
         )
         if limit is not None:
             query = query.limit(limit)
@@ -765,11 +787,15 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         logger.error(f"LLM팀 포스터 전송 실패: {e}")
         return 0
 
-    now = datetime.now(timezone.utc)
     concert_ids = [c.id for c in concerts]
     async with AsyncSessionLocal() as db:
         await db.execute(
-            update(Concert).where(Concert.id.in_(concert_ids)).values(artist_extraction_attempted_at=now)
+            update(Concert)
+            .where(Concert.id.in_(concert_ids))
+            .values(
+                artist_extraction_attempted_at=now,
+                artist_extraction_attempt_count=Concert.artist_extraction_attempt_count + 1,
+            )
         )
         await db.commit()
 
