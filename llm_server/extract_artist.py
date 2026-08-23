@@ -11,6 +11,10 @@ KOPIS로 이미 채워진 공연은 이 함수 자체가 호출 안 됨(프롬�
         --mm-processor-kwargs '{"max_pixels": 1500000, "min_pixels": 3136}' \
         --limit-mm-per-prompt '{"image": 32}'
 
+few_shot_examples/ 폴더: 텍스트 지시만으론 안 고쳐지던 패턴 5개를 실제 포스터+정답으로 보여주는
+멀티모달 few-shot 예시. _FEW_SHOT_EXAMPLES에서 참조하고, 매 요청 앞부분에 고정으로
+붙는다 - 폴더의 이미지 파일을 지우거나 옮기면 실행이 깨지니 주의.
+
 사용:
     # URL
     python extract_artist.py "https://example.com/poster.jpg" --concert-name "9와 숫자들: 99%, Best"
@@ -35,6 +39,69 @@ from schema import LINEUP_ENTRY_SCHEMA
 MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 
 USER_PROMPT = "이 공연 포스터에서 위 규칙에 따라 출연 아티스트명을 추출해줘."
+
+FEW_SHOT_DIR = Path(__file__).parent / "few_shot_examples"
+
+# 텍스트 지시만으론 두 번 재타겟팅해도 안 고쳐지던 패턴 5개를 실제 이미지+정답으로 보여줌
+# 각 항목: (파일명, concert_name 힌트, 정답 JSON) - 정답은 전부 포스터 직접 확인으로 확정한 것.
+_FEW_SHOT_EXAMPLES: list[tuple[str, str, dict]] = [
+    (
+        # 패턴: 브랜드 로고만 있고 개별 이름이 아예 없으면 null (지어낸 placeholder 금지)
+        "s2o_korea.gif",
+        "S2O Korea (Korea Songkran Music Festival)",
+        {
+            "lineup": [{"artist": None, "performance_date": None}],
+            "event_type": "UNKNOWN",
+        },
+    ),
+    (
+        # 패턴: "+"로 이어진 줄은 공연장 정보 - 진짜 아티스트명은 포스터 다른 곳에 크게 따로 있음
+        "zutomayo.png",
+        "ZUTOMAYO INTENSE Ⅱ, 坐·ZOMBIE CRAB LABO in Seoul FC presale 추가공연",
+        {
+            "lineup": [
+                {"artist": "ZUTOMAYO", "performance_date": "2026-03-14"},
+                {"artist": "ZUTOMAYO", "performance_date": "2026-03-15"},
+            ],
+            "event_type": "SOLO",
+        },
+    ),
+    (
+        # 패턴: 시리즈 브랜드명 X 날짜별 실제 아티스트 - 티켓 스텁처럼 작게 적힌 그 회차 실제 이름을 씀
+        "wonder_weeks.jpg",
+        "원더윅스 X 연합 불사일연 [부산]",
+        {
+            "lineup": [{"artist": "연합 불사일연", "performance_date": "2026-07-08"}],
+            "event_type": "SOLO",
+        },
+    ),
+    (
+        # 패턴: 크고 화려한 테마/슬로건 문구에서 멈추지 말고 그 아래 실제 라인업까지 계속 읽기
+        "cool_and_loud.png",
+        "COOL & LOUD Rocking Sunday",
+        {
+            "lineup": [
+                {"artist": "내귀에도청장치", "performance_date": "2026-07-12"},
+                {"artist": "지프크락", "performance_date": "2026-07-12"},
+                {"artist": "소소용", "performance_date": "2026-07-12"},
+            ],
+            "event_type": "FESTIVAL",
+        },
+    ),
+    (
+        # 패턴: 사진과 함께 크게 나온 메인 아티스트를 먼저 찾고, "FEAT." 같은 작은 보조 크레딧에만
+        # 꽂혀서 메인을 놓치면 안 됨(둘 다 있으면 둘 다 포함)
+        "fumi_stecxhno.gif",
+        "KINETIC TEC Session 1: Hard Techno",
+        {
+            "lineup": [
+                {"artist": "FUMI", "performance_date": "2026-08-08"},
+                {"artist": "STECXHNO", "performance_date": "2026-08-08"},
+            ],
+            "event_type": "SOLO",
+        },
+    ),
+]
 
 
 # concert_name을 받지 않는 완전 고정 문자열로 둔다(공연마다 안 바뀜). vLLM의 prefix
@@ -127,14 +194,14 @@ def _build_system_prompt() -> str:
 - 같은 출연진이 한글명과 영문명(또는 그 외 서로 다른 표기)으로 각각 표시돼 있다고 해서
   서로 다른 두 팀으로 착각해 항목을 두 개 만들지 마세요. 최종 목록을 만들기 전에 지금까지
   나온 이름들을 서로 비교해 같은 인물/팀을 가리키는 표기가 없는지 확인하세요. 동일
-  인물/팀으로 판단되면 항목 하나로 합치고, artist에는 이미지에 실제로 나온 두 표기를
-  그대로 이어 붙여 씁니다.
+  인물/팀으로 판단되면 항목 하나로 합치되, artist에는 **두 표기를 이어 붙이지 말고 그중
+  하나만** 고르세요(라인업 목록 줄에 쓰인 표기를 우선하고, 우열을 가리기 애매하면 아무
+  거나 하나) - 두 표기를 합친 문자열은 검색/팔로우 매칭에 안 걸려서 오히려 못 쓰게 됩니다.
 - 이미지에 한자/가나/키릴 문자 등 한글도 로마자도 아닌 외국어 표기만 있고, 함께 주어진
   공연 제목에 같은 대상을 가리키는 로마자 표기가 있다면(예: 이미지엔 "名誉×伝説"만,
   제목엔 "MEIYO DENSETSU"), 이미지 표기 대신 **제목의 로마자 표기를 최종 답으로** 쓰세요
-  (즉 "名誉×伝説"이 아니라 "MEIYO DENSETSU"). 바로 위 규칙(한글명+로마자명 병기)과 달리
-  이 경우는 병기하지 않고 로마자 하나로 통일합니다 - 외국어 원어 표기보다 로마자 표기가
-  검색/매칭에 더 일관적이기 때문입니다. 제목에 대응하는 로마자 표기가 없으면(원어 표기만
+  (즉 "名誉×伝説"이 아니라 "MEIYO DENSETSU") - 외국어 원어 표기보다 로마자 표기가 검색/
+  매칭에 더 일관적이기 때문입니다. 제목에 대응하는 로마자 표기가 없으면(원어 표기만
   있고 로마자로 뭐라 하는지 알 수 있는 정보가 없으면) 억지로 로마자로 바꾸지 말고 이미지에
   실제로 적힌 원어 표기를 그대로 쓰세요 - 모르는 로마자 표기를 지어내지 마세요.
 
@@ -175,25 +242,47 @@ def image_to_data_uri(im: Image.Image) -> str:
     return f"data:image/png;base64,{data}"
 
 
+def _user_turn(concert_name: str | None, image: Image.Image) -> dict:
+    user_text = USER_PROMPT
+    if concert_name:
+        user_text = f'이 공연의 제목은 "{concert_name}"입니다.\n\n{USER_PROMPT}'
+    return {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": user_text},
+            {"type": "image_url", "image_url": {"url": image_to_data_uri(image)}},
+        ],
+    }
+
+
+# few-shot 턴을 매번 새로 만들지 않고 최초 1회만 구성해 재사용 - 이미지 재인코딩도 없고,
+# system 메시지처럼 매 요청 바이트 단위로 동일해야 prefix caching이 이 구간까지 재사용된다.
+_few_shot_messages_cache: list[dict] | None = None
+
+
+def _build_few_shot_messages() -> list[dict]:
+    global _few_shot_messages_cache
+    if _few_shot_messages_cache is None:
+        messages: list[dict] = []
+        for filename, concert_name, answer in _FEW_SHOT_EXAMPLES:
+            im = load_image(str(FEW_SHOT_DIR / filename))
+            messages.append(_user_turn(concert_name, im))
+            messages.append({"role": "assistant", "content": json.dumps(answer, ensure_ascii=False)})
+        _few_shot_messages_cache = messages
+    return _few_shot_messages_cache
+
+
 def extract_artist_info(image: str, concert_name: str | None, base_url: str, api_key: str = "EMPTY") -> dict:
     client = OpenAI(base_url=base_url, api_key=api_key)
 
     im = load_image(image)
 
-    user_text = USER_PROMPT
-    if concert_name:
-        user_text = f'이 공연의 제목은 "{concert_name}"입니다.\n\n{USER_PROMPT}'
-
-    content = [
-        {"type": "text", "text": user_text},
-        {"type": "image_url", "image_url": {"url": image_to_data_uri(im)}},
-    ]
-
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
             {"role": "system", "content": _build_system_prompt()},
-            {"role": "user", "content": content},
+            *_build_few_shot_messages(),
+            _user_turn(concert_name, im),
         ],
         temperature=0,
         max_tokens=2048,
