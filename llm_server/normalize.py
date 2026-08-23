@@ -33,6 +33,15 @@ def _to_date_string(value) -> str | None:
     return str(value)
 
 
+# 라인업 미공개 포스터에서 모델이 진짜 null 대신 문자열로 뱉는 경우.
+# 이대로 두면 "null"이라는 이름의 가짜 아티스트가 DB artist_name에 박힘
+_NULL_LITERALS = {"null", "none", "n/a", "na", "unknown", "미상"}
+
+
+def _is_null_literal(name: str) -> bool:
+    return name.strip().lower() in _NULL_LITERALS
+
+
 # lineup(우선) 또는 timetable에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
 # 반환. 블라인드 라인업(artist=None)은 자연히 걸러짐 - 순서는 처음 등장한 순서 유지
 def _extract_artist_names(raw: dict) -> list[str]:
@@ -41,7 +50,7 @@ def _extract_artist_names(raw: dict) -> list[str]:
     names: list[str] = []
     for entry in entries:
         name = entry.get("artist")
-        if name and name not in seen:
+        if name and not _is_null_literal(name) and name not in seen:
             seen.add(name)
             names.append(name)
     return names
@@ -105,6 +114,18 @@ def normalize_artist_list(raw) -> list[str]:
     if isinstance(raw, dict):
         return _extract_artist_names(raw)
     return [str(name) for name in raw]
+
+
+# extract_poster.py 결과에는 이 키가 없으므로 자연히 None이 된다. 백엔드 ArtistExtractionResult
+# 스키마와 값이 정확히 같아야 그대로 실어보낼 수 있어서, 셋 중 하나가 아니면 신호 없음(None)으로 취급
+_VALID_EVENT_TYPES = {"SOLO", "FESTIVAL", "UNKNOWN"}
+
+
+def normalize_event_type(raw) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("event_type")
+    return value if value in _VALID_EVENT_TYPES else None
 
 
 def normalize_diary_text(raw) -> str:
