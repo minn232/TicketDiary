@@ -16,6 +16,9 @@ class ArtistExtractItem(BaseModel):
     concert_id: str
     concert_name: str | None = None
     poster_url: str
+    # KOPIS에 등록된 공연장(시설)명 - extract_artist.py 원칙 2번(공연장명 오인 방지)의
+    # 근거로 프롬프트에 그대로 실림. 없으면(None) 그 근거 없이 기존처럼 판단함.
+    venue: str | None = None
 
 
 class DiaryGenerateItem(BaseModel):

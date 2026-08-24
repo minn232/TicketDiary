@@ -22,9 +22,14 @@ def analyze_crawl_screenshot(item: CrawlAnalyzeItem) -> dict:
 
 def extract_artists_from_poster(item: ArtistExtractItem) -> dict:
     """공연 포스터에서 아티스트명만 뽑는다. concert_name도 같이 넘겨서, 포스터에 이름이
-    없고 부제만 있을 때("아티스트명: 부제" 형식) 힌트로 쓸 수 있게 한다."""
+    없고 부제만 있을 때("아티스트명: 부제" 형식) 힌트로 쓸 수 있게 한다. item.venue(KOPIS
+    등록 공연장명)가 있으면 같이 넘겨서 공연장명 오인 방지 근거로 쓴다."""
     return extract_artist_info(
-        item.poster_url, item.concert_name, base_url=settings.VLLM_BASE_URL, api_key=settings.VLLM_API_KEY
+        item.poster_url,
+        item.concert_name,
+        base_url=settings.VLLM_BASE_URL,
+        api_key=settings.VLLM_API_KEY,
+        venue=item.venue,
     )
 
 
