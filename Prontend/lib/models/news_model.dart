@@ -56,6 +56,20 @@ class NewsModel {
   /// 카드 좌상단 라벨을 아티스트 이름 대신 공연 D-day로 표시하는 데 씁니다.
   final bool isFavoritedConcert;
 
+  /// 상세 화면 정보 타일용 구조화 값 — 공연 기간(예: "2026.09.04 ~ 09.06").
+  final String? periodText;
+
+  /// 상세 화면 정보 타일용 구조화 값 — 티켓팅 상태(예: "D-3"/"예매 중"/"미정").
+  final String? ticketingText;
+
+  /// 공연 종료일. 공연 기간 타일을 눌렀을 때 캘린더에서 [concertDate]~여기까지
+  /// 색칠하는 데 씁니다.
+  final DateTime? concertEndDate;
+
+  /// 티켓팅(예매 오픈) 날짜. 티켓팅 타일을 눌렀을 때 캘린더에서 이 날에
+  /// 색칠하는 데 씁니다.
+  final DateTime? ticketingDate;
+
   NewsModel({
     required this.artist,
     required this.concert,
@@ -71,6 +85,10 @@ class NewsModel {
     this.ticketingLinks,
     this.concertDate,
     this.isFavoritedConcert = false,
+    this.periodText,
+    this.ticketingText,
+    this.concertEndDate,
+    this.ticketingDate,
   });
 
   /// 카드 좌상단에 보여줄 공연 D-day 라벨. 날짜 정보가 없으면 "미정".
@@ -140,6 +158,9 @@ class NewsModel {
       venue: venue,
       ticketingLinks: ticketingLinks,
       concertDate: DateTime.tryParse(concertJson?['start_date'] as String? ?? ''),
+      periodText: period,
+      concertEndDate:
+          DateTime.tryParse(concertJson?['end_date'] as String? ?? ''),
     );
   }
 
@@ -180,6 +201,10 @@ class NewsModel {
       ticketingLinks: concert.ticketingLinks,
       concertDate: concert.startDate,
       isFavoritedConcert: true,
+      periodText: period,
+      ticketingText: dDay,
+      concertEndDate: concert.endDate,
+      ticketingDate: concert.ticketingDate,
     );
   }
 
@@ -201,6 +226,10 @@ class NewsModel {
     'ticketingLinks': ticketingLinks,
     'concertDate': concertDate?.toIso8601String(),
     'isFavoritedConcert': isFavoritedConcert,
+    'periodText': periodText,
+    'ticketingText': ticketingText,
+    'concertEndDate': concertEndDate?.toIso8601String(),
+    'ticketingDate': ticketingDate?.toIso8601String(),
   };
 
   factory NewsModel.fromCacheJson(Map<String, dynamic> json) {
@@ -222,6 +251,14 @@ class NewsModel {
           ? DateTime.tryParse(json['concertDate'] as String)
           : null,
       isFavoritedConcert: json['isFavoritedConcert'] as bool? ?? false,
+      periodText: json['periodText'] as String?,
+      ticketingText: json['ticketingText'] as String?,
+      concertEndDate: json['concertEndDate'] != null
+          ? DateTime.tryParse(json['concertEndDate'] as String)
+          : null,
+      ticketingDate: json['ticketingDate'] != null
+          ? DateTime.tryParse(json['ticketingDate'] as String)
+          : null,
     );
   }
 

@@ -57,7 +57,7 @@ void main() {
   test('박스 전체가 채워지면 정렬로 인식된다', () async {
     final detector = LiveTicketAlignmentDetector(
       buildFakeController(),
-      requiredStableFrames: 1,
+      requiredStableDuration: Duration.zero,
     );
 
     final events = <bool>[];
@@ -99,7 +99,7 @@ void main() {
     test('스텁 뜯긴 티켓 패턴($pattern)도 정렬로 인식된다', () async {
       final detector = LiveTicketAlignmentDetector(
         buildFakeController(),
-        requiredStableFrames: 1,
+        requiredStableDuration: Duration.zero,
       );
 
       final events = <bool>[];
@@ -148,7 +148,7 @@ void main() {
   test('아무것도 없으면(박스 안팎이 같은 배경) 정렬로 인식되지 않는다', () async {
     final detector = LiveTicketAlignmentDetector(
       buildFakeController(),
-      requiredStableFrames: 1,
+      requiredStableDuration: Duration.zero,
     );
 
     final events = <bool>[];

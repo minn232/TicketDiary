@@ -533,22 +533,27 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildNewsGrid(BoxConstraints constraints, List<NewsModel> items) {
-    const crossAxisCount = 2;
+    const rowCount = 2;
     const spacing = 18.0;
+    // 이 그리드를 감싸는 Padding(all: 12) 만큼, 실제로 카드가 놓일 폭은
+    // [constraints]보다 좌우 12씩(총 24) 더 좁다. 이걸 빼지 않고 계산하면
+    // 카드 2열의 실제 폭이 창보다 24 더 커져 오른쪽 카드가 잘려 보인다.
+    const outerPadding = 12.0;
+    final availableWidth = constraints.maxWidth - outerPadding * 2;
 
-    // 한 행의 높이는 기존과 동일하게 "2행이 화면에 꽉 차는" 기준으로 고정합니다
-    // (4개 이하일 때의 모양은 그대로 유지). 5개 이상 등록되면 physics가
-    // 스크롤 가능해서 아래로 스크롤해 나머지 행을 볼 수 있습니다 — 기존에는
-    // NeverScrollableScrollPhysics라 4개를 넘는 카드는 그냥 화면 밖으로
-    // 잘려 안 보였습니다.
+    // 카드를 세로가 아니라 "가로로" 넘겨봅니다(오른쪽으로 스크롤). 창 안에
+    // 2행 × 2열 = 4개가 한 화면에 온전히 보이도록, 카드 한 장의 가로폭을
+    // 실제 사용 가능한 폭의 절반으로 둡니다. 열이 많아지면 오른쪽으로
+    // 스크롤합니다.
     final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: crossAxisCount,
+      crossAxisCount: rowCount,
       crossAxisSpacing: spacing,
       mainAxisSpacing: spacing,
-      mainAxisExtent: (constraints.maxHeight - 60) / 2,
+      mainAxisExtent: (availableWidth - spacing) / 2,
     );
 
     return GridView.builder(
+      scrollDirection: Axis.horizontal,
       padding: EdgeInsets.zero,
       physics: const BouncingScrollPhysics(),
       gridDelegate: gridDelegate,
@@ -595,27 +600,69 @@ class _NewsFrame extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: _insets,
-      child: Stack(
-        fit: StackFit.expand,
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Padding(
+          padding: _insets,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // 창: 슬라이드되는 내용(창 밖으로 넘친 부분은 잘라냄).
+              ClipRRect(
+                borderRadius: BorderRadius.circular(_windowRadius),
+                child: child,
+              ),
+              // 유리 광택(내용 위, 프레임의 일부라 슬라이드해도 고정). 그 아래로
+              // 내용이 지나가서 "유리 낀 액자"처럼 보입니다.
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: _GlassGloss(radius: _windowRadius),
+                ),
+              ),
+              // 액자 안쪽 그림자 + 얇은 테두리(가장 위, 터치는 통과).
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: _InnerShadowFrame(radius: _windowRadius),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // 카드가 가로로 더 있다는 걸 알려주는 화살표. 창 밖(액자 테두리)
+        // 아래쪽 여백에 그려 내용 위를 가리지 않는다.
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: _insets.bottom,
+          child: const IgnorePointer(child: _HorizontalScrollHint()),
+        ),
+      ],
+    );
+  }
+}
+
+/// 액자 테두리 아래쪽에 그리는 "가로로 더 스크롤할 수 있어요" 화살표 힌트.
+class _HorizontalScrollHint extends StatelessWidget {
+  const _HorizontalScrollHint();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Colors.brown.withValues(alpha: 0.5);
+    return Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // 창: 슬라이드되는 내용(창 밖으로 넘친 부분은 잘라냄).
-          ClipRRect(
-            borderRadius: BorderRadius.circular(_windowRadius),
-            child: child,
-          ),
-          // 유리 광택(내용 위, 프레임의 일부라 슬라이드해도 고정). 그 아래로
-          // 내용이 지나가서 "유리 낀 액자"처럼 보입니다.
-          const Positioned.fill(
-            child: IgnorePointer(
-              child: _GlassGloss(radius: _windowRadius),
-            ),
-          ),
-          // 액자 안쪽 그림자 + 얇은 테두리(가장 위, 터치는 통과).
-          const Positioned.fill(
-            child: IgnorePointer(
-              child: _InnerShadowFrame(radius: _windowRadius),
+          Icon(Icons.chevron_left, size: context.rs(15), color: color),
+          Icon(Icons.chevron_right, size: context.rs(15), color: color),
+          SizedBox(width: context.rs(4)),
+          Text(
+            '옆으로 넘겨보세요',
+            style: TextStyle(
+              fontSize: context.sp(10),
+              fontWeight: FontWeight.w700,
+              color: color,
             ),
           ),
         ],
@@ -709,11 +756,11 @@ class _GlassGloss extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  _tint.withValues(alpha: 0.3),
-                  _tint.withValues(alpha: 0.12),
-                  _tint.withValues(alpha: 0.02),
+                  _tint.withValues(alpha: 0.13),
+                  _tint.withValues(alpha: 0.05),
+                  _tint.withValues(alpha: 0.01),
                   _tint.withValues(alpha: 0.0),
-                  _tint.withValues(alpha: 0.08),
+                  _tint.withValues(alpha: 0.035),
                 ],
                 stops: const [0.0, 0.24, 0.52, 0.8, 1.0],
               ),
@@ -728,8 +775,8 @@ class _GlassGloss extends StatelessWidget {
                 colors: [
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
-                  _tint.withValues(alpha: 0.6),
-                  _tint.withValues(alpha: 0.6),
+                  _tint.withValues(alpha: 0.24),
+                  _tint.withValues(alpha: 0.24),
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
                 ],
@@ -747,8 +794,8 @@ class _GlassGloss extends StatelessWidget {
                 colors: [
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
-                  _tint.withValues(alpha: 0.4),
-                  _tint.withValues(alpha: 0.4),
+                  _tint.withValues(alpha: 0.15),
+                  _tint.withValues(alpha: 0.15),
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
                 ],

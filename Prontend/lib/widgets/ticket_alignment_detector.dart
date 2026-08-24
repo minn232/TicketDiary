@@ -111,7 +111,7 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
 class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   LiveTicketAlignmentDetector(
     this._controller, {
-    this.requiredStableFrames = 24,
+    this.requiredStableDuration = const Duration(seconds: 2),
     this.minBrightness = 75,
     this.maxBrightness = 235,
     this.minContrast = 26,
@@ -124,10 +124,12 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
 
   final CameraController _controller;
 
-  /// 정렬 판정을 내리기까지 연속으로 조건을 만족해야 하는 프레임 수.
-  /// 넉넉하게 잡아서(약 1초), 티켓을 박스에 맞춘 채 잠시 들고 있어야만
-  /// 촬영되고 지나가는 장면에는 반응하지 않습니다.
-  final int requiredStableFrames;
+  /// 정렬 판정을 내리기까지 연속으로 조건을 만족한 채 유지돼야 하는
+  /// 시간. 프레임 수 대신 실제 경과 시간으로 재서, 기기별로 카메라
+  /// 프레임 속도(fps)가 달라도 항상 같은 길이만큼 가만히 있어야
+  /// 촬영됩니다. 티켓을 박스에 맞춘 채 이 시간만큼 들고 있어야만
+  /// 촬영되고, 지나가는 장면이나 잠깐의 흔들림에는 반응하지 않습니다.
+  final Duration requiredStableDuration;
 
   /// 티켓 종이가 정상 조명에서 갖는 밝기 하한. 어두운 책상/벽 등
   /// 티켓이 아닌 장면을 걸러냅니다.
@@ -171,12 +173,14 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     (rowStart: 0, rowEnd: 1, colStart: kTicketStubHeightRatio, colEnd: 1), // 왼쪽 열 제외
   ];
 
-  /// 후보별 밝기 기준선(EMA)과 연속 안정 프레임 수. 후보마다 독립적으로
-  /// 추적해서, 그 후보가 실제로 "티켓으로 채워진" 쪽이면 정상 수렴해
-  /// 정렬로 인정될 수 있습니다.
+  /// 후보별 밝기 기준선(EMA)과, 그 후보가 조건을 계속 만족하기 시작한
+  /// 시각(끊기면 다시 null로 리셋). 후보마다 독립적으로 추적해서, 그
+  /// 후보가 실제로 "티켓으로 채워진" 쪽이면 정상 수렴해 정렬로 인정될
+  /// 수 있습니다.
   final List<double?> _smoothBrightness =
       List<double?>.filled(_regionCandidates.length, null);
-  final List<int> _stableCounts = List<int>.filled(_regionCandidates.length, 0);
+  final List<DateTime?> _stableSince =
+      List<DateTime?>.filled(_regionCandidates.length, null);
 
   @override
   Stream<bool> get alignmentStream => _output.stream;
@@ -211,6 +215,7 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     try {
       final analysis = _analyze(image);
 
+      final now = DateTime.now();
       var anyReady = false;
       for (var i = 0; i < _regionCandidates.length; i++) {
         final pass = _evaluateRegion(
@@ -220,8 +225,12 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
           baseline: _smoothBrightness[i],
           onBaseline: (v) => _smoothBrightness[i] = v,
         );
-        _stableCounts[i] = pass ? _stableCounts[i] + 1 : 0;
-        if (_stableCounts[i] >= requiredStableFrames) anyReady = true;
+        if (!pass) {
+          _stableSince[i] = null;
+          continue;
+        }
+        final since = _stableSince[i] ??= now;
+        if (now.difference(since) >= requiredStableDuration) anyReady = true;
       }
 
       if (anyReady && !_emitted) {

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/setlist.dart';
@@ -17,24 +18,87 @@ import 'responsive_text.dart';
 bool _isNetworkUrl(String value) =>
     value.startsWith('http://') || value.startsWith('https://');
 
+/// 폴라로이드 카드 안쪽 흰 여백(실제 폴라로이드처럼 아래쪽이 더 두꺼움).
+/// 사진을 등록하기 전 잘라낼 목표 비율을 계산할 때도 동일한 값을 뺍니다
+/// ([_PhotoBoard]의 추가 탭 핸들러 참고) — 그래야 사용자가 잘라온 사진이
+/// [_PolaroidCard]의 사진 자리에 여백 없이 꽉 맞습니다.
+EdgeInsets _polaroidPadding(BuildContext context) => EdgeInsets.fromLTRB(
+      context.rs(10),
+      context.rs(10),
+      context.rs(10),
+      context.rs(28),
+    );
+
+/// 폴라로이드 필름 특유의 색감(살짝 빛바랜 대비 + 노란빛이 도는 따뜻한
+/// 색조 + 옅어진 채도)을 흉내 내는 색상 행렬. [_PolaroidCard]와 확대
+/// 보기([_buildFullPhoto]) 양쪽에 동일하게 적용해, 확대해도 "같은 사진"
+/// 처럼 보이게 합니다.
+const List<double> _polaroidFilterMatrix = <double>[
+  0.79, 0.12, 0.01, 0, 18,
+  0.04, 0.87, 0.01, 0, 8,
+  0.04, 0.12, 0.77, 0, -6,
+  0, 0, 0, 1, 0,
+];
+
+/// 사진 위젯에 [_polaroidFilterMatrix]로 색감을 입힌 뒤, 그 위에 중앙은
+/// 살짝 밝고 테두리는 살짝 어두워지는 비네팅을 겹칩니다. 비네팅은 색보정이
+/// 끝난 결과 위에 얹어야 하므로 [ColorFiltered]의 자식이 아니라 형제로 둡니다.
+/// 실제 렌더 크기는 image 쪽(사진 원본 비율)이 정하고, [Stack]이 그 크기
+/// 그대로 감싸므로 [_PolaroidVignette]는 항상 사진 전체를 정확히 덮습니다.
+Widget _withPolaroidFilter(Widget image) => Stack(
+      children: [
+        ColorFiltered(
+          colorFilter: const ColorFilter.matrix(_polaroidFilterMatrix),
+          child: image,
+        ),
+        const Positioned.fill(child: IgnorePointer(child: _PolaroidVignette())),
+      ],
+    );
+
+/// 사진 가장자리를 살짝 어둡게, 중앙을 살짝 밝게 해 조리개 비네팅 느낌을
+/// 더하는 오버레이. 상대 좌표(0~1) 그라데이션이라 사진 크기와 무관하게
+/// 항상 같은 비율로 밝기 차이가 생깁니다.
+class _PolaroidVignette extends StatelessWidget {
+  const _PolaroidVignette();
+
+  @override
+  Widget build(BuildContext context) {
+    return const DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: RadialGradient(
+          radius: 0.85,
+          colors: [
+            Color(0x26FFFFFF), // 중앙: 흰색을 살짝 섞어 밝게
+            Colors.transparent,
+            Color(0x4D000000), // 테두리: 검정을 살짝 섞어 어둡게
+          ],
+          stops: [0.0, 0.55, 1.0],
+        ),
+      ),
+    );
+  }
+}
+
 Widget _buildFullPhoto(String url) {
   const errorIcon = Icon(
     Icons.broken_image_outlined,
     size: 48,
     color: Colors.white54,
   );
-  return _isNetworkUrl(url)
-      ? Image.network(
-          url,
-          fit: BoxFit.contain,
-          webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-          errorBuilder: (context, error, stackTrace) => errorIcon,
-        )
-      : Image.file(
-          File(url),
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) => errorIcon,
-        );
+  return _withPolaroidFilter(
+    _isNetworkUrl(url)
+        ? Image.network(
+            url,
+            fit: BoxFit.contain,
+            webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+            errorBuilder: (context, error, stackTrace) => errorIcon,
+          )
+        : Image.file(
+            File(url),
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => errorIcon,
+          ),
+  );
 }
 
 /// 폴라로이드 썸네일을 눌렀을 때, 원본 사진을 화면 전체에 크게 보여줍니다.
@@ -186,8 +250,15 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     }
   }
 
-  Future<void> _addPhoto() async {
+  /// [slotAspectRatio]는 폴라로이드 사진 자리의 가로/세로 비율([_PhotoBoard]가
+  /// 실제 카드 크기에서 계산해 넘겨줌). 사용자가 갤러리에서 고른 사진을 이
+  /// 비율에 맞춰 직접 확대/이동하며 자르게 한 뒤 업로드합니다.
+  Future<void> _addPhoto(double slotAspectRatio) async {
     if (!_ensureEditable() || _uploadingPhoto) return;
+    if ((_ticketInfo?.concertPhotoUrls ?? const <String>[]).isNotEmpty) {
+      _showSnack('사진은 한 장만 첨부할 수 있어요.');
+      return;
+    }
 
     final XFile? picked = await _imagePicker.pickImage(
       source: ImageSource.gallery,
@@ -195,9 +266,27 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     );
     if (picked == null) return; // 취소
 
+    final CroppedFile? cropped = await ImageCropper().cropImage(
+      sourcePath: picked.path,
+      aspectRatio: CropAspectRatio(ratioX: slotAspectRatio, ratioY: 1),
+      compressQuality: 90,
+      uiSettings: [
+        IOSUiSettings(
+          title: '사진 편집',
+          aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+        ),
+        AndroidUiSettings(
+          toolbarTitle: '사진 편집',
+          lockAspectRatio: true,
+        ),
+      ],
+    );
+    if (cropped == null || !mounted) return; // 편집 취소
+
     setState(() => _uploadingPhoto = true);
     try {
-      final url = await _uploadService.uploadConcertPhoto(picked);
+      final url = await _uploadService.uploadConcertPhoto(XFile(cropped.path));
       final List<String> nextUrls = [
         ...(_ticketInfo?.concertPhotoUrls ?? const <String>[]),
         url,
@@ -277,22 +366,31 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
 
   @override
   Widget build(BuildContext context) {
+    final photoUrls = _ticketInfo?.concertPhotoUrls ?? const <String>[];
+
     final grid = Column(
       children: [
         Expanded(
           child: Row(
             children: [
               Expanded(
-                child: _DashedPhotoCard(
-                  icon: Icons.photo_camera_outlined,
-                  label: '사진',
-                  child: _PhotoBoard(
-                    photoUrls: _ticketInfo?.concertPhotoUrls ?? const [],
-                    uploading: _uploadingPhoto,
-                    onAddTap: _uploadingPhoto ? null : _addPhoto,
-                    onDeleteTap: _uploadingPhoto ? null : _confirmDeletePhoto,
-                  ),
-                ),
+                // 사진이 등록되면, 점선 안내 칸(_DashedPhotoCard) 대신 같은
+                // 자리를 실제 폴라로이드 사진(_PolaroidCard)이 통째로 대신한다.
+                child: photoUrls.isNotEmpty
+                    ? _PolaroidCard(
+                        url: photoUrls.first,
+                        onLongPress: _uploadingPhoto
+                            ? null
+                            : () => _confirmDeletePhoto(photoUrls.first),
+                      )
+                    : _DashedPhotoCard(
+                        icon: Icons.photo_camera_outlined,
+                        label: '사진',
+                        child: _PhotoBoard(
+                          uploading: _uploadingPhoto,
+                          onAddTap: _uploadingPhoto ? null : _addPhoto,
+                        ),
+                      ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -793,86 +891,69 @@ class _RuledPaperPainter extends CustomPainter {
   bool shouldRepaint(covariant _RuledPaperPainter oldDelegate) => false;
 }
 
-/// "사진" 카드 내용. 추가한 사진들은 다이어리 종이 위에 직접 붙인
-/// 폴라로이드처럼 보여줍니다(흰 테두리 + 위쪽 테이프 + 삐뚤빼뚤한 기울기).
-/// 카드 배경/테두리는 [_MemoryCard]가 이미 그려주므로 여기선 내용만 둡니다.
+/// "사진" 카드가 비어있을 때의 내용 — 사진이 등록되면 이 위젯 대신
+/// [_PolaroidCard]가 같은 자리를 통째로 대신합니다(호출부인
+/// [ConcertAfterPageContentsState.build] 참고).
+/// 카드 배경/테두리는 [_DashedPhotoCard]가 이미 그려주므로 여기선 내용만 둡니다.
 class _PhotoBoard extends StatelessWidget {
-  final List<String> photoUrls;
   final bool uploading;
-  final VoidCallback? onAddTap;
-  final ValueChanged<String>? onDeleteTap;
 
-  const _PhotoBoard({
-    required this.photoUrls,
-    required this.uploading,
-    required this.onAddTap,
-    required this.onDeleteTap,
-  });
+  /// 사용자가 탭한 순간, 이 칸(폴라로이드 사진 자리)의 실제 가로/세로 비율을
+  /// 계산해 넘겨줍니다 — 사진 편집(자르기) 화면의 목표 비율로 씁니다.
+  final ValueChanged<double>? onAddTap;
+
+  const _PhotoBoard({required this.uploading, required this.onAddTap});
 
   @override
   Widget build(BuildContext context) {
-    final isEmpty = photoUrls.isEmpty && !uploading;
-
-    if (isEmpty) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onAddTap,
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.add_a_photo_outlined,
-                size: 26,
-                color: Colors.black.withValues(alpha: 0.35),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '탭해서 사진을\n붙여보세요',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: context.sp(12),
-                  fontWeight: FontWeight.w700,
-                  color: Colors.black.withValues(alpha: 0.4),
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
+    if (uploading) {
+      return const Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2.5),
         ),
       );
     }
 
-    return SingleChildScrollView(
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 14,
-        children: [
-          for (var i = 0; i < photoUrls.length; i++)
-            _PolaroidThumb(
-              url: photoUrls[i],
-              // 번갈아 살짝 기울여 실제로 붙인 느낌을 냅니다.
-              angle: i.isEven ? -0.05 : 0.045,
-              onLongPress: onDeleteTap == null
-                  ? null
-                  : () => onDeleteTap!(photoUrls[i]),
-            ),
-          if (uploading)
-            const SizedBox(
-              width: 58,
-              height: 70,
-              child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final pad = _polaroidPadding(context);
+        final slotWidth =
+            (constraints.maxWidth - pad.horizontal).clamp(1.0, double.infinity);
+        final slotHeight =
+            (constraints.maxHeight - pad.vertical).clamp(1.0, double.infinity);
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onAddTap == null
+              ? null
+              : () => onAddTap!(slotWidth / slotHeight),
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.add_a_photo_outlined,
+                  size: 26,
+                  color: Colors.black.withValues(alpha: 0.35),
                 ),
-              ),
-            )
-          else
-            _AddPhotoTile(onTap: onAddTap),
-        ],
-      ),
+                const SizedBox(height: 8),
+                Text(
+                  '탭해서 사진을\n붙여보세요',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black.withValues(alpha: 0.4),
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -881,14 +962,12 @@ class _PhotoBoard extends StatelessWidget {
 class _DashedBorderPainter extends CustomPainter {
   final Color color;
   final double radius;
-  final double dashLength;
-  final double gapLength;
+  static const double dashLength = 7;
+  static const double gapLength = 5;
 
   const _DashedBorderPainter({
     required this.color,
     required this.radius,
-    this.dashLength = 7,
-    this.gapLength = 5,
   });
 
   @override
@@ -923,183 +1002,87 @@ class _DashedBorderPainter extends CustomPainter {
   }
 }
 
-/// 다이어리에 직접 붙인 폴라로이드 사진. 흰 테두리(아래쪽이 더 두꺼움) +
-/// 그림자 + 위쪽 가운데 반투명 테이프로 "붙어있는" 느낌을 냅니다.
-//
-// [백엔드 수정]
-// 사진 프레임이 정사각형 고정이라 가로/세로로 긴 사진은 억지로 잘려
-// 보이던 문제 - 실제 이미지 비율을 읽어와 프레임 크기를 그에 맞게
-// 조절(짧은 변은 고정, 긴 변만 비율만큼 늘어나되 상한 있음).
-class _PolaroidThumb extends StatefulWidget {
+/// 사진이 등록되면 점선 안내 칸([_DashedPhotoCard]) 자리를 통째로 대신하는,
+/// 실제 폴라로이드 사진처럼 보이는 흰 카드(가로/세로는 부모가 준 자리를
+/// 그대로 채움 — 곧 그 점선 칸과 같은 모양/크기). [_PhotoBoard]가 사용자가
+/// 사진을 등록하기 전에 바로 이 카드의 사진 자리 비율을 계산해 자르기
+/// 화면에 넘기므로, 여기서는 [BoxFit.cover]로 빈틈없이 채우기만 합니다.
+class _PolaroidCard extends StatelessWidget {
   final String url;
-  final double angle;
   final VoidCallback? onLongPress;
 
-  const _PolaroidThumb({
-    required this.url,
-    required this.angle,
-    this.onLongPress,
-  });
-
-  @override
-  State<_PolaroidThumb> createState() => _PolaroidThumbState();
-}
-
-class _PolaroidThumbState extends State<_PolaroidThumb> {
-  static const double _shortSide = 50;
-  static const double _maxLongSide = 88;
-
-  double? _aspectRatio; // width / height
-  ImageStream? _stream;
-  late ImageStreamListener _listener;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolveAspectRatio();
-  }
-
-  @override
-  void dispose() {
-    _stream?.removeListener(_listener);
-    super.dispose();
-  }
-
-  void _resolveAspectRatio() {
-    final provider = _isNetworkUrl(widget.url)
-        ? NetworkImage(widget.url) as ImageProvider
-        : FileImage(File(widget.url));
-    _listener = ImageStreamListener(
-      (info, _) {
-        if (!mounted) return;
-        setState(() {
-          _aspectRatio = info.image.width / info.image.height;
-        });
-      },
-      onError: (_, _) {}, // 실패하면 정사각형 기본값 유지
-    );
-    _stream = provider.resolve(const ImageConfiguration())
-      ..addListener(_listener);
-  }
-
-  Size get _frameSize {
-    final ratio = _aspectRatio;
-    if (ratio == null || ratio == 1) return const Size(_shortSide, _shortSide);
-    if (ratio > 1) {
-      // 가로로 긴 사진: 세로를 고정하고 가로만 비율만큼 늘림
-      return Size((_shortSide * ratio).clamp(_shortSide, _maxLongSide), _shortSide);
-    }
-    // 세로로 긴 사진: 가로를 고정하고 세로만 비율만큼 늘림
-    return Size(_shortSide, (_shortSide / ratio).clamp(_shortSide, _maxLongSide));
-  }
+  const _PolaroidCard({required this.url, this.onLongPress});
 
   @override
   Widget build(BuildContext context) {
-    final size = _frameSize;
-    return Transform.rotate(
-      angle: widget.angle,
-      child: GestureDetector(
-        onTap: () => _openFullPhoto(context, widget.url),
-        onLongPress: widget.onLongPress,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(4, 5, 4, 13),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.22),
-                    blurRadius: 5,
-                    offset: const Offset(1.5, 2.5),
-                  ),
-                ],
-              ),
-              child: _isNetworkUrl(widget.url)
+    const errorIcon = Icon(Icons.broken_image_outlined, size: 24, color: Colors.black26);
+
+    return GestureDetector(
+      onTap: () => _openFullPhoto(context, url),
+      onLongPress: onLongPress,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: double.infinity,
+            height: double.infinity,
+            padding: _polaroidPadding(context),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(_DashedPhotoCard._radius),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.22),
+                  blurRadius: 6,
+                  offset: const Offset(1.5, 3),
+                ),
+              ],
+            ),
+            child: _withPolaroidFilter(
+              _isNetworkUrl(url)
                   ? Image.network(
-                      widget.url,
-                      width: size.width,
-                      height: size.height,
+                      url,
                       fit: BoxFit.cover,
+                      width: double.infinity,
+                      height: double.infinity,
                       webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        width: size.width,
-                        height: size.height,
-                        color: Colors.black12,
-                        child: const Icon(Icons.broken_image_outlined, size: 18),
-                      ),
+                      errorBuilder: (context, error, stackTrace) => const Center(child: errorIcon),
                     )
                   // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
                   : Image.file(
-                      File(widget.url),
-                      width: size.width,
-                      height: size.height,
+                      File(url),
                       fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        width: size.width,
-                        height: size.height,
-                        color: Colors.black12,
-                        child: const Icon(Icons.broken_image_outlined, size: 18),
-                      ),
+                      width: double.infinity,
+                      height: double.infinity,
+                      errorBuilder: (context, error, stackTrace) => const Center(child: errorIcon),
                     ),
             ),
+          ),
 
-            // 위쪽 가운데 테이프 — 포스트잇처럼 종이에 붙여둔 느낌
-            Positioned(
-              top: -6,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Transform.rotate(
-                  angle: -0.08,
-                  child: Container(
-                    width: 30,
-                    height: 11,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.65),
-                      borderRadius: BorderRadius.circular(2),
-                      border: Border.all(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        width: 1,
-                      ),
+          // 위쪽 가운데 테이프 — 사진을 종이에 붙여둔 느낌
+          Positioned(
+            top: -context.rs(6),
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Transform.rotate(
+                angle: -0.08,
+                child: Container(
+                  width: context.rs(30),
+                  height: context.rs(11),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(2),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      width: 1,
                     ),
                   ),
                 ),
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AddPhotoTile extends StatelessWidget {
-  final VoidCallback? onTap;
-
-  const _AddPhotoTile({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: CustomPaint(
-        painter: _DashedBorderPainter(
-          color: Colors.black.withValues(alpha: 0.30),
-          radius: 4,
-          dashLength: 5,
-          gapLength: 4,
-        ),
-        child: const SizedBox(
-          width: 58,
-          height: 70,
-          child: Icon(
-            Icons.add,
-            size: 22,
-            color: Colors.black38,
           ),
-        ),
+        ],
       ),
     );
   }

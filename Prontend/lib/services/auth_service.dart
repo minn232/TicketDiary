@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api_client.dart';
@@ -92,6 +93,15 @@ class AuthService extends ChangeNotifier {
   static const _roleKey = 'auth_role';
   static const _deviceIdKey = 'auth_device_id';
 
+  /// iOS Keychain은 앱을 지웠다 다시 설치해도 항목이 그대로 남습니다
+  /// (일반 앱 데이터와 달리 삭제되지 않음). 그래서 예전에 테스트용으로
+  /// 설치했던 빌드가 남긴 access/refresh token이 "새로 설치한" 앱에서도
+  /// 그대로 읽혀서, 이미 만료/폐기된 토큰으로 계속 인증에 실패하는 문제가
+  /// 있었습니다. [SharedPreferences](앱 삭제 시 함께 지워짐)에 "이 설치본에서
+  /// 한 번이라도 실행됐는지" 표시를 남겨두고, 표시가 없으면(=재설치 이후
+  /// 첫 실행) Keychain을 통째로 비운 뒤 시작합니다.
+  static const _firstLaunchCleanupDoneKey = 'auth_first_launch_cleanup_done';
+
   final ApiClient _client = ApiClient.instance;
 
   String? _accessToken;
@@ -138,6 +148,8 @@ class AuthService extends ChangeNotifier {
     if (_loaded) return;
     _loaded = true;
 
+    await _clearKeychainOnFreshInstall();
+
     try {
       _accessToken = await _storage.read(key: _accessTokenKey);
       _refreshToken = await _storage.read(key: _refreshTokenKey);
@@ -156,8 +168,30 @@ class AuthService extends ChangeNotifier {
         }
       }
     } catch (_) {
-      // 저장소/네트워크 어느 쪽이 실패해도 로그인 안 된 상태로 계속 진행합니다.
+      // 저장소 읽기 자체가 실패했을 수 있으니, 남아있을 수 있는 값을 지우고
+      // 게스트 로그인을 한 번 더 시도해봅니다. 그래도 실패하면(오프라인 등)
+      // 로그인 안 된 상태로 계속 진행합니다.
+      try {
+        await _clearTokens();
+        await _loginAsGuest();
+      } catch (_) {
+        // 위 주석 참고: 조용히 흡수합니다.
+      }
     }
+  }
+
+  /// 재설치 이후 첫 실행이면 Keychain에 남아있는 예전 토큰/device_id를
+  /// 전부 지웁니다([_firstLaunchCleanupDoneKey] 참고). SharedPreferences
+  /// 자체를 못 쓰는 등 판단이 실패하면, 안전하게 "지우지 않음"으로 둡니다
+  /// (예전 세션이 우연히 남아있는 게, 있어야 할 로그인 자체가 막히는
+  /// 것보다는 낫습니다).
+  Future<void> _clearKeychainOnFreshInstall() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_firstLaunchCleanupDoneKey) ?? false) return;
+      await _storage.deleteAll();
+      await prefs.setBool(_firstLaunchCleanupDoneKey, true);
+    } catch (_) {}
   }
 
   Future<void> _loginAsGuest() async {
@@ -255,7 +289,21 @@ class AuthService extends ChangeNotifier {
 
   Future<String?> _performRefresh() async {
     final currentRefreshToken = _refreshToken;
-    if (currentRefreshToken == null) return null;
+    if (currentRefreshToken == null) {
+      // refresh token이 아예 없다는 건, 세션을 한 번도 발급받지 못한
+      // 상태입니다 — 보통 [ensureSession]의 최초 게스트 로그인이 앱 시작
+      // 시점의 일시적인 네트워크 문제로 조용히 실패했을 때 이렇게 됩니다.
+      // 그 실패는 한 번만 시도되고 끝이라(재시도 없음), 이후 인증이 필요한
+      // 요청마다 계속 401("인증이 필요합니다")이 나서 앱을 재시작하기
+      // 전까진 회복되지 않았습니다. 여기서 새 게스트 로그인을 한 번 더
+      // 시도해, 원래 요청이 자동으로 재시도되며 스스로 복구되게 합니다.
+      try {
+        await _loginAsGuest();
+        return _accessToken;
+      } catch (_) {
+        return null;
+      }
+    }
 
     try {
       final json = await _client.post(

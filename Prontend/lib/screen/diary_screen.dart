@@ -1435,20 +1435,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ? '등록'
         : ((info?.vendorName?.isNotEmpty ?? false) ? info!.vendorName! : '예매처');
 
+    // 뜯는 부분(스티커/라벨)을 카드 왼쪽으로, 공연 정보(포스터/D-day)를
+    // 오른쪽으로 — 바깥쪽 모서리 둥글림도 함께 뒤집는다.
     if (_usePosterTicketDesign) {
       return Row(
         children: [
           Expanded(
-            flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
-            child: _PosterTicketFace(
-              title: title,
-              info: info,
-              bigCenterText: dDayLabel,
-            ),
-          ),
-          Container(width: 1, color: Colors.grey.shade400),
-          Expanded(
-            flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
+            flex: 13,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: isRegisterReady && !_isAddTicketExpanded
@@ -1457,7 +1450,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
               child: _TicketStub(
                 label: vendorLabel,
                 labelColor: isRegisterReady ? const Color(0xFF16A34A) : null,
+                radiusOnLeft: true,
               ),
+            ),
+          ),
+          Container(width: 1, color: Colors.grey.shade400),
+          Expanded(
+            flex: 27,
+            child: _PosterTicketFace(
+              title: title,
+              info: info,
+              bigCenterText: dDayLabel,
+              radiusOnRight: true,
             ),
           ),
         ],
@@ -1466,11 +1470,42 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return Row(
       children: [
         Expanded(
-          flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
+          flex: 13,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: isRegisterReady && !_isAddTicketExpanded
+                ? () => _startCameraScan()
+                : null,
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
+              ),
+              child: Center(
+                child: Text(
+                  vendorLabel,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
+                    color: isRegisterReady
+                        ? const Color(0xFF16A34A)
+                        : Colors.black54,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Container(width: 1, color: Colors.grey.shade400),
+        Expanded(
+          flex: 27,
           child: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
+              borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
             ),
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -1498,39 +1533,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 ),
                 const Spacer(),
               ],
-            ),
-          ),
-        ),
-        Container(width: 1, color: Colors.grey.shade400),
-        Expanded(
-          flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: isRegisterReady && !_isAddTicketExpanded
-                ? () => _startCameraScan()
-                : null,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.horizontal(
-                  right: Radius.circular(8),
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  vendorLabel,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    color: isRegisterReady
-                        ? const Color(0xFF16A34A)
-                        : Colors.black54,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
             ),
           ),
         ),
@@ -1649,17 +1651,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Widget _buildTicketBeforeConcert({required String title, TicketInfo? info}) {
+    // "입장 티켓" 라벨을 카드 왼쪽으로 옮기고, 공연 정보(포스터/제목)를
+    // 오른쪽으로 옮김 — 바깥쪽 모서리 둥글림도 함께 뒤집는다.
     if (_usePosterTicketDesign) {
       return Row(
         children: [
-          Expanded(
-            flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
-            child: _PosterTicketFace(title: title, info: info),
+          const Expanded(
+            flex: 13,
+            child: _TicketStub(label: '입장 티켓', radiusOnLeft: true),
           ),
           Container(width: 1, color: Colors.grey.shade400),
-          const Expanded(
-            flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
-            child: _TicketStub(label: '입장 티켓'),
+          Expanded(
+            flex: 27,
+            child: _PosterTicketFace(title: title, info: info, radiusOnRight: true),
           ),
         ],
       );
@@ -1667,11 +1671,32 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return Row(
       children: [
         Expanded(
-          flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
+          flex: 13,
           child: Container(
             decoration: const BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
+            ),
+            child: Center(
+              child: Text(
+                '입장 티켓',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: context.sp(12),
+                  fontWeight: FontWeight.w800,
+                  color: Colors.black.withValues(alpha: 0.55),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Container(width: 1, color: Colors.grey.shade400),
+        Expanded(
+          flex: 27,
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
             ),
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -1700,27 +1725,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
             ),
           ),
         ),
-        Container(width: 1, color: Colors.grey.shade400),
-        Expanded(
-          flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
-            ),
-            child: Center(
-              child: Text(
-                '입장 티켓',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: context.sp(12),
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black.withValues(alpha: 0.55),
-                ),
-              ),
-            ),
-          ),
-        ),
       ],
     );
   }
@@ -1736,70 +1740,26 @@ class _DiaryScreenState extends State<DiaryScreen> {
     VoidCallback? onTorn,
     ValueChanged<TicketInfo>? onInfoChanged,
   }) {
+    // 뜯는 부분(관람 완료 라벨/뜯긴 뒤 "공연전" 바로가기)을 카드 왼쪽으로,
+    // 공연 정보(포스터/제목)를 오른쪽으로 — 바깥쪽 모서리 둥글림도 함께
+    // 뒤집는다.
     return Row(
       children: [
         Expanded(
-          flex: 27, // 왼쪽 67.5%(=기존 75%에서, 왼쪽 폭의 10%만큼 절취선을 왼쪽으로 옮김)
-          child: PressableScale(
-            onTap: _isAddTicketExpanded
-                ? null
-                : () async {
-                    // "공연 전" 티켓과 동일한 로직: 일반 push 대신, 눌린
-                    // 티켓 위치(Rect)에서 자연스럽게 확장되는 오버레이로
-                    // 상세를 보여줍니다.
-                    final startRect = _globalRectOf(posterOverlayKey);
-                    if (startRect == null) return;
-
-                    // [백엔드 수정]
-                    // 오버레이가 떠있는 동안 리스트의 진짜 포스터만 숨겨서
-                    // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함(오른쪽
-                    // 뜯긴 조각은 이 오버레이랑 무관하니 posterOverlayKey로만 구분).
-                    setState(() => _overlayHiddenRegionKey = posterOverlayKey);
-                    await ConcertAfterOverlay.show(
-                      context,
-                      startRect: startRect,
-                      collapsedTicket: _buildAfterConcertPosterFace(
-                        title: title,
-                        info: info,
-                      ),
-                      concertTitle: title,
-                      ticketInfo: info,
-                      onTicketInfoChanged: onInfoChanged,
-                      // [백엔드 수정]
-                      // 이 리스트에서 쓰이는 배율을 그대로 넘김.
-                      frameScale:
-                          DiaryFrameScale.maybeOf(context) ??
-                          diaryScaleFromMediaQuery(context),
-                    );
-                    if (mounted) setState(() => _overlayHiddenRegionKey = null);
-                  },
-            pressScale: 0.985,
-            tapScale: 1.03,
-            child: _hideWhileOverlayOpen(
-              regionKey: posterOverlayKey,
-              child: KeyedSubtree(
-                key: posterOverlayKey,
-                child: _buildAfterConcertPosterFace(title: title, info: info),
-              ),
-            ),
-          ),
-        ),
-        const _DashedVerticalDivider(),
-        Expanded(
-          flex: 13, // 오른쪽(뜯는 부분) 32.5%로 확대(기존 25% + 절취선 이동분 7.5%)
+          flex: 13,
           child: EntryTicketTearPiece(
             enabled: !_isAddTicketExpanded,
             vibrate: vibrate,
             initiallyRevealed: initiallyRevealed,
             onTorn: onTorn,
-            // 뜯기 전: 다른 티켓 오른쪽 칸과 동일한 디자인 + "관람 완료" 라벨
+            // 뜯기 전: 다른 티켓 왼쪽 칸과 동일한 디자인 + "관람 완료" 라벨
             front: _usePosterTicketDesign
-                ? const _TicketStub(label: '관람 완료')
+                ? const _TicketStub(label: '관람 완료', radiusOnLeft: true)
                 : DecoratedBox(
                     decoration: const BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.horizontal(
-                        right: Radius.circular(8),
+                        left: Radius.circular(8),
                       ),
                     ),
                     child: Center(
@@ -1823,7 +1783,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   decoration: const BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.horizontal(
-                      right: Radius.circular(8),
+                      left: Radius.circular(8),
                     ),
                   ),
                   child: _concertBeforeShortcutWidget(dark: true),
@@ -1854,23 +1814,78 @@ class _DiaryScreenState extends State<DiaryScreen> {
             },
           ),
         ),
+        const _DashedVerticalDivider(),
+        Expanded(
+          flex: 27,
+          child: PressableScale(
+            onTap: _isAddTicketExpanded
+                ? null
+                : () async {
+                    // "공연 전" 티켓과 동일한 로직: 일반 push 대신, 눌린
+                    // 티켓 위치(Rect)에서 자연스럽게 확장되는 오버레이로
+                    // 상세를 보여줍니다.
+                    final startRect = _globalRectOf(posterOverlayKey);
+                    if (startRect == null) return;
+
+                    // [백엔드 수정]
+                    // 오버레이가 떠있는 동안 리스트의 진짜 포스터만 숨겨서
+                    // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함(왼쪽
+                    // 뜯긴 조각은 이 오버레이랑 무관하니 posterOverlayKey로만 구분).
+                    setState(() => _overlayHiddenRegionKey = posterOverlayKey);
+                    await ConcertAfterOverlay.show(
+                      context,
+                      startRect: startRect,
+                      collapsedTicket: _buildAfterConcertPosterFace(
+                        title: title,
+                        info: info,
+                        radiusOnRight: true,
+                      ),
+                      concertTitle: title,
+                      ticketInfo: info,
+                      onTicketInfoChanged: onInfoChanged,
+                      // [백엔드 수정]
+                      // 이 리스트에서 쓰이는 배율을 그대로 넘김.
+                      frameScale:
+                          DiaryFrameScale.maybeOf(context) ??
+                          diaryScaleFromMediaQuery(context),
+                    );
+                    if (mounted) setState(() => _overlayHiddenRegionKey = null);
+                  },
+            pressScale: 0.985,
+            tapScale: 1.03,
+            child: _hideWhileOverlayOpen(
+              regionKey: posterOverlayKey,
+              child: KeyedSubtree(
+                key: posterOverlayKey,
+                child: _buildAfterConcertPosterFace(
+                  title: title,
+                  info: info,
+                  radiusOnRight: true,
+                ),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  /// [_buildTicketAfterConcert]의 왼쪽(포스터) 영역 디자인. 정지 상태 UI와
+  /// [_buildTicketAfterConcert]의 오른쪽(포스터) 영역 디자인. 정지 상태 UI와
   /// [ConcertAfterOverlay]의 collapsedTicket이 같은 모양을 보여줘야
   /// 자연스럽게 이어지므로 별도 위젯으로 뽑아 양쪽에서 재사용합니다.
   Widget _buildAfterConcertPosterFace({
     required String title,
     TicketInfo? info,
+    bool radiusOnRight = false,
   }) {
     return _usePosterTicketDesign
-        ? _PosterTicketFace(title: title, info: info)
+        ? _PosterTicketFace(title: title, info: info, radiusOnRight: radiusOnRight)
         : Container(
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.horizontal(left: Radius.circular(8)),
+              borderRadius: radiusOnRight
+                  ? const BorderRadius.horizontal(right: Radius.circular(8))
+                  : const BorderRadius.horizontal(left: Radius.circular(8)),
             ),
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -1993,11 +2008,22 @@ List<Color> _posterFallbackGradient(String seedText) {
 /// [bigCenterText]를 주면(배송 전 티켓의 D-day) 공연명 대신 가운데 큰 텍스트
 /// 레이아웃으로 바뀝니다.
 class _PosterTicketFace extends StatelessWidget {
-  const _PosterTicketFace({required this.title, this.info, this.bigCenterText});
+  const _PosterTicketFace({
+    required this.title,
+    this.info,
+    this.bigCenterText,
+    this.radiusOnRight = false,
+  });
 
   final String title;
   final TicketInfo? info;
   final String? bigCenterText;
+
+  /// 이 포스터 면이 카드의 오른쪽 끝에 놓일 때(예: 입장 티켓 라벨을 왼쪽으로
+  /// 옮겨서 포스터가 오른쪽으로 밀린 경우) true로 줘서 바깥쪽 모서리
+  /// (오른쪽)를 둥글게 한다. 기본값(false)은 기존처럼 왼쪽 모서리를
+  /// 둥글게 한다.
+  final bool radiusOnRight;
 
   static const List<Shadow> _textShadows = [
     Shadow(color: Colors.black45, blurRadius: 4),
@@ -2008,7 +2034,9 @@ class _PosterTicketFace extends StatelessWidget {
     final posterUrl = info?.posterImageUrl;
 
     return ClipRRect(
-      borderRadius: const BorderRadius.horizontal(left: Radius.circular(8)),
+      borderRadius: radiusOnRight
+          ? const BorderRadius.horizontal(right: Radius.circular(8))
+          : const BorderRadius.horizontal(left: Radius.circular(8)),
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -2175,17 +2203,28 @@ class _PosterTicketFace extends StatelessWidget {
 
 /// 티켓 오른쪽(반권) 영역: 흰 배경에 라벨만 가운데 표시합니다.
 class _TicketStub extends StatelessWidget {
-  const _TicketStub({required this.label, this.labelColor});
+  const _TicketStub({
+    required this.label,
+    this.labelColor,
+    this.radiusOnLeft = false,
+  });
 
   final String label;
   final Color? labelColor;
 
+  /// 이 조각이 카드의 왼쪽 끝에 놓일 때(예: 입장 티켓 라벨을 왼쪽으로 옮긴
+  /// 경우) true로 줘서 바깥쪽 모서리(왼쪽)를 둥글게 한다. 기본값(false)은
+  /// 기존처럼 오른쪽 모서리를 둥글게 한다.
+  final bool radiusOnLeft;
+
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
+        borderRadius: radiusOnLeft
+            ? const BorderRadius.horizontal(left: Radius.circular(8))
+            : const BorderRadius.horizontal(right: Radius.circular(8)),
       ),
       child: Center(
         child: Padding(

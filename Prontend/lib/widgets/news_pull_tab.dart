@@ -159,7 +159,7 @@ class _PullTabPiece extends StatelessWidget {
                 clipper: _HeartWipeClipper(heartWipe.value),
                 child: child,
               ),
-              child: Icon(Icons.favorite, size: context.rs(30), color: _heartColor),
+              child: Icon(Icons.search, size: context.rs(30), color: _heartColor),
             ),
             Icon(
               pointLeft ? Icons.chevron_left : Icons.chevron_right,
