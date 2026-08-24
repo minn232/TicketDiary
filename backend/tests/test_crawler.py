@@ -28,7 +28,10 @@ def mock_concert():
 
 
 def _make_pw_mock(
-    screenshot: bytes, link_href: str | None = None, body_text: str = "", img_srcs: list[str] | None = None
+    screenshot: bytes,
+    link_href: str | None = None,
+    body_text: str = "정상적으로 로딩된 공연 상세 페이지 콘텐츠입니다",
+    img_srcs: list[str] | None = None,
 ):
     mock_link = None
     if link_href:
@@ -80,10 +83,13 @@ class _FakeExpectPageCM:
 
 # 인터파크 mock: 검색결과 카드 클릭 -> 새 탭(context.expect_page)으로 상세 페이지가 열리는 흐름 지원
 def _make_interpark_pw_mock(screenshot: bytes, card_count: int = 0, detail_screenshot: bytes | None = None):
+    body_text = "정상적으로 로딩된 공연 상세 페이지 콘텐츠입니다"
+
     mock_detail_page = AsyncMock()
     mock_detail_page.wait_for_load_state = AsyncMock()
     mock_detail_page.wait_for_timeout = AsyncMock()
     mock_detail_page.screenshot = AsyncMock(return_value=detail_screenshot or screenshot)
+    mock_detail_page.inner_text = AsyncMock(return_value=body_text)
 
     mock_locator = AsyncMock()
     mock_locator.count = AsyncMock(return_value=card_count)
@@ -96,6 +102,7 @@ def _make_interpark_pw_mock(screenshot: bytes, card_count: int = 0, detail_scree
     mock_page = AsyncMock()
     mock_page.goto = AsyncMock()
     mock_page.wait_for_timeout = AsyncMock()
+    mock_page.inner_text = AsyncMock(return_value=body_text)
     mock_page.screenshot = AsyncMock(return_value=screenshot)
     mock_page.locator = MagicMock(return_value=mock_locator)
     mock_page.context = mock_browser_context
@@ -168,7 +175,7 @@ async def test_crawl_interpark_returns_none_on_error(mock_concert):
 @pytest.mark.asyncio
 async def test_crawl_interpark_direct_url_returns_screenshot(mock_concert):
     expected = b"interpark-direct-png"
-    pw_mock = _make_pw_mock(expected, body_text="R석 110,000원 예매하기")
+    pw_mock = _make_pw_mock(expected, body_text="공연 상세 정보: R석 110,000원, 예매하기 버튼 활성화됨")
     with patch("app.services.crawler.async_playwright", return_value=pw_mock):
         result = await crawl_interpark(mock_concert, direct_url="https://tickets.interpark.com/goods/12345")
     assert result == expected
@@ -316,7 +323,7 @@ async def test_crawl_interpark_direct_url_expands_nol_yanolja_show_more(mock_con
     mock_page = AsyncMock()
     mock_page.goto = AsyncMock()
     mock_page.wait_for_timeout = AsyncMock()
-    mock_page.inner_text = AsyncMock(return_value="정상 상세 페이지")
+    mock_page.inner_text = AsyncMock(return_value="정상적으로 로딩된 공연 상세 페이지 콘텐츠입니다")
     mock_page.locator = MagicMock(return_value=mock_show_more)
     mock_page.screenshot = AsyncMock(return_value=expected)
 
@@ -383,6 +390,28 @@ async def test_crawl_yes24_direct_url_unavailable_returns_none(mock_concert):
     assert result is None
 
 
+# 봇 차단 페이지 감지 테스트 (실측: YES24가 한 달 내내 아래 문구의 차단 페이지만 캡처됨)
+@pytest.mark.asyncio
+async def test_crawl_yes24_returns_none_on_blocked_page(mock_concert):
+    body_text = (
+        "비정상적인 접근으로 일시적으로 서비스 접속이 제한 되었습니다.\n"
+        "Restricted access to service. your access has been restricted due to policy violations. Code: 72"
+    )
+    pw_mock = _make_pw_mock(b"blocked-png", body_text=body_text)
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_yes24(mock_concert, direct_url="https://ticket.yes24.com/Perf/1")
+    assert result is None
+
+
+# 빈 페이지 감지 테스트 (실측: 멜론에서 5KB 완전 흰 화면만 반복 캡처됨)
+@pytest.mark.asyncio
+async def test_crawl_melon_returns_none_on_blank_page(mock_concert):
+    pw_mock = _make_melon_pw_mock(b"blank-png", body_text="")
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_melon(mock_concert, direct_url="https://ticket.melon.com/performance/index.htm?prodId=1")
+    assert result is None
+
+
 # NOL 티켓(인터파크 리브랜딩) 별칭 테스트
 
 # "NOL ticket"/"NOL" 표기가 INTERPARK 크롤러로 정규화되는지 확인
@@ -400,6 +429,110 @@ def test_pick_crawl_target_nol_prefers_direct_interpark_link():
     )
     assert site_key == "INTERPARK"
     assert direct_url == "https://tickets.interpark.com/goods/12345"
+
+
+# _pick_crawl_candidates / _crawl_first_success 테스트 (한 사이트가 계속 차단당해도 다음
+# 우선순위 사이트로 넘어갈 수 있게 하는 폴백 로직 - YES24 한 달째 100% 차단 대응)
+
+# 등록된 링크가 있는 우선순위 사이트를 전부 후보로, _PREFERRED_SITES 순서 그대로 반환하는지 확인
+def test_pick_crawl_candidates_returns_all_preferred_sites_in_order():
+    from app.services.crawler import _pick_crawl_candidates
+
+    candidates = _pick_crawl_candidates(
+        None,
+        {
+            "MELON": "https://ticket.melon.com/performance/index.htm?prodId=1",
+            "YES24": "https://ticket.yes24.com/Perf/1",
+            "INTERPARK": "https://tickets.interpark.com/goods/1",
+        },
+    )
+    assert [site for site, _ in candidates] == ["YES24", "INTERPARK", "MELON"]
+
+
+# 우선순위 사이트 링크가 하나도 없어도 명시적으로 전달된 ticketing_site는 마지막 후보로 포함
+def test_pick_crawl_candidates_appends_ticketing_site_as_fallback():
+    from app.services.crawler import _pick_crawl_candidates
+
+    candidates = _pick_crawl_candidates("TICKETLINK", None)
+    assert candidates == []  # TICKETLINK는 _UNSUPPORTED_SITES라 후보에서 제외됨
+
+    candidates = _pick_crawl_candidates("MELON", None)
+    assert candidates == [("MELON", None)]
+
+
+# 1순위 후보가 실패(None 반환)해도 다음 후보로 넘어가 성공하면 그 결과를 반환하는지 확인
+@pytest.mark.asyncio
+async def test_crawl_first_success_falls_back_to_next_candidate(mock_concert):
+    from app.services.crawler import _crawl_first_success
+
+    blocked_crawler = AsyncMock(return_value=None)
+    working_crawler = AsyncMock(return_value=b"interpark-bytes")
+
+    candidates = [("YES24", "https://ticket.yes24.com/Perf/1"), ("INTERPARK", "https://tickets.interpark.com/goods/1")]
+    with patch.dict(
+        "app.services.crawler._CRAWLERS", {"YES24": blocked_crawler, "INTERPARK": working_crawler}
+    ):
+        site_key, result = await _crawl_first_success(mock_concert, candidates)
+
+    assert site_key == "INTERPARK"
+    assert result == b"interpark-bytes"
+    blocked_crawler.assert_awaited_once()
+    working_crawler.assert_awaited_once()
+
+
+# 모든 후보가 실패하면 (None, None) 반환
+@pytest.mark.asyncio
+async def test_crawl_first_success_all_fail_returns_none(mock_concert):
+    from app.services.crawler import _crawl_first_success
+
+    candidates = [("YES24", "https://ticket.yes24.com/Perf/1"), ("MELON", "https://ticket.melon.com/1")]
+    with patch.dict(
+        "app.services.crawler._CRAWLERS",
+        {"YES24": AsyncMock(return_value=None), "MELON": AsyncMock(return_value=None)},
+    ):
+        site_key, result = await _crawl_first_success(mock_concert, candidates)
+
+    assert (site_key, result) == (None, None)
+
+
+# crawl_and_save 통합 테스트: YES24가 차단(None)이어도 INTERPARK 후보로 자동 폴백해 저장되는지 확인
+@pytest.mark.asyncio
+async def test_crawl_and_save_falls_back_to_next_site_when_first_blocked():
+    concert_id = uuid.uuid4()
+    fake_url = "https://s3.example.com/crawls/screenshot.png"
+
+    mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
+    mock_concert.id = concert_id
+    mock_concert.name = "공연명"
+    mock_concert.ticketing_links = {
+        "YES24": "https://ticket.yes24.com/Perf/1",
+        "INTERPARK": "https://tickets.interpark.com/goods/1",
+    }
+    mock_concert.crawl_screenshot_url = None
+    mock_concert.ticketing_date = None
+    mock_concert.end_date = None
+    mock_concert.crawl_attempted_at = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.commit = AsyncMock()
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    yes24_crawler = AsyncMock(return_value=None)  # 봇 차단으로 실패
+    interpark_crawler = AsyncMock(return_value=b"interpark-bytes")
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch.dict("app.services.crawler._CRAWLERS", {"YES24": yes24_crawler, "INTERPARK": interpark_crawler}),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+    ):
+        await crawl_and_save(concert_id)
+
+    yes24_crawler.assert_awaited_once()
+    interpark_crawler.assert_awaited_once()
+    assert mock_concert.crawl_screenshot_url == fake_url
 
 
 # _make_page 테스트
@@ -798,6 +931,7 @@ def _make_melon_pw_mock(
     current_url: str = "https://ticket.melon.com/search",
     link_href: str | None = None,
     img_srcs: list[str] | None = None,
+    body_text: str = "정상적으로 로딩된 공연 상세 페이지 콘텐츠입니다",
 ):
     """멜론 mock: page.url 속성 지원 포함"""
     mock_link = None
@@ -810,7 +944,7 @@ def _make_melon_pw_mock(
     mock_page.wait_for_timeout = AsyncMock()
     mock_page.query_selector = AsyncMock(return_value=mock_link)
     mock_page.screenshot = AsyncMock(return_value=screenshot)
-    mock_page.inner_text = AsyncMock(return_value="")
+    mock_page.inner_text = AsyncMock(return_value=body_text)
     mock_page.eval_on_selector_all = AsyncMock(return_value=img_srcs or [])
     type(mock_page).url = current_url
 
@@ -1128,7 +1262,7 @@ def test_hash_lineup_text_ignores_rotating_learn_more_line():
 async def test_crawl_interpark_capture_lineup_snapshot_returns_tuple(mock_concert):
     expected_screenshot = b"interpark-direct-png"
     pw_mock = _make_pw_mock(
-        expected_screenshot, body_text="라인업 텍스트", img_srcs=["https://img.example.com/poster.jpg"]
+        expected_screenshot, body_text="라인업 텍스트 - 아티스트A, 아티스트B 출연 예정입니다", img_srcs=["https://img.example.com/poster.jpg"]
     )
     with patch("app.services.crawler.async_playwright", return_value=pw_mock):
         result = await crawl_interpark(
@@ -1144,7 +1278,7 @@ async def test_crawl_interpark_capture_lineup_snapshot_returns_tuple(mock_concer
 async def test_crawl_yes24_capture_lineup_snapshot_returns_tuple(mock_concert):
     expected_screenshot = b"yes24-png"
     pw_mock = _make_pw_mock(
-        expected_screenshot, body_text="라인업 텍스트", img_srcs=["https://img.example.com/poster.jpg"]
+        expected_screenshot, body_text="라인업 텍스트 - 아티스트A, 아티스트B 출연 예정입니다", img_srcs=["https://img.example.com/poster.jpg"]
     )
     with patch("app.services.crawler.async_playwright", return_value=pw_mock):
         result = await crawl_yes24(mock_concert, capture_lineup_snapshot=True)
@@ -1361,6 +1495,30 @@ async def test_check_festival_lineup_skips_when_concert_ended():
         await _check_festival_lineup(concert_id)
 
     mock_crawler.assert_not_called()
+
+
+# _check_festival_lineup_limited 테스트
+
+# 개별 크롤이 타임아웃을 넘겨도 예외가 밖으로 안 새고, semaphore도 정상 반환되는지 테스트
+# (gather() 전체가 하루 넘게 안 끝나던 실제 장애 대응)
+@pytest.mark.asyncio
+async def test_check_festival_lineup_limited_timeout_does_not_propagate():
+    from app.services.crawler import _check_festival_lineup_limited
+
+    concert_id = uuid.uuid4()
+
+    async def _hang(_concert_id):
+        await asyncio.sleep(10)
+
+    with (
+        patch("app.services.crawler._check_festival_lineup", new=_hang),
+        patch("app.services.crawler._FESTIVAL_LINEUP_CHECK_TIMEOUT", 0.05),
+    ):
+        semaphore = asyncio.Semaphore(1)
+        await _check_festival_lineup_limited(semaphore, concert_id)  # 예외 없이 반환돼야 함
+
+    # 타임아웃 후에도 semaphore가 반환돼 다음 작업이 즉시 진행 가능한지 확인
+    assert semaphore.locked() is False
 
 
 # retry_festival_lineup_checks 테스트
