@@ -770,8 +770,10 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         logger.info("아티스트 추출 대상 공연 없음")
         return 0
 
+    # venue는 KOPIS 동기화 시점에 이미 채워져 있어(fcltynm) 별도 API 호출 없이 그대로 실어
+    # 보냄 - LLM 쪽이 공연장명을 아티스트로 잘못 뽑는 걸 방지하는 근거로 씀
     payload = [
-        {"concert_id": str(c.id), "concert_name": c.name, "poster_url": c.poster_url}
+        {"concert_id": str(c.id), "concert_name": c.name, "poster_url": c.poster_url, "venue": c.venue}
         for c in concerts
     ]
 
