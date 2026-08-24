@@ -3,14 +3,15 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// "공연 후" 티켓의 오른쪽 "입장 티켓" 조각에 쓰는 상호작용.
+/// "공연 후" 티켓의 왼쪽 "입장 티켓" 조각에 쓰는 상호작용.
 ///
-/// - 뜯기 전에는 [front](다른 티켓 오른쪽 칸과 같은 평범한 디자인)가 보이며,
+/// - 뜯기 전에는 [front](다른 티켓 왼쪽 칸과 같은 평범한 디자인)가 보이며,
 ///   "뜯을 수 있다"는 걸 알려주기 위해 누르지 않는 동안은 항상 자동으로 부들부들
 ///   떨리는(진동) 효과가 반복됩니다. 누르고 있는 동안에는 진동이 멈추고,
 ///   손을 떼면 다시 진동합니다.
-/// - 누른 채로 오른쪽/아래쪽으로 끌면, [front]가 왼쪽 아래 모서리를 고정한 채
-///   시계방향으로 최대 [_maxTiltRadians](20도)까지 돌아갑니다.
+/// - 누른 채로 왼쪽/아래쪽으로 끌면, [front]가 오른쪽 아래 모서리(=나머지
+///   티켓과 이어진 쪽)를 고정한 채 반시계방향으로 최대 [_maxTiltRadians]
+///   (20도)까지 돌아갑니다.
 /// - 20도에 도달하는 순간 찢어지며, 그때부터는 손의 움직임을 그대로 따라
 ///   이동합니다(손에 종속). 손을 떼면 그 자리에서 서서히 사라지며 [onTorn]이
 ///   호출됩니다. 20도에 도달하기 전에 손을 떼면 원래 각도(0도)로 돌아갑니다.
@@ -62,17 +63,17 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
   /// 뜯기 전, 누르지 않고 있는 동안 반복 재생되는 "떨림" 애니메이션.
   late final AnimationController _trembleController;
 
-  /// 오른쪽으로 끄는 만큼 0(회전 없음)~1(20도 회전)로 움직이는 기울기 진행도.
+  /// 왼쪽으로 끄는 만큼 0(회전 없음)~1(20도 회전)로 움직이는 기울기 진행도.
   /// 드래그 중에는 직접 값을 설정하고, 손을 뗀 뒤에는 이 컨트롤러로 애니메이션합니다.
   late final AnimationController _tiltController;
 
   /// 손을 떼서 그 자리에서 서서히 사라지는 1회성 애니메이션.
   late final AnimationController _fadeController;
 
-  /// 오른쪽으로 끌어야 20도까지 회전하는 데 필요한 거리(px).
+  /// 왼쪽으로 끌어야 20도까지 회전하는 데 필요한 거리(px).
   static const double _tiltDragDistance = 70.0;
 
-  /// 왼쪽 아래를 고정한 채 돌아가는 최대 각도(20도, 라디안).
+  /// 오른쪽 아래를 고정한 채 돌아가는 최대 각도(20도, 라디안).
   static const double _maxTiltRadians = 20 * math.pi / 180;
 
   /// 20도에 도달해서 찢어진 뒤, 손의 움직임을 그대로 따라가는 상태.
@@ -157,8 +158,8 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
       return;
     }
 
-    // 오른쪽(+dx)뿐 아니라 아래쪽(+dy)으로 끄는 것도 찢는 진행도에 더합니다.
-    final tearDelta = details.delta.dx + details.delta.dy;
+    // 왼쪽(-dx)뿐 아니라 아래쪽(+dy)으로 끄는 것도 찢는 진행도에 더합니다.
+    final tearDelta = -details.delta.dx + details.delta.dy;
     final next = (_tiltController.value + tearDelta / _tiltDragDistance).clamp(
       0.0,
       1.0,
@@ -240,6 +241,12 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
               onPanUpdate: widget.enabled ? _onPanUpdate : null,
               onPanEnd: widget.enabled ? _onPanEnd : null,
               onPanCancel: widget.enabled ? _onPanCancel : null,
+              // 이 조각은 보통 "티켓을 꾹 눌러 삭제" 제스처를 쓰는 티켓 카드
+              // 안에 놓입니다. 아무 동작도 하지 않는 onLongPress를 여기 두면,
+              // 같은 지점을 오래 누르고 있을 때 제스처 아레나에서 이 조각의
+              // 인식기가 먼저 이겨 바깥(삭제) 롱프레스를 막아줍니다 — 그래서
+              // 뜯으려고 꾹 누르고 있는 도중에는 삭제 확인 창이 뜨지 않습니다.
+              onLongPress: widget.enabled ? () {} : null,
               child: AnimatedBuilder(
                 animation: Listenable.merge([
                   _trembleController,
@@ -255,8 +262,8 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
                       child: Transform.translate(
                         offset: _pointerOffset,
                         child: Transform.rotate(
-                          angle: _maxTiltRadians,
-                          alignment: Alignment.bottomLeft,
+                          angle: -_maxTiltRadians,
+                          alignment: Alignment.bottomRight,
                           child: child,
                         ),
                       ),
@@ -268,8 +275,8 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
                     return Transform.translate(
                       offset: _pointerOffset,
                       child: Transform.rotate(
-                        angle: _maxTiltRadians,
-                        alignment: Alignment.bottomLeft,
+                        angle: -_maxTiltRadians,
+                        alignment: Alignment.bottomRight,
                         child: child,
                       ),
                     );
@@ -299,8 +306,8 @@ class _EntryTicketTearPieceState extends State<EntryTicketTearPiece>
                   return Transform.translate(
                     offset: Offset(shakeX, shakeY),
                     child: Transform.rotate(
-                      angle: tiltAngle,
-                      alignment: Alignment.bottomLeft,
+                      angle: -tiltAngle,
+                      alignment: Alignment.bottomRight,
                       child: child,
                     ),
                   );

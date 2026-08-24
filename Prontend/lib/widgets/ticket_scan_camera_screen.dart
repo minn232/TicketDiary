@@ -300,31 +300,44 @@ class _ScanGuideOverlay extends StatelessWidget {
             baseShortSide * (14.9 * verticalRatioBoost) / 6; // 6:19.37 비율
         const enlargeFactor = 1.3;
         final guideWidth = baseShortSide * enlargeFactor;
-        final guideHeight = baseLongSide * enlargeFactor;
+        // 세로 그리드 길이를 1/10만큼 줄임(0.9배).
+        final guideHeight = baseLongSide * enlargeFactor * 0.9;
         final guideRect = Rect.fromCenter(
           center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2 - 30),
           width: guideWidth,
           height: guideHeight,
         );
 
-        // 박스 아래쪽에서 kTicketStubHeightRatio(14.9 중 4.5)만큼이
-        // "입장티켓" 영역입니다. 공연을 이미 본 뒤 추가하는 티켓은 입장권
-        // 스텁이 뜯겨 있을 수 있어, 점선으로 경계를 표시해 두 영역을
-        // 구분해 보여줍니다(인식 자체는 둘 중 하나만 채워도 통과합니다 —
-        // [LiveTicketAlignmentDetector] 참고).
-        final stubTop =
-            guideRect.bottom - guideRect.height * kTicketStubHeightRatio;
-        final ticketZone = Rect.fromLTRB(
+        // 박스 위쪽에서 kTicketStubHeightRatio(14.9 중 4.5)만큼이
+        // "입장티켓" 영역입니다(다이어리 화면에서 입장 티켓 영역을 왼쪽에
+        // 두는 것과 맞추기 위해, 사용자가 폰을 시계반대방향으로 90도 돌려
+        // 찍었을 때 최종적으로 왼쪽에 오도록 위쪽에 배치). 공연을 이미 본
+        // 뒤 추가하는 티켓은 입장권 스텁이 뜯겨 있을 수 있어, 점선으로
+        // 경계를 표시해 두 영역을 구분해 보여줍니다(인식 자체는 둘 중
+        // 하나만 채워도 통과합니다 — [LiveTicketAlignmentDetector] 참고).
+        //
+        // 경계선(stubBottom)은 원래(확장 전) 높이 기준으로 고정해두고,
+        // 박스 아래쪽 테두리만 세로 길이의 1/20만큼 더 내립니다 — 그래서
+        // 경계선 위치는 그대로인 채 "티켓" 영역의 길이만 늘어납니다.
+        final stubBottom =
+            guideRect.top + guideRect.height * kTicketStubHeightRatio;
+        final displayRect = Rect.fromLTRB(
           guideRect.left,
           guideRect.top,
           guideRect.right,
-          stubTop,
+          guideRect.bottom + guideHeight / 20,
         );
         final stubZone = Rect.fromLTRB(
           guideRect.left,
-          stubTop,
+          guideRect.top,
           guideRect.right,
-          guideRect.bottom,
+          stubBottom,
+        );
+        final ticketZone = Rect.fromLTRB(
+          guideRect.left,
+          stubBottom,
+          guideRect.right,
+          displayRect.bottom,
         );
 
         return Stack(
@@ -332,13 +345,13 @@ class _ScanGuideOverlay extends StatelessWidget {
           children: [
             // 가이드 박스 바깥만 살짝 어둡게(블러 없이, 안쪽은 카메라 화면 그대로)
             ClipPath(
-              clipper: _OutsideGuideClipper(guideRect: guideRect, radius: 0),
+              clipper: _OutsideGuideClipper(guideRect: displayRect, radius: 0),
               child: Container(color: Colors.black.withValues(alpha: 0.35)),
             ),
 
             // 가이드 박스 테두리(정렬되면 초록색으로 전환)
             Positioned.fromRect(
-              rect: guideRect.inflate(2),
+              rect: displayRect.inflate(2),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
                 decoration: BoxDecoration(
@@ -358,9 +371,9 @@ class _ScanGuideOverlay extends StatelessWidget {
 
             // 입장티켓 영역과의 경계를 점선으로 표시.
             Positioned(
-              left: guideRect.left,
-              top: stubTop - 2,
-              width: guideRect.width,
+              left: displayRect.left,
+              top: stubBottom - 2,
+              width: displayRect.width,
               height: 4,
               child: const CustomPaint(painter: _DashedLinePainter()),
             ),
@@ -378,7 +391,7 @@ class _ScanGuideOverlay extends StatelessWidget {
             ),
 
             Positioned(
-              top: guideRect.bottom + 24,
+              top: displayRect.bottom + 24,
               left: 24,
               right: 24,
               child: Text(

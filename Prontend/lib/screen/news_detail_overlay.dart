@@ -11,10 +11,7 @@ import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
 
 /// 소식 폴라로이드 카드를 누르면, "공연 전" 티켓과 동일한 방식으로 카드가
-/// 화면 전체로 확장되며 소식 상세(포스터 + 줄글 기사)를 보여주는 오버레이.
-///
-/// 애니메이션/닫기 로직은 [ConcertBeforeOverlay]와 동일한 구조를 따르되,
-/// 내부 콘텐츠만 포스트잇 그리드 대신 포스터 배경 + 기사 본문으로 대체합니다.
+/// 화면 전체로 확장되며 소식 상세(포스터 + 정보 카드)를 보여주는 오버레이.
 class NewsDetailOverlay extends StatefulWidget {
   /// 애니메이션 시작 위치/크기(눌린 카드의 전역 Rect)
   final Rect startRect;
@@ -70,14 +67,19 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
 
   bool _isClosing = false;
 
-  // [백엔드 수정]
   // 두 손가락 오므리기(핀치 인)로 오버레이를 닫는 기능.
-  // Listener로 직접 두 손가락 사이 거리를 계산.
-  // 포스터를 크게 보는 중엔 감지를 꺼야 포스터 확대/축소와 충돌하지 않음.
   final Map<int, Offset> _pinchPointers = {};
   double? _pinchStartDistance;
   bool _pinchTriggered = false;
-  bool _posterZoomActive = false;
+
+  // ── 포스터 확대(전체 화면) 상태 ──
+  // 포스터를 크게 볼 땐 검은 패널이 카드 rect가 아니라 폰 화면 전체를
+  // 덮어야 하므로, 이 레이어를 카드 안이 아니라 최상위 Stack에서 그립니다.
+  bool _posterExpanded = false;
+  final TransformationController _posterZoomController =
+      TransformationController();
+  TapDownDetails? _posterDoubleTapDetails;
+  static const double _posterDoubleTapZoomScale = 2.5;
 
   double _pinchCurrentDistance() {
     final points = _pinchPointers.values.toList();
@@ -101,12 +103,10 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     if (_pinchPointers.length != 2 ||
         start == null ||
         _pinchTriggered ||
-        _posterZoomActive) {
+        _posterExpanded) {
       return;
     }
-    // 다 펼쳐진 뒤에만 반응(펼쳐지는 도중엔 무시)
     if (_controller.value < 0.95) return;
-    // 시작 거리 대비 30% 이상 오므라들면 닫기로 간주
     if (_pinchCurrentDistance() / start < 0.7) {
       _pinchTriggered = true;
       _close();
@@ -127,20 +127,18 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
       vsync: this,
       duration: const Duration(milliseconds: 520),
     );
-
     _t = CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic);
-
     _contentOpacity = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic),
     );
-
     _controller.forward();
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _posterZoomController.dispose();
     super.dispose();
   }
 
@@ -153,17 +151,10 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     return Rect.lerp(widget.startRect, end, t)!;
   }
 
-  double _getRadiusForT(double t) {
-    return lerpDouble(4, 18, t)!;
-  }
+  double _getRadiusForT(double t) => lerpDouble(4, 18, t)!;
 
-  void _onBackgroundTap(TapDownDetails details) {
-    _handleOutsideTap();
-  }
+  void _onBackgroundTap(TapDownDetails details) => _handleOutsideTap();
 
-  /// 카드 바깥(어두운 dim 영역) 또는 카드 안이지만 흰 카드가 아닌 자리
-  /// (포스터가 비치는 여백)를 눌렀을 때 호출됩니다. 두 곳 모두 "닫기"만
-  /// 하면 되므로 같은 로직을 공유합니다.
   void _handleOutsideTap() {
     if (_controller.value < 0.85) return;
     _close();
@@ -172,162 +163,21 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
   Future<void> _close() async {
     if (_isClosing) return;
     _isClosing = true;
-
     try {
       await _controller.reverse();
-    } catch (_) {
-      // route dispose 등으로 reverse가 중단될 수 있음
-    }
-
-    if (mounted) {
-      Navigator.of(context).pop();
-    }
+    } catch (_) {}
+    if (mounted) Navigator.of(context).pop();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final media = MediaQuery.of(context);
-    final screenSize = media.size;
+  void _openPoster() => setState(() => _posterExpanded = true);
 
-    return Listener(
-      onPointerDown: _onPinchPointerDown,
-      onPointerMove: _onPinchPointerMove,
-      onPointerUp: _onPinchPointerEnd,
-      onPointerCancel: _onPinchPointerEnd,
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, result) {
-          if (didPop) return;
-          _close();
-        },
-        child: Material(
-          type: MaterialType.transparency,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              final t = _t.value;
-              final rect = _getRectForT(screenSize, t);
-              final radius = _getRadiusForT(t);
-
-              final dimOpacity = lerpDouble(0.0, 0.40, t)!;
-
-              final expandedOpacity = Curves.easeIn.transform(
-                ((t - 0.20) / 0.80).clamp(0.0, 1.0),
-              );
-              final collapsedOpacity = 1.0 - expandedOpacity;
-
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        color: Colors.black.withValues(alpha: dimOpacity),
-                      ),
-                    ),
-                  ),
-
-                  // 전체 탭 감지(페이지 바깥을 눌러야만 닫힘). 카드 콘텐츠보다
-                  // 먼저(=아래에) 둬야 합니다 — 위에 두면 translucent라도 탭
-                  // 제스처 경합(arena)에서 카드 안 인터랙티브 요소(공연장
-                  // 탭-지도 이동, 포스터 확대 등)와 이 감지기가 항상 같이
-                  // 경쟁하게 되어, 곧잘 이 감지기가 이겨서 카드 안 요소가
-                  // 눌리지 않는 문제가 있었습니다(concert_before/after_overlay와
-                  // 동일한 문제). 아래에 두면 카드 안 인터랙티브 요소가 있는
-                  // 자리는 그 요소가 먼저 히트되어 이 감지기까지 도달하지
-                  // 않고, 카드 바깥(진짜 빈 공간)만 이 감지기가 받습니다.
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTapDown: _onBackgroundTap,
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-
-                  Positioned.fromRect(
-                    rect: rect,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(radius),
-                      clipBehavior: Clip.antiAlias,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: Opacity(
-                                opacity: collapsedOpacity,
-                                child: widget.collapsedCard,
-                              ),
-                            ),
-                          ),
-
-                          Positioned.fill(
-                            child: Opacity(
-                              opacity: expandedOpacity,
-                              child: _ExpandedNewsDetail(
-                                pageKey: _pageKey,
-                                contentOpacity: _contentOpacity,
-                                news: widget.news,
-                                onOutsideTap: _handleOutsideTap,
-                                onPosterZoomActiveChanged: (active) =>
-                                    _posterZoomActive = active,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
+  void _collapsePoster() {
+    setState(() => _posterExpanded = false);
+    _posterZoomController.value = Matrix4.identity();
   }
-}
 
-class _ExpandedNewsDetail extends StatefulWidget {
-  final GlobalKey pageKey;
-  final Animation<double> contentOpacity;
-  final NewsModel news;
-  final VoidCallback onOutsideTap;
-
-  /// 포스터를 크게 보는 중(자체 핀치줌 사용 중)인지 알려줌 — 부모 오버레이의
-  /// 핀치로 닫기 감지와 충돌하지 않도록 하기 위함.
-  final ValueChanged<bool> onPosterZoomActiveChanged;
-
-  const _ExpandedNewsDetail({
-    required this.pageKey,
-    required this.contentOpacity,
-    required this.news,
-    required this.onOutsideTap,
-    required this.onPosterZoomActiveChanged,
-  });
-
-  @override
-  State<_ExpandedNewsDetail> createState() => _ExpandedNewsDetailState();
-}
-
-class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
-  /// 포스터를 크게 보여주는 중인지. 작은 포스터를 누르면 true, 커진
-  /// 포스터 바깥(여백)을 누르면 false로 돌아갑니다.
-  bool _posterExpanded = false;
-
-  /// 확대된 포스터의 확대/이동 상태. 더블탭으로 이 값을 직접 바꿔
-  /// 확대·축소하고, 확대된 동안은 [InteractiveViewer]가 드래그로 이동을
-  /// 처리합니다.
-  final TransformationController _posterZoomController =
-      TransformationController();
-
-  /// 더블탭한 위치를 기준으로 확대해야 자연스러워서, onDoubleTapDown에서
-  /// 좌표를 받아뒀다가 onDoubleTap에서 씁니다.
-  TapDownDetails? _posterDoubleTapDetails;
-
-  static const double _posterDoubleTapZoomScale = 2.5;
-
-  void _handlePosterDoubleTapDown(TapDownDetails details) {
-    _posterDoubleTapDetails = details;
-  }
+  void _handlePosterDoubleTapDown(TapDownDetails details) =>
+      _posterDoubleTapDetails = details;
 
   void _handlePosterDoubleTap() {
     final isZoomedIn = _posterZoomController.value.getMaxScaleOnAxis() > 1.01;
@@ -347,237 +197,152 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
       ..scaleByDouble(scale, scale, scale, 1);
   }
 
-  void _collapsePoster() {
-    setState(() => _posterExpanded = false);
-    _posterZoomController.value = Matrix4.identity();
-    widget.onPosterZoomActiveChanged(false);
-  }
-
-  @override
-  void dispose() {
-    _posterZoomController.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final news = widget.news;
-    return Stack(
-      children: [
-        Positioned.fill(child: PosterBackground(imageUrl: news.imageUrl)),
+    final media = MediaQuery.of(context);
+    final screenSize = media.size;
 
-        // 흰 카드 바깥, 포스터가 비치는 여백을 누르면 닫힙니다. 이 레이어가
-        // 화면 전체(카드 포함 영역)를 덮고 있지만, 실제 흰 카드는 이보다
-        // 나중에(=위에) 그려져 먼저 히트되므로 카드 안 요소(공연장 탭 등)
-        // 와는 경합하지 않습니다 — 카드가 차지하지 않는 자리만 이 감지기가
-        // 받습니다.
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onOutsideTap,
-            child: Container(color: Colors.white.withValues(alpha: 0.50)),
+    return Listener(
+      onPointerDown: _onPinchPointerDown,
+      onPointerMove: _onPinchPointerMove,
+      onPointerUp: _onPinchPointerEnd,
+      onPointerCancel: _onPinchPointerEnd,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          if (_posterExpanded) {
+            _collapsePoster();
+            return;
+          }
+          _close();
+        },
+        child: Material(
+          type: MaterialType.transparency,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final t = _t.value;
+              final rect = _getRectForT(screenSize, t);
+              final radius = _getRadiusForT(t);
+              final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+              final expandedOpacity = Curves.easeIn.transform(
+                ((t - 0.20) / 0.80).clamp(0.0, 1.0),
+              );
+              final collapsedOpacity = 1.0 - expandedOpacity;
+
+              return Stack(
+                children: [
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        color: Colors.black.withValues(alpha: dimOpacity),
+                      ),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTapDown: _onBackgroundTap,
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                  Positioned.fromRect(
+                    rect: rect,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(radius),
+                      clipBehavior: Clip.antiAlias,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: Opacity(
+                                opacity: collapsedOpacity,
+                                child: widget.collapsedCard,
+                              ),
+                            ),
+                          ),
+                          Positioned.fill(
+                            child: Opacity(
+                              opacity: expandedOpacity,
+                              child: _ExpandedNewsDetail(
+                                pageKey: _pageKey,
+                                contentOpacity: _contentOpacity,
+                                news: widget.news,
+                                onOutsideTap: _handleOutsideTap,
+                                onPosterTap: _openPoster,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
+                  // rect가 아니라 최상위라 상태바 영역까지 꽉 참).
+                  if (_posterExpanded) _buildFullscreenPoster(),
+                ],
+              );
+            },
           ),
         ),
+      ),
+    );
+  }
 
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-            child: Center(
-              child: FractionallySizedBox(
-                // 카드를 기존보다 가로/세로 8% 더 크게(20% 키운 뒤 10% 축소 = 순증 8%)
-                widthFactor: 0.888 * 1.08,
-                heightFactor: 0.888 * 1.08,
-                child: Container(
-                  key: widget.pageKey,
-                  constraints: const BoxConstraints(maxWidth: 562),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.94),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.10),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
-                        blurRadius: 18,
-                        offset: const Offset(0, 10),
+  Widget _buildFullscreenPoster() {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.92),
+        child: Stack(
+          children: [
+            // 바깥(패딩·상태바) 영역 탭 → 닫기.
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _collapsePoster,
+              ),
+            ),
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: InteractiveViewer(
+                  transformationController: _posterZoomController,
+                  minScale: 1.0,
+                  maxScale: _posterDoubleTapZoomScale * 2,
+                  // 닫기 감지기를 InteractiveViewer "안쪽"(포스터 뒤)에 둡니다.
+                  // 이렇게 해야 확대 전 포스터의 실제 영역 밖(예전엔 InteractiveViewer
+                  // 여백이라 눌러도 안 닫히던 자리)을 탭해도 닫힙니다. 포스터 자체는
+                  // 위에 얹은 GestureDetector가 (불투명하게) 탭을 흡수해 안 닫히고,
+                  // 더블탭 확대/축소만 처리합니다.
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _collapsePoster,
+                        ),
+                      ),
+                      Center(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onDoubleTapDown: _handlePosterDoubleTapDown,
+                          onDoubleTap: _handlePosterDoubleTap,
+                          child: _buildLargePoster(widget.news),
+                        ),
                       ),
                     ],
-                  ),
-                  // 카드 폭이 maxWidth(562)에 걸리기 전까지는 화면 폭에 맞춰
-                  // 늘어나므로(FractionallySizedBox), 아이패드처럼 화면이
-                  // 넓은 기기에서는 카드 자체가 아이폰보다 훨씬 커집니다.
-                  // 안쪽 여백/간격/썸네일 크기가 고정 픽셀이면 그만큼
-                  // 상대적으로 작아 보여서, 실제로 렌더링된 카드 폭 대비
-                  // 비율(k)로 스케일링합니다. 350은 아이폰 계열에서 이
-                  // 카드가 보통 실제로 차지하는 폭에 맞춘 기준값이라,
-                  // 아이폰에서는 k≈1(기존과 거의 동일)입니다.
-                  child: LayoutBuilder(
-                    builder: (context, cardConstraints) {
-                      final k = cardConstraints.maxWidth / 350.0;
-                      return FadeTransition(
-                        opacity: widget.contentOpacity,
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            22 * k,
-                            19 * k,
-                            22 * k,
-                            19 * k,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                news.concert,
-                                style: TextStyle(
-                                  fontSize: context.sp(19),
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              SizedBox(height: 4 * k),
-                              Text(
-                                news.artist,
-                                style: TextStyle(
-                                  fontSize: context.sp(14),
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.black.withValues(alpha: 0.55),
-                                ),
-                              ),
-                              SizedBox(height: 15 * k),
-                              GestureDetector(
-                                onTap: () {
-                                  setState(() => _posterExpanded = true);
-                                  widget.onPosterZoomActiveChanged(true);
-                                },
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(8 * k),
-                                  child: SizedBox(
-                                    width: double.infinity,
-                                    height: 151 * k,
-                                    child: Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        // 이미지가 없거나 로드에 실패하면
-                                        // 그라데이션 플레이스홀더로
-                                        // 폴백합니다.
-                                        PosterBackground(
-                                          imageUrl: news.articleImageUrl,
-                                        ),
-                                        // 눌러서 크게 볼 수 있다는 힌트 아이콘.
-                                        Positioned(
-                                          right: 8 * k,
-                                          bottom: 8 * k,
-                                          child: Container(
-                                            padding: EdgeInsets.all(5 * k),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black.withValues(
-                                                alpha: 0.45,
-                                              ),
-                                              shape: BoxShape.circle,
-                                            ),
-                                            child: Icon(
-                                              Icons.zoom_in,
-                                              size: 16 * k,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              SizedBox(height: 15 * k),
-                              Expanded(
-                                child: SingleChildScrollView(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      _NewsContentBody(news: news, scale: k),
-                                      SizedBox(height: 18 * k),
-                                      _TicketingVendorButtons(
-                                        ticketingLinks: news.ticketingLinks,
-                                        scale: k,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
                   ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
-
-        // 포스터를 크게 보여주는 레이어. 작은 포스터를 누르면 나타납니다.
-        // 흰 카드보다 나중에(=위에) 그려지므로, 카드 안 다른 요소와 탭
-        // 제스처가 경합할 걱정 없이 항상 이 레이어가 먼저 탭을 받습니다.
-        IgnorePointer(
-          ignoring: !_posterExpanded,
-          child: AnimatedOpacity(
-            opacity: _posterExpanded ? 1 : 0,
-            duration: const Duration(milliseconds: 220),
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.88),
-              child: Stack(
-                children: [
-                  // 포스터 바깥(여백)을 누르면 닫히는 감지기. 포스터
-                  // 자체(아래 SafeArea 안)보다 먼저(=아래에) 둬서, 포스터
-                  // 위 더블탭/드래그 제스처와 경합하지 않고 포스터가
-                  // 차지하지 않는 자리만 이 감지기가 받습니다 — 배경
-                  // 감지기를 카드보다 뒤에 두는 것과 같은 원칙입니다.
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _collapsePoster,
-                    ),
-                  ),
-                  SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.all(28),
-                      // InteractiveViewer는 (Center 밑에서 그냥 두면) 자기
-                      // 자식인 포스터의 원래(축소 배율) 크기로 줄어들어,
-                      // 뷰포트 자체가 그 작은 박스에 갇혀버립니다 — 그
-                      // 안에서만 확대/이동이 되니 "확대해도 딱 그 자리
-                      // 안에서만 커 보이는" 문제가 있었습니다. SizedBox.expand
-                      // 로 뷰포트 자체를 이 자리(패딩 뺀 화면 전체)만큼
-                      // 강제로 채워서, 확대했을 때 포스터의 원래 그리드
-                      // 크기와 무관하게 화면 전체를 자유롭게 씁니다. 확대
-                      // 전(1배) 모습은 안쪽 Center가 그대로 유지합니다.
-                      child: SizedBox.expand(
-                        child: GestureDetector(
-                          onDoubleTapDown: _handlePosterDoubleTapDown,
-                          onDoubleTap: _handlePosterDoubleTap,
-                          child: InteractiveViewer(
-                            transformationController: _posterZoomController,
-                            minScale: 1.0,
-                            maxScale: _posterDoubleTapZoomScale * 2,
-                            child: Center(child: _buildLargePoster(news)),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  /// 원본 비율 그대로(잘리지 않게) 크게 보여주는 포스터. 작은 썸네일과
-  /// 달리 [BoxFit.contain] + 불투명도 1.0을 씁니다([PosterBackground]는
-  /// 항상 cover+0.85 불투명도라 재사용하지 않습니다).
   Widget _buildLargePoster(NewsModel news) {
     final url = news.articleImageUrl;
     if (url.isEmpty) {
@@ -604,27 +369,538 @@ class _ExpandedNewsDetailState extends State<_ExpandedNewsDetail> {
   }
 }
 
+/// 확장된 소식 상세 카드(첨부 예시 스타일): 포스터 → 제목+찜 → 정보 타일 3개
+/// (공연 기간/공연장/티켓팅 날짜) → 예매처 버튼(세로로 쌓기, 예매처 색상).
+class _ExpandedNewsDetail extends StatelessWidget {
+  final GlobalKey pageKey;
+  final Animation<double> contentOpacity;
+  final NewsModel news;
+  final VoidCallback onOutsideTap;
+  final VoidCallback onPosterTap;
+
+  const _ExpandedNewsDetail({
+    required this.pageKey,
+    required this.contentOpacity,
+    required this.news,
+    required this.onOutsideTap,
+    required this.onPosterTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(child: PosterBackground(imageUrl: news.imageUrl)),
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onOutsideTap,
+            child: Container(color: Colors.white.withValues(alpha: 0.50)),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+            child: Center(
+              child: FractionallySizedBox(
+                widthFactor: 0.888 * 1.08,
+                heightFactor: 0.888 * 1.08,
+                child: Container(
+                  key: pageKey,
+                  constraints: const BoxConstraints(maxWidth: 562),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      width: 1.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 18,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, cardConstraints) {
+                      final k = cardConstraints.maxWidth / 350.0;
+                      return FadeTransition(
+                        opacity: contentOpacity,
+                        child: SingleChildScrollView(
+                          padding: EdgeInsets.fromLTRB(18 * k, 18 * k, 18 * k, 18 * k),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _poster(context, k),
+                              SizedBox(height: 14 * k),
+                              _titleRow(context, k),
+                              SizedBox(height: 14 * k),
+                              _infoTiles(context, k),
+                              SizedBox(height: 16 * k),
+                              _VendorButtons(
+                                ticketingLinks: news.ticketingLinks,
+                                scale: k,
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _poster(BuildContext context, double k) {
+    return GestureDetector(
+      onTap: onPosterTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12 * k),
+        child: SizedBox(
+          width: double.infinity,
+          height: 190 * k,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              PosterBackground(imageUrl: news.articleImageUrl),
+              Positioned(
+                right: 10 * k,
+                bottom: 10 * k,
+                child: Container(
+                  padding: EdgeInsets.all(6 * k),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.zoom_in, size: 18 * k, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _titleRow(BuildContext context, double k) {
+    return Text(
+      news.concert,
+      maxLines: 3,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: context.sp(20),
+        fontWeight: FontWeight.w900,
+        height: 1.2,
+      ),
+    );
+  }
+
+  Widget _infoTiles(BuildContext context, double k) {
+    final day = news.concertDate?.day;
+    // IntrinsicHeight로 Row 높이를 확정해야 stretch가 무한 높이로 터지지
+    // 않고(SingleChildScrollView 안), 타일 3개가 같은 높이로 맞춰집니다.
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _InfoTile(
+              scale: k,
+              icon: _CalendarDayIcon(day: day, scale: k),
+              label: '공연 기간',
+              value: news.periodText ?? '미정',
+              onTap: news.concertDate != null
+                  ? () => _showCalendar(
+                        context,
+                        title: '공연 기간',
+                        start: news.concertDate!,
+                        end: news.concertEndDate ?? news.concertDate!,
+                        color: const Color(0xFF3DBE6B),
+                      )
+                  : null,
+            ),
+          ),
+        SizedBox(width: 10 * k),
+        Expanded(
+          child: _InfoTile(
+            scale: k,
+            icon: Icon(Icons.location_on,
+                size: 26 * k, color: const Color(0xFF5C4033)),
+            label: '공연장',
+            value: (news.venue == null || news.venue!.isEmpty) ? '미정' : news.venue!,
+            onTap: (news.venue != null && news.venue!.isNotEmpty)
+                ? () => _showMapPicker(context, news.venue!)
+                : null,
+          ),
+        ),
+        SizedBox(width: 10 * k),
+        Expanded(
+          child: _InfoTile(
+            scale: k,
+            icon: Icon(Icons.confirmation_num_outlined,
+                size: 26 * k, color: const Color(0xFF5C4033)),
+            label: '티켓팅 날짜',
+            value: news.ticketingText ?? '미정',
+            onTap: news.ticketingDate != null
+                ? () => _showCalendar(
+                      context,
+                      title: '티켓팅 날짜',
+                      start: news.ticketingDate!,
+                      end: news.ticketingDate!,
+                      color: const Color(0xFF3DBE6B),
+                    )
+                : null,
+          ),
+        ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 공연 기간/티켓팅 날짜를 캘린더로 보여줍니다. [start]~[end] 구간의 날짜에
+/// [color]로 색을 칠합니다(티켓팅처럼 하루면 start==end).
+Future<void> _showCalendar(
+  BuildContext context, {
+  required String title,
+  required DateTime start,
+  required DateTime end,
+  required Color color,
+}) {
+  final s = DateTime(start.year, start.month, start.day);
+  final e = DateTime(end.year, end.month, end.day);
+  return showDialog<void>(
+    context: context,
+    builder: (context) => _CalendarDialog(
+      title: title,
+      start: s.isAfter(e) ? e : s,
+      end: e.isBefore(s) ? s : e,
+      highlight: color,
+    ),
+  );
+}
+
+/// 달력 다이얼로그. [start]~[end]가 걸친 달(1개 또는 최대 2개)을 세로로
+/// 나열해 보여주고, 해당 날짜들을 [highlight] 색의 둥근 사각형으로 칠합니다.
+/// 한 주 안에서 연속된 날짜는 사이 여백 없이 하나로 이어져 칠해집니다.
+class _CalendarDialog extends StatelessWidget {
+  final String title;
+  final DateTime start;
+  final DateTime end;
+  final Color highlight;
+
+  const _CalendarDialog({
+    required this.title,
+    required this.start,
+    required this.end,
+    required this.highlight,
+  });
+
+  /// 범위가 걸친 달들(최대 2개).
+  List<DateTime> get _months {
+    final list = <DateTime>[];
+    var m = DateTime(start.year, start.month);
+    final last = DateTime(end.year, end.month);
+    while (!m.isAfter(last) && list.length < 2) {
+      list.add(m);
+      m = DateTime(m.year, m.month + 1);
+    }
+    return list;
+  }
+
+  bool _on(DateTime d) => !d.isBefore(start) && !d.isAfter(end);
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: context.sp(16),
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF5C4033),
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    behavior: HitTestBehavior.opaque,
+                    child: Icon(Icons.close_rounded,
+                        size: context.sp(20), color: Colors.black45),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final m in _months) ...[
+                        _monthView(context, m),
+                        const SizedBox(height: 16),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _monthView(BuildContext context, DateTime month) {
+    const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+    final firstWeekday = DateTime(month.year, month.month, 1).weekday % 7;
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    // 주 단위(7칸)로 나눕니다. 빈 칸은 null.
+    final rows = <List<int?>>[];
+    var cur = <int?>[];
+    for (var i = 0; i < firstWeekday; i++) {
+      cur.add(null);
+    }
+    for (var d = 1; d <= daysInMonth; d++) {
+      cur.add(d);
+      if (cur.length == 7) {
+        rows.add(cur);
+        cur = [];
+      }
+    }
+    if (cur.isNotEmpty) {
+      while (cur.length < 7) {
+        cur.add(null);
+      }
+      rows.add(cur);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text(
+            '${month.year}년 ${month.month}월',
+            style: TextStyle(
+              fontSize: context.sp(15),
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF3E2C22),
+            ),
+          ),
+        ),
+        Row(
+          children: [
+            for (var i = 0; i < 7; i++)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    weekdays[i],
+                    style: TextStyle(
+                      fontSize: context.sp(11),
+                      fontWeight: FontWeight.w700,
+                      color: i == 0
+                          ? const Color(0xFFE8455E)
+                          : (i == 6
+                              ? const Color(0xFF3D7BE8)
+                              : Colors.black45),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        for (final row in rows)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                for (var i = 0; i < 7; i++)
+                  Expanded(child: _cell(context, month, row, i)),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _cell(BuildContext context, DateTime month, List<int?> row, int i) {
+    final day = row[i];
+    if (day == null) return const SizedBox(height: 36);
+    final date = DateTime(month.year, month.month, day);
+    final on = _on(date);
+    bool nbrOn(int j) {
+      if (j < 0 || j > 6) return false;
+      final d = row[j];
+      return d != null && _on(DateTime(month.year, month.month, d));
+    }
+
+    // 연속된 칸은 이어지도록: 좌/우 이웃도 칠해졌으면 그쪽 모서리는 각지게.
+    const r = Radius.circular(11);
+    final radius = on
+        ? BorderRadius.horizontal(
+            left: nbrOn(i - 1) ? Radius.zero : r,
+            right: nbrOn(i + 1) ? Radius.zero : r,
+          )
+        : null;
+    return Container(
+      height: 36,
+      alignment: Alignment.center,
+      decoration: on ? BoxDecoration(color: highlight, borderRadius: radius) : null,
+      child: Text(
+        '$day',
+        style: TextStyle(
+          fontSize: context.sp(13),
+          fontWeight: on ? FontWeight.w900 : FontWeight.w600,
+          color: on ? Colors.white : Colors.black.withValues(alpha: 0.78),
+        ),
+      ),
+    );
+  }
+}
+
+/// 정보 타일 하나(공연 기간/공연장/티켓팅). 흰 둥근 카드에 아이콘 + 라벨 +
+/// 값. [onTap]이 있으면(공연장) 누를 수 있습니다.
+class _InfoTile extends StatelessWidget {
+  final Widget icon;
+  final String label;
+  final String value;
+  final double scale;
+  final VoidCallback? onTap;
+
+  const _InfoTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.scale,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final k = scale;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: onTap != null ? HitTestBehavior.opaque : HitTestBehavior.deferToChild,
+      child: Container(
+        padding: EdgeInsets.symmetric(vertical: 12 * k, horizontal: 4 * k),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14 * k),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 6,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(height: 28 * k, child: Center(child: icon)),
+            SizedBox(height: 7 * k),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: context.sp(11),
+                fontWeight: FontWeight.w700,
+                color: Colors.black.withValues(alpha: 0.45),
+              ),
+            ),
+            SizedBox(height: 4 * k),
+            Text(
+              value,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: context.sp(12),
+                fontWeight: FontWeight.w800,
+                color: Colors.black.withValues(alpha: 0.8),
+                height: 1.25,
+                decoration: onTap != null ? TextDecoration.underline : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 달력 아이콘 + 날짜 숫자(있으면). 공연 기간 타일용.
+class _CalendarDayIcon extends StatelessWidget {
+  final int? day;
+  final double scale;
+
+  const _CalendarDayIcon({required this.day, required this.scale});
+
+  @override
+  Widget build(BuildContext context) {
+    final k = scale;
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Icon(Icons.calendar_today_rounded,
+            size: 26 * k, color: const Color(0xFF5C4033)),
+        if (day != null)
+          Padding(
+            padding: EdgeInsets.only(top: 4 * k),
+            child: Text(
+              '$day',
+              style: TextStyle(
+                fontSize: context.sp(9),
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF5C4033),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 // [백엔드 수정]
 // KOPIS가 실제로 준 예매처만(ticketingLinks) 버튼으로 보여주고, 눌렀을 때 진짜
 // 예매 링크로 이동. Android는 android_intent_plus로 package 지정해 앱 우선
 // 실행 시도(launch() 전에 canResolveActivity()로 먼저 확인), 실패하면 브라우저로
 // 폴백. ticketingLinks가 비어있으면 섹션 자체를 숨김.
-class _TicketingVendorButtons extends StatelessWidget {
-  const _TicketingVendorButtons({
-    required this.ticketingLinks,
-    required this.scale,
-  });
+class _VendorButtons extends StatelessWidget {
+  const _VendorButtons({required this.ticketingLinks, required this.scale});
 
   final Map<String, String>? ticketingLinks;
-
-  /// 카드 실제 렌더링 폭 기준 스케일(자세한 설명은 [_ExpandedNewsDetailState.build] 참고).
   final double scale;
 
-  static const Map<String, String> _vendorLabels = {
-    'INTERPARK': '인터파크',
-    'YES24': '예스24',
-    'TICKETLINK': '티켓링크',
-    'MELON': '멜론티켓',
+  /// 예매처별 표시 이름 + 상징 색.
+  static const Map<String, ({String label, Color color})> _vendors = {
+    'MELON': (label: '멜론티켓', color: Color(0xFF00C639)),
+    'INTERPARK': (label: '인터파크', color: Color(0xFFE51937)),
+    'YES24': (label: '예스24', color: Color(0xFF0A4DA1)),
+    'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B)),
   };
 
   /// 각 예매처 앱의 실제 Android 패키지명(여러 개면 순서대로 시도).
@@ -666,171 +942,98 @@ class _TicketingVendorButtons extends StatelessWidget {
   Widget build(BuildContext context) {
     final links = ticketingLinks;
     if (links == null || links.isEmpty) return const SizedBox.shrink();
-
     final k = scale;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
         SizedBox(height: 14 * k),
-        Text(
-          '예매처 바로가기',
-          style: TextStyle(
-            fontSize: context.sp(13),
-            fontWeight: FontWeight.w800,
-            color: Colors.black.withValues(alpha: 0.55),
-          ),
-        ),
-        SizedBox(height: 8 * k),
-        Wrap(
-          spacing: 8 * k,
-          runSpacing: 8 * k,
-          children: [
-            for (final entry in links.entries)
-              OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 14 * k,
-                    vertical: 8 * k,
-                  ),
-                  side: BorderSide(color: Colors.black.withValues(alpha: 0.2)),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20 * k),
-                  ),
-                ),
-                onPressed: () => _openVendor(entry.key, entry.value),
-                child: Text(
-                  _vendorLabels[entry.key] ?? entry.key,
-                  style: TextStyle(
-                    fontSize: context.sp(13),
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-/// 소식 상세 본문. [NewsModel.contentTop](출연진/공연 기간 등) 다음에
-/// 공연장 이름(탭하면 지도로 이동)을, 그다음에
-/// [NewsModel.contentBottom](티케팅 날짜 등)을 순서대로 보여줍니다. 공연장
-/// 줄만 줄글 텍스트가 아니라 탭 가능한 위젯이라 이렇게 세 조각으로
-/// 나눠 그립니다.
-class _NewsContentBody extends StatelessWidget {
-  const _NewsContentBody({required this.news, required this.scale});
-
-  final NewsModel news;
-
-  /// 카드 실제 렌더링 폭 기준 스케일(자세한 설명은 [_ExpandedNewsDetailState.build] 참고).
-  final double scale;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasVenue = news.venue != null && news.venue!.isNotEmpty;
-    if (news.contentTop.isEmpty && news.contentBottom.isEmpty && !hasVenue) {
-      return Text(
-        '아직 등록된 소식 내용이 없습니다.',
-        style: TextStyle(
-          fontSize: context.sp(15),
-          height: 1.6,
-          color: Colors.black87,
-        ),
-      );
-    }
-
-    final textStyle = TextStyle(
-      fontSize: context.sp(15),
-      height: 1.6,
-      color: Colors.black87,
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (news.contentTop.isNotEmpty) Text(news.contentTop, style: textStyle),
-        if (hasVenue) ...[
-          if (news.contentTop.isNotEmpty) SizedBox(height: 4 * scale),
-          _VenueRow(venue: news.venue!, scale: scale),
-          if (news.contentBottom.isNotEmpty) SizedBox(height: 4 * scale),
-        ],
-        if (news.contentBottom.isNotEmpty)
-          Text(news.contentBottom, style: textStyle),
-      ],
-    );
-  }
-}
-
-/// 공연장 이름 한 줄. 누르면 지도 앱(카카오맵/네이버지도) 선택 시트가
-/// 뜨고, 고른 앱에서 이 이름으로 검색합니다.
-///
-/// 실제 도로명주소는 앱 어디에도 없습니다(KOPIS가 공연장 "이름"만 주고,
-/// 백엔드도 주소/좌표를 따로 수집하지 않음) — 그래서 정확한 좌표 대신
-/// 공연장 이름으로 지도 검색 링크를 엽니다. 대부분의 공연장은 지도
-/// 앱에 등록돼 있어 이름 검색만으로도 잘 찾아집니다.
-class _VenueRow extends StatelessWidget {
-  const _VenueRow({required this.venue, required this.scale});
-
-  final String venue;
-
-  /// 카드 실제 렌더링 폭 기준 스케일(자세한 설명은 [_ExpandedNewsDetailState.build] 참고).
-  final double scale;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _showMapPicker(context, venue),
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: 2 * scale),
-        child: Row(
-          children: [
-            // 다른 줄(출연진/공연 기간/티케팅 날짜)과 같은 스타일의 라벨.
-            Text(
-              '공연장  ',
-              style: TextStyle(
-                fontSize: context.sp(15),
-                height: 1.6,
-                color: Colors.black87,
-              ),
-            ),
-            Icon(
-              Icons.location_on_outlined,
-              size: context.sp(15),
+        SizedBox(
+          width: double.infinity,
+          child: Text(
+            '예매처 바로가기',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: context.sp(13),
+              fontWeight: FontWeight.w800,
               color: Colors.black.withValues(alpha: 0.55),
             ),
-            SizedBox(width: 3 * scale),
-            // [백엔드 수정]
-            // TextDecoration.underline은 띄어쓰기 부분에서 밑줄이 살짝 끊겨
-            // 떠 보이는 문제가 있어(폰트 글리프별로 그려짐), 텍스트 전체
-            // 아래에 실선 테두리를 긋는 방식으로 바꿔 연결된 한 줄로 보이게 함.
-            Flexible(
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      width: 1,
-                    ),
-                  ),
+          ),
+        ),
+        SizedBox(height: 10 * k),
+        // 예매처가 여러 곳이면 바로 아래에 세로로 쌓습니다.
+        for (final entry in links.entries) ...[
+          _VendorButton(
+            vendor: entry.key,
+            info: _vendors[entry.key],
+            scale: k,
+            onTap: () => _openVendor(entry.key, entry.value),
+          ),
+          SizedBox(height: 9 * k),
+        ],
+      ],
+    );
+  }
+}
+
+/// 예매처 버튼 하나(가로 꽉 참, 예매처 상징색). 왼쪽에 예매처 이니셜 뱃지.
+class _VendorButton extends StatelessWidget {
+  final String vendor;
+  final ({String label, Color color})? info;
+  final double scale;
+  final VoidCallback onTap;
+
+  const _VendorButton({
+    required this.vendor,
+    required this.info,
+    required this.scale,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final k = scale;
+    final label = info?.label ?? vendor;
+    final color = info?.color ?? const Color(0xFF5C4033);
+    return Material(
+      color: color,
+      borderRadius: BorderRadius.circular(14 * k),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14 * k),
+        onTap: onTap,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16 * k, vertical: 14 * k),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 22 * k,
+                height: 22 * k,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
                 ),
-                padding: const EdgeInsets.only(bottom: 1),
                 child: Text(
-                  venue,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  vendor.isNotEmpty ? vendor.substring(0, 1) : '?',
                   style: TextStyle(
-                    fontSize: context.sp(13),
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black.withValues(alpha: 0.7),
+                    fontSize: context.sp(12),
+                    fontWeight: FontWeight.w900,
+                    color: color,
                   ),
                 ),
               ),
-            ),
-          ],
+              SizedBox(width: 9 * k),
+              Text(
+                '$label에서 예매하기',
+                style: TextStyle(
+                  fontSize: context.sp(14),
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -840,9 +1043,7 @@ class _VenueRow extends StatelessWidget {
 enum _MapProvider { kakao, naver }
 
 /// "카카오맵/네이버지도 중 선택" 바텀시트를 띄우고, 고른 지도 앱의 검색
-/// 링크를 엽니다. 두 서비스 모두 앱이 설치돼 있으면 앱으로, 아니면
-/// 웹으로 열리는 공식 웹 검색 링크 형식을 씁니다(별도 API 키/앱 등록
-/// 없이 동작).
+/// 링크를 엽니다.
 Future<void> _showMapPicker(BuildContext context, String venue) async {
   final choice = await showModalBottomSheet<_MapProvider>(
     context: context,
