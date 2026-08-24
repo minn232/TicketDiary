@@ -58,14 +58,21 @@ def _unique_artist_names(entries: list[dict]) -> list[str]:
 # 원칙 6(event_type-라인업 개수 일치)을 프롬프트로만 지시했을 때 모델이 안 지켜서 생기던
 # 자기모순(전수조사 확정 버그 37건 중 21건)을 여기서 결정론적으로 강제 - 진짜 페스티벌이면
 # 서로 다른 이름이 1개만 나올 수 없음. extract_poster.py 쪽은 event_type이 없어 영향 없음.
-def _is_untrustworthy_single_festival_artist(raw: dict, names: list[str]) -> bool:
-    return raw.get("event_type") == "FESTIVAL" and len(names) == 1
+# 단, 이 이름이 concert_name에도 그대로 등장하면(예: "백현진: 한여름밤의 꿈 페스티벌") 시리즈
+# 브랜드명에 "페스티벌"이 섞여 event_type만 잘못 판단된 것일 뿐 이름 자체는 맞을 가능성이
+# 높아 - 제목이 독립적인 교차검증 신호가 되므로 이 경우엔 지우지 않고 예외로 살려둠.
+def _is_untrustworthy_single_festival_artist(raw: dict, names: list[str], concert_name: str | None = None) -> bool:
+    if raw.get("event_type") != "FESTIVAL" or len(names) != 1:
+        return False
+    if concert_name and names[0].strip().lower() in concert_name.strip().lower():
+        return False
+    return True
 
 
-def _extract_artist_names(raw: dict) -> list[str]:
+def _extract_artist_names(raw: dict, concert_name: str | None = None) -> list[str]:
     entries = raw.get("lineup") or raw.get("timetable") or []
     names = _unique_artist_names(entries)
-    if _is_untrustworthy_single_festival_artist(raw, names):
+    if _is_untrustworthy_single_festival_artist(raw, names, concert_name):
         return []
     return names
 
@@ -95,11 +102,11 @@ def _to_timetable_entry(entry: dict) -> dict:
 # 테이블은 "날짜가 있는 배정"만 저장하고, 날짜 모르는 아티스트는 저장 안 해도 항상 폴백(전체
 # 표시)되니 보낼 필요가 없음. 같은 (artist,date) 조합 중복도 제거. crawl/artist 두 경로가
 # 공유(analyze_crawl_screenshot/extract_artists_from_poster 둘 다 lineup을 이 형태로 반환).
-def normalize_lineup_entries(raw) -> list[dict]:
+def normalize_lineup_entries(raw, concert_name: str | None = None) -> list[dict]:
     if not isinstance(raw, dict):
         return []
     entries = raw.get("lineup") or []
-    if _is_untrustworthy_single_festival_artist(raw, _unique_artist_names(entries)):
+    if _is_untrustworthy_single_festival_artist(raw, _unique_artist_names(entries), concert_name):
         return []
     seen: set[tuple[str, str]] = set()
     result: list[dict] = []
@@ -116,7 +123,7 @@ def normalize_lineup_entries(raw) -> list[dict]:
     return result
 
 
-def normalize_crawl_result(raw: dict) -> dict:
+def normalize_crawl_result(raw: dict, concert_name: str | None = None) -> dict:
     body: dict = {}
 
     if raw.get("timetable") is not None:
@@ -134,11 +141,11 @@ def normalize_crawl_result(raw: dict) -> dict:
     if raw.get("ticket_delivery_date") is not None:
         body["delivery_date"] = _to_date_string(raw["ticket_delivery_date"])
 
-    artist_names = _extract_artist_names(raw)
+    artist_names = _extract_artist_names(raw, concert_name)
     if artist_names:
         body["artist_name"] = artist_names
 
-    lineup = normalize_lineup_entries(raw)
+    lineup = normalize_lineup_entries(raw, concert_name)
     if lineup:
         body["lineup"] = lineup
 
@@ -152,11 +159,11 @@ def normalize_crawl_result(raw: dict) -> dict:
 # extract_artists_from_poster가 analyze_crawl_screenshot과 같은 추론 함수를 재사용하므로
 # (포스터든 크롤링 스크린샷이든 같은 전체 스키마를 반환), raw가 dict면 그 안에서 아티스트명만
 # 뽑아낸다. 혹시 나중에 단순 리스트를 반환하도록 바뀌어도 그대로 동작하게 이중으로 처리
-def normalize_artist_list(raw) -> list[str]:
+def normalize_artist_list(raw, concert_name: str | None = None) -> list[str]:
     if raw is None:
         return []
     if isinstance(raw, dict):
-        return _extract_artist_names(raw)
+        return _extract_artist_names(raw, concert_name)
     return [str(name) for name in raw]
 
 

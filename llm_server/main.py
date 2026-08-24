@@ -63,7 +63,7 @@ async def _process_crawl_batch(items: list[CrawlAnalyzeItem]) -> None:
             return
         try:
             raw = await _run_sync(inference.analyze_crawl_screenshot, item)
-            body = normalize_crawl_result(raw)
+            body = normalize_crawl_result(raw, item.concert_name)
             await send_crawl_result(item.concert_id, body)
             mark_processed("crawl", dedup_key)
         except Exception:
@@ -81,11 +81,11 @@ async def _process_artist_batch(items: list[ArtistExtractItem]) -> None:
             return
         try:
             raw = await _run_sync(inference.extract_artists_from_poster, item)
-            body = {"artist_name": normalize_artist_list(raw)}
+            body = {"artist_name": normalize_artist_list(raw, item.concert_name)}
             event_type = normalize_event_type(raw)
             if event_type is not None:
                 body["event_type"] = event_type
-            lineup = normalize_lineup_entries(raw)
+            lineup = normalize_lineup_entries(raw, item.concert_name)
             if lineup:
                 body["lineup"] = lineup
             await send_artist_result(item.concert_id, body)
