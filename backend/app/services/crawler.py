@@ -563,8 +563,12 @@ async def crawl_melon(
         return None
 
 
-# KOPIS 공연 상세 페이지 전체 스크린샷 (티켓링크 폴백용)
-async def crawl_kopis(concert: Concert) -> bytes | None:
+# KOPIS 공연 상세 페이지 전체 스크린샷 (티켓링크 전용/인터파크 미지원 공연의 폴백용)
+# capture_lineup_snapshot=True면 (screenshot, text, text_hash, img_srcs) 튜플을 반환 (라인업 재크롤링 배치용,
+# 다른 크롤러 함수들과 동일한 시그니처)
+async def crawl_kopis(
+    concert: Concert, capture_lineup_snapshot: bool = False
+) -> bytes | tuple[bytes, str, str, list[str]] | None:
     if not concert.kopis_id:
         logger.info(f"KOPIS ID 없음 — 크롤링 불가: {concert.name}")
         return None
@@ -579,7 +583,11 @@ async def crawl_kopis(concert: Concert) -> bytes | None:
             try:
                 await page.goto(url, wait_until="networkidle", timeout=30_000)
                 await _dismiss_popups(page)
-                return await page.screenshot(full_page=True, type="png")
+                screenshot = await page.screenshot(full_page=True, type="png")
+                if capture_lineup_snapshot:
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    return screenshot, text, text_hash, img_srcs
+                return screenshot
             finally:
                 await browser.close()
     except Exception as e:
@@ -621,11 +629,19 @@ _CRAWLERS: dict[str, callable] = {
     "멜론": crawl_melon,
 }
 
-# 크롤링 지원 사이트 우선순위 (YES24 > INTERPARK > MELON)
-_PREFERRED_SITES = ["YES24", "INTERPARK", "MELON"]
+# 크롤링 지원 사이트 우선순위. 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
+# AWS 서버 IP 차단으로 한 달 내내 100% 실패 확정된 상태라([[crawler_block_detection_and_fallback_fix]])
+# 매 재시도 사이클마다 헛되이 먼저 시도하고 실패하는 낭비를 없애기 위해 임시로 INTERPARK만 남김.
+# 프록시 등으로 YES24/MELON 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
+_PREFERRED_SITES = ["INTERPARK"]
 
 # 크롤링 미지원 사이트
 _UNSUPPORTED_SITES = {"TICKETLINK", "티켓링크"}
+
+# 크롤러 자체는 있지만(_CRAWLERS에 매핑됨) 위와 같은 이유로 임시 비활성화된 사이트.
+# ticketing_site로 명시적으로 지정돼 들어와도 후보에서 제외(_pick_crawl_candidates) - 어차피
+# 실패가 확정이라 시도할수록 리소스 낭비. 해결되면 이 세트를 비우면 됨.
+_TEMPORARILY_DISABLED_SITES = {"YES24", "MELON"}
 
 
 # 크롤링할 사이트와 직접 URL을 결정 (ticketing_links에 지원 사이트가 있으면 YES24 > INTERPARK > MELON
@@ -657,7 +673,11 @@ def _pick_crawl_candidates(
     candidates = [(site, links[site]) for site in _PREFERRED_SITES if site in links]
     if ticketing_site:
         site_key = normalize_site_key(ticketing_site)
-        if site_key not in _UNSUPPORTED_SITES and not any(s == site_key for s, _ in candidates):
+        if (
+            site_key not in _UNSUPPORTED_SITES
+            and site_key not in _TEMPORARILY_DISABLED_SITES
+            and not any(s == site_key for s, _ in candidates)
+        ):
             candidates.append((site_key, links.get(site_key)))
     return candidates
 
@@ -972,15 +992,19 @@ async def _check_festival_lineup(concert_id) -> None:
         # 찜/티켓등록 트리거와 달리 특정 사이트에 안 묶인 주기 배치라 ticketing_site 없이
         # concert.ticketing_links만으로 대상 사이트를 고름 (social.py의 찜 갱신 경로와 동일 패턴)
         candidates = _pick_crawl_candidates(None, concert.ticketing_links)
-        if not candidates:
-            return
 
         # 실제 크롤링 전에 먼저 시각을 찍고 커밋 - crawl_and_save와 동일하게, 크롤링 도중 배치가
         # 죽어도 다음 사이클에 무한정 재시도하지 않도록 함
         concert.lineup_check_attempted_at = now
         await db.commit()
 
-        site_key, capture = await _crawl_first_success(concert, candidates, capture_lineup_snapshot=True)
+        if candidates:
+            site_key, capture = await _crawl_first_success(concert, candidates, capture_lineup_snapshot=True)
+        else:
+            # 지원 사이트 링크가 하나도 없는 경우(티켓링크 전용 등) - crawl_and_save와 동일하게
+            # KOPIS 상세페이지로 폴백
+            site_key = "kopis"
+            capture = await crawl_kopis(concert, capture_lineup_snapshot=True)
         if capture is None:
             return
 

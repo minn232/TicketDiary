@@ -9,6 +9,7 @@ from app.services.crawler import (
     _pick_crawl_target,
     crawl_and_save,
     crawl_interpark,
+    crawl_kopis,
     crawl_melon,
     crawl_yes24,
     retry_pending_crawls,
@@ -434,7 +435,9 @@ def test_pick_crawl_target_nol_prefers_direct_interpark_link():
 # _pick_crawl_candidates / _crawl_first_success 테스트 (한 사이트가 계속 차단당해도 다음
 # 우선순위 사이트로 넘어갈 수 있게 하는 폴백 로직 - YES24 한 달째 100% 차단 대응)
 
-# 등록된 링크가 있는 우선순위 사이트를 전부 후보로, _PREFERRED_SITES 순서 그대로 반환하는지 확인
+# 등록된 링크가 있는 우선순위 사이트를 전부 후보로, _PREFERRED_SITES 순서 그대로 반환하는지 확인.
+# 지금은 YES24/MELON이 임시 비활성화라(_TEMPORARILY_DISABLED_SITES) _PREFERRED_SITES에 INTERPARK만
+# 있음 - 링크가 있어도 후보에서 제외되는지 함께 확인
 def test_pick_crawl_candidates_returns_all_preferred_sites_in_order():
     from app.services.crawler import _pick_crawl_candidates
 
@@ -446,10 +449,11 @@ def test_pick_crawl_candidates_returns_all_preferred_sites_in_order():
             "INTERPARK": "https://tickets.interpark.com/goods/1",
         },
     )
-    assert [site for site, _ in candidates] == ["YES24", "INTERPARK", "MELON"]
+    assert [site for site, _ in candidates] == ["INTERPARK"]
 
 
-# 우선순위 사이트 링크가 하나도 없어도 명시적으로 전달된 ticketing_site는 마지막 후보로 포함
+# 우선순위 사이트 링크가 하나도 없어도 명시적으로 전달된 ticketing_site는 마지막 후보로 포함.
+# 단, 임시 비활성화된 사이트(MELON)는 명시적으로 지정돼도 후보에서 제외됨
 def test_pick_crawl_candidates_appends_ticketing_site_as_fallback():
     from app.services.crawler import _pick_crawl_candidates
 
@@ -457,7 +461,10 @@ def test_pick_crawl_candidates_appends_ticketing_site_as_fallback():
     assert candidates == []  # TICKETLINK는 _UNSUPPORTED_SITES라 후보에서 제외됨
 
     candidates = _pick_crawl_candidates("MELON", None)
-    assert candidates == [("MELON", None)]
+    assert candidates == []  # MELON은 _TEMPORARILY_DISABLED_SITES라 후보에서 제외됨
+
+    candidates = _pick_crawl_candidates("INTERPARK", None)
+    assert candidates == [("INTERPARK", None)]
 
 
 # 1순위 후보가 실패(None 반환)해도 다음 후보로 넘어가 성공하면 그 결과를 반환하는지 확인
@@ -495,9 +502,10 @@ async def test_crawl_first_success_all_fail_returns_none(mock_concert):
     assert (site_key, result) == (None, None)
 
 
-# crawl_and_save 통합 테스트: YES24가 차단(None)이어도 INTERPARK 후보로 자동 폴백해 저장되는지 확인
+# crawl_and_save 통합 테스트: YES24는 임시 비활성화 상태라(_TEMPORARILY_DISABLED_SITES) 링크가
+# 있어도 아예 시도하지 않고 INTERPARK 후보로 바로 저장되는지 확인
 @pytest.mark.asyncio
-async def test_crawl_and_save_falls_back_to_next_site_when_first_blocked():
+async def test_crawl_and_save_skips_temporarily_disabled_site():
     concert_id = uuid.uuid4()
     fake_url = "https://s3.example.com/crawls/screenshot.png"
 
@@ -520,7 +528,7 @@ async def test_crawl_and_save_falls_back_to_next_site_when_first_blocked():
     mock_db.__aenter__ = AsyncMock(return_value=mock_db)
     mock_db.__aexit__ = AsyncMock(return_value=None)
 
-    yes24_crawler = AsyncMock(return_value=None)  # 봇 차단으로 실패
+    yes24_crawler = AsyncMock(return_value=None)
     interpark_crawler = AsyncMock(return_value=b"interpark-bytes")
 
     with (
@@ -530,7 +538,7 @@ async def test_crawl_and_save_falls_back_to_next_site_when_first_blocked():
     ):
         await crawl_and_save(concert_id)
 
-    yes24_crawler.assert_awaited_once()
+    yes24_crawler.assert_not_awaited()  # 임시 비활성화라 아예 시도 안 함
     interpark_crawler.assert_awaited_once()
     assert mock_concert.crawl_screenshot_url == fake_url
 
@@ -1300,6 +1308,31 @@ async def test_crawl_melon_capture_lineup_snapshot_returns_tuple(mock_concert):
     assert img_srcs == ["https://img.example.com/poster.jpg"]
 
 
+@pytest.mark.asyncio
+async def test_crawl_kopis_capture_lineup_snapshot_returns_tuple(mock_concert):
+    mock_concert.kopis_id = "PF123456"
+    expected_screenshot = b"kopis-png"
+    pw_mock = _make_pw_mock(
+        expected_screenshot, body_text="공연안내 - 아티스트A, 아티스트B 출연", img_srcs=["https://img.example.com/poster.jpg"]
+    )
+    with patch("app.services.crawler.async_playwright", return_value=pw_mock):
+        result = await crawl_kopis(mock_concert, capture_lineup_snapshot=True)
+    screenshot, _text, text_hash, img_srcs = result
+    assert screenshot == expected_screenshot
+    assert isinstance(text_hash, str) and text_hash
+    assert img_srcs == ["https://img.example.com/poster.jpg"]
+
+
+# kopis_id가 없으면 브라우저를 띄우지도 않고 바로 None 반환하는지 테스트
+@pytest.mark.asyncio
+async def test_crawl_kopis_no_kopis_id_returns_none(mock_concert):
+    mock_concert.kopis_id = None
+    with patch("app.services.crawler.async_playwright") as mock_pw_ctor:
+        result = await crawl_kopis(mock_concert)
+    assert result is None
+    mock_pw_ctor.assert_not_called()
+
+
 # _check_festival_lineup 테스트
 
 def _make_festival_concert(concert_id, **overrides):
@@ -1430,13 +1463,39 @@ async def test_check_festival_lineup_skips_within_cooldown():
     mock_crawler.assert_not_called()
 
 
-# 크롤링 대상 사이트를 못 고르면(ticketing_links 없음) 업로드 없이 종료하는지 테스트
+# 크롤링 대상 사이트를 못 고르면(ticketing_links 없음, 예: 티켓링크 전용) crawl_and_save와
+# 동일하게 KOPIS 상세페이지로 폴백하는지 테스트
 @pytest.mark.asyncio
-async def test_check_festival_lineup_skips_when_no_site_resolvable():
+async def test_check_festival_lineup_falls_back_to_kopis_when_no_site_resolvable():
     from app.services.crawler import _check_festival_lineup
 
     concert_id = uuid.uuid4()
-    concert = _make_festival_concert(concert_id, ticketing_links=None)
+    concert = _make_festival_concert(concert_id, ticketing_links=None, kopis_id="PF123456")
+    mock_db = _make_db_mock(concert)
+
+    mock_kopis_crawler = AsyncMock(return_value=(b"kopis-png", "raw text", "hash-kopis", []))
+    fake_url = "https://s3.example.com/crawls/kopis-versioned.png"
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler.crawl_kopis", new=mock_kopis_crawler),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+        patch("app.services.crawler.refresh_ticketing_links", new=AsyncMock(return_value=False)),
+    ):
+        await _check_festival_lineup(concert_id)
+
+    mock_kopis_crawler.assert_awaited_once_with(concert, capture_lineup_snapshot=True)
+    assert concert.crawl_screenshot_url == fake_url
+    assert concert.lineup_snapshot_hash == "hash-kopis"
+
+
+# KOPIS 폴백도 실패(kopis_id 없음 등)하면 업로드 없이 종료하는지 테스트
+@pytest.mark.asyncio
+async def test_check_festival_lineup_skips_when_kopis_fallback_also_fails():
+    from app.services.crawler import _check_festival_lineup
+
+    concert_id = uuid.uuid4()
+    concert = _make_festival_concert(concert_id, ticketing_links=None, kopis_id=None)
     mock_db = _make_db_mock(concert)
 
     mock_upload = AsyncMock()
