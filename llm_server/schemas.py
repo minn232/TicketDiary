@@ -46,6 +46,7 @@ class CrawlResultCallback(BaseModel):
     prices: list[dict] | None = None
     venue_layout: VenueLayoutPayload | None = None
     ticketing_date: str | None = None  # YYYY-MM-DD
+    ticketing_phases: list[dict] | None = None  # [{"phase": "선예매", "date": "..."|None}, ...]
     delivery_date: str | None = None  # YYYY-MM-DD
     artist_name: list[str] | None = None
     food_allowed: str | None = None  # "가능"/"불가능"/"일부허용"
