@@ -43,7 +43,7 @@ async def _run_daily_kopis_sync() -> None:
 
 async def _run_pod_start() -> None:
     try:
-        # pod 시작 + SSH 원격으로 start_all.sh 실행까지 한 번에 (LLM팀 Container Start
+        # pod 시작 + SSH 원격으로 start_vllm.sh 실행까지 한 번에 (LLM팀 Container Start
         # Command 자동화가 무산되면서 SSH 방식으로 대체함, 2026-08-06)
         await start_pod_and_launch_services()
     except Exception as e:
