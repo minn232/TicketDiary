@@ -40,6 +40,7 @@ llm_server/*.sqlite3
 # 배치 테스트 결과물 (test_batch_extract.py 출력, 실행할 때마다 재생성되는 로컬 산출물)
 llm_server/batch_results/
 llm_server/batch_results_v2/
+llm_server/batch_results_v3/
 
 # IDE
 .vscode/

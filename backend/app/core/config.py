@@ -32,10 +32,10 @@ class Settings(BaseSettings):
     # LLM팀 GPU pod을 매일 켜고 끄기 위한 RunPod REST API 인증 정보 (비용 절감용, 미설정 시 트리거 안 함)
     RUNPOD_API_KEY: str = ""
     RUNPOD_POD_ID: str = ""
-    # pod을 깨운 뒤 SSH로 접속해서 start_all.sh(vLLM+llm_server+cloudflared 기동)를 원격
-    # 실행하기 위한 정보. RUNPOD_SSH_HOST 미설정이면 pod만 켜고 원격 실행은 건너뜀
-    RUNPOD_SSH_HOST: str = ""
-    RUNPOD_SSH_PORT: int = 22
+    # pod을 깨운 뒤 SSH로 접속해서 start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 원격
+    # 실행하기 위한 정보. RUNPOD_SSH_KEY_PATH 미설정이면 pod만 켜고 원격 실행은 건너뜀.
+    # host/port는 여기 없음 - pod stop/start마다 RunPod이 SSH 외부포트를 바꿔버려서(실측
+    # 확인됨) 고정값 대신 매번 RunPod API로 조회함(runpod.py의 _fetch_ssh_endpoint)
     RUNPOD_SSH_USER: str = "root"
     RUNPOD_SSH_KEY_PATH: str = ""
     AWS_ACCESS_KEY_ID: str = ""
