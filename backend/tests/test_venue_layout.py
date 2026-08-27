@@ -539,6 +539,81 @@ async def test_crawl_result_invalid_ticketing_date_ignored():
     assert "ticketing_date" not in response.json()["updated"]
 
 
+# ticketing_phases 수신 → Concert.ticketing_phases에 전체 단계 저장 + "ticketing_phases" in updated
+@pytest.mark.asyncio
+async def test_crawl_result_ticketing_phases_saved():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_CR_TP_001")
+
+    body = {
+        "ticketing_phases": [
+            {"phase": "선예매", "date": "2030-04-25"},
+            {"phase": "일반예매", "date": "2030-05-01"},
+        ]
+    }
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "ticketing_phases" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+
+    assert concert.ticketing_phases == [
+        {"phase": "선예매", "date": "2030-04-25"},
+        {"phase": "일반예매", "date": "2030-05-01"},
+    ]
+
+
+# phase의 date 형식이 잘못돼도 그 항목만 걸러내고 나머지 phase는 정상 저장
+@pytest.mark.asyncio
+async def test_crawl_result_ticketing_phases_invalid_date_filtered():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_CR_TP_INVALID_001")
+
+    body = {
+        "ticketing_phases": [
+            {"phase": "선예매", "date": "not-a-date"},
+            {"phase": "일반예매", "date": "2030-05-01"},
+        ]
+    }
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "ticketing_phases" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+
+    assert concert.ticketing_phases == [{"phase": "일반예매", "date": "2030-05-01"}]
+
+
 # delivery_date 수신 → Concert.delivery_date 저장 + "delivery_date" in updated
 @pytest.mark.asyncio
 async def test_crawl_result_delivery_date_saved():

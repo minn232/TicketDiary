@@ -11,7 +11,7 @@
     vllm serve Qwen/Qwen2.5-VL-7B-Instruct-AWQ \
         --quantization awq \
         --max-model-len 65536 \
-        --mm-processor-kwargs '{"max_pixels": 1500000, "min_pixels": 3136}' \
+        --mm-processor-kwargs '{"max_pixels": 3000000, "min_pixels": 3136}' \
         --limit-mm-per-prompt '{"image": 32}'
 
 사용:
@@ -19,8 +19,8 @@
     python extract_poster.py "https://example.com/poster.jpg"
 
     # 로컬 파일 (여러 장 가능, glob도 지원)
-    python extract_poster.py /workspace/poster_image/*.png --out-dir /workspace/poster_extractor/results
-    python server/extract_poster.py poster_image/20260713_184727_장기하_X_카더가든__MINTPAPER_20th_SPE_kopis.png
+    /workspace/venv/bin/python server/extract_poster.py /workspace/poster_image/*.png --out-dir /workspace/poster_image/results
+    /workspace/venv/bin/python server/extract_poster.py poster_image/20260815_203732_사운드플래닛페스티벌2026_melon.png
 
 """
 
@@ -29,8 +29,10 @@ import base64
 import io
 import json
 import sys
+import time
 from pathlib import Path
 
+import numpy as np
 import requests
 from openai import OpenAI
 from PIL import Image
@@ -40,13 +42,20 @@ from schema import POSTER_INFO_SCHEMA
 MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 
 # 타일 하나가 감당할 최대 픽셀 수. 서버의 --mm-processor-kwargs max_pixels 와 맞춰둔다.
-MAX_PIXELS_PER_TILE = 1_500_000
-TILE_OVERLAP_PX = 100
+MAX_PIXELS_PER_TILE = 3_000_000
+TILE_OVERLAP_PX = 75
 # 타일(이미지) 수가 너무 많으면 모델이 같은 이름을 계속 반복 생성하는 루프에 빠지는
 # 경향이 있어 상한을 낮게 잡는다. 대신 타일 개수가 이 값을 넘으면 타일을 더 키운다.
 MAX_TILES = 18
 # 세로/가로 비율이 이보다 크면 "상세페이지 캡처형" 이미지로 보고 타일링한다.
 TALL_IMAGE_RATIO = 1.6
+# 목표 절단 지점(고정 간격) 위아래로 이 범위 안에서 배경색이 가장 뚜렷하게 바뀌는 행을 찾아
+# 그 행에서 자른다 - 텍스트나 타임테이블 막대 중간이 그대로 잘리는 것을 피하기 위함.
+CUT_SEARCH_RADIUS_PX = 150
+# vLLM 요청 1건당 최대 대기 시간(초). 라인업/타임테이블 항목이 아주 많은 포스터는 응답
+# 생성이 오래 걸릴 수 있는데, 이 시간을 넘기면 (조용히 멈춰 있지 말고) 타임아웃 예외를
+# 던지고 다음 이미지로 넘어간다.
+REQUEST_TIMEOUT_SEC = 180
 
 SYSTEM_PROMPT = """\
 당신은 공연/페스티벌 홍보 이미지를 분석해 정형 데이터를 추출하는 어시스턴트입니다.
@@ -56,31 +65,33 @@ SYSTEM_PROMPT = """\
 어떤 필드든 이미지 내용만으로 정확히 판단할 수 없으면 절대로 추측하거나 지어내지 말고 반드시 null(배열 필드는 null 또는 빈 배열)로 두세요.
 
 1. lineup (라인업): 출연하는 가수/팀 각각을 artist(가수명)·performance_date(그 가수의 출연 날짜, YYYY-MM-DD, 모르면 null) 쌍으로 나열한 배열입니다. 페스티벌 상세페이지마다 라인업을 표현하는 방식이 다르니, 형태에 상관없이 실제로 인쇄된 이름을 빠짐없이 찾아 채우세요.
-    - "LINE UP"/"라인업"/"OUT-LINE" 같은 제목의 전용 섹션이 없을 수도 있습니다. 전용 섹션 없이 타임테이블 그리드 안에만 이름이 적혀 있다면 그 이름들을 모아 lineup을 구성하세요.
-    - 사진 카드형(인물 사진+이름 라벨, 그리드 배열)과 텍스트 전용 타이포그래피형(사진 없이 이름만, 헤드라이너일수록 글자가 큼)이 모두 흔합니다. 카드/글자 크기나 사진 유무는 신경 쓰지 말고 이름만 그대로 옮기세요 - 글자가 크다고 더 신뢰하거나 작다고 빠뜨리지 마세요.
-    - 라인업은 보통 공연일(SAT/SUN, DAY1/DAY2, 10.18/10.19 등)별로 섹션이 나뉩니다. 각 아티스트가 어느 날짜 섹션에 속하는지 확인해 performance_date를 그 섹션의 날짜로 채우고, 날짜 구분 없이 나열되어 있으면 null로 둡니다.
-    - "Special Guest"/"DJ Line-up"/"Live Performance"처럼 역할·카테고리별로 섹션이 나뉜 경우에도 각 섹션의 이름을 모두 포함하세요(카테고리 자체를 저장할 필드는 없으니 이름만 뽑으면 됩니다).
-    - 다음은 라인업이 아니므로 포함하지 마세요: 참여 "클럽"/매장 이름, 스폰서·협찬사 로고나 문구, 시설/부스 이름, 사회자(MC)만 소개되고 실제 공연은 아닌 경우.
-    - 같은 아티스트가 페이지 여러 곳(상단 "출연진" 요약 카드, 본문 라인업 포스터, 타임테이블)에 중복 등장하는 경우가 많습니다 - 같은 아티스트·같은 날짜는 한 항목으로 합치고 중복 추가하지 마세요. 단, 같은 아티스트가 서로 다른 날짜에 출연하면 날짜마다 별도 항목을 만드세요.
-    - "1st/2nd LINEUP", "AND MORE" 등 라인업이 단계적으로 공개된 경우 실제로 이름이 적힌 아티스트만 넣고, 미공개 인원을 상상해서 추가하지 마세요. 라인업이 전혀 공개되지 않은 페이지(블라인드 티켓, "라인업 추후 공개" 등)는 lineup을 빈 배열로 둡니다.
-    - 단독 콘서트처럼 출연자가 한 팀/한 명뿐이면 그 아티스트만 넣습니다. 같은 아티스트가 여러 회차(날짜)에 걸쳐 공연하면 회차 날짜마다 항목을 하나씩 만드세요. 전용 "라인업" 섹션이나 사진 그리드가 없어도, 오프닝·게스트가 텍스트로만 나열되어 있고 그 공연에 실제로 출연한다고 명시되어 있다면 lineup에 포함하세요.
+   - "LINE UP"/"라인업"/"OUT-LINE" 같은 제목의 전용 섹션이 없을 수도 있습니다. 전용 섹션 없이 타임테이블 그리드 안에만 이름이 적혀 있다면 그 이름들을 모아 lineup을 구성하세요.
+   - 사진 카드형(인물 사진+이름 라벨, 그리드 배열)과 텍스트 전용 타이포그래피형(사진 없이 이름만, 헤드라이너일수록 글자가 큼)이 모두 흔합니다. 카드/글자 크기나 사진 유무는 신경 쓰지 말고 이름만 그대로 옮기세요 - 글자가 크다고 더 신뢰하거나 작다고 빠뜨리지 마세요.
+   - 라인업은 보통 공연일(SAT/SUN, DAY1/DAY2, 10.18/10.19 등)별로 섹션이 나뉩니다. 각 아티스트가 어느 날짜 섹션에 속하는지 확인해 performance_date를 그 섹션의 날짜로 채우고, 날짜 구분 없이 나열되어 있으면 null로 둡니다.
+   - "Special Guest"/"DJ Line-up"/"Live Performance"처럼 역할·카테고리별로 섹션이 나뉜 경우에도 각 섹션의 이름을 모두 포함하세요(카테고리 자체를 저장할 필드는 없으니 이름만 뽑으면 됩니다).
+   - 다음은 라인업이 아니므로 포함하지 마세요: 참여 "클럽"/매장 이름, 스폰서·협찬사 로고나 문구, 시설/부스 이름, 사회자(MC)만 소개되고 실제 공연은 아닌 경우.
+   - 같은 아티스트가 페이지 여러 곳(상단 "출연진" 요약 카드, 본문 라인업 포스터, 타임테이블)에 중복 등장하는 경우가 많습니다 - 같은 아티스트·같은 날짜는 한 항목으로 합치고 중복 추가하지 마세요. 단, 같은 아티스트가 서로 다른 날짜에 출연하면 날짜마다 별도 항목을 만드세요.
+   - "1st/2nd LINEUP", "AND MORE" 등 라인업이 단계적으로 공개된 경우 실제로 이름이 적힌 아티스트만 넣고, 미공개 인원을 상상해서 추가하지 마세요. 라인업이 전혀 공개되지 않은 페이지(블라인드 티켓, "라인업 추후 공개" 등)는 lineup을 빈 배열로 둡니다.
+   - 단독 콘서트처럼 출연자가 한 팀/한 명뿐이면 그 아티스트만 넣습니다. 같은 아티스트가 여러 회차(날짜)에 걸쳐 공연하면 회차 날짜마다 항목을 하나씩 만드세요. 전용 "라인업" 섹션이나 사진 그리드가 없어도, 오프닝·게스트가 텍스트로만 나열되어 있고 그 공연에 실제로 출연한다고 명시되어 있다면 lineup에 포함하세요.
+
 2. timetable (타임테이블): performance_date(공연 날짜)·time(그 아티스트의 시작 시각, HH:MM)·artist(가수명)·stage(무대명, 없으면 null)로 구성된 배열입니다. artist는 반드시 lineup에 있는 이름과 동일한 표기를 사용하세요.
-    - 타임테이블은 대부분 그래픽(이미지)으로 삽입되어 있습니다. 세로축이 시간, 가로축이 무대인 그리드형(무대별 열에 아티스트가 시간 순서로 배치)이거나, 화면 중앙에 공용 시간축을 두고 좌우로 날짜/무대를 나눠 카드를 순서대로 배치한 리스트형이 흔합니다. 어느 형태든 각 블록의 시작 시각과 소속 무대(열 제목/카드 라벨)를 읽어 time/stage로 옮기세요. "OO분(소요시간)"이나 종료 시각이 함께 적혀 있어도 time에는 시작 시각만 씁니다.
-    - 무대 구분이 없는 단일 무대 페스티벌은 stage를 null로 둡니다. 무대명이 있으면 이미지에 적힌 표기 그대로 씁니다(예: "Mint Breeze Stage", "RAVE STAGE").
-    - 하루(날짜)마다 표가 통째로 따로 그려진 경우가 많습니다(예: "10.18 SAT TIMETABLE"과 "10.19 SUN TIMETABLE"이 별개 이미지). 각 표가 어느 날짜의 것인지 표 제목/헤더를 보고 performance_date에 정확히 반영하세요.
-    - 그리드 그림과 같은 내용을 요약한 텍스트 리스트가 페이지에 한 번 더 있는 경우(그리드+리스트 이중 표기)가 있습니다 - 같은 아티스트·같은 시각을 두 번 만들지 말고 한 항목으로만 만드세요.
-    - 표가 특정 아티스트의 "공연"이 아니라 체크인, 파티, 부대행사 같은 일반 프로그램(예: "Welcome Check-in", "Night Splash Party")을 안내하는 것이라면, 출연 아티스트명이 없는 그 줄은 timetable 항목으로 만들지 마세요 - 프로그램명을 artist에 넣거나 지어내지 마세요.
-    - 페이지에 시간·무대 그리드가 전혀 없고 "OO월 OO일 OO시" 같은 공연 일시 텍스트만 있는 경우(단독 콘서트, 라인업 미공개, "타임테이블 추후 공지" 등)는 timetable 전체를 null로 둡니다 - 회차 날짜만으로 시간표를 임의로 만들지 마세요.
-3. ticketing_date (티켓팅/예매 오픈일): "예매오픈", "티켓오픈", "판매시작", "OO예매" 등으로 표시된 티켓 구매 시작 날짜를 YYYY-MM-DD로 변환합니다. 시간(HH:MM)까지 적혀 있어도 날짜만 씁니다. 선예매/1차/2차/일반예매처럼 단계가 여러 개면 그중 **가장 이른 날짜**를 씁니다(유저가 놓치면 안 되는 첫 기회이기 때문). 예매 오픈 관련 언급이 전혀 없으면 null로 둡니다. 공연 당일/회차 날짜(timetable)나 배송일(ticket_delivery_date)과 혼동하지 마세요 - 이건 "티켓을 살 수 있게 되는 날"입니다.
+   - 타임테이블은 대부분 그래픽(이미지)으로 삽입되어 있습니다. 세로축이 시간, 가로축이 무대인 그리드형(무대별 열에 아티스트가 시간 순서로 배치)이거나, 화면 중앙에 공용 시간축을 두고 좌우로 날짜/무대를 나눠 카드를 순서대로 배치한 리스트형이 흔합니다. 어느 형태든 각 블록의 시작 시각과 소속 무대(열 제목/카드 라벨)를 읽어 time/stage로 옮기세요. "OO분(소요시간)"이나 종료 시각이 함께 적혀 있어도 time에는 시작 시각만 씁니다.
+   - 무대 구분이 없는 단일 무대 페스티벌은 stage를 null로 둡니다. 무대명이 있으면 이미지에 적힌 표기 그대로 씁니다(예: "Mint Breeze Stage", "RAVE STAGE").
+   - 하루(날짜)마다 표가 통째로 따로 그려진 경우가 많습니다(예: "10.18 SAT TIMETABLE"과 "10.19 SUN TIMETABLE"이 별개 이미지). 각 표가 어느 날짜의 것인지 표 제목/헤더를 보고 performance_date에 정확히 반영하세요.
+   - 그리드 그림과 같은 내용을 요약한 텍스트 리스트가 페이지에 한 번 더 있는 경우(그리드+리스트 이중 표기)가 있습니다 - 같은 아티스트·같은 시각을 두 번 만들지 말고 한 항목으로만 만드세요.
+   - 표가 특정 아티스트의 "공연"이 아니라 체크인, 파티, 부대행사 같은 일반 프로그램(예: "Welcome Check-in", "Night Splash Party")을 안내하는 것이라면, 출연 아티스트명이 없는 그 줄은 timetable 항목으로 만들지 마세요 - 프로그램명을 artist에 넣거나 지어내지 마세요.
+   - 페이지에 시간·무대 그리드가 전혀 없고 "OO월 OO일 OO시" 같은 공연 일시 텍스트만 있는 경우(단독 콘서트, 라인업 미공개, "타임테이블 추후 공지" 등)는 timetable 전체를 null로 둡니다 - 회차 날짜만으로 시간표를 임의로 만들지 마세요.
+
+3. ticketing_date (티켓팅/예매 오픈일): "예매오픈", "티켓오픈", "판매시작", "OO예매" 등으로 표시된 티켓 구매 시작 날짜를 YYYY-MM-DD로 변환합니다. 시간(HH:MM)까지 적혀 있어도 날짜만 씁니다. 선예매/1차/2차/일반예매처럼 단계가 여러 개면 그중 가장 이른 날짜를 씁니다(유저가 놓치면 안 되는 첫 기회이기 때문). 예매 오픈 관련 언급이 전혀 없으면 null로 둡니다. 공연 당일/회차 날짜(timetable)나 배송일(ticket_delivery_date)과 혼동하지 마세요 - 이건 "티켓을 살 수 있게 되는 날"입니다.
 4. ticket_delivery_date (티켓 배송 날짜): 이미지에 명시된 날짜가 있으면 YYYY-MM-DD로 변환합니다. 배송 관련 언급이 전혀 없으면 null로 둡니다.
 5. ticket_prices (이용권/좌석별 가격): 매우 보수적으로 채우세요. 이미지 안 한 곳에 "구분 명칭"과 "정확한 금액(원)"이 서로 붙어 나란히 인쇄되어 있는 것을 실제로 두 눈으로 읽었을 때만 항목을 만들고, 그 글자와 숫자를 있는 그대로 seat_type과 price(정수, 원 단위)로 옮겨 적으세요.
-    - 지정석 공연인 경우: 좌석 등급/구역별 가격을 seat_type/price로 작성합니다. 좌석별 가격이 이미지에 나와있지 않으면 ticket_prices=null입니다.
-    - 비지정석 공연인 경우: 관람 일수 기준 이용권 종류(예: 단일권, 양일권 등)별 가격을 seat_type/price로 작성합니다. 가격이 이미지에 나와있지 않으면 ticket_prices=null입니다.
+   - 지정석 공연인 경우: 좌석 등급/구역별 가격을 seat_type/price로 작성합니다. 좌석별 가격이 이미지에 나와있지 않으면 ticket_prices=null입니다.
+   - 비지정석 공연인 경우: 관람 일수 기준 이용권 종류(예: 단일권, 양일권 등)별 가격을 seat_type/price로 작성합니다. 가격이 이미지에 나와있지 않으면 ticket_prices=null입니다.
 6. other_info.food_allowed (음식물 반입 가능 여부): "반입 가능 물품"/"반입 금지 물품" 아이콘 안내가 있는지 먼저 확인하세요(예: "500ml 이하 페트병/텀블러 음료는 가능, 병/캔/유리 용기·500ml 초과 음료·도시락 등은 금지" 처럼 아이콘과 짧은 설명으로 표시되는 경우가 많습니다).
-    - 모든 외부 음식/음료가 금지면 "불가능".
-    - 생수·작은 텀블러·간단한 간식 등 일부 품목만 허용하고 나머지(도시락, 배달음식, 일정 용량 초과 음료 등)는 금지면 "일부허용".
-    - 제한 없이 자유롭게 반입 가능하면 "가능".
-    - 언급이 전혀 없으면 null로 둡니다.
+   - 모든 외부 음식/음료가 금지면 "불가능".
+   - 생수·작은 텀블러·간단한 간식 등 일부 품목만 허용하고 나머지(도시락, 배달음식, 일정 용량 초과 음료 등)는 금지면 "일부허용".
+   - 제한 없이 자유롭게 반입 가능하면 "가능".
+   - 언급이 전혀 없으면 null로 둡니다.
 
 반드시 주어진 JSON 스키마 형식으로만 답하세요.
 """
@@ -96,8 +107,51 @@ def load_image(image: str) -> Image.Image:
     return Image.open(image).convert("RGB")
 
 
+def _row_activity(im: Image.Image) -> np.ndarray:
+    """각 행(가로 한 줄) 안에서 픽셀 값이 얼마나 들쭉날쭉한지를 표준편차로 나타낸다. shape (h,).
+    값이 0에 가까우면 그 행은 배경색뿐인 빈 줄(여백)이라는 뜻이고, 값이 크면 글자/그래프/표
+    선 등이 지나간다는 뜻이다. 절단선을 고를 때 이 값이 가장 작은(가장 비어 있는) 행을 고르면
+    텍스트나 타임테이블 막대 한가운데를 피할 수 있다.
+
+    (예전에는 '바로 위 행과 색이 가장 크게 차이 나는 행'을 절단선으로 썼는데, 타임테이블처럼
+    표 전체가 촘촘한 색 블록으로 채워진 구간은 어느 행이든 위 행과 색이 다르므로 결국 표
+    한가운데(칸과 칸 사이 경계선)에서 잘리는 문제가 있었다. 행 자체의 활동도가 낮은 지점을
+    찾는 방식은 실제 여백(빈 줄)을 우선하므로 이런 문제를 피한다.)"""
+    arr = np.asarray(im, dtype=np.float32)
+    return arr.std(axis=(1, 2))
+
+
+def _find_cut_row(row_activity: np.ndarray, target: int, top: int, h: int) -> int:
+    """target 이전 구간(target - CUT_SEARCH_RADIUS_PX ~ target, top<row<=target 범위 내)에서
+    가장 활동도가 낮은(가장 비어 있는) 행을 찾는다 - 텍스트나 타임테이블 막대, 표 선 등이
+    지나가지 않는 여백 줄을 절단선으로 쓰기 위함. target보다 뒤쪽은 보지 않는다 - 타일이
+    MAX_PIXELS_PER_TILE 예산을 넘어가면 vLLM이 강제로 축소해서 작은 글자가 더 뭉개지기 때문."""
+    search_lo = max(top + 1, target - CUT_SEARCH_RADIUS_PX)
+    search_hi = min(h, target)
+    if search_lo >= search_hi:
+        return target
+    window = row_activity[search_lo:search_hi]
+    return search_lo + int(np.argmin(window))
+
+
+def _tile_at_height(im: Image.Image, row_activity: np.ndarray, tile_h: int) -> list[Image.Image]:
+    w, h = im.size
+    tiles = []
+    top = 0
+    while top < h:
+        target_bottom = min(h, top + tile_h)
+        bottom = target_bottom if target_bottom >= h else _find_cut_row(row_activity, target_bottom, top, h)
+        tiles.append(im.crop((0, top, w, bottom)))
+        if bottom >= h:
+            break
+        top = max(top + 1, bottom - TILE_OVERLAP_PX)
+    return tiles
+
+
 def split_into_tiles(im: Image.Image) -> list[Image.Image]:
-    """세로로 매우 긴 이미지를 겹치는 구간을 둔 여러 조각으로 자른다."""
+    """세로로 매우 긴 이미지를 겹치는 구간을 둔 여러 조각으로 자른다. 절단 위치는 고정 간격이
+    아니라, 목표 지점 근처(이전 구간)에서 가장 활동도가 낮은(텍스트/그래프가 없는 여백) 행을
+    찾아 그 행에서 자른다 - 텍스트나 타임테이블 막대 한가운데가 그대로 잘리는 것을 피하기 위함."""
     w, h = im.size
     if h / w < TALL_IMAGE_RATIO and w * h <= MAX_PIXELS_PER_TILE:
         return [im]
@@ -107,16 +161,15 @@ def split_into_tiles(im: Image.Image) -> list[Image.Image]:
 
     if -(-h // step) > MAX_TILES:  # 타일 수가 너무 많아지면 타일을 키워서 개수를 제한
         tile_h = -(-h // MAX_TILES) + TILE_OVERLAP_PX
-        step = max(1, tile_h - TILE_OVERLAP_PX)
 
-    tiles = []
-    top = 0
-    while top < h:
-        bottom = min(h, top + tile_h)
-        tiles.append(im.crop((0, top, w, bottom)))
-        if bottom >= h:
-            break
-        top += step
+    row_activity = _row_activity(im)
+    tiles = _tile_at_height(im, row_activity, tile_h)
+
+    # 경계 탐색이 target 이전에서만 자르다 보니 실제 타일 수가 예상보다 늘어날 수 있다 -
+    # MAX_TILES를 넘으면(반복 루프 유발 위험) 타일을 키워가며 다시 자른다.
+    while len(tiles) > MAX_TILES:
+        tile_h = int(tile_h * 1.15) + TILE_OVERLAP_PX
+        tiles = _tile_at_height(im, row_activity, tile_h)
     return tiles
 
 
@@ -127,8 +180,13 @@ def image_to_data_uri(im: Image.Image) -> str:
     return f"data:image/png;base64,{data}"
 
 
-def extract_poster_info(image: str, base_url: str, api_key: str = "EMPTY") -> dict:
-    client = OpenAI(base_url=base_url, api_key=api_key)
+def extract_poster_info(
+    image: str,
+    base_url: str,
+    api_key: str = "EMPTY",
+    timeout: float = REQUEST_TIMEOUT_SEC,
+) -> dict:
+    client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
 
     im = load_image(image)
     tiles = split_into_tiles(im)
@@ -153,7 +211,7 @@ def extract_poster_info(image: str, base_url: str, api_key: str = "EMPTY") -> di
             {"role": "user", "content": content},
         ],
         temperature=0,
-        max_tokens=8192,
+        max_tokens=32768,
         response_format={
             "type": "json_schema",
             "json_schema": {
@@ -164,7 +222,14 @@ def extract_poster_info(image: str, base_url: str, api_key: str = "EMPTY") -> di
         },
     )
 
-    raw = response.choices[0].message.content
+    choice = response.choices[0]
+    if choice.finish_reason == "length":
+        raise RuntimeError(
+            "응답이 max_tokens 한도에 걸려 중간에 잘렸습니다(라인업/타임테이블 항목이 너무 많은 "
+            "포스터일 수 있음) - max_tokens를 늘려보세요."
+        )
+
+    raw = choice.message.content
     return json.loads(raw)
 
 
@@ -178,6 +243,12 @@ def main():
     )
     parser.add_argument("--api-key", default="EMPTY", help="vLLM은 보통 임의 문자열이면 충분")
     parser.add_argument("--out-dir", default=None, help="지정하면 이미지별 결과를 <파일명>.json으로 저장")
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=REQUEST_TIMEOUT_SEC,
+        help=f"이미지 1장당 요청 최대 대기 시간(초) (기본값: {REQUEST_TIMEOUT_SEC})",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir) if args.out_dir else None
@@ -187,16 +258,21 @@ def main():
     exit_code = 0
     for image in args.images:
         label = Path(image).name if not image.startswith("http") else image
+        start = time.monotonic()
         try:
-            result = extract_poster_info(image, args.base_url, args.api_key)
+            result = extract_poster_info(image, args.base_url, args.api_key, timeout=args.timeout)
         except Exception as exc:  # noqa: BLE001
-            print(f"[{label}] 추출 실패: {exc}", file=sys.stderr)
+            elapsed = time.monotonic() - start
+            print(f"[{label}] 추출 실패 ({elapsed:.1f}초): {exc}", file=sys.stderr)
             exit_code = 1
             continue
+        elapsed = time.monotonic() - start
 
         text = json.dumps(result, ensure_ascii=False, indent=2)
         if len(args.images) > 1:
-            print(f"=== {label} ===")
+            print(f"=== {label} ({elapsed:.1f}초) ===")
+        else:
+            print(f"({elapsed:.1f}초 소요)")
         print(text)
 
         if out_dir:

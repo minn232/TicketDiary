@@ -6,11 +6,11 @@
 보고 나서 손댈 곳은 inference.py가 아니라 이 파일이 되어야 한다.
 
 LLM팀 실제 SYSTEM_PROMPT(Qwen2.5-VL) + vLLM response_format(json_schema, POSTER_INFO_SCHEMA)
-강제 출력 포맷 기준(2026-08-18 ticketing_date 추가):
+강제 출력 포맷 기준:
 {
     "timetable": [{"performance_date": "2026-09-19", "time": "18:00", "artist": "...", "stage": "MAIN"}] | null,
     "lineup": [{"artist": "...", "performance_date": "2026-09-19"}],   # 항상 배열(null 아님)
-    "ticketing_date": "2026-08-25" | null,
+    "ticketing_date": [{"phase": "선예매", "date": "2026-08-25"|null}, ...] | null,
     "ticket_delivery_date": "2026-09-10" | null,
     "ticket_prices": [{"seat_type": "VIP", "price": 198000}] | null,
     "other_info": {"food_allowed": "가능"|"불가능"|"일부허용"|null},   # 객체 자체는 항상 존재
@@ -18,8 +18,11 @@ LLM팀 실제 SYSTEM_PROMPT(Qwen2.5-VL) + vLLM response_format(json_schema, POST
 POSTER_INFO_SCHEMA는 최상위에 additionalProperties: False + 위 6개 키만 required라서
 venue_layout은 지금 이 경로로는 나올 수 없음(안 쓰기로 결정해 매핑 자체를 없앰).
 ticketing_date는 크롤링 "완료" 판정에 쓰이는 필드라(crawler.py의 Concert.ticketing_date)
-이게 안 채워지면 같은 공연이 24시간 쿨다운마다 계속 재크롤링됨 - 이번에 스키마에 추가되기
-전까지 실제로 그런 상태였음.
+이게 안 채워지면 같은 공연이 24시간 쿨다운마다 계속 재크롤링됨. 이 필드는 여전히 단일
+날짜 컬럼/필드라(schemas.py 참고) 선예매/1차/2차 등 여러 단계 중 가장 이른 날짜 하나로
+접어서 보낸다 - _earliest_ticketing_date 참고. 화면에 전체 단계를 보여주기 위한 원본
+배열은 별도로 ticketing_phases(Concert.ticketing_phases)에 그대로
+실어보낸다 - _normalize_ticketing_phases 참고.
 """
 
 from datetime import date, datetime
@@ -31,6 +34,39 @@ def _to_date_string(value) -> str | None:
     if isinstance(value, (date, datetime)):
         return value.strftime("%Y-%m-%d")
     return str(value)
+
+
+# [{"phase": "선예매", "date": "..."}] 배열로 바뀜(선예매/1차/2차 등 여러 단계를 모두 받기
+# 위함). Concert.ticketing_date는 크롤링 "완료" 판정에 쓰는 단일 DateTime 컬럼이라 원래
+# LLM 프롬프트 지시대로도 "가장 이른 날짜"만 있으면 되므로(유저가 놓치면 안 되는 첫 기회),
+# 배열 중 가장 이른 날짜 하나로 접어 반환한다. 예전 형태(단일 문자열/날짜)로 오는 경우도
+# 그대로 지원. 단계별 전체 내역은 별도로 _normalize_ticketing_phases가 담당.
+def _earliest_ticketing_date(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        dates = [
+            _to_date_string(entry.get("date"))
+            for entry in value
+            if isinstance(entry, dict) and entry.get("date")
+        ]
+        return min(dates) if dates else None
+    return _to_date_string(value)
+
+
+# 화면에 선예매/1차/2차 등 단계를 전부 보여주기 위한 원본 배열.
+# ticketing_date와 같은 원본 값을 받아 phase가 있는 항목만 골라 date를
+# 문자열로 정리해 돌려준다. 예전 단일 문자열 형태는 phase 구분이 없어 여기서는 다루지 않음
+# (그 경우 ticketing_date만 채워지고 ticketing_phases는 생략됨).
+def _normalize_ticketing_phases(value) -> list[dict] | None:
+    if not isinstance(value, list):
+        return None
+    phases = [
+        {"phase": entry.get("phase"), "date": _to_date_string(entry.get("date"))}
+        for entry in value
+        if isinstance(entry, dict) and entry.get("phase")
+    ]
+    return phases or None
 
 
 # 라인업 미공개 포스터에서 모델이 진짜 null 대신 문자열로 뱉는 경우.
@@ -135,8 +171,15 @@ def normalize_crawl_result(raw: dict, concert_name: str | None = None) -> dict:
     # venue_layout은 안 쓰기로 결정해 매핑 없음 (POSTER_INFO_SCHEMA에도 없는 키)
 
     # 크롤링 "완료" 판정에 쓰이는 필드(crawler.py) - 없으면 계속 재크롤링 대상으로 남음
-    if raw.get("ticketing_date") is not None:
-        body["ticketing_date"] = _to_date_string(raw["ticketing_date"])
+    raw_ticketing_date = raw.get("ticketing_date")
+    ticketing_date = _earliest_ticketing_date(raw_ticketing_date)
+    if ticketing_date is not None:
+        body["ticketing_date"] = ticketing_date
+
+    # 화면에 선예매/1차/2차 전체를 보여주기 위한 원본 - 위 ticketing_date와 같은 값에서 뽑음
+    ticketing_phases = _normalize_ticketing_phases(raw_ticketing_date)
+    if ticketing_phases is not None:
+        body["ticketing_phases"] = ticketing_phases
 
     if raw.get("ticket_delivery_date") is not None:
         body["delivery_date"] = _to_date_string(raw["ticket_delivery_date"])
