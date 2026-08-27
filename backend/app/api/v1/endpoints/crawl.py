@@ -100,6 +100,23 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 ticketing_date 형식: {body.ticketing_date}")
 
+    # 선예매/1차/2차 등 단계별 전체 내역 - ticketing_date(가장 이른 날짜, 완료 판정용)와는
+    # 별개로 화면 표시용 원본을 그대로 저장. 같은 크롤링 결과에서 같이 오므로 매번 통째로
+    # 덮어써도 되고(병합할 과거 값이 따로 없음), date가 있는 항목만 형식 검증한다
+    if body.ticketing_phases is not None:
+        valid_phases = []
+        for entry in body.ticketing_phases:
+            if entry.date is not None:
+                try:
+                    date.fromisoformat(entry.date)
+                except ValueError:
+                    logger.warning(f"잘못된 ticketing_phases date 형식: {entry.date}")
+                    continue
+            valid_phases.append({"phase": entry.phase, "date": entry.date})
+        if valid_phases:
+            concert.ticketing_phases = valid_phases
+            updated.append("ticketing_phases")
+
     delivery_date: datetime | None = None
     if body.delivery_date is not None:
         try:

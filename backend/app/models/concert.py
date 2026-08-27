@@ -41,6 +41,10 @@ class Concert(Base):
     # 재시도하지 않도록 _MAX_CRAWL_ATTEMPTS(crawler.py)와 비교해 포기 시점을 판단하는 데 씀
     crawl_attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     ticketing_date = Column(DateTime(timezone=True), nullable=True)
+    # 선예매/1차/2차 등 예매 단계별 전체 내역: [{"phase": "선예매", "date": "2026-08-25"}, ...].
+    # ticketing_date는 이 중 가장 이른 날짜(크롤링 "완료" 판정용)만 담고 있어 단계 구분이
+    # 안 남으므로, 화면에 전체 단계를 보여주기 위해 원본 배열을 별도로 둔다.
+    ticketing_phases = Column(JSONB, nullable=True)
     # 예매 사이트 크롤링 결과로 채워지는 배송 예정일 공지 (사이트 공통 공지라 티켓별이 아닌 공연 단위)
     delivery_date = Column(DateTime(timezone=True), nullable=True)
     ticketing_links = Column(JSONB, nullable=True)

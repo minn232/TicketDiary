@@ -10,6 +10,13 @@ class PriceEntry(BaseModel):
     price: int
 
 
+class TicketingPhaseEntry(BaseModel):
+    # 예매 단계 1건 (예: {"phase": "선예매", "date": "2026-08-25"}). LLM팀 크롤링 추출 결과
+    # 원본 포맷 그대로 사용 - date는 해당 단계의 날짜를 아직 특정할 수 없으면 null
+    phase: str
+    date: str | None = None  # YYYY-MM-DD
+
+
 class ConcertResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -28,6 +35,8 @@ class ConcertResponse(BaseModel):
     price: list[PriceEntry] | None
     event_type: str
     ticketing_date: datetime | None
+    # 선예매/1차/2차 등 예매 단계별 전체 내역 (ticketing_date는 이 중 가장 이른 날짜만 담음)
+    ticketing_phases: list[TicketingPhaseEntry] | None
     delivery_date: datetime | None
     food_allowed: str | None
     # 예매처 바로가기 버튼용. KOPIS relates에서 파싱한 사이트별 URL
