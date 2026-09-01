@@ -229,11 +229,11 @@ function renderDetail(c) {
     const st = statusOf(c, name);
     const tag = st ? `<span class="status-tag status-${st}">${st}</span>` : '';
     return `
-      <div class="artist-row">
+      <div class="artist-row" data-concert-id="${c.id}" data-name="${esc(name)}">
         <span class="name">${esc(name)}${tag}</span>
         <span class="actions">
-          <button onclick="renamePrompt('${c.id}', ${JSON.stringify(name)})">수정</button>
-          <button class="danger" onclick="deleteArtist('${c.id}', ${JSON.stringify(name)})">삭제</button>
+          <button onclick="startRename(this)">수정</button>
+          <button class="danger" onclick="startDeleteConfirm(this)">삭제</button>
         </span>
       </div>`;
   }).join('');
@@ -250,30 +250,69 @@ function renderDetail(c) {
   `;
 }
 
-async function renamePrompt(concertId, originalName) {
-  const next = prompt(`"${originalName}" 를 무엇으로 바꿀까요?`, originalName);
-  if (!next || next.trim() === '' || next === originalName) return;
+// prompt()/confirm() 네이티브 다이얼로그는 브라우저가 몇 번 닫으면("이 페이지에서 다시
+// 표시 안 함") 이후 호출을 조용히 막아버려서 실사용 중 먹통처럼 보이는 문제가 있었음 -
+// 그 자리에서 바로 입력/확인하는 인라인 UI로 교체
+
+// 아티스트명을 onclick 문자열 인자로 직접 넣으면 JSON.stringify가 만드는 큰따옴표가
+// onclick="..."의 큰따옴표와 충돌해서 속성 자체가 깨짐(따옴표/특수문자 있는 이름마다 버튼이
+// 먹통이 됨) - data-* 속성에 담아두고 클릭 시 DOM에서 읽어오는 방식으로 이 문제를 피한다
+function startRename(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const originalName = row.dataset.name;
+  row.innerHTML = `
+    <input type="text" class="rename-input" value="${esc(originalName)}" style="flex:1; margin-right:8px;" />
+    <span class="actions">
+      <button onclick="submitRename(this)">저장</button>
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+  const input = row.querySelector('.rename-input');
+  input.focus();
+  input.select();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitRename(input);
+    if (e.key === 'Escape') openDetail(concertId);
+  });
+}
+
+async function submitRename(el) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const originalName = row.dataset.name;
+  const next = row.querySelector('.rename-input').value.trim();
+  if (!next || next === originalName) { openDetail(concertId); return; }
   try {
-    const updated = await api(`/concerts/${concertId}/artist-name`, {
+    await api(`/concerts/${concertId}/artist-name`, {
       method: 'PATCH',
-      body: JSON.stringify({ original_name: originalName, confirmed_name: next.trim() }),
+      body: JSON.stringify({ original_name: originalName, confirmed_name: next }),
     });
-    renderDetail(updated);
     toast('수정됨');
+    openDetail(concertId);
     load(page);
   } catch (e) {
     toast('오류: ' + e.message);
   }
 }
 
-async function deleteArtist(concertId, name) {
-  if (!confirm(`"${name}" 를 이 공연 아티스트 목록에서 삭제할까요?`)) return;
+function startDeleteConfirm(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const actions = button.closest('.actions');
+  actions.innerHTML = `
+    <span style="font-size:12px; color:var(--danger); margin-right:6px;">삭제할까요?</span>
+    <button class="danger" onclick="submitDelete(this)">확인</button>
+    <button onclick="openDetail('${concertId}')">취소</button>`;
+}
+
+async function submitDelete(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
   try {
-    const updated = await api(`/concerts/${concertId}/artist-name?name=${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-    });
-    renderDetail(updated);
+    await api(`/concerts/${concertId}/artist-name?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
     toast('삭제됨');
+    openDetail(concertId);
     load(page);
   } catch (e) {
     toast('오류: ' + e.message);
