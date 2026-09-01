@@ -344,11 +344,27 @@ async def _process_one(
     return status
 
 
-# 정규화 대기열(pending)을 소비하는 배치 본체. 실패(네트워크 오류 등)는 status를 안 바꾸고
-# pending으로 남겨둬서 다음 실행이 자동으로 재시도하게 함 - 확정 응답을 받은 것만 상태를 바꿈.
-async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_run: bool = False) -> dict[str, int]:
+# row 목록을 순서대로 정규화 처리하며 결과를 집계 (normalize_pending_artists/normalize_specific_artists
+# 공통 루프). 실패(네트워크 오류 등)는 status를 안 바꾸고 pending으로 남겨둬서 다음 실행이 자동으로
+# 재시도하게 함 - 확정 응답을 받은 것만 상태를 바꿈.
+async def _process_rows(
+    db: AsyncSession, client: httpx.AsyncClient, rows: list[ArtistNormalizationStatus]
+) -> dict[str, int]:
     stats = {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
+    for row in rows:
+        try:
+            status = await _process_one(db, client, row)
+            stats[status] = stats.get(status, 0) + 1
+        except Exception as e:
+            logger.warning(f"아티스트 정규화 실패, pending 유지 (artist_text={row.artist_text!r}): {e}")
+            stats["error"] += 1
+            continue
+        stats["processed"] += 1
+    return stats
 
+
+# 정규화 대기열(pending)을 소비하는 배치 본체 (스케줄러가 매일 밤 전체 큐 대상으로 호출)
+async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_run: bool = False) -> dict[str, int]:
     async with AsyncSessionLocal() as db:
         pending_concert_ids = (
             await db.execute(select(ArtistNormalizationStatus.concert_id).distinct().where(
@@ -367,19 +383,11 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
         )
         rows = result.scalars().all()
         if not rows:
-            return stats
+            return {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
 
         logger.info(f"MusicBrainz 정규화 대상 {len(rows)}건")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            for row in rows:
-                try:
-                    status = await _process_one(db, client, row)
-                    stats[status] = stats.get(status, 0) + 1
-                except Exception as e:
-                    logger.warning(f"아티스트 정규화 실패, pending 유지 (artist_text={row.artist_text!r}): {e}")
-                    stats["error"] += 1
-                    continue
-                stats["processed"] += 1
+            stats = await _process_rows(db, client, rows)
 
         if dry_run:
             await db.rollback()
@@ -387,5 +395,33 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
         else:
             await db.commit()
             logger.info(f"MusicBrainz 정규화 완료: {stats}")
+
+    return stats
+
+
+# 웹훅 도착 직후 "이번에 새로 큐잉된 이름들"만 즉시 정규화 - fire-and-forget 백그라운드
+# 태스크로 호출(웹훅 응답 이후 실행, 응답을 기다리게 하지 않음). pending 전체를 훑는
+# normalize_pending_artists와 달리 이 콘서트의 이 이름들로만 좁혀서 무관한 콘서트는 안 건드림
+async def normalize_specific_artists(concert_id, names: list[str]) -> dict[str, int]:
+    if not names:
+        return {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistNormalizationStatus).where(
+                ArtistNormalizationStatus.concert_id == concert_id,
+                ArtistNormalizationStatus.artist_text.in_(names),
+                ArtistNormalizationStatus.status == "pending",
+            )
+        )
+        rows = result.scalars().all()
+        if not rows:
+            return {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            stats = await _process_rows(db, client, rows)
+
+        await db.commit()
+        logger.info(f"MusicBrainz 즉시 정규화 완료 (concert_id={concert_id}): {stats}")
 
     return stats

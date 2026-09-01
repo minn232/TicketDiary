@@ -22,6 +22,7 @@ from app.services.artist_normalization import (
     expand_follow_index_with_group_relations,
     find_canonical_by_alias,
     normalize_pending_artists,
+    normalize_specific_artists,
     queue_for_normalization,
 )
 from app.services.kopis import _build_follow_index, _create_news_feeds_for_concert
@@ -341,6 +342,66 @@ async def test_normalize_pending_artists_dry_run_does_not_persist():
         assert status_result.scalar_one().status == "pending"  # 상태도 그대로
 
 
+# normalize_specific_artists - 웹훅 도착 직후 즉시 트리거되는 좁은 범위 정규화 (pending
+# 전체를 훑는 normalize_pending_artists와 달리 concert_id+이름 목록으로 좁혀서 처리)
+
+@pytest.mark.asyncio
+async def test_normalize_specific_artists_only_processes_given_names():
+    await _clear_pending_queue()
+    token = await _get_token()
+    concert_id = uuid.UUID(await _create_concert(f"PF_NSA_{uuid.uuid4().hex[:6]}", "넬,다른아티스트", token))
+
+    async with AsyncSessionLocal() as db:
+        await queue_for_normalization(db, concert_id, ["넬", "다른아티스트"])
+
+    with _no_relation_fetch(), patch(
+        "app.services.artist_normalization.search_artist",
+        new=AsyncMock(return_value=[_kr_candidate("Nell", score=100)]),
+    ):
+        stats = await normalize_specific_artists(concert_id, ["넬"])
+
+    assert stats["matched"] == 1
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistNormalizationStatus).where(ArtistNormalizationStatus.concert_id == concert_id)
+        )
+        rows = {r.artist_text: r.status for r in result.scalars().all()}
+    assert rows["넬"] == "matched"
+    assert rows["다른아티스트"] == "pending"  # 목록에 없는 이름은 안 건드림
+
+
+@pytest.mark.asyncio
+async def test_normalize_specific_artists_ignores_other_concerts():
+    await _clear_pending_queue()
+    token = await _get_token()
+    concert_a = uuid.UUID(await _create_concert(f"PF_NSA_A_{uuid.uuid4().hex[:6]}", "같은이름", token))
+    concert_b = uuid.UUID(await _create_concert(f"PF_NSA_B_{uuid.uuid4().hex[:6]}", "같은이름", token))
+
+    async with AsyncSessionLocal() as db:
+        await queue_for_normalization(db, concert_a, ["같은이름"])
+        await queue_for_normalization(db, concert_b, ["같은이름"])
+
+    mock_search = AsyncMock(return_value=[_general_candidate("Same Name", score=100)])
+    with _no_relation_fetch(), patch("app.services.artist_normalization.search_artist", new=mock_search):
+        stats = await normalize_specific_artists(concert_a, ["같은이름"])
+
+    assert stats["matched"] == 1
+    mock_search.assert_awaited_once()  # concert_b 것까지 같이 처리하지 않음(호출 1회로 끝)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistNormalizationStatus).where(ArtistNormalizationStatus.concert_id == concert_b)
+        )
+        assert result.scalar_one().status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_normalize_specific_artists_empty_names_is_noop():
+    stats = await normalize_specific_artists(uuid.uuid4(), [])
+    assert stats["processed"] == 0
+
+
 # 웹훅(/artist-result)이 정규화 큐를 적립하는지
 
 @pytest.mark.asyncio
@@ -364,6 +425,27 @@ async def test_artist_result_queues_pending_normalization():
         rows = result.scalars().all()
     assert [r.artist_text for r in rows] == ["신규아티스트"]
     assert rows[0].status == "pending"
+
+
+# 웹훅이 큐잉 직후 normalize_specific_artists를 백그라운드로 스케줄하는지 (conftest의 autouse
+# 스텁을 이 테스트에서만 해제하고 호출 여부/인자를 직접 검증)
+@pytest.mark.asyncio
+async def test_artist_result_schedules_immediate_normalization():
+    token = await _get_token()
+    concert_id = uuid.UUID(await _create_concert(f"PF_AR_TRIGGER_{uuid.uuid4().hex[:6]}", "", token))
+
+    body = {"artist_name": ["즉시아티스트"]}
+    mock_normalize = AsyncMock()
+    with patch("app.api.v1.endpoints.crawl.normalize_specific_artists", new=mock_normalize), patch(
+        "app.core.deps.settings"
+    ) as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result", json=body, headers=_llm_headers()
+            )
+    assert res.status_code == 200
+    mock_normalize.assert_awaited_once_with(concert_id, ["즉시아티스트"])
 
 
 # PATCH /concerts/{concert_id}/artist-name/confirm (유저 프로모션 API)
@@ -630,7 +712,7 @@ async def test_normalize_pending_artists_supplements_missing_kopis_members():
     m1, m2, m3 = (f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(3))
     concert_id = uuid.UUID(await _create_concert(kopis_id, f"{m1},{m2},{m3}", token))
 
-    # replace=True로 KOPIS 원본(3명)이 DB에서 지워지고 LLM이 1명만 남긴 상황을 재현
+    # LLM이 포스터에서 3명 중 1명만 인식해 concert.artist_name에 1명만 있는 상황을 재현
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, concert_id)
         concert.artist_name = [m1]

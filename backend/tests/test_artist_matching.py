@@ -165,13 +165,14 @@ async def test_artist_result_normalizes_and_saves():
     assert res.json()["artist_name"] == [existing, "신규아티스트"]
 
 
-# KOPIS 원본(실명/멤버명일 수 있음)이 채운 소규모 공연에 포스터 결과가 오면 합집합이 아니라
-# 교체되는지 테스트 (예: 존박→박성규 케이스 - 포스터가 더 신뢰할 수 있는 활동명을 준다고 가정)
+# KOPIS 원본(실명/멤버명일 수 있음)이 채운 소규모 공연에 포스터 결과가 와도 교체가 아니라
+# 합집합으로 남는지 테스트 - LLM이 멤버 일부를 놓쳐도 KOPIS 쪽 이름이 사라지지 않아야 함
+# (본명↔활동명 중복은 MusicBrainz 정규화 배치가 나중에 정리, artist_normalization.py 참고)
 @pytest.mark.asyncio
-async def test_artist_result_replaces_small_kopis_sourced_artist():
+async def test_artist_result_unions_small_kopis_sourced_artist():
     token = await _get_token()
     kopis_name = f"KOPIS실명_{uuid.uuid4().hex[:6]}"
-    concert_id = await _create_concert(f"PF_AR_REPLACE_{uuid.uuid4().hex[:6]}", kopis_name, token)
+    concert_id = await _create_concert(f"PF_AR_UNION2_{uuid.uuid4().hex[:6]}", kopis_name, token)
 
     poster_name = f"포스터활동명_{uuid.uuid4().hex[:6]}"
     body = {"artist_name": [poster_name]}
@@ -186,11 +187,10 @@ async def test_artist_result_replaces_small_kopis_sourced_artist():
             )
 
     assert res.status_code == 200
-    # KOPIS 이름은 사라지고 포스터 결과로 교체됨 (합집합이었다면 둘 다 남았을 것)
-    assert res.json()["artist_name"] == [poster_name]
+    assert set(res.json()["artist_name"]) == {kopis_name, poster_name}
 
 
-# 이미 4명 이상(페스티벌 추정)이면 라인업 유실 방지를 위해 교체 대신 기존처럼 합집합 유지
+# 4명 이상(페스티벌 추정)도 당연히 합집합 유지 (라인업 유실 방지)
 @pytest.mark.asyncio
 async def test_artist_result_keeps_union_when_already_multi_artist():
     token = await _get_token()

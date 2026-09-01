@@ -86,6 +86,16 @@ def _stub_lastfm_genre_fetch():
         yield
 
 
+# /artist-result 웹훅이 큐잉 직후 백그라운드로 즉시 MusicBrainz 정규화(normalize_specific_artists)를
+# 트리거하는데, 기본으로 막아두지 않으면 관련 없는 테스트까지 전부 실제 MusicBrainz API를 호출하게
+# 됨(느려지고 네트워크 의존적이 됨). 이 즉시-정규화 자체를 테스트하는 케이스는 test_artist_normalization.py에서
+# 각자 다시 patch해서 오버라이드하면 됨
+@pytest.fixture(autouse=True)
+def _stub_immediate_artist_normalization():
+    with patch("app.api.v1.endpoints.crawl.normalize_specific_artists", new=AsyncMock()):
+        yield
+
+
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처
 @pytest_asyncio.fixture
 async def get_auth_token():

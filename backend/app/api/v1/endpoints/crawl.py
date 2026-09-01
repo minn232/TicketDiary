@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtracti
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.models.lineup import ConcertLineup
 from app.services.artist_matching import get_known_artist_names, merge_artist_names
-from app.services.artist_normalization import queue_for_normalization
+from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.lineup import upsert_concert_lineup
 from app.services.notification import schedule_ticketing_day_notifications
@@ -185,6 +185,7 @@ async def receive_crawl_result(
 async def receive_artist_extraction_result(
     concert_id: UUID,
     body: ArtistExtractionResult,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
@@ -198,11 +199,13 @@ async def receive_artist_extraction_result(
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        # KOPIS 원본이 채운 소규모(단독 추정, 4명 미만) 공연이면 포스터 결과를 더 신뢰해서
-        # 교체(KOPIS prfcast가 본명/멤버명인 경우가 많아서) - 이미 4명 이상(페스티벌 등)이면
-        # 라인업 유실 방지를 위해 기존처럼 합집합 유지
-        replace = concert.kopis_detail_synced_at is not None and len(concert.artist_name or []) < 4
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names, replace=replace)
+        # 항상 합집합 병합 - 예전엔 소규모(4명 미만) 공연에서 KOPIS가 본명/멤버명을 주는 문제
+        # (존박→박성규 등) 때문에 replace=True로 KOPIS 쪽을 통째로 버렸지만, LLM이 포스터에서
+        # 일부 멤버를 놓치면 그만큼 라인업이 사라지는 부작용이 있었음. 이제 MusicBrainz alias
+        # 매칭(services/artist_normalization.py)이 본명↔활동명을 배치로 자동 정리해주므로 그냥
+        # 합집합으로 두고 정리는 정규화 배치에 맡김. merge_artist_names의 replace=True 자체는
+        # 다른 상황에 필요할 수 있어 남겨둠(artist_matching.py)
+        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert, body.event_type)
@@ -234,6 +237,9 @@ async def receive_artist_extraction_result(
         queue_names |= set(lineup_result.scalars().all())
     if queue_names:
         await queue_for_normalization(db, concert_id, list(queue_names))
+        # 다음날 밤 정기 배치를 기다리지 않고 바로 시도 - 응답 이후 백그라운드로 실행되므로
+        # 웹훅 응답 시간엔 영향 없음(services/artist_normalization.py의 normalize_specific_artists 참고)
+        background_tasks.add_task(normalize_specific_artists, concert_id, list(queue_names))
 
     logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)
