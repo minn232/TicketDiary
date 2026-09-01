@@ -51,3 +51,8 @@ class AdminArtistRenameRequest(BaseModel):
     # confirm_artist_name_change에 그대로 넘기는 페이로드(G안과 동일 로직)
     original_name: str
     confirmed_name: str
+
+
+class AdminArtistAddRequest(BaseModel):
+    # add_artist_name에 그대로 넘기는 페이로드 - LLM/KOPIS 둘 다 놓친 아티스트 수기 추가용
+    name: str

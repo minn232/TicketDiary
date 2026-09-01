@@ -244,10 +244,38 @@ function renderDetail(c) {
     ${links ? `<div class="ticket-links">${links}</div>` : ''}
     <div class="body">
       ${poster}
-      <div style="flex:1;">${rows || '<div style="color:var(--muted)">아티스트 없음</div>'}</div>
+      <div style="flex:1;">
+        ${rows || '<div style="color:var(--muted)">아티스트 없음</div>'}
+        <div class="artist-row" data-concert-id="${c.id}" style="border-style:dashed;">
+          <input type="text" class="add-input" placeholder="놓친 아티스트명 입력" style="flex:1; margin-right:8px; border:none;" />
+          <button onclick="submitAdd(this)">추가</button>
+        </div>
+      </div>
     </div>
     <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
   `;
+  const addInput = document.querySelector('.add-input');
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAdd(addInput);
+  });
+}
+
+async function submitAdd(el) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.querySelector('.add-input').value.trim();
+  if (!name) return;
+  try {
+    await api(`/concerts/${concertId}/artist-name`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    toast('추가됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
 }
 
 // prompt()/confirm() 네이티브 다이얼로그는 브라우저가 몇 번 닫으면("이 페이지에서 다시

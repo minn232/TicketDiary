@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from app.core.deps import verify_admin_key
 from app.models.artist_normalization import ArtistNormalizationStatus
 from app.models.concert import Concert
 from app.schemas.admin import (
+    AdminArtistAddRequest,
     AdminArtistRenameRequest,
     AdminConcertDetail,
     AdminConcertListItem,
@@ -108,6 +109,20 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
             for r in status_rows
         ],
     )
+
+
+@router.post("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)
+async def add_artist(
+    concert_id: UUID,
+    body: AdminArtistAddRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    _, canonical = await add_artist_name(db, concert_id, body.name)
+    if canonical.mbid is None:
+        # 응답 이후 백그라운드로 실행 - 스로틀(2초 간격) 때문에 여기서 기다리면 추가 자체가 느려짐
+        background_tasks.add_task(try_link_canonical_to_musicbrainz, canonical.id)
+    return await get_concert_detail(concert_id, db)
 
 
 @router.patch("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)

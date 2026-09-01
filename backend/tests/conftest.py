@@ -96,6 +96,14 @@ def _stub_immediate_artist_normalization():
         yield
 
 
+# 관리자 페이지에서 아티스트를 추가하면 같은 이유로 백그라운드에서 MusicBrainz 연결을 시도함
+# (try_link_canonical_to_musicbrainz) - 기본으로 막아서 관련 없는 테스트가 실제 API를 안 타게 함
+@pytest.fixture(autouse=True)
+def _stub_admin_musicbrainz_link():
+    with patch("app.api.v1.endpoints.admin.try_link_canonical_to_musicbrainz", new=AsyncMock()):
+        yield
+
+
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처
 @pytest_asyncio.fixture
 async def get_auth_token():

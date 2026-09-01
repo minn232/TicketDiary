@@ -433,6 +433,67 @@ async def remove_artist_name(db: AsyncSession, concert_id, name: str) -> Concert
     return concert
 
 
+# LLM/KOPIS 둘 다 놓친 아티스트를 관리자가 직접 추가 - confirm_artist_name_change처럼 기존
+# canonical과 퍼지매칭해 재사용하되 MusicBrainz 조회 없이 즉시 반영(추가를 안 늦춤). canonical도
+# 반환해서 호출부가 mbid 없으면 try_link_canonical_to_musicbrainz를 백그라운드로 걸 수 있게 함
+async def add_artist_name(db: AsyncSession, concert_id, name: str) -> tuple[Concert, CanonicalArtist]:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="아티스트명이 비어있습니다.")
+    if is_blocklisted_artist_name(name):
+        raise HTTPException(status_code=400, detail="아티스트명으로 쓸 수 없는 값입니다.")
+
+    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
+    canonical_names = {c.canonical_name for c in existing_canonicals}
+    resolved_name = normalize_artist_names([name], canonical_names)[0]
+
+    if resolved_name in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="이미 등록된 아티스트입니다.")
+
+    canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+    if canonical is None:
+        canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
+        db.add(canonical)
+        await db.flush()
+    await _register_alias_if_new(db, canonical, name, source="user_input")
+
+    concert.artist_name = sorted(set(concert.artist_name or []) | {resolved_name})
+
+    await db.commit()
+    await db.refresh(concert)
+    return concert, canonical
+
+
+# add_artist_name이 건너뛴 MusicBrainz 조회를 응답 이후 백그라운드에서 한 번 시도 - 매치되면
+# mbid/관계까지 채워지고(그룹이면 로스터까지 확보), 실패해도 무해하게 mbid=None 그대로 남음.
+# canonical_name은 admin이 정한 표기를 그대로 유지(조회 결과로 덮어쓰지 않음)
+async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
+    async with AsyncSessionLocal() as db:
+        canonical = await db.get(CanonicalArtist, canonical_id)
+        if canonical is None or canonical.mbid is not None:
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                candidates = await search_artist(canonical.canonical_name, client=client)
+                status, winner = decide_match(candidates, canonical.canonical_name)
+                if status != "matched" or winner is None:
+                    return
+                canonical.mbid = winner.mbid
+                await _register_alias_if_new(db, canonical, winner.name, source="musicbrainz")
+                await _fetch_and_store_group_relations(db, canonical, client)
+        except Exception as e:
+            logger.warning(f"관리자 추가 아티스트 MusicBrainz 연결 실패, 건너뜀 ({canonical.canonical_name}): {e}")
+            return
+
+        await db.commit()
+        logger.info(f"관리자 추가 아티스트 MusicBrainz 연결 완료: {canonical.canonical_name} -> {winner.name}")
+
+
 # 매치된 멤버들의 그룹 로스터와 대조해 사실상 그룹 전체 공연이면 멤버 표기 대신 그룹명으로
 # 정리한다. 그룹명이 이미 있거나 로스터 전원이 있으면 바로, 1명이라도 빠졌으면 concert.name에
 # 그룹명이 언급될 때만 허용(추출 누락으로 간주) - 근거 없이 안 오는 사람까지 왔다고 하는 게 더 위험함
