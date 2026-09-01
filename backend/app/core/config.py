@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     SETLISTFM_BASE_URL: str = "https://api.setlist.fm/rest/1.0"
     LASTFM_API_KEY: str = ""
     LASTFM_BASE_URL: str = "https://ws.audioscrobbler.com/2.0"
+    MUSICBRAINZ_BASE_URL: str = "https://musicbrainz.org/ws/2"
+    # MusicBrainz API 이용 정책상 User-Agent에 연락처(이메일 등)가 있어야 함 - 없으면 요청이
+    # 차단될 수 있음. 형식: "AppName/Version (contact)"
+    MUSICBRAINZ_USER_AGENT: str = "TicketDiary/1.0 (scj7565@gmail.com)"
     GOOGLE_VISION_API_KEY: str = ""
     # LLM_EXTRACT_URL: str = ""  # OCR 파싱이 로컬 regex로 전환되어 현재 미사용
     LLM_EXTRACT_API_KEY: str = ""
