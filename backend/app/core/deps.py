@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,13 +74,13 @@ async def verify_llm_api_key(
 
 
 # 아티스트 정규화 관리자 페이지 API Key 검증 - Nginx Basic Auth(서브도메인)에만 기대지 않고
-# 앱 레벨에서도 한 번 더 막음(메인 도메인으로 같은 라우트를 찔러도 뚫리지 않도록)
-async def verify_admin_key(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-) -> None:
+# 앱 레벨에서도 한 번 더 막음(메인 도메인으로 같은 라우트를 찔러도 뚫리지 않도록). Authorization
+# 헤더는 Nginx Basic Auth가 이미 쓰고 있어서(Basic ...) 겹치면 거기서부터 401이 나므로,
+# 별도 헤더(X-Admin-Key)를 씀
+async def verify_admin_key(x_admin_key: str | None = Header(None)) -> None:
     if not settings.ADMIN_API_KEY:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="관리자 API 키가 설정되지 않았습니다.")
-    if credentials is None or not secrets.compare_digest(credentials.credentials, settings.ADMIN_API_KEY):
+    if x_admin_key is None or not secrets.compare_digest(x_admin_key, settings.ADMIN_API_KEY):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 API 키입니다.")
 
 

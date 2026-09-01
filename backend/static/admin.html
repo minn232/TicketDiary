@@ -146,7 +146,7 @@ document.getElementById('admin-key').value = adminKey();
 async function api(path, opts = {}) {
   const res = await fetch(API + path, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + adminKey(), ...(opts.headers || {}) },
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey(), ...(opts.headers || {}) },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
