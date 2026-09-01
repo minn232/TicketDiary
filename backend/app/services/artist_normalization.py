@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +15,8 @@ from app.models.artist_normalization import (
 )
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
-from app.services.artist_matching import _compact, _contains_hangul
+from app.services.artist_blocklist import is_blocklisted_artist_name
+from app.services.artist_matching import _compact, _contains_hangul, normalize_artist_names
 from app.services.musicbrainz import ArtistCandidate, fetch_member_of_band_relations, search_artist
 
 logger = logging.getLogger(__name__)
@@ -344,6 +346,91 @@ async def apply_canonical_replacement(
             if row.source == "crawl" and target.source != "crawl":
                 target.source = "crawl"
             await db.delete(row)
+
+
+# 유저 확정(G안) API/관리자 페이지가 공유하는 핵심 로직 - original_name을 confirmed_name으로
+# 바꾸고 alias/canonical을 등록한다. 서비스 레이어에서 바로 HTTPException을 던짐(raw int,
+# 프로젝트 컨벤션) - 호출부(엔드포인트)는 그대로 전파만 하면 됨
+async def confirm_artist_name_change(
+    db: AsyncSession, concert_id, original_name: str, confirmed_name: str
+) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    original_name = original_name.strip()
+    confirmed_name = confirmed_name.strip()
+    if not original_name or not confirmed_name:
+        raise HTTPException(status_code=400, detail="아티스트명이 비어있습니다.")
+    if original_name not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+    if is_blocklisted_artist_name(confirmed_name):
+        raise HTTPException(status_code=400, detail="아티스트명으로 쓸 수 없는 값입니다.")
+
+    # 기존 canonical 표기들과 퍼지/로마자 매칭해서 근접 중복(오타, 대소문자 등)이면 새로
+    # 만들지 않고 기존 것을 재사용 - concert.artist_name 병합 때 쓰는 것과 동일한 로직/임계치
+    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
+    canonical_names = {c.canonical_name for c in existing_canonicals}
+    resolved_name = normalize_artist_names([confirmed_name], canonical_names)[0]
+
+    canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+    if canonical is None:
+        canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
+        db.add(canonical)
+        await db.flush()
+
+    for alias_text in {original_name, confirmed_name}:
+        await _register_alias_if_new(db, canonical, alias_text, source="user_input")
+
+    await apply_canonical_replacement(db, concert_id, original_name, resolved_name)
+
+    status_result = await db.execute(
+        select(ArtistNormalizationStatus).where(
+            ArtistNormalizationStatus.concert_id == concert_id,
+            ArtistNormalizationStatus.artist_text == original_name,
+        )
+    )
+    status_row = status_result.scalar_one_or_none()
+    if status_row is not None:
+        status_row.status = "matched"
+
+    await db.commit()
+    await db.refresh(concert)
+    return concert
+
+
+# 아티스트가 아닌데 잘못 들어간 표기를 통째로 제거(수정이 아니라 삭제) - 관리자 페이지 전용.
+# concert.artist_name에서 빼고, 정규화 큐/라인업에 같은 표기가 남아있으면 같이 정리해서
+# 다음 배치가 다시 큐잉하지 않게 한다
+async def remove_artist_name(db: AsyncSession, concert_id, name: str) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    name = name.strip()
+    if not name or name not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+
+    concert.artist_name = sorted(n for n in concert.artist_name if n != name)
+
+    status_result = await db.execute(
+        select(ArtistNormalizationStatus).where(
+            ArtistNormalizationStatus.concert_id == concert_id,
+            ArtistNormalizationStatus.artist_text == name,
+        )
+    )
+    for row in status_result.scalars().all():
+        await db.delete(row)
+
+    lineup_result = await db.execute(
+        select(ConcertLineup).where(ConcertLineup.concert_id == concert_id, ConcertLineup.artist == name)
+    )
+    for row in lineup_result.scalars().all():
+        await db.delete(row)
+
+    await db.commit()
+    await db.refresh(concert)
+    return concert
 
 
 # 매치된 멤버들의 그룹 로스터와 대조해 사실상 그룹 전체 공연이면 멤버 표기 대신 그룹명으로

@@ -12,7 +12,6 @@ from app.core.deps import (
     rate_limit_ticket_scan,
     record_meaningful_ticket_scan,
 )
-from app.models.artist_normalization import ArtistNormalizationStatus, CanonicalArtist
 from app.models.concert import Concert
 from app.models.user import User
 from app.schemas.concert import (
@@ -22,9 +21,7 @@ from app.schemas.concert import (
     TicketScanExtracted,
     TicketScanResponse,
 )
-from app.services.artist_blocklist import is_blocklisted_artist_name
-from app.services.artist_matching import normalize_artist_names
-from app.services.artist_normalization import _register_alias_if_new, apply_canonical_replacement
+from app.services.artist_normalization import confirm_artist_name_change
 from app.services.kopis import (
     search_concerts as kopis_search,
     search_concerts_multi as kopis_search_multi,
@@ -172,48 +169,5 @@ async def confirm_artist_name(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Concert).where(Concert.id == concert_id))
-    concert = result.scalar_one_or_none()
-    if concert is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
-
-    original_name = body.original_name.strip()
-    confirmed_name = body.confirmed_name.strip()
-    if not original_name or not confirmed_name:
-        raise HTTPException(status_code=400, detail="아티스트명이 비어있습니다.")
-    if original_name not in (concert.artist_name or []):
-        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
-    if is_blocklisted_artist_name(confirmed_name):
-        raise HTTPException(status_code=400, detail="아티스트명으로 쓸 수 없는 값입니다.")
-
-    # 기존 canonical 표기들과 퍼지/로마자 매칭해서 근접 중복(오타, 대소문자 등)이면 새로
-    # 만들지 않고 기존 것을 재사용 - artist_matching.py가 concert.artist_name 병합 때 쓰는
-    # 것과 동일한 로직/임계치를 그대로 재사용(이중 기준을 두지 않기 위함)
-    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
-    canonical_names = {c.canonical_name for c in existing_canonicals}
-    resolved_name = normalize_artist_names([confirmed_name], canonical_names)[0]
-
-    canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
-    if canonical is None:
-        canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
-        db.add(canonical)
-        await db.flush()
-
-    for alias_text in {original_name, confirmed_name}:
-        await _register_alias_if_new(db, canonical, alias_text, source="user_input")
-
-    await apply_canonical_replacement(db, concert_id, original_name, resolved_name)
-
-    status_result = await db.execute(
-        select(ArtistNormalizationStatus).where(
-            ArtistNormalizationStatus.concert_id == concert_id,
-            ArtistNormalizationStatus.artist_text == original_name,
-        )
-    )
-    status_row = status_result.scalar_one_or_none()
-    if status_row is not None:
-        status_row.status = "matched"
-
-    await db.commit()
-    await db.refresh(concert)
+    concert = await confirm_artist_name_change(db, concert_id, body.original_name, body.confirmed_name)
     return ArtistNameConfirmResponse(artist_name=concert.artist_name)

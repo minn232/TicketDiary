@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     GOOGLE_VISION_API_KEY: str = ""
     # LLM_EXTRACT_URL: str = ""  # OCR 파싱이 로컬 regex로 전환되어 현재 미사용
     LLM_EXTRACT_API_KEY: str = ""
+    # 아티스트 정규화 관리자 페이지 인증 키 (Nginx Basic Auth와 별개로 앱 레벨에서도 검증)
+    ADMIN_API_KEY: str = ""
     LLM_CRAWL_URL: str = ""
     LLM_ARTIST_URL: str = ""
     LLM_DIARY_URL: str = ""

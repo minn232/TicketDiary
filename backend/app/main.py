@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.batch.scheduler import start_scheduler, stop_scheduler
 from app.core.config import settings
+from app.api.v1.endpoints.admin import page_router as admin_page_router
 from app.api.v1.router import api_router
 
 
@@ -35,6 +36,8 @@ app.add_middleware(
 
 # API 라우터 등록
 app.include_router(api_router, prefix="/api/v1")
+# 관리자 페이지 - Nginx가 admin 서브도메인을 /admin으로 프록시하는 걸 전제로 루트 경로에 마운트
+app.include_router(admin_page_router, prefix="/admin")
 
 
 # 헬스 체크
