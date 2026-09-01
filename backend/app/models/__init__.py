@@ -13,6 +13,7 @@ from app.models.artist_genre import ArtistGenre
 from app.models.artist_normalization import (
     CanonicalArtist, ArtistAlias, ArtistNormalizationStatus, ArtistGroupMembership,
 )
+from app.models.artist_blocklist import BlockedArtistName
 
 __all__ = [
     "User", "UserRole",
@@ -28,4 +29,5 @@ __all__ = [
     "ArtistSimilarity",
     "ArtistGenre",
     "CanonicalArtist", "ArtistAlias", "ArtistNormalizationStatus", "ArtistGroupMembership",
+    "BlockedArtistName",
 ]

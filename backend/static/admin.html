@@ -329,17 +329,19 @@ function startDeleteConfirm(button) {
   const actions = button.closest('.actions');
   actions.innerHTML = `
     <span style="font-size:12px; color:var(--danger); margin-right:6px;">삭제할까요?</span>
-    <button class="danger" onclick="submitDelete(this)">확인</button>
+    <button class="danger" onclick="submitDelete(this, false)">삭제만</button>
+    <button class="danger" onclick="submitDelete(this, true)" title="이 이름이 다른 콘서트에서 또 잘못 추출돼도 자동으로 걸러지게 함">삭제+차단</button>
     <button onclick="openDetail('${concertId}')">취소</button>`;
 }
 
-async function submitDelete(button) {
+async function submitDelete(button, blocklist) {
   const row = button.closest('.artist-row');
   const concertId = row.dataset.concertId;
   const name = row.dataset.name;
   try {
-    await api(`/concerts/${concertId}/artist-name?name=${encodeURIComponent(name)}`, { method: 'DELETE' });
-    toast('삭제됨');
+    const qs = new URLSearchParams({ name, blocklist });
+    await api(`/concerts/${concertId}/artist-name?${qs.toString()}`, { method: 'DELETE' });
+    toast(blocklist ? '삭제+차단됨(다음부터 자동으로 안 뽑힘)' : '삭제됨');
     openDetail(concertId);
     load(page);
   } catch (e) {

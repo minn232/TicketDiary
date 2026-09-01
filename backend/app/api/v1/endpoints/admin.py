@@ -17,7 +17,13 @@ from app.schemas.admin import (
     AdminConcertListItem,
     AdminConcertListResponse,
 )
-from app.services.artist_normalization import confirm_artist_name_change, remove_artist_name
+from app.services.artist_blocklist import add_to_blocklist
+from app.services.artist_normalization import (
+    add_artist_name,
+    confirm_artist_name_change,
+    remove_artist_name,
+    try_link_canonical_to_musicbrainz,
+)
 
 router = APIRouter(dependencies=[Depends(verify_admin_key)])
 
@@ -132,8 +138,16 @@ async def rename_artist(concert_id: UUID, body: AdminArtistRenameRequest, db: As
 
 
 @router.delete("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)
-async def delete_artist(concert_id: UUID, name: str = Query(...), db: AsyncSession = Depends(get_db)):
+async def delete_artist(
+    concert_id: UUID,
+    name: str = Query(...),
+    blocklist: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
     await remove_artist_name(db, concert_id, name)
+    if blocklist:
+        # 배포 없이 즉시 반영 - DB 저장 + 이 프로세스의 인메모리 캐시 갱신까지 add_to_blocklist가 처리
+        await add_to_blocklist(db, name)
     return await get_concert_detail(concert_id, db)
 
 

@@ -1,3 +1,8 @@
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.artist_blocklist import BlockedArtistName
+
 # LLM이 아티스트 자리에 반복적으로 잘못 뽑아내는 것으로 "확정된" 브랜드/페스티벌/공연장명을
 # 저장 직전에 한 번 더 거르는 안전망. normalize.py(llm_server)의 FESTIVAL+1 구조적 필터
 # (event_type=FESTIVAL인데 이름이 1개뿐이면 버림)와는 다른 층위 - 그쪽은 event_type 분류가
@@ -42,10 +47,39 @@ BLOCKLISTED_ARTIST_NAMES: set[str] = {
     "고려대학교 화정체육관",
 }
 
-_NORMALIZED_BLOCKLIST: set[str] = {" ".join(name.split()).casefold() for name in BLOCKLISTED_ARTIST_NAMES}
+def _normalize(name: str) -> str:
+    return " ".join(name.split()).casefold()
+
+
+# 위 코드 블록리스트는 배포해야만 반영되는 "검토된" 목록. 관리자 페이지에서 즉시 추가하는
+# 것들은 DB(BlockedArtistName)에 쌓이고, 이 인메모리 집합에 합쳐져서 배포 없이 바로
+# 적용된다 - 앱 시작 시 한 번(refresh_blocklist_cache) + 추가할 때마다(add_to_blocklist) 갱신
+_dynamic_blocklist: set[str] = set()
+_NORMALIZED_BLOCKLIST: set[str] = {_normalize(name) for name in BLOCKLISTED_ARTIST_NAMES}
 
 
 # 공백 흔들림/대소문자만 다른 재발도 잡히게 정규화 후 비교 (오탈자·부분일치까지 잡을 필요는
 # 없음 - 확정된 것만 정밀 타격하는 게 목적이라 exact match 유지)
 def is_blocklisted_artist_name(name: str) -> bool:
-    return " ".join(name.split()).casefold() in _NORMALIZED_BLOCKLIST
+    return _normalize(name) in _NORMALIZED_BLOCKLIST
+
+
+# 앱 시작 시 DB에 쌓인 관리자 추가분을 인메모리 캐시로 불러옴 (lifespan에서 1회 호출)
+async def refresh_blocklist_cache(db: AsyncSession) -> None:
+    global _dynamic_blocklist, _NORMALIZED_BLOCKLIST
+    names = (await db.execute(select(BlockedArtistName.name))).scalars().all()
+    _dynamic_blocklist = {_normalize(name) for name in names}
+    _NORMALIZED_BLOCKLIST = {_normalize(name) for name in BLOCKLISTED_ARTIST_NAMES} | _dynamic_blocklist
+
+
+# 관리자 페이지에서 호출 - DB에 영구 저장하고 인메모리 캐시도 즉시 갱신(재배포/재시작 없이
+# 바로 다음 요청부터 차단됨). 이미 있는 이름이면 조용히 스킵
+async def add_to_blocklist(db: AsyncSession, name: str, source: str = "admin") -> None:
+    global _NORMALIZED_BLOCKLIST
+    name = name.strip()
+    if not name or is_blocklisted_artist_name(name):
+        return
+    db.add(BlockedArtistName(name=name, source=source))
+    await db.commit()
+    _dynamic_blocklist.add(_normalize(name))
+    _NORMALIZED_BLOCKLIST = {_normalize(n) for n in BLOCKLISTED_ARTIST_NAMES} | _dynamic_blocklist
