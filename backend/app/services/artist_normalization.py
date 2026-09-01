@@ -110,9 +110,14 @@ async def _fetch_and_store_group_relations(
     for rel in relations:
         if not rel.is_current:
             continue  # 탈퇴 멤버는 저장만 하지 않고 통째로 건너뜀(정책: 현역 멤버만 매칭에 사용)
-        related, _ = await _get_or_create_canonical_by_mbid(db, rel.mbid, rel.name)
+        related, related_created = await _get_or_create_canonical_by_mbid(db, rel.mbid, rel.name)
         if rel.type == "Group":
             await _register_membership_if_new(db, canonical.id, related.id)
+            if related_created:
+                # 멤버 쪽에서 발견한 그룹은 아직 그 그룹의 "전체" 로스터를 모름(이 관계 1건만
+                # 앎) - 그룹 표기 통합(멤버 전원 있으면 그룹명으로) 판단에 전체 로스터가 필요해서
+                # 그룹당 1회만 추가로 조회. created 플래그로 막아서 무한 연쇄는 안 됨
+                await _fetch_and_store_group_relations(db, related, client)
         else:
             await _register_membership_if_new(db, related.id, canonical.id)
 
@@ -318,6 +323,66 @@ async def apply_canonical_replacement(
             await db.delete(row)
 
 
+# 매치된 멤버들의 그룹 로스터와 대조해 사실상 그룹 전체 공연이면 멤버 표기 대신 그룹명으로
+# 정리한다. 그룹명이 이미 있거나 로스터 전원이 있으면 바로, 1명이라도 빠졌으면 concert.name에
+# 그룹명이 언급될 때만 허용(추출 누락으로 간주) - 근거 없이 안 오는 사람까지 왔다고 하는 게 더 위험함
+async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None:
+    concert = await db.get(Concert, concert_id)
+    if concert is None or not concert.artist_name:
+        return
+
+    names = list(concert.artist_name)
+    canonical_result = await db.execute(
+        select(CanonicalArtist).where(CanonicalArtist.canonical_name.in_(names))
+    )
+    canonical_by_name = {c.canonical_name: c for c in canonical_result.scalars().all()}
+    canonical_ids = {c.id for c in canonical_by_name.values()}
+    if not canonical_ids:
+        return
+
+    membership_result = await db.execute(
+        select(ArtistGroupMembership).where(
+            ArtistGroupMembership.is_current.is_(True),
+            ArtistGroupMembership.member_canonical_id.in_(canonical_ids),
+        )
+    )
+    candidate_group_ids = {m.group_canonical_id for m in membership_result.scalars().all()}
+    if not candidate_group_ids:
+        return
+
+    changed = False
+    for group_id in candidate_group_ids:
+        group = await db.get(CanonicalArtist, group_id)
+        if group is None:
+            continue
+
+        roster_result = await db.execute(
+            select(ArtistGroupMembership.member_canonical_id).where(
+                ArtistGroupMembership.group_canonical_id == group_id,
+                ArtistGroupMembership.is_current.is_(True),
+            )
+        )
+        roster_ids = set(roster_result.scalars().all())
+        present_member_ids = roster_ids & canonical_ids
+        if not present_member_ids:
+            continue
+
+        group_name_present = group.canonical_name in names
+        all_members_present = bool(roster_ids) and present_member_ids == roster_ids
+        title_mentions_group = group.canonical_name in (concert.name or "")
+        if not (group_name_present or all_members_present or title_mentions_group):
+            continue
+
+        present_member_names = {n for n, c in canonical_by_name.items() if c.id in present_member_ids}
+        new_names = (set(names) - present_member_names) | {group.canonical_name}
+        if new_names != set(names):
+            names = sorted(new_names)
+            changed = True
+
+    if changed:
+        concert.artist_name = names
+
+
 async def _process_one(
     db: AsyncSession, client: httpx.AsyncClient, row: ArtistNormalizationStatus
 ) -> str:
@@ -389,6 +454,9 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
         async with httpx.AsyncClient(timeout=10.0) as client:
             stats = await _process_rows(db, client, rows)
 
+        for concert_id in {row.concert_id for row in rows}:
+            await _collapse_members_to_group_names(db, concert_id)
+
         if dry_run:
             await db.rollback()
             logger.info(f"[dry-run] 커밋하지 않고 롤백함: {stats}")
@@ -420,6 +488,8 @@ async def normalize_specific_artists(concert_id, names: list[str]) -> dict[str, 
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             stats = await _process_rows(db, client, rows)
+
+        await _collapse_members_to_group_names(db, concert_id)
 
         await db.commit()
         logger.info(f"MusicBrainz 즉시 정규화 완료 (concert_id={concert_id}): {stats}")

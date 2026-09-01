@@ -608,6 +608,168 @@ async def test_normalize_pending_artists_skips_relation_fetch_for_known_canonica
     mock_relations.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_backfills_group_roster_from_member_side():
+    # 멤버 쪽에서 그룹을 처음 발견해도(그룹 자체는 안 나옴) 그룹의 전체 로스터를 알아야
+    # 표기 통합(_collapse_members_to_group_names)을 판단할 수 있으므로, 그룹 쪽 관계도
+    # 자동으로 한 번 더 조회돼서 멤버B까지 저장되는지 확인
+    await _clear_pending_queue()
+    token = await _get_token()
+    member_a_name = f"멤버A_{uuid.uuid4().hex[:6]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_ROSTER_{uuid.uuid4().hex[:6]}", member_a_name, token))
+
+    async with AsyncSessionLocal() as db:
+        await queue_for_normalization(db, concert_id, [member_a_name])
+
+    member_a_mbid = uuid.uuid4().hex
+    group_mbid = uuid.uuid4().hex
+    member_b_mbid = uuid.uuid4().hex
+    group_name = f"밴드X_{uuid.uuid4().hex[:6]}"
+    member_b_name = f"멤버B_{uuid.uuid4().hex[:6]}"
+
+    async def _fake_relations(mbid, client=None):
+        if mbid == member_a_mbid:
+            return [BandRelation(mbid=group_mbid, name=group_name, type="Group", is_current=True)]
+        if mbid == group_mbid:
+            return [
+                BandRelation(mbid=member_a_mbid, name=member_a_name, type="Person", is_current=True),
+                BandRelation(mbid=member_b_mbid, name=member_b_name, type="Person", is_current=True),
+            ]
+        return []
+
+    with _no_kopis_supplement(), patch(
+        "app.services.artist_normalization.search_artist",
+        new=AsyncMock(return_value=[_kr_candidate(member_a_name, score=100, mbid=member_a_mbid)]),
+    ), patch(
+        "app.services.artist_normalization.fetch_member_of_band_relations", new=AsyncMock(side_effect=_fake_relations)
+    ):
+        stats = await normalize_pending_artists(limit=10)
+
+    assert stats["matched"] == 1
+
+    async with AsyncSessionLocal() as db:
+        group_canonical = await find_canonical_by_alias(db, group_name)
+        assert group_canonical is not None
+
+        memberships = (
+            await db.execute(
+                select(ArtistGroupMembership).where(ArtistGroupMembership.group_canonical_id == group_canonical.id)
+            )
+        ).scalars().all()
+        member_names = (
+            await db.execute(
+                select(CanonicalArtist.canonical_name).where(
+                    CanonicalArtist.id.in_({m.member_canonical_id for m in memberships})
+                )
+            )
+        ).scalars().all()
+        # 콘서트에 한 번도 안 나온 멤버B도 그룹 쪽 로스터 조회로 같이 저장됨
+        assert set(member_names) == {member_a_name, member_b_name}
+
+
+# _collapse_members_to_group_names - 멤버 표기를 그룹명으로 정리하는 정책
+
+async def _seed_group_with_members(db, group_name: str, member_names: list[str]) -> None:
+    group = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=group_name)
+    db.add(group)
+    await db.flush()
+    db.add(ArtistAlias(canonical_artist_id=group.id, alias_text=group_name, source="musicbrainz"))
+    for name in member_names:
+        member = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=name)
+        db.add(member)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=member.id, alias_text=name, source="musicbrainz"))
+        db.add(ArtistGroupMembership(member_canonical_id=member.id, group_canonical_id=group.id, is_current=True))
+
+
+@pytest.mark.asyncio
+async def test_collapse_to_group_name_when_group_text_present():
+    await _clear_pending_queue()
+    token = await _get_token()
+    group_name = f"밴드X_{uuid.uuid4().hex[:6]}"
+    m1, m2 = (f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(2))
+    concert_id = uuid.UUID(
+        await _create_concert(f"PF_COLL_TXT_{uuid.uuid4().hex[:6]}", f"{group_name},{m1},{m2}", token)
+    )
+
+    async with AsyncSessionLocal() as db:
+        await _seed_group_with_members(db, group_name, [m1, m2])
+        await db.commit()
+        await queue_for_normalization(db, concert_id, [group_name, m1, m2])
+
+    with _no_kopis_supplement():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [group_name]  # 멤버는 빠지고 그룹명만 남음
+
+
+@pytest.mark.asyncio
+async def test_collapse_to_group_name_when_all_members_present_without_group_text():
+    await _clear_pending_queue()
+    token = await _get_token()
+    group_name = f"밴드Y_{uuid.uuid4().hex[:6]}"
+    m1, m2 = (f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(2))
+    concert_id = uuid.UUID(await _create_concert(f"PF_COLL_ALL_{uuid.uuid4().hex[:6]}", f"{m1},{m2}", token))
+
+    async with AsyncSessionLocal() as db:
+        await _seed_group_with_members(db, group_name, [m1, m2])
+        await db.commit()
+        await queue_for_normalization(db, concert_id, [m1, m2])
+
+    with _no_kopis_supplement():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [group_name]  # 그룹명 텍스트 없이도 로스터 전원 일치로 통합됨
+
+
+@pytest.mark.asyncio
+async def test_collapse_skipped_when_member_missing_and_title_silent():
+    await _clear_pending_queue()
+    token = await _get_token()
+    group_name = f"밴드Z_{uuid.uuid4().hex[:6]}"
+    m1, m2, m3 = (f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(3))
+    concert_id = uuid.UUID(await _create_concert(f"PF_COLL_MISS_{uuid.uuid4().hex[:6]}", f"{m1},{m2}", token))
+
+    async with AsyncSessionLocal() as db:
+        await _seed_group_with_members(db, group_name, [m1, m2, m3])  # m3는 이 콘서트에 없음
+        await db.commit()
+        await queue_for_normalization(db, concert_id, [m1, m2])
+
+    with _no_kopis_supplement():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert set(concert.artist_name) == {m1, m2}  # 근거(그룹명 텍스트) 없어서 개별 표기 유지
+
+
+@pytest.mark.asyncio
+async def test_collapse_applies_when_member_missing_but_title_mentions_group():
+    await _clear_pending_queue()
+    token = await _get_token()
+    group_name = f"밴드W_{uuid.uuid4().hex[:6]}"
+    m1, m2, m3 = (f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(3))
+    concert_id = uuid.UUID(await _create_concert(f"PF_COLL_TITLE_{uuid.uuid4().hex[:6]}", f"{m1},{m2}", token))
+
+    async with AsyncSessionLocal() as db:
+        await _seed_group_with_members(db, group_name, [m1, m2, m3])  # m3는 이 콘서트에 없음
+        concert = await db.get(Concert, concert_id)
+        concert.name = f"{group_name} 단독 콘서트"  # 제목에 그룹명 언급
+        await db.commit()
+        await queue_for_normalization(db, concert_id, [m1, m2])
+
+    with _no_kopis_supplement():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [group_name]  # 제목 교차검증으로 누락 허용, 그룹명으로 통합
+
+
 # expand_follow_index_with_group_relations - 팔로우 인덱스를 밴드<->현재 멤버 관계로 확장
 
 @pytest.mark.asyncio
