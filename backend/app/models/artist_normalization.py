@@ -37,12 +37,9 @@ class ArtistAlias(Base):
     canonical_artist = relationship("CanonicalArtist", back_populates="aliases")
 
 
-# 콘서트에 저장된 아티스트 표기 하나하나의 정규화 진행 상태. 웹훅은 이 테이블에 pending으로만
-# 큐잉하고(외부 호출 없음), 별도 배치(app/services/artist_normalization.py)가 이 큐를 소비해서
-# MusicBrainz 조회 + Concert.artist_name/ConcertLineup.artist 표기 치환까지 수행한다.
-#
-# status: "pending"(아직 조회 안 함/실패해서 재시도 대기) | "matched"(canonical로 확정)
-#         | "unconfirmed"(MusicBrainz에 없음, 원본 표기 그대로 유지) | "ambiguous"(후보 다수, 확정 못 함)
+# 콘서트에 저장된 아티스트 표기 하나하나의 정규화 진행 상태. 웹훅은 pending으로만 큐잉하고
+# (외부 호출 없음), 별도 배치(services/artist_normalization.py)가 큐를 소비해 MusicBrainz 조회
+# + Concert.artist_name/ConcertLineup.artist 표기 치환까지 수행한다
 class ArtistNormalizationStatus(Base):
     __tablename__ = "artist_normalization_status"
 
@@ -57,18 +54,17 @@ class ArtistNormalizationStatus(Base):
     # 웹훅이 큐잉할 당시 Concert.artist_name에 실제로 저장돼 있던 원문 표기. 배치가 이 문자열을
     # 키로 삼아 Concert.artist_name/ConcertLineup.artist에서 찾아 canonical로 치환한다.
     artist_text = Column(String, nullable=False)
+    # "pending"(조회 전/재시도 대기) | "matched"(canonical 확정) | "unconfirmed"(MusicBrainz에
+    # 없음, 원본 유지) | "ambiguous"(후보 다수, 확정 못 함)
     status = Column(String, nullable=False, default="pending", index=True)
     attempt_count = Column(Integer, nullable=False, default=0)
     last_attempted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
-# 사람(멤버) canonical과 그룹(밴드) canonical 사이의 소속 관계 - alias로 합치지 않고 별도
-# 엣지로 저장(멤버가 솔로 활동을 할 수도 있어서 "같은 아티스트"로 취급하면 안 됨). MusicBrainz의
-# "member of band" 관계에서 채워지며, 새로 매치된 canonical 1건당 딱 1단계(그 아티스트 본인의
-# 관계)만 조회 - 연쇄적으로 상대방의 상대방까지 훑지는 않음(API 호출량 방지, artist_normalization.py 참고).
-# is_current=False(탈퇴 멤버)는 저장은 해두지만 뉴스피드 매칭(kopis.py)에서는 제외한다 -
-# 탈퇴한 멤버의 팔로워에게 그 밴드의 신곡 공연까지 뜨는 건 원치 않는다는 결정.
+# 사람(멤버) canonical과 그룹(밴드) canonical 사이의 소속 관계 - alias로 합치지 않고 별도 엣지로
+# 저장(멤버가 솔로 활동을 할 수도 있어 "같은 아티스트"로 취급하면 안 됨). is_current=False(탈퇴
+# 멤버)는 저장은 하되 뉴스피드 매칭(kopis.py)에서는 제외한다
 class ArtistGroupMembership(Base):
     __tablename__ = "artist_group_memberships"
 

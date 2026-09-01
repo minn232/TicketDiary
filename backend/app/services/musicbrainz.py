@@ -1,13 +1,3 @@
-"""MusicBrainz 공개 API(/ws/2/artist) 클라이언트.
-
-docs/musicbrainz_integration_review.md 실측 검증 결과를 그대로 반영:
-- 1.1초 간격이면 503이 43% 발생 -> 2초 간격 + 실패시 최대 2회 재시도(3초 대기)로 최종 실패 3%까지 감소
-- artist: 필드만으론 alias 전용 등록(예: Jae Joong -> 김재중)을 놓침 -> alias: 필드 병행 검색 필요
-- country:KR 하드필터는 위험(그 항목에 country 자체가 비어있는 경우가 있음) -> 1차로 country:KR을
-  시도해보고, 결과가 없을 때만 country 없는 일반 검색으로 폴백(폴백 결과는 신뢰도가 낮음을
-  호출부가 알 수 있게 candidate.source로 구분해서 반환)
-- fuzzy(~) 연산자는 한글 짧은 문자열에 노이즈만 만들어서 미사용
-"""
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -18,7 +8,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 공식 정책: 인증 없는 공개 API는 IP당 초당 1요청. 실측 검증(review 문서)으로 확인된 안전 간격
+# 공식 정책: 인증 없는 공개 API는 IP당 초당 1요청. 2초 간격 + 실패 시 최대 2회 재시도(3초 대기)로
+# 503 발생률을 크게 낮춤(docs/musicbrainz_integration_review.md 실측 검증)
 _MIN_REQUEST_INTERVAL = 2.0
 _MAX_RETRIES = 2
 _RETRY_BACKOFF_SECONDS = 3.0
@@ -93,9 +84,9 @@ async def _run_query(client: httpx.AsyncClient, query: str) -> list[dict]:
     return data.get("artists", [])
 
 
-# 이름 하나를 MusicBrainz에서 검색해 후보 목록을 반환한다. country:KR 검색을 우선 시도하고,
-# 거기서 하나도 안 잡히면 country 필터 없는 일반 검색으로 폴백한다(폴백 결과는 candidate.source로
-# 구분되므로, 자동 확정 여부는 호출부(artist_normalization.py)가 source를 보고 판단해야 함).
+# 이름 하나를 MusicBrainz에서 검색해 후보 목록을 반환한다. artist: 필드만으론 별칭 등록(예:
+# Jae Joong -> 김재중)을 놓쳐서 alias: 필드도 같이 검색. country:KR을 먼저 시도하고 없으면
+# country 필터 없는 일반 검색으로 폴백(폴백 결과는 candidate.source로 구분해 반환)
 async def search_artist(name: str, client: httpx.AsyncClient | None = None) -> list[ArtistCandidate]:
     escaped = _escape_lucene_phrase(name)
     base_query = f'(artist:"{escaped}" OR alias:"{escaped}")'
