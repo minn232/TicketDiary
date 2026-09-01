@@ -81,3 +81,15 @@ class TicketScanResponse(BaseModel):
     # 티켓 스캔 응답 (OCR 추출 결과 + KOPIS 후보 목록)
     extracted: TicketScanExtracted
     candidates: list[ConcertResponse]
+
+
+class ArtistNameConfirmRequest(BaseModel):
+    # 미확정 아티스트 표기를 유저가 직접 확정(G안) - original_name은 지금 concert.artist_name에
+    # 실제로 들어있는 표기여야 함
+    original_name: str
+    confirmed_name: str
+
+
+class ArtistNameConfirmResponse(BaseModel):
+    # 치환 후 concert.artist_name 전체 배열
+    artist_name: list[str]
