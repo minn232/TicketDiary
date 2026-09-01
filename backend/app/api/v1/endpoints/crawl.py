@@ -12,7 +12,9 @@ from app.core.deps import verify_llm_api_key
 from app.models.concert import Concert
 from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtractionResponse
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
+from app.models.lineup import ConcertLineup
 from app.services.artist_matching import get_known_artist_names, merge_artist_names
+from app.services.artist_normalization import queue_for_normalization
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.lineup import upsert_concert_lineup
 from app.services.notification import schedule_ticketing_day_notifications
@@ -220,6 +222,18 @@ async def receive_artist_extraction_result(
         lineup_known_names = set(known_artist_names or set()) | set(concert.artist_name or [])
         entries = [e.model_dump() for e in body.lineup]
         await upsert_concert_lineup(db, concert_id, entries, source="poster", known_names=lineup_known_names)
+
+    # MusicBrainz 정규화 큐잉 - pending row만 적립하고 끝(외부 호출 없음, 콜백 타임아웃과 무관).
+    # 실제 조회/치환은 별도 배치(services/artist_normalization.py)가 수행. concert.artist_name뿐
+    # 아니라 방금 upsert된 concert_lineups 표기도 같이 큐잉해 둘이 어긋나는 경우를 놓치지 않음
+    queue_names = set(concert.artist_name or [])
+    if body.lineup:
+        lineup_result = await db.execute(
+            select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert_id)
+        )
+        queue_names |= set(lineup_result.scalars().all())
+    if queue_names:
+        await queue_for_normalization(db, concert_id, list(queue_names))
 
     logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)
