@@ -14,6 +14,7 @@ from app.models.artist_normalization import (
 )
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
+from app.services.artist_matching import _compact, _contains_hangul
 from app.services.musicbrainz import ArtistCandidate, fetch_member_of_band_relations, search_artist
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,10 @@ _MIN_MATCH_SCORE = 90
 # 확정. HAKIM 실측 사례(1등100/2등98, 차이 2)는 걸러지고, 차이가 크게 나는 경우만 통과시키려는
 # 의도라 넉넉하게 잡음 - 임계치를 낮추면 HAKIM류가 다시 통과할 위험이 커짐
 _MIN_SCORE_GAP = 15
+
+# 부분 문자열 관계인 두 이름의 길이 비율이 이 미만이면 의심스러운 조각 매치로 봄
+# (실측: 최정철->정철 2/3=0.67, METHOD->The Crystal Method 6/16=0.375 - 전부 잡힘)
+_FRAGMENT_LENGTH_RATIO_MIN = 0.7
 
 # 1회 배치 실행당 처리 상한 (안전장치 - 콘서트 신규 유입 급증 시 하룻밤에 다 못 끝내도 다음날 이어감)
 _DEFAULT_BATCH_LIMIT = 500
@@ -257,23 +262,41 @@ async def _supplement_from_kopis_originals(db: AsyncSession, kopis_client, conce
             await queue_for_normalization(db, concert_id, kopis_names, commit=False)
 
 
-# 후보가 1명뿐이거나(동명이인 없음), 1등과 2등 점수 차이가 크면(1등이 확실히 두드러짐) 자동 확정.
-# 국적(country:KR)이 아니라 "후보 유일성"이 기준 - 흔한 이름은 후보가 여럿 몰려있어(HAKIM 사례)
-# 걸러지고, 내한 아티스트처럼 애초에 country가 없는 경우도 후보가 하나면 정상 확정된다
-def decide_match(candidates: list[ArtistCandidate]) -> tuple[str, ArtistCandidate | None]:
+# 같은 스크립트(둘 다 한글 포함 또는 둘 다 미포함)에서 한쪽이 다른 쪽의 부분 문자열인데 길이
+# 차이가 크면 의심스러운 매치로 본다(성이 빠지거나 장르/일반명사가 유명 아티스트에 우연히 걸리는
+# 패턴). 스크립트가 다르면 정상 별칭 매치(권지용->G-DRAGON 등)일 수 있어 검사하지 않는다
+def _is_suspicious_fragment_match(query: str, candidate_name: str) -> bool:
+    if _contains_hangul(query) != _contains_hangul(candidate_name):
+        return False
+    q, c = _compact(query), _compact(candidate_name)
+    if not q or not c or q == c or not (q in c or c in q):
+        return False
+    shorter_len, longer_len = sorted([len(q), len(c)])
+    return shorter_len / longer_len < _FRAGMENT_LENGTH_RATIO_MIN
+
+
+# 후보가 1명뿐이거나 1등-2등 점수차가 크면(HAKIM 사례처럼 몰려있지 않으면) 자동 확정 - 국적이
+# 아니라 "후보 유일성"이 기준. 다만 확정 직전에 쿼리명-후보명이 부분 문자열 관계
+# (_is_suspicious_fragment_match)면 한 번 더 걸러 ambiguous로 내림("정철"=최정철의 부분 등)
+def decide_match(candidates: list[ArtistCandidate], query_name: str) -> tuple[str, ArtistCandidate | None]:
     if not candidates:
         return "unconfirmed", None
 
     top = candidates[0]
     if top.score < _MIN_MATCH_SCORE:
         return "unconfirmed", None
-    if len(candidates) == 1:
-        return "matched", top
 
-    second = candidates[1]
-    if top.score - second.score >= _MIN_SCORE_GAP:
-        return "matched", top
-    return "ambiguous", None
+    if len(candidates) == 1:
+        matched = True
+    else:
+        second = candidates[1]
+        matched = top.score - second.score >= _MIN_SCORE_GAP
+
+    if not matched:
+        return "ambiguous", None
+    if _is_suspicious_fragment_match(query_name, top.name):
+        return "ambiguous", None
+    return "matched", top
 
 
 # concert.artist_name 배열 + 같은 표기를 쓰는 concert_lineups row들의 표기를 canonical로
@@ -396,7 +419,7 @@ async def _process_one(
     row.attempt_count += 1
     row.last_attempted_at = datetime.now(timezone.utc)
 
-    status, winner = decide_match(candidates)
+    status, winner = decide_match(candidates, row.artist_text)
     row.status = status
 
     if status == "matched" and winner is not None:

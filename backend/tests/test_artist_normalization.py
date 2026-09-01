@@ -99,11 +99,11 @@ async def _clear_pending_queue() -> None:
         await db.commit()
 
 
-# decide_match - 순수 함수, DB/네트워크 불필요
-# 2026-08-31 정책 변경: country:KR 여부가 아니라 "후보 유일성"이 확정 기준 (모듈 docstring 참고)
+# decide_match - 순수 함수, DB/네트워크 불필요. country:KR 여부가 아니라 "후보 유일성"이
+# 확정 기준(2026-08-31), 2026-09-01엔 부분 문자열 오탐 방지 검증도 추가됨(아래)
 
 def test_decide_match_single_high_score_country_kr_matches():
-    status, winner = decide_match([_kr_candidate("Nell", score=100)])
+    status, winner = decide_match([_kr_candidate("Nell", score=100)], "Nell")
     assert status == "matched"
     assert winner.name == "Nell"
 
@@ -111,13 +111,13 @@ def test_decide_match_single_high_score_country_kr_matches():
 def test_decide_match_single_high_score_general_also_matches():
     # 실측 회귀 케이스: Konomi Suzuki/Alessia Cara처럼 country:KR은 없지만 후보가 유일하면
     # 확정돼야 함 - 국적이 아니라 "동명이인 후보가 없다"가 진짜 안전 신호였음
-    status, winner = decide_match([_general_candidate("Konomi Suzuki", score=100)])
+    status, winner = decide_match([_general_candidate("Konomi Suzuki", score=100)], "Konomi Suzuki")
     assert status == "matched"
     assert winner.name == "Konomi Suzuki"
 
 
 def test_decide_match_single_low_score_unconfirmed():
-    status, winner = decide_match([_kr_candidate("Nell", score=50)])
+    status, winner = decide_match([_kr_candidate("Nell", score=50)], "Nell")
     assert status == "unconfirmed"
     assert winner is None
 
@@ -125,7 +125,7 @@ def test_decide_match_single_low_score_unconfirmed():
 def test_decide_match_close_scores_is_ambiguous():
     # HAKIM 실측 사례 재현: 후보 여럿이 점수 차이 없이(100/98) 몰려있으면 애매함으로 남김
     status, winner = decide_match(
-        [_general_candidate("Hakim Norbert", score=100), _general_candidate("Hakim", score=98)]
+        [_general_candidate("Hakim Norbert", score=100), _general_candidate("Hakim", score=98)], "HAKIM"
     )
     assert status == "ambiguous"
     assert winner is None
@@ -134,16 +134,51 @@ def test_decide_match_close_scores_is_ambiguous():
 def test_decide_match_clear_score_gap_matches_despite_multiple_candidates():
     # 후보가 여럿이어도 1등이 압도적으로 두드러지면(점수 차이 큼) 확정
     status, winner = decide_match(
-        [_general_candidate("정확한이름", score=100), _general_candidate("전혀다른사람", score=60)]
+        [_general_candidate("정확한이름", score=100), _general_candidate("전혀다른사람", score=60)], "정확한이름"
     )
     assert status == "matched"
     assert winner.name == "정확한이름"
 
 
 def test_decide_match_no_candidates_unconfirmed():
-    status, winner = decide_match([])
+    status, winner = decide_match([], "아무개")
     assert status == "unconfirmed"
     assert winner is None
+
+
+# 실측 발견(2026-09-01): 후보 이름이 쿼리한 이름의 부분 문자열일 때 점수/후보수만으로는
+# 못 걸러지던 오탐 - 확정 직전에 이름 유사도를 한 번 더 검증
+
+def test_decide_match_rejects_truncated_surname_match():
+    # 실측: 최정철 검색 시 유일 후보가 "정철"(성 소실)로 나와 잘못 확정되던 사례
+    status, winner = decide_match([_kr_candidate("정철", score=100)], "최정철")
+    assert status == "ambiguous"
+    assert winner is None
+
+
+def test_decide_match_rejects_generic_word_matched_to_unrelated_famous_artist():
+    # 실측: METHOD(메탈 밴드로 추정) 검색이 점수차 15(임계치)로 유명 일렉트로닉 듀오
+    # The Crystal Method에 잘못 확정되던 사례
+    status, winner = decide_match(
+        [_general_candidate("The Crystal Method", score=100), _general_candidate("Method Man", score=85)], "METHOD"
+    )
+    assert status == "ambiguous"
+    assert winner is None
+
+
+def test_decide_match_allows_cross_script_alias_despite_dissimilar_strings():
+    # 문자열은 전혀 안 닮았어도 스크립트가 다르면(권지용/G-DRAGON처럼) 정상 별칭 매치일 수
+    # 있으니 부분 문자열 검사를 적용하지 않음
+    status, winner = decide_match([_kr_candidate("G-DRAGON", score=100)], "권지용")
+    assert status == "matched"
+    assert winner.name == "G-DRAGON"
+
+
+def test_decide_match_allows_same_script_alias_that_is_not_a_substring():
+    # 같은 스크립트라도 부분 문자열 관계가 아니면(진짜 본명<->활동명 별칭) 그대로 확정
+    status, winner = decide_match([_general_candidate("Freddie Gibbs", score=100)], "Fredrick Tipton")
+    assert status == "matched"
+    assert winner.name == "Freddie Gibbs"
 
 
 # queue_for_normalization
