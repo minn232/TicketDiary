@@ -362,13 +362,35 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
     return sorted(normalized)
 
 
-# 라인업 변경 감지용 스냅샷(원본 텍스트 + 해시 + 이미지 경로 목록) 캡처. 스크린샷과 같은 페이지
-# 방문에서 함께 뽑아야 브라우저를 두 번 띄우지 않아도 됨. 원본 텍스트는 실제 배치 로직(정규화된
-# 해시만 비교)에선 안 쓰이지만, scripts/test_lineup_diff.py에서 광고/카운터 노이즈를 눈으로
-# 직접 비교해볼 수 있게 그대로 반환해둠
-async def _capture_lineup_snapshot(page) -> tuple[str, str, list[str]]:
-    text = await page.inner_text("body")
-    img_srcs = await page.eval_on_selector_all("img", "els => els.map(e => e.src)")
+# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 회전 광고 배너(방문마다
+# 문구가 바뀌어 숫자/"더 알아보기" 필터로도 못 걸러지는 노이즈)를 캡처 범위 밖에 둔다.
+# interpark는 실제 오탐 사례로 확인, 나머지는 DOM 구조+재방문 diff로 검증한 예방적 추가
+# (셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+_LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
+    "interpark": ".productMain",
+    "yes24": ".renew-content",
+    "melon": ".section_detailview_product",
+    "kopis": "#su_con",
+}
+
+
+# 라인업 변경 감지용 스냅샷(원본 텍스트 + 해시 + 이미지 경로 목록) 캡처 - 스크린샷과 같은
+# 페이지 방문에서 함께 뽑음. container_selector가 주어지면 그 안쪽만 캡처해 사이트 전역 배너
+# 노이즈를 제외하고, 셀렉터가 안 잡히면 body로 폴백. 스크린샷(LLM 입력)은 각 크롤러가 항상
+# full_page로 따로 캡처하므로 이 범위 축소는 LLM이 보는 정보엔 영향 없음.
+async def _capture_lineup_snapshot(page, container_selector: str | None = None) -> tuple[str, str, list[str]]:
+    scope = container_selector
+    if scope:
+        try:
+            if await page.locator(scope).count() == 0:
+                scope = None
+        except Exception as e:
+            logger.warning(f"라인업 캡처 컨테이너 '{scope}' 확인 실패, body 전체로 폴백: {e}")
+            scope = None
+
+    text = await page.inner_text(scope or "body")
+    img_selector = f"{scope} img" if scope else "img"
+    img_srcs = await page.eval_on_selector_all(img_selector, "els => els.map(e => e.src)")
     return text, _hash_lineup_text(text), _normalize_lineup_img_srcs(img_srcs)
 
 
@@ -408,7 +430,9 @@ async def crawl_interpark(
                     await _expand_collapsed_sections(page)
                     screenshot = await page.screenshot(full_page=True, type="png")
                     if capture_lineup_snapshot:
-                        text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                        text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                            page, container_selector=_LINEUP_CAPTURE_CONTAINER["interpark"]
+                        )
                         return screenshot, text, text_hash, img_srcs
                     return screenshot
 
@@ -446,7 +470,9 @@ async def crawl_interpark(
                 await _expand_collapsed_sections(detail_page)
                 screenshot = await detail_page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(detail_page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        detail_page, container_selector=_LINEUP_CAPTURE_CONTAINER["interpark"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:
@@ -494,7 +520,9 @@ async def crawl_yes24(
                 await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        page, container_selector=_LINEUP_CAPTURE_CONTAINER["yes24"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:
@@ -553,7 +581,9 @@ async def crawl_melon(
                 await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        page, container_selector=_LINEUP_CAPTURE_CONTAINER["melon"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:
@@ -585,7 +615,9 @@ async def crawl_kopis(
                 await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        page, container_selector=_LINEUP_CAPTURE_CONTAINER["kopis"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:

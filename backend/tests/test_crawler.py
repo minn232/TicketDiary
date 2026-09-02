@@ -1264,6 +1264,80 @@ def test_hash_lineup_text_ignores_rotating_learn_more_line():
     assert _hash_lineup_text(text_a) == _hash_lineup_text(text_b)
 
 
+# container_selector 스코핑 테스트 - 인터파크 상단 회전 광고 배너가 body 전체 캡처에 섞여
+# 들어가 라인업이 안 바뀌어도 "변경"으로 오탐시켰던 걸 실데이터로 확인함(2026-09-02).
+# .productMain 안쪽만 캡처하면 배너가 원천적으로 제외됨.
+
+@pytest.mark.asyncio
+async def test_capture_lineup_snapshot_scopes_to_container_when_present():
+    from app.services.crawler import _capture_lineup_snapshot
+
+    mock_locator = AsyncMock()
+    mock_locator.count = AsyncMock(return_value=1)
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(return_value=mock_locator)
+    mock_page.inner_text = AsyncMock(return_value="컨테이너 안쪽 텍스트")
+    mock_page.eval_on_selector_all = AsyncMock(return_value=["https://img.example.com/a.jpg"])
+
+    text, _text_hash, img_srcs = await _capture_lineup_snapshot(mock_page, container_selector=".productMain")
+
+    mock_page.locator.assert_called_once_with(".productMain")
+    mock_page.inner_text.assert_awaited_once_with(".productMain")
+    mock_page.eval_on_selector_all.assert_awaited_once_with(".productMain img", "els => els.map(e => e.src)")
+    assert text == "컨테이너 안쪽 텍스트"
+    assert img_srcs == ["https://img.example.com/a.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_capture_lineup_snapshot_falls_back_to_body_when_container_missing():
+    from app.services.crawler import _capture_lineup_snapshot
+
+    mock_locator = AsyncMock()
+    mock_locator.count = AsyncMock(return_value=0)  # 페이지에 해당 셀렉터가 없음 (구조 변경 등)
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(return_value=mock_locator)
+    mock_page.inner_text = AsyncMock(return_value="body 전체 텍스트")
+    mock_page.eval_on_selector_all = AsyncMock(return_value=[])
+
+    text, _text_hash, _img_srcs = await _capture_lineup_snapshot(mock_page, container_selector=".doesNotExist")
+
+    mock_page.inner_text.assert_awaited_once_with("body")
+    mock_page.eval_on_selector_all.assert_awaited_once_with("img", "els => els.map(e => e.src)")
+    assert text == "body 전체 텍스트"
+
+
+@pytest.mark.asyncio
+async def test_capture_lineup_snapshot_falls_back_to_body_on_locator_error():
+    from app.services.crawler import _capture_lineup_snapshot
+
+    mock_page = AsyncMock()
+    mock_page.locator = MagicMock(side_effect=Exception("locator 조회 실패"))
+    mock_page.inner_text = AsyncMock(return_value="body 전체 텍스트")
+    mock_page.eval_on_selector_all = AsyncMock(return_value=[])
+
+    text, _text_hash, _img_srcs = await _capture_lineup_snapshot(mock_page, container_selector=".broken")
+
+    mock_page.inner_text.assert_awaited_once_with("body")
+    assert text == "body 전체 텍스트"
+
+
+@pytest.mark.asyncio
+async def test_capture_lineup_snapshot_without_container_selector_uses_body():
+    from app.services.crawler import _capture_lineup_snapshot
+
+    mock_page = AsyncMock()
+    mock_page.inner_text = AsyncMock(return_value="body 전체 텍스트")
+    mock_page.eval_on_selector_all = AsyncMock(return_value=[])
+
+    text, _text_hash, _img_srcs = await _capture_lineup_snapshot(mock_page)
+
+    mock_page.locator.assert_not_called()
+    mock_page.inner_text.assert_awaited_once_with("body")
+    assert text == "body 전체 텍스트"
+
+
 # capture_lineup_snapshot=True 시 (screenshot, text_hash, img_srcs) 튜플 반환 테스트
 
 @pytest.mark.asyncio
