@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.services.musicbrainz import fetch_member_of_band_relations, search_artist
+from app.services.musicbrainz import fetch_member_of_band_relations, fetch_wikidata_qid, search_artist
 
 
 def _resp(status_code: int, artists: list[dict] | None = None) -> MagicMock:
@@ -127,3 +127,41 @@ async def test_fetch_relations_filters_to_member_of_band_and_parses_current():
     assert past.is_current is False
     assert current.name == "최정훈"
     assert current.type == "Person"
+
+
+# fetch_wikidata_qid
+
+def _url_rels_resp(relations: list[dict]) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"relations": relations}
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_fetch_wikidata_qid_extracts_id_from_wikidata_relation():
+    client = MagicMock()
+    client.get = AsyncMock(
+        return_value=_url_rels_resp(
+            [
+                {"type": "official homepage", "url": {"resource": "https://example.com"}},
+                {"type": "wikidata", "url": {"resource": "https://www.wikidata.org/wiki/Q165193"}},
+            ]
+        )
+    )
+
+    with patch("app.services.musicbrainz._MIN_REQUEST_INTERVAL", 0):
+        qid = await fetch_wikidata_qid("band-mbid", client=client)
+
+    assert qid == "Q165193"
+
+
+@pytest.mark.asyncio
+async def test_fetch_wikidata_qid_none_when_no_wikidata_relation():
+    client = MagicMock()
+    client.get = AsyncMock(return_value=_url_rels_resp([{"type": "official homepage", "url": {"resource": "x"}}]))
+
+    with patch("app.services.musicbrainz._MIN_REQUEST_INTERVAL", 0):
+        qid = await fetch_wikidata_qid("band-mbid", client=client)
+
+    assert qid is None

@@ -262,6 +262,13 @@ def _no_relation_fetch():
     return patch("app.services.artist_normalization.fetch_member_of_band_relations", new=AsyncMock(return_value=[]))
 
 
+# matched될 때마다 _process_one이 Wikidata 한글 별칭 보강(_register_wikidata_korean_alias)도
+# 같이 트리거하는데, 그 자체를 검증하지 않는 테스트에서 안 막아두면 매번 실제 MusicBrainz/Wikidata에
+# 조회를 나가서 테스트가 느려짐 - _no_relation_fetch와 같은 이유
+def _no_wikidata_lookup():
+    return patch("app.services.artist_normalization._register_wikidata_korean_alias", new=AsyncMock(return_value=None))
+
+
 @pytest.mark.asyncio
 async def test_normalize_pending_artists_matches_via_musicbrainz():
     await _clear_pending_queue()
@@ -271,7 +278,7 @@ async def test_normalize_pending_artists_matches_via_musicbrainz():
     async with AsyncSessionLocal() as db:
         await queue_for_normalization(db, concert_id, ["넬"])
 
-    with _no_kopis_supplement(), _no_relation_fetch(), patch(
+    with _no_kopis_supplement(), _no_relation_fetch(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(return_value=[_kr_candidate("Nell", score=100)]),
     ):
@@ -314,7 +321,9 @@ async def test_normalize_pending_artists_local_alias_skips_api_call():
         await queue_for_normalization(db, concert_id, ["넬"])
 
     mock_search = AsyncMock(side_effect=AssertionError("로컬 alias가 있으면 API를 호출하면 안 됨"))
-    with _no_kopis_supplement(), patch("app.services.artist_normalization.search_artist", new=mock_search):
+    with _no_kopis_supplement(), _no_wikidata_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=mock_search
+    ):
         stats = await normalize_pending_artists(limit=10)
 
     assert stats["matched"] == 1
@@ -359,7 +368,7 @@ async def test_normalize_pending_artists_dry_run_does_not_persist():
     async with AsyncSessionLocal() as db:
         await queue_for_normalization(db, concert_id, ["넬"])
 
-    with _no_kopis_supplement(), _no_relation_fetch(), patch(
+    with _no_kopis_supplement(), _no_relation_fetch(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(return_value=[_kr_candidate("Nell", score=100)]),
     ):
@@ -389,7 +398,7 @@ async def test_normalize_specific_artists_only_processes_given_names():
     async with AsyncSessionLocal() as db:
         await queue_for_normalization(db, concert_id, ["넬", "다른아티스트"])
 
-    with _no_relation_fetch(), patch(
+    with _no_relation_fetch(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(return_value=[_kr_candidate("Nell", score=100)]),
     ):
@@ -418,7 +427,9 @@ async def test_normalize_specific_artists_ignores_other_concerts():
         await queue_for_normalization(db, concert_b, ["같은이름"])
 
     mock_search = AsyncMock(return_value=[_general_candidate("Same Name", score=100)])
-    with _no_relation_fetch(), patch("app.services.artist_normalization.search_artist", new=mock_search):
+    with _no_relation_fetch(), _no_wikidata_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=mock_search
+    ):
         stats = await normalize_specific_artists(concert_a, ["같은이름"])
 
     assert stats["matched"] == 1
@@ -585,7 +596,7 @@ async def test_normalize_pending_artists_stores_current_member_relations():
         BandRelation(mbid=uuid.uuid4().hex, name="탈퇴멤버", type="Person", is_current=False),
     ]
 
-    with _no_kopis_supplement(), patch(
+    with _no_kopis_supplement(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(return_value=[_kr_candidate(band_name, score=100, mbid=band_mbid)]),
     ), patch(
@@ -634,7 +645,7 @@ async def test_normalize_pending_artists_skips_relation_fetch_for_known_canonica
         await queue_for_normalization(db, concert_id, [band_name])
 
     mock_relations = AsyncMock(side_effect=AssertionError("이미 아는 canonical은 관계를 다시 조회하면 안 됨"))
-    with _no_kopis_supplement(), patch(
+    with _no_kopis_supplement(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.fetch_member_of_band_relations", new=mock_relations
     ):
         stats = await normalize_pending_artists(limit=10)
@@ -672,7 +683,7 @@ async def test_normalize_pending_artists_backfills_group_roster_from_member_side
             ]
         return []
 
-    with _no_kopis_supplement(), patch(
+    with _no_kopis_supplement(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(return_value=[_kr_candidate(member_a_name, score=100, mbid=member_a_mbid)]),
     ), patch(
@@ -700,6 +711,150 @@ async def test_normalize_pending_artists_backfills_group_roster_from_member_side
         ).scalars().all()
         # 콘서트에 한 번도 안 나온 멤버B도 그룹 쪽 로스터 조회로 같이 저장됨
         assert set(member_names) == {member_a_name, member_b_name}
+
+
+# Wikidata 한글 별칭 보강 (_register_wikidata_korean_alias) - mbid로 확정된 아티스트의
+# Wikidata 한글 label을 alias로 등록해서, "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어
+# 영구 unconfirmed로 남던 케이스(스즈키 코노미 실측 사례)를 구제하는 게 목적
+
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_registers_wikidata_korean_alias_on_fresh_match():
+    await _clear_pending_queue()
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_WD_NEW_{uuid.uuid4().hex[:6]}", latin_name, token))
+
+    async with AsyncSessionLocal() as db:
+        await queue_for_normalization(db, concert_id, [latin_name])
+
+    with _no_kopis_supplement(), _no_relation_fetch(), patch(
+        "app.services.artist_normalization.search_artist",
+        new=AsyncMock(return_value=[_general_candidate(latin_name, score=100)]),
+    ), patch(
+        "app.services.artist_normalization.fetch_wikidata_qid", new=AsyncMock(return_value="Q1")
+    ), patch(
+        "app.services.artist_normalization.fetch_korean_label", new=AsyncMock(return_value=hangul_name)
+    ):
+        stats = await normalize_pending_artists(limit=10)
+
+    assert stats["matched"] == 1
+
+    async with AsyncSessionLocal() as db:
+        canonical = await find_canonical_by_alias(db, latin_name)
+        assert canonical is not None
+        alias_rows = (
+            await db.execute(select(ArtistAlias).where(ArtistAlias.canonical_artist_id == canonical.id))
+        ).scalars().all()
+        wikidata_alias = next(a for a in alias_rows if a.source == "wikidata")
+        assert wikidata_alias.alias_text == hangul_name
+
+
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_skips_wikidata_lookup_when_alias_already_registered():
+    await _clear_pending_queue()
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_WD_SKIP_{uuid.uuid4().hex[:6]}", latin_name, token))
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=latin_name, source="musicbrainz"))
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=hangul_name, source="wikidata"))
+        await db.commit()
+
+        await queue_for_normalization(db, concert_id, [latin_name])
+
+    mock_qid = AsyncMock(side_effect=AssertionError("wikidata alias가 이미 있으면 재조회하면 안 됨"))
+    with _no_kopis_supplement(), patch("app.services.artist_normalization.fetch_wikidata_qid", new=mock_qid):
+        stats = await normalize_pending_artists(limit=10)
+
+    assert stats["matched"] == 1
+    mock_qid.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_wikidata_no_qid_still_matches():
+    await _clear_pending_queue()
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_WD_NOQID_{uuid.uuid4().hex[:6]}", latin_name, token))
+
+    async with AsyncSessionLocal() as db:
+        await queue_for_normalization(db, concert_id, [latin_name])
+
+    with _no_kopis_supplement(), _no_relation_fetch(), patch(
+        "app.services.artist_normalization.search_artist",
+        new=AsyncMock(return_value=[_general_candidate(latin_name, score=100)]),
+    ), patch(
+        "app.services.artist_normalization.fetch_wikidata_qid", new=AsyncMock(return_value=None)
+    ):
+        stats = await normalize_pending_artists(limit=10)
+
+    assert stats["matched"] == 1  # Wikidata 문서가 없어도 본 매치엔 영향 없음
+
+    async with AsyncSessionLocal() as db:
+        canonical = await find_canonical_by_alias(db, latin_name)
+        alias_rows = (
+            await db.execute(select(ArtistAlias).where(ArtistAlias.canonical_artist_id == canonical.id))
+        ).scalars().all()
+        assert not any(a.source == "wikidata" for a in alias_rows)
+
+
+# 실제 프로덕션에서 발견된 패턴(David/데이비드): 포스터엔 원어, KOPIS 원본엔 한글 음차로 각각
+# 큐잉된 두 row가 한 배치 안에서 처리될 때, 한글 표기가 재검색 없이 Wikidata 별칭으로 바로
+# matched되는지 확인 - 처리 순서(한글을 뒤로 미룸)와 별칭 등록이 같이 맞물려야 성립
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_resolves_hangul_sibling_via_wikidata_alias_same_batch():
+    await _clear_pending_queue()
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(
+        await _create_concert(f"PF_WD_SIBLING_{uuid.uuid4().hex[:6]}", f"{latin_name},{hangul_name}", token)
+    )
+
+    async with AsyncSessionLocal() as db:
+        # concert_lineups는 _create_concert가 채워주지 않으므로 병합 검증을 위해 직접 심어둠
+        # (test_apply_canonical_replacement_dedups_lineup_conflict와 동일한 패턴)
+        d = date(2030, 6, 1)
+        db.add(ConcertLineup(concert_id=concert_id, artist=latin_name, performance_date=d, source="poster"))
+        db.add(ConcertLineup(concert_id=concert_id, artist=hangul_name, performance_date=d, source="poster"))
+        await db.commit()
+
+        await queue_for_normalization(db, concert_id, [latin_name, hangul_name])
+
+    async def _search(name, client=None):
+        if name == latin_name:
+            return [_general_candidate(latin_name, score=100)]
+        raise AssertionError("한글 표기는 Wikidata 별칭으로 바로 matched돼야 함 - 재검색하면 안 됨")
+
+    with _no_kopis_supplement(), _no_relation_fetch(), patch(
+        "app.services.artist_normalization.search_artist", new=AsyncMock(side_effect=_search)
+    ), patch(
+        "app.services.artist_normalization.fetch_wikidata_qid", new=AsyncMock(return_value="Q1")
+    ), patch(
+        "app.services.artist_normalization.fetch_korean_label", new=AsyncMock(return_value=hangul_name)
+    ):
+        stats = await normalize_pending_artists(limit=10)
+
+    assert stats["matched"] == 2
+
+    async with AsyncSessionLocal() as db:
+        status_result = await db.execute(
+            select(ArtistNormalizationStatus).where(ArtistNormalizationStatus.concert_id == concert_id)
+        )
+        rows = {r.artist_text: r.status for r in status_result.scalars().all()}
+        assert rows == {latin_name: "matched", hangul_name: "matched"}
+
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [latin_name]  # 중복 없이 하나로 합쳐짐
+
+        lineup_result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == concert_id))
+        assert [row.artist for row in lineup_result.scalars().all()] == [latin_name]  # concert_lineups도 병합됨
 
 
 # _collapse_members_to_group_names - 멤버 표기를 그룹명으로 정리하는 정책
@@ -917,7 +1072,9 @@ async def test_normalize_pending_artists_supplements_missing_kopis_members():
         await queue_for_normalization(db, concert_id, [m1])
 
     kopis_detail_mock = AsyncMock(return_value={"artist_name": [m1, m2, m3]})
-    with patch("app.services.kopis._fetch_kopis_detail_data", new=kopis_detail_mock), _no_relation_fetch(), patch(
+    with patch(
+        "app.services.kopis._fetch_kopis_detail_data", new=kopis_detail_mock
+    ), _no_relation_fetch(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(side_effect=lambda name, client=None: [_kr_candidate(name, score=100)]),
     ):
@@ -958,7 +1115,7 @@ async def test_normalize_pending_artists_dry_run_does_not_persist_kopis_suppleme
 
     with patch(
         "app.services.kopis._fetch_kopis_detail_data", new=AsyncMock(return_value={"artist_name": [m1, m2]})
-    ), _no_relation_fetch(), patch(
+    ), _no_relation_fetch(), _no_wikidata_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(side_effect=lambda name, client=None: [_kr_candidate(name, score=100)]),
     ):

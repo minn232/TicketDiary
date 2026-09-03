@@ -117,6 +117,29 @@ async def search_artist(name: str, client: httpx.AsyncClient | None = None) -> l
         return await _search(c)
 
 
+# canonical 하나(mbid)가 Wikidata 항목과 연결돼 있으면 그 QID(예: "Q165193")를 반환. 관계가
+# 없거나 조회 실패 시 None - 호출부(artist_normalization._register_wikidata_korean_alias)가
+# 조용히 건너뛴다
+async def fetch_wikidata_qid(mbid: str, client: httpx.AsyncClient | None = None) -> str | None:
+    async def _fetch(c: httpx.AsyncClient) -> str | None:
+        data = await _get_with_retry(
+            c, f"/artist/{mbid}", {"inc": "url-rels", "fmt": "json"}, f"wikidata qid mbid={mbid}"
+        )
+        for rel in data.get("relations", []):
+            if rel.get("type") != "wikidata":
+                continue
+            resource = (rel.get("url") or {}).get("resource", "")
+            qid = resource.rsplit("/", 1)[-1]
+            if qid:
+                return qid
+        return None
+
+    if client is not None:
+        return await _fetch(client)
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        return await _fetch(c)
+
+
 # 아티스트 하나(mbid)의 "member of band" 관계를 전부 가져온다. 밴드를 조회하면 멤버 목록이,
 # 멤버를 조회하면 소속 밴드가 나오는 대칭 관계(실측으로 잔나비 조회해서 확인: 밴드 조회 시
 # direction="backward"로 5명의 현재/과거 멤버가 나옴). relations[].end 필드로 탈퇴 여부를 구분.

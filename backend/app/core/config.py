@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # MusicBrainz API 이용 정책상 User-Agent에 연락처(이메일 등)가 있어야 함 - 없으면 요청이
     # 차단될 수 있음. 형식: "AppName/Version (contact)"
     MUSICBRAINZ_USER_AGENT: str = "TicketDiary/1.0 (scj7565@gmail.com)"
+    # mbid로 확정된 아티스트의 한글 통용명 보강용(wikidata.py). User-Agent는 MUSICBRAINZ_USER_AGENT 재사용
+    WIKIDATA_BASE_URL: str = "https://www.wikidata.org"
     GOOGLE_VISION_API_KEY: str = ""
     # LLM_EXTRACT_URL: str = ""  # OCR 파싱이 로컬 regex로 전환되어 현재 미사용
     LLM_EXTRACT_API_KEY: str = ""

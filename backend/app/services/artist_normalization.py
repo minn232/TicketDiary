@@ -17,7 +17,8 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.services.artist_blocklist import is_blocklisted_artist_name
 from app.services.artist_matching import _compact, _contains_hangul, normalize_artist_names
-from app.services.musicbrainz import ArtistCandidate, fetch_member_of_band_relations, search_artist
+from app.services.musicbrainz import ArtistCandidate, fetch_member_of_band_relations, fetch_wikidata_qid, search_artist
+from app.services.wikidata import fetch_korean_label
 
 logger = logging.getLogger(__name__)
 
@@ -554,11 +555,43 @@ async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None
         concert.artist_name = names
 
 
+# canonical의 mbid로 Wikidata 항목을 찾아 한글 label을 alias로 등록한다(예: Konomi Suzuki
+# mbid -> Wikidata ko label "스즈키 코노미"). KOPIS 원본 라인업이 그 한글 표기 그대로 별도
+# row로 큐잉돼 있었다면(_supplement_from_kopis_originals) 이후 처리 시 MusicBrainz 재검색 없이
+# 이 alias로 바로 matched됨 - "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어 영구 unconfirmed로
+# 남던 케이스(스즈키 코노미 실측)를 구제하는 게 목적. 이미 wikidata 출처 alias가 있으면
+# mbid당 재조회 안 함(문서가 바뀌는 일은 드묾). 조회 실패/미존재는 전부 조용히 건너뜀 - 관계
+# 조회(_fetch_and_store_group_relations)와 같은 성격의 보강 데이터라 본 매치엔 영향 없음
+async def _register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
+    if not canonical.mbid:
+        return
+    existing = await db.execute(
+        select(ArtistAlias.id).where(
+            ArtistAlias.canonical_artist_id == canonical.id, ArtistAlias.source == "wikidata"
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return
+
+    try:
+        qid = await fetch_wikidata_qid(canonical.mbid, client)
+        if qid is None:
+            return
+        label = await fetch_korean_label(qid, client)
+    except Exception as e:
+        logger.warning(f"Wikidata 한글 별칭 보강 실패, 건너뜀 (mbid={canonical.mbid}): {e}")
+        return
+
+    if label:
+        await _register_alias_if_new(db, canonical, label, source="wikidata")
+
+
 async def _process_one(
     db: AsyncSession, client: httpx.AsyncClient, row: ArtistNormalizationStatus
 ) -> str:
     canonical = await find_canonical_by_alias(db, row.artist_text)
     if canonical is not None:
+        await _register_wikidata_korean_alias(db, canonical, client)
         await apply_canonical_replacement(db, row.concert_id, row.artist_text, canonical.canonical_name)
         row.status = "matched"
         return "matched"
@@ -575,6 +608,7 @@ async def _process_one(
         await _register_alias_if_new(db, canonical, row.artist_text, source="musicbrainz")
         if created:
             await _fetch_and_store_group_relations(db, canonical, client)
+        await _register_wikidata_korean_alias(db, canonical, client)
         await apply_canonical_replacement(db, row.concert_id, row.artist_text, canonical.canonical_name)
 
     return status
@@ -620,6 +654,12 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
         rows = result.scalars().all()
         if not rows:
             return {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
+
+        # 한글 표기를 뒤로 미룸(created_at 순서는 유지, stable sort) - 같은 콘서트의 원어
+        # 표기가 먼저 matched되면 그 자리에서 Wikidata 한글 alias가 등록되니, 한글 probe(KOPIS
+        # 원본) 표기가 그 뒤에 처리되면 재검색 없이 바로 그 alias로 matched됨. 순서를 안 바꾸면
+        # 한글 쪽이 먼저 뽑혀서 이 회차엔 놓치고 unconfirmed로 영구 고정될 수 있음(재시도 없음)
+        rows = sorted(rows, key=lambda r: _contains_hangul(r.artist_text))
 
         logger.info(f"MusicBrainz 정규화 대상 {len(rows)}건")
         async with httpx.AsyncClient(timeout=10.0) as client:
