@@ -41,6 +41,7 @@ llm_server/*.sqlite3
 llm_server/batch_results/
 llm_server/batch_results_v2/
 llm_server/batch_results_v3/
+llm_server/batch_results_kor/
 
 # IDE
 .vscode/
