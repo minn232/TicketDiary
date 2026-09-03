@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.notification import process_pending_notifications
 from app.services.kopis import sync_daily_concerts
+from app.services.artist_normalization import normalize_pending_artists
 from app.services.crawler import (
     retry_festival_lineup_checks,
     retry_pending_crawls,
@@ -43,7 +44,7 @@ async def _run_daily_kopis_sync() -> None:
 
 async def _run_pod_start() -> None:
     try:
-        # pod 시작 + SSH 원격으로 start_all.sh 실행까지 한 번에 (LLM팀 Container Start
+        # pod 시작 + SSH 원격으로 start_vllm.sh 실행까지 한 번에 (LLM팀 Container Start
         # Command 자동화가 무산되면서 SSH 방식으로 대체함, 2026-08-06)
         await start_pod_and_launch_services()
     except Exception as e:
@@ -140,6 +141,14 @@ async def _run_real_setlist_backfill() -> None:
         logger.error(f"실제 셋리스트 자동 채움 오류: {e}")
 
 
+async def _run_musicbrainz_normalize() -> None:
+    try:
+        stats = await normalize_pending_artists()
+        logger.info(f"MusicBrainz 아티스트 정규화 배치 완료: {stats}")
+    except Exception as e:
+        logger.error(f"MusicBrainz 아티스트 정규화 배치 오류: {e}")
+
+
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
     # LLM팀 GPU pod을 배치 시작 10분 전에 미리 깨워둠 (KST 23:50 = UTC 14:50, 전날 기준).
@@ -171,6 +180,11 @@ def start_scheduler() -> None:
     # stop 실패(네트워크 오류 등) 대비 백업 - 밤새 GPU 켜진 채 방치되는 비용 누수를 막는 게
     # 목적이라 이미 꺼져있어도 다시 호출하는 게 안전함 (KST 02:00 = UTC 17:00)
     scheduler.add_job(_run_pod_stop, "cron", hour=17, minute=0, id="pod_stop_backup", max_instances=1)
+    # 그날 웹훅들이 쌓아둔 아티스트 정규화 큐(pending)를 MusicBrainz로 확인 - pod_stop_backup
+    # 직후로 잡아서 그날 콜백이 다 들어온 뒤에 처리되게 함 (KST 02:10 = UTC 17:10)
+    scheduler.add_job(
+        _run_musicbrainz_normalize, "cron", hour=17, minute=10, id="musicbrainz_normalize", max_instances=1
+    )
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

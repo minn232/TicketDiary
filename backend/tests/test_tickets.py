@@ -857,3 +857,25 @@ def test_upgrade_event_type_does_not_downgrade_existing_festival():
     concert = Concert(event_type=EventType.FESTIVAL.value, artist_name=["A"])
     assert upgrade_event_type_if_multi_artist(concert) is False
     assert concert.event_type == EventType.FESTIVAL.value
+
+
+# VLM이 포스터를 보고 event_type=FESTIVAL로 판단하면, 5명 임계치 전이라도 실제 라인업이
+# 서로 다른 이름 2명 이상으로 교차검증되면 승격됨(초반 라인업만 공개된 페스티벌을 더 일찍 잡기 위함)
+def test_upgrade_event_type_llm_festival_hint_upgrades_below_threshold():
+    concert = Concert(event_type=EventType.SOLO.value, artist_name=["A", "B"])
+    assert upgrade_event_type_if_multi_artist(concert, llm_event_type="FESTIVAL") is True
+    assert concert.event_type == EventType.FESTIVAL.value
+
+
+# VLM이 FESTIVAL이라고 판단했어도 실제 라인업이 1명뿐이면(콜라보 포스터 오인 등과 모순) 무시함
+def test_upgrade_event_type_llm_festival_hint_ignored_without_corroboration():
+    concert = Concert(event_type=EventType.SOLO.value, artist_name=["A"])
+    assert upgrade_event_type_if_multi_artist(concert, llm_event_type="FESTIVAL") is False
+    assert concert.event_type == EventType.SOLO.value
+
+
+# VLM이 SOLO/UNKNOWN으로 판단하면 기존 5명 임계치 로직만 그대로 적용됨(추가 승격 없음)
+def test_upgrade_event_type_llm_solo_hint_does_not_upgrade_below_threshold():
+    concert = Concert(event_type=EventType.SOLO.value, artist_name=["A", "B", "C", "D"])
+    assert upgrade_event_type_if_multi_artist(concert, llm_event_type="SOLO") is False
+    assert concert.event_type == EventType.SOLO.value

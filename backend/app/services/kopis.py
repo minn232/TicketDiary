@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.models.concert import Concert
 from app.models.social import ArtistFollow, NewsFeed
 from app.services.artist_matching import get_known_artist_names, normalize_artist_names
+from app.services.artist_normalization import expand_follow_index_with_group_relations
 from app.services.notification import schedule_new_concert_notifications
 from app.services.site_aliases import find_site_key
 from app.services.text_utils import min_len_ok
@@ -494,6 +495,10 @@ async def _build_follow_index(db: AsyncSession) -> dict[str, list[tuple]]:
             if not name:
                 continue
             index.setdefault(name.lower(), []).append((follow.user_id, name))
+
+    # 밴드<->현재 멤버 관계로 인덱스 확장 - "잔나비" 팔로워가 KOPIS 멤버명만 있는 콘서트도
+    # 받고, 멤버명을 팔로우한 유저가 밴드명만 있는 콘서트도 받게 함(app/services/artist_normalization.py)
+    await expand_follow_index_with_group_relations(db, index)
     return index
 
 

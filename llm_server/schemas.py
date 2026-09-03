@@ -16,6 +16,9 @@ class ArtistExtractItem(BaseModel):
     concert_id: str
     concert_name: str | None = None
     poster_url: str
+    # KOPIS에 등록된 공연장(시설)명 - extract_artist.py 원칙 2번(공연장명 오인 방지)의
+    # 근거로 프롬프트에 그대로 실림. 없으면(None) 그 근거 없이 기존처럼 판단함.
+    venue: str | None = None
 
 
 class DiaryGenerateItem(BaseModel):
@@ -43,6 +46,7 @@ class CrawlResultCallback(BaseModel):
     prices: list[dict] | None = None
     venue_layout: VenueLayoutPayload | None = None
     ticketing_date: str | None = None  # YYYY-MM-DD
+    ticketing_phases: list[dict] | None = None  # [{"phase": "선예매", "date": "..."|None}, ...]
     delivery_date: str | None = None  # YYYY-MM-DD
     artist_name: list[str] | None = None
     food_allowed: str | None = None  # "가능"/"불가능"/"일부허용"
@@ -50,6 +54,9 @@ class CrawlResultCallback(BaseModel):
 
 class ArtistResultCallback(BaseModel):
     artist_name: list[str]
+    # 포스터를 보고 판단한 단독/페스티벌 분류.
+    # 백엔드 app/models/concert.py EventType과 값을 정확히 맞출 것("SOLO"/"FESTIVAL"/"UNKNOWN")
+    event_type: str | None = None
 
 
 class DiaryResultCallback(BaseModel):

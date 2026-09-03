@@ -180,7 +180,9 @@ async def generate_ticket_real_setlist_auto(
 # 게이팅을 제거함. 값 자체(GET/PATCH /settings)는 그대로 유지.
 
 
-# 예상 셋리스트는 아티스트 과거 통계 기반 추측이라 날짜에 안 묶임 - ticket.concert_id로만 위임
+# 예상 셋리스트는 아티스트 과거 통계 기반 추측이라 곡 자체는 날짜에 안 묶이지만, 페스티벌처럼
+# 아티스트가 여럿이면 ticket.attended_date에 배정된 아티스트로 좁혀서 보여줌(get_pre_setlist
+# 참고) - 배정 정보가 없으면 기존처럼 전체 반환
 @router.get("/{ticket_id}/setlist/pre", response_model=PreSetlistResponse)
 async def get_ticket_pre_setlist(
     ticket_id: UUID,
@@ -188,8 +190,8 @@ async def get_ticket_pre_setlist(
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await get_ticket(db, current_user.id, ticket_id)
-    concert_id, _ = _ticket_concert_and_date(ticket)
-    return await get_pre_setlist(db, concert_id)
+    concert_id, explicit_date = _ticket_concert_and_date(ticket)
+    return await get_pre_setlist(db, concert_id, explicit_date)
 
 
 @router.post("/{ticket_id}/setlist/pre/generate", response_model=PreSetlistResponse, status_code=status.HTTP_201_CREATED)

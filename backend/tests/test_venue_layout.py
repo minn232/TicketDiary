@@ -539,6 +539,81 @@ async def test_crawl_result_invalid_ticketing_date_ignored():
     assert "ticketing_date" not in response.json()["updated"]
 
 
+# ticketing_phases 수신 → Concert.ticketing_phases에 전체 단계 저장 + "ticketing_phases" in updated
+@pytest.mark.asyncio
+async def test_crawl_result_ticketing_phases_saved():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_CR_TP_001")
+
+    body = {
+        "ticketing_phases": [
+            {"phase": "선예매", "date": "2030-04-25"},
+            {"phase": "일반예매", "date": "2030-05-01"},
+        ]
+    }
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "ticketing_phases" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+
+    assert concert.ticketing_phases == [
+        {"phase": "선예매", "date": "2030-04-25"},
+        {"phase": "일반예매", "date": "2030-05-01"},
+    ]
+
+
+# phase의 date 형식이 잘못돼도 그 항목만 걸러내고 나머지 phase는 정상 저장
+@pytest.mark.asyncio
+async def test_crawl_result_ticketing_phases_invalid_date_filtered():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+    from sqlalchemy import select
+    import uuid as _uuid
+
+    concert_id = await _create_concert("PF_CR_TP_INVALID_001")
+
+    body = {
+        "ticketing_phases": [
+            {"phase": "선예매", "date": "not-a-date"},
+            {"phase": "일반예매", "date": "2030-05-01"},
+        ]
+    }
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "ticketing_phases" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == _uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+
+    assert concert.ticketing_phases == [{"phase": "일반예매", "date": "2030-05-01"}]
+
+
 # delivery_date 수신 → Concert.delivery_date 저장 + "delivery_date" in updated
 @pytest.mark.asyncio
 async def test_crawl_result_delivery_date_saved():
@@ -731,3 +806,43 @@ async def test_crawl_result_delivery_date_backfills_multiple_tickets():
             assert any(
                 n["type"] == "delivery_day" for n in await _get_notifications_from_db(token)
             )
+
+
+# crawl-result의 lineup으로 concert_lineups가 source="crawl"로 채워지고, 같은 아티스트가
+# 여러 날짜에 걸쳐 있어도(페스티벌 헤드라이너 등) 날짜별로 row가 각각 쌓이는지 테스트
+@pytest.mark.asyncio
+async def test_crawl_result_lineup_saved_per_date():
+    from datetime import date
+
+    from app.models.lineup import ConcertLineup
+
+    concert_id = await _create_concert(f"PF_CR_LINEUP_{uuid.uuid4().hex[:8]}")
+
+    body = {
+        "artist_name": ["아티스트A", "아티스트B"],
+        "lineup": [
+            {"artist": "아티스트A", "performance_date": "2030-06-01"},
+            {"artist": "아티스트A", "performance_date": "2030-06-02"},
+            {"artist": "아티스트B", "performance_date": "2030-06-01"},
+        ],
+    }
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "lineup" in response.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
+        rows = {(r.artist, r.performance_date, r.source) for r in result.scalars().all()}
+    assert rows == {
+        ("아티스트A", date(2030, 6, 1), "crawl"),
+        ("아티스트A", date(2030, 6, 2), "crawl"),
+        ("아티스트B", date(2030, 6, 1), "crawl"),
+    }

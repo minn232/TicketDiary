@@ -41,6 +41,10 @@ class Concert(Base):
     # 재시도하지 않도록 _MAX_CRAWL_ATTEMPTS(crawler.py)와 비교해 포기 시점을 판단하는 데 씀
     crawl_attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     ticketing_date = Column(DateTime(timezone=True), nullable=True)
+    # 선예매/1차/2차 등 예매 단계별 전체 내역: [{"phase": "선예매", "date": "2026-08-25"}, ...].
+    # ticketing_date는 이 중 가장 이른 날짜(크롤링 "완료" 판정용)만 담고 있어 단계 구분이
+    # 안 남으므로, 화면에 전체 단계를 보여주기 위해 원본 배열을 별도로 둔다.
+    ticketing_phases = Column(JSONB, nullable=True)
     # 예매 사이트 크롤링 결과로 채워지는 배송 예정일 공지 (사이트 공통 공지라 티켓별이 아닌 공연 단위)
     delivery_date = Column(DateTime(timezone=True), nullable=True)
     ticketing_links = Column(JSONB, nullable=True)
@@ -50,9 +54,11 @@ class Concert(Base):
     # 생성된 공연은 이 값이 None이라 artist_name이 비어 있어도 "진짜 출연진 없음"과 구분 못하므로,
     # 상세 조회 시 이 값 유무로 재조회 필요 여부를 판단함 (None이면 아직 상세 미조회)
     kopis_detail_synced_at = Column(DateTime(timezone=True), nullable=True)
-    # 포스터를 VLM팀에 아티스트 추출 요청으로 보낸 시점(성공/실패 무관). 포스터 내용은 시간이 지나도
-    # 안 바뀌므로 크롤링과 달리 재시도 개념 없이 한 번만 보내고 다시 보내지 않기 위한 플래그
+    # 포스터를 VLM팀에 아티스트 추출 요청으로 보낸 시점(HTTP 전송 성공 여부만 뜻함, 콜백 도착
+    # 여부는 모름). attempt_count와 같이 crawl_attempted_at식 쿨다운 재시도에 씀 - 포스터는
+    # 내용이 안 바뀌므로 크롤링(30회)보다 상한은 낮게 잡음(crawler.py 참고)
     artist_extraction_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    artist_extraction_attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     # 페스티벌 라인업 변경 감지용 직전 스냅샷(조회수/광고 등 노이즈 제거된 본문 해시 + 이미지 경로 목록).
     # crawl_attempted_at/ticketing_date와는 목적이 달라 별도 필드로 분리 - 저건 "티켓팅일 확보" 완료
     # 판단용, 이건 "라인업이 직전과 달라졌는가" 비교용
@@ -68,3 +74,5 @@ class Concert(Base):
     real_setlists = relationship("RealSetlist", back_populates="concert")
     pre_setlist = relationship("PreSetlist", back_populates="concert", uselist=False)
     venue_layout = relationship("VenueLayout", back_populates="concert", uselist=False)
+    # 아티스트별 실제 출연일 매핑 (날짜별 셋리스트 필터링용, app/models/lineup.py 참고)
+    lineups = relationship("ConcertLineup", back_populates="concert")

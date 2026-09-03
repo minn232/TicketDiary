@@ -9,7 +9,7 @@ from uuid import UUID
 import httpx
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -92,6 +92,37 @@ async def _is_unavailable_page(page) -> bool:
     except Exception:
         return False
     return any(keyword in text for keyword in _UNAVAILABLE_PAGE_KEYWORDS)
+
+
+# 봇 차단 페이지 문구 (실측: YES24가 한 달 내내 이 페이지만 캡처됨 - "Restricted access to
+# service" 계열의 정형화된 차단 페이지, Code: 72). 지금은 스크린샷을 그냥 성공으로 처리해서
+# 차단 화면이 그대로 저장되고 있었음 - 이걸 감지해서 실패로 처리하면 다음 우선순위 사이트로
+# 넘어갈 수 있음
+_BLOCKED_PAGE_KEYWORDS = [
+    "비정상적인 접근으로", "일시적으로 서비스 접속이 제한",
+    "Restricted access to service", "policy violations",
+]
+
+
+async def _is_blocked_page(page) -> bool:
+    try:
+        text = await page.inner_text("body")
+    except Exception:
+        return False
+    return any(keyword in text for keyword in _BLOCKED_PAGE_KEYWORDS)
+
+
+# 페이지 본문이 거의 비어있으면(실측: 멜론에서 반복 확인 - 5KB짜리 완전 흰 화면만 매번 캡처됨,
+# 정확한 원인은 불명이지만 매번 동일하게 재현됨) 정상 렌더링이 아니라고 보고 실패 처리
+_BLANK_PAGE_TEXT_MIN_LENGTH = 20
+
+
+async def _is_blank_page(page) -> bool:
+    try:
+        text = await page.inner_text("body")
+    except Exception:
+        return False
+    return len(text.strip()) < _BLANK_PAGE_TEXT_MIN_LENGTH
 
 
 # NOL 상세페이지의 "상품 상세"/"공지사항"은 기본 접힘 상태라 안 누르면 스크린샷이 잘림.
@@ -331,13 +362,35 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
     return sorted(normalized)
 
 
-# 라인업 변경 감지용 스냅샷(원본 텍스트 + 해시 + 이미지 경로 목록) 캡처. 스크린샷과 같은 페이지
-# 방문에서 함께 뽑아야 브라우저를 두 번 띄우지 않아도 됨. 원본 텍스트는 실제 배치 로직(정규화된
-# 해시만 비교)에선 안 쓰이지만, scripts/test_lineup_diff.py에서 광고/카운터 노이즈를 눈으로
-# 직접 비교해볼 수 있게 그대로 반환해둠
-async def _capture_lineup_snapshot(page) -> tuple[str, str, list[str]]:
-    text = await page.inner_text("body")
-    img_srcs = await page.eval_on_selector_all("img", "els => els.map(e => e.src)")
+# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 회전 광고 배너(방문마다
+# 문구가 바뀌어 숫자/"더 알아보기" 필터로도 못 걸러지는 노이즈)를 캡처 범위 밖에 둔다.
+# interpark는 실제 오탐 사례로 확인, 나머지는 DOM 구조+재방문 diff로 검증한 예방적 추가
+# (셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+_LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
+    "interpark": ".productMain",
+    "yes24": ".renew-content",
+    "melon": ".section_detailview_product",
+    "kopis": "#su_con",
+}
+
+
+# 라인업 변경 감지용 스냅샷(원본 텍스트 + 해시 + 이미지 경로 목록) 캡처 - 스크린샷과 같은
+# 페이지 방문에서 함께 뽑음. container_selector가 주어지면 그 안쪽만 캡처해 사이트 전역 배너
+# 노이즈를 제외하고, 셀렉터가 안 잡히면 body로 폴백. 스크린샷(LLM 입력)은 각 크롤러가 항상
+# full_page로 따로 캡처하므로 이 범위 축소는 LLM이 보는 정보엔 영향 없음.
+async def _capture_lineup_snapshot(page, container_selector: str | None = None) -> tuple[str, str, list[str]]:
+    scope = container_selector
+    if scope:
+        try:
+            if await page.locator(scope).count() == 0:
+                scope = None
+        except Exception as e:
+            logger.warning(f"라인업 캡처 컨테이너 '{scope}' 확인 실패, body 전체로 폴백: {e}")
+            scope = None
+
+    text = await page.inner_text(scope or "body")
+    img_selector = f"{scope} img" if scope else "img"
+    img_srcs = await page.eval_on_selector_all(img_selector, "els => els.map(e => e.src)")
     return text, _hash_lineup_text(text), _normalize_lineup_img_srcs(img_srcs)
 
 
@@ -367,11 +420,19 @@ async def crawl_interpark(
                     if await _is_unavailable_page(page):
                         logger.info(f"인터파크 아직 정보 없음/오픈 전으로 추정: {concert.name}")
                         return None
+                    if await _is_blocked_page(page):
+                        logger.info(f"인터파크 봇 차단 감지: {concert.name}")
+                        return None
+                    if await _is_blank_page(page):
+                        logger.info(f"인터파크 빈 페이지 감지: {concert.name}")
+                        return None
                     await _dismiss_popups(page)
                     await _expand_collapsed_sections(page)
                     screenshot = await page.screenshot(full_page=True, type="png")
                     if capture_lineup_snapshot:
-                        text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                        text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                            page, container_selector=_LINEUP_CAPTURE_CONTAINER["interpark"]
+                        )
                         return screenshot, text, text_hash, img_srcs
                     return screenshot
 
@@ -399,11 +460,19 @@ async def crawl_interpark(
                 detail_page = await new_page_info.value
                 await detail_page.wait_for_load_state("domcontentloaded")
                 await detail_page.wait_for_timeout(2_000)
+                if await _is_blocked_page(detail_page):
+                    logger.info(f"인터파크 봇 차단 감지: {concert.name}")
+                    return None
+                if await _is_blank_page(detail_page):
+                    logger.info(f"인터파크 빈 페이지 감지: {concert.name}")
+                    return None
                 await _dismiss_popups(detail_page)
                 await _expand_collapsed_sections(detail_page)
                 screenshot = await detail_page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(detail_page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        detail_page, container_selector=_LINEUP_CAPTURE_CONTAINER["interpark"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:
@@ -441,10 +510,19 @@ async def crawl_yes24(
                         await page.goto(href, wait_until="domcontentloaded", timeout=30_000)
                         await page.wait_for_timeout(2_000)
 
+                if await _is_blocked_page(page):
+                    logger.info(f"YES24 봇 차단 감지: {concert.name}")
+                    return None
+                if await _is_blank_page(page):
+                    logger.info(f"YES24 빈 페이지 감지: {concert.name}")
+                    return None
+
                 await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        page, container_selector=_LINEUP_CAPTURE_CONTAINER["yes24"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:
@@ -493,10 +571,19 @@ async def crawl_melon(
                             logger.info(f"멜론티켓 봇 차단 감지 (상세 페이지): {concert.name}")
                             return None
 
+                if await _is_blocked_page(page):
+                    logger.info(f"멜론티켓 봇 차단 감지: {concert.name}")
+                    return None
+                if await _is_blank_page(page):
+                    logger.info(f"멜론티켓 빈 페이지 감지: {concert.name}")
+                    return None
+
                 await _dismiss_popups(page)
                 screenshot = await page.screenshot(full_page=True, type="png")
                 if capture_lineup_snapshot:
-                    text, text_hash, img_srcs = await _capture_lineup_snapshot(page)
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        page, container_selector=_LINEUP_CAPTURE_CONTAINER["melon"]
+                    )
                     return screenshot, text, text_hash, img_srcs
                 return screenshot
             finally:
@@ -506,8 +593,12 @@ async def crawl_melon(
         return None
 
 
-# KOPIS 공연 상세 페이지 전체 스크린샷 (티켓링크 폴백용)
-async def crawl_kopis(concert: Concert) -> bytes | None:
+# KOPIS 공연 상세 페이지 전체 스크린샷 (티켓링크 전용/인터파크 미지원 공연의 폴백용)
+# capture_lineup_snapshot=True면 (screenshot, text, text_hash, img_srcs) 튜플을 반환 (라인업 재크롤링 배치용,
+# 다른 크롤러 함수들과 동일한 시그니처)
+async def crawl_kopis(
+    concert: Concert, capture_lineup_snapshot: bool = False
+) -> bytes | tuple[bytes, str, str, list[str]] | None:
     if not concert.kopis_id:
         logger.info(f"KOPIS ID 없음 — 크롤링 불가: {concert.name}")
         return None
@@ -522,7 +613,13 @@ async def crawl_kopis(concert: Concert) -> bytes | None:
             try:
                 await page.goto(url, wait_until="networkidle", timeout=30_000)
                 await _dismiss_popups(page)
-                return await page.screenshot(full_page=True, type="png")
+                screenshot = await page.screenshot(full_page=True, type="png")
+                if capture_lineup_snapshot:
+                    text, text_hash, img_srcs = await _capture_lineup_snapshot(
+                        page, container_selector=_LINEUP_CAPTURE_CONTAINER["kopis"]
+                    )
+                    return screenshot, text, text_hash, img_srcs
+                return screenshot
             finally:
                 await browser.close()
     except Exception as e:
@@ -564,11 +661,19 @@ _CRAWLERS: dict[str, callable] = {
     "멜론": crawl_melon,
 }
 
-# 크롤링 지원 사이트 우선순위 (YES24 > INTERPARK > MELON)
-_PREFERRED_SITES = ["YES24", "INTERPARK", "MELON"]
+# 크롤링 지원 사이트 우선순위. 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
+# AWS 서버 IP 차단으로 한 달 내내 100% 실패 확정된 상태라([[crawler_block_detection_and_fallback_fix]])
+# 매 재시도 사이클마다 헛되이 먼저 시도하고 실패하는 낭비를 없애기 위해 임시로 INTERPARK만 남김.
+# 프록시 등으로 YES24/MELON 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
+_PREFERRED_SITES = ["INTERPARK"]
 
 # 크롤링 미지원 사이트
 _UNSUPPORTED_SITES = {"TICKETLINK", "티켓링크"}
+
+# 크롤러 자체는 있지만(_CRAWLERS에 매핑됨) 위와 같은 이유로 임시 비활성화된 사이트.
+# ticketing_site로 명시적으로 지정돼 들어와도 후보에서 제외(_pick_crawl_candidates) - 어차피
+# 실패가 확정이라 시도할수록 리소스 낭비. 해결되면 이 세트를 비우면 됨.
+_TEMPORARILY_DISABLED_SITES = {"YES24", "MELON"}
 
 
 # 크롤링할 사이트와 직접 URL을 결정 (ticketing_links에 지원 사이트가 있으면 YES24 > INTERPARK > MELON
@@ -588,6 +693,39 @@ def _pick_crawl_target(
     if site_key in _UNSUPPORTED_SITES:
         return None, None
     return site_key, links.get(site_key)
+
+
+# _pick_crawl_target과 같은 우선순위 규칙이지만, 1순위 하나만 고르지 않고 시도해볼 후보를
+# 순서대로 전부 반환한다 - YES24가 한 달째 봇 차단만 당하는데도 늘 1순위라 다른 사이트로
+# 못 넘어가던 문제 대응(실측 확인). 1순위가 차단/빈 페이지로 실패하면 다음 후보로 넘어감
+def _pick_crawl_candidates(
+    ticketing_site: str | None, ticketing_links: dict[str, str] | None
+) -> list[tuple[str, str | None]]:
+    links = ticketing_links or {}
+    candidates = [(site, links[site]) for site in _PREFERRED_SITES if site in links]
+    if ticketing_site:
+        site_key = normalize_site_key(ticketing_site)
+        if (
+            site_key not in _UNSUPPORTED_SITES
+            and site_key not in _TEMPORARILY_DISABLED_SITES
+            and not any(s == site_key for s, _ in candidates)
+        ):
+            candidates.append((site_key, links.get(site_key)))
+    return candidates
+
+
+# 후보 사이트를 순서대로 시도해 처음 성공한 결과를 반환 (전부 실패하면 (None, None))
+async def _crawl_first_success(
+    concert: Concert, candidates: list[tuple[str, str | None]], capture_lineup_snapshot: bool = False
+):
+    for site_key, direct_url in candidates:
+        crawler = _CRAWLERS.get(site_key)
+        if crawler is None:
+            continue
+        result = await crawler(concert, direct_url=direct_url, capture_lineup_snapshot=capture_lineup_snapshot)
+        if result is not None:
+            return site_key, result
+    return None, None
 
 
 # 알려진 사이트 키 집합 (대소문자 정규화 후 조회용)
@@ -652,21 +790,16 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         concert.crawl_attempt_count += 1
         await db.commit()
 
-        site_key, direct_url = _pick_crawl_target(ticketing_site, concert.ticketing_links)
-        if site_key is None:
+        candidates = _pick_crawl_candidates(ticketing_site, concert.ticketing_links)
+        if not candidates:
             # 티켓링크 전용 공연 → KOPIS 페이지로 폴백
             logger.info(f"티켓링크 미지원 → KOPIS 폴백: {concert.name}")
             image_bytes = await crawl_kopis(concert)
             upload_key = "kopis"
         else:
-            crawler = _CRAWLERS.get(site_key)
-            if crawler is None:
-                logger.info(f"크롤링 미지원 사이트: {site_key}")
-                return
-
-            logger.info(f"크롤링 대상: {site_key} (직접 URL: {bool(direct_url)})")
-            image_bytes = await crawler(concert, direct_url=direct_url)
-            upload_key = site_key.lower()
+            logger.info(f"크롤링 대상 후보: {[c[0] for c in candidates]}")
+            site_key, image_bytes = await _crawl_first_success(concert, candidates)
+            upload_key = site_key.lower() if site_key else None
 
         if image_bytes is None:
             return
@@ -721,8 +854,28 @@ async def send_screenshots_to_llm() -> None:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
 
-# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청 (포스터는 안 바뀌므로 한 번만 시도 -
-# 전송 실패하면 artist_extraction_attempted_at을 안 남겨서 다음 배치에 재시도됨).
+# 콜백(/artist-result)이 타임아웃/522로 유실되면 attempted_at만 찍히고 영영 재시도가 안 되던
+# 구조적 갭 수정용 - 포스터 내용은 안 바뀌므로 crawl_and_save처럼 오래 재시도할 이유는 없어
+# 상한을 크롤링(24h/최대 30회)보다 훨씬 낮게 잡는다
+_ARTIST_EXTRACTION_RETRY_COOLDOWN = timedelta(hours=24)
+_MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
+
+
+# send_posters_for_artist_extraction과 scripts/send_artist_extraction_now.py(대상 카운트
+# 미리보기)가 동일한 조건을 써야 해서 공유 함수로 뺌 - 둘 중 하나만 고치고 잊어버리는 걸 방지
+def artist_extraction_target_filter(now: datetime):
+    cutoff = now - _ARTIST_EXTRACTION_RETRY_COOLDOWN
+    return or_(
+        Concert.artist_extraction_attempted_at.is_(None),
+        and_(
+            Concert.artist_extraction_attempted_at < cutoff,
+            Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+        ),
+    )
+
+
+# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 보낸 적
+# 있어도 쿨다운이 지났고 시도 횟수가 상한 미만이면 다시 대상(artist_extraction_target_filter).
 # KOPIS가 이미 채운 공연도 대상에 포함 - prfcast가 예명 대신 본명/그룹명 대신 멤버명인 경우가
 # 많아서(merge는 합집합이라 기존 값은 안 지워짐). 다만 이미 4명 이상이면(ticket.py의
 # _MULTI_ARTIST_FESTIVAL_THRESHOLD=5 코앞이라 1명만 추가돼도 SOLO->FESTIVAL 오승격 위험) 제외.
@@ -732,12 +885,14 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
         return 0
 
+    now = datetime.now(timezone.utc)
+
     async with AsyncSessionLocal() as db:
         query = select(Concert).where(
             Concert.genre.contains(["대중음악"]),  # DB에 다른 장르도 섞여 있어 명시적으로 걸러야 함
             func.cardinality(Concert.artist_name) < 4,
             Concert.poster_url.isnot(None),
-            Concert.artist_extraction_attempted_at.is_(None),
+            artist_extraction_target_filter(now),
         )
         if limit is not None:
             query = query.limit(limit)
@@ -748,8 +903,10 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         logger.info("아티스트 추출 대상 공연 없음")
         return 0
 
+    # venue는 KOPIS 동기화 시점에 이미 채워져 있어(fcltynm) 별도 API 호출 없이 그대로 실어
+    # 보냄 - LLM 쪽이 공연장명을 아티스트로 잘못 뽑는 걸 방지하는 근거로 씀
     payload = [
-        {"concert_id": str(c.id), "concert_name": c.name, "poster_url": c.poster_url}
+        {"concert_id": str(c.id), "concert_name": c.name, "poster_url": c.poster_url, "venue": c.venue}
         for c in concerts
     ]
 
@@ -765,11 +922,15 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         logger.error(f"LLM팀 포스터 전송 실패: {e}")
         return 0
 
-    now = datetime.now(timezone.utc)
     concert_ids = [c.id for c in concerts]
     async with AsyncSessionLocal() as db:
         await db.execute(
-            update(Concert).where(Concert.id.in_(concert_ids)).values(artist_extraction_attempted_at=now)
+            update(Concert)
+            .where(Concert.id.in_(concert_ids))
+            .values(
+                artist_extraction_attempted_at=now,
+                artist_extraction_attempt_count=Concert.artist_extraction_attempt_count + 1,
+            )
         )
         await db.commit()
 
@@ -822,10 +983,13 @@ async def retry_pending_crawls() -> None:
     await asyncio.gather(*(_crawl_and_save_limited(semaphore, cid) for cid in concert_ids))
 
 
-# 페스티벌 라인업 재확인 쿨다운. 진행예정 FESTIVAL이 (2026-07-29 기준 실측) 100여 건 수준이라
-# 매일 돌아도 처리 시간 자체는 부담 없음 - 다만 같은 사이트를 매일 반복 방문하는 거라 봇 차단
-# 빈도가 늘면 그때 늘리는 식으로 조정할 것
+# 페스티벌 라인업 재확인 쿨다운.
 _FESTIVAL_LINEUP_CHECK_COOLDOWN = timedelta(hours=24)
+
+# 실측 결과 사이트 하나가 응답 없이 멈추면(크롤링 함수 내부에 전체를 감싸는 타임아웃이 없어서)
+# gather() 전체가 하루 넘게 안 끝나고 다음날 배치가 통째로 스킵되는 사고가 있었음 - 건별로
+# 상한을 씌워서 한 건이 멈춰도 나머지·다음날 배치는 정상 진행되게 함
+_FESTIVAL_LINEUP_CHECK_TIMEOUT = 120
 
 
 # FESTIVAL 공연 하나의 라인업이 직전 방문과 달라졌는지 확인, 달라졌으면(최초 방문 포함)
@@ -859,20 +1023,20 @@ async def _check_festival_lineup(concert_id) -> None:
 
         # 찜/티켓등록 트리거와 달리 특정 사이트에 안 묶인 주기 배치라 ticketing_site 없이
         # concert.ticketing_links만으로 대상 사이트를 고름 (social.py의 찜 갱신 경로와 동일 패턴)
-        site_key, direct_url = _pick_crawl_target(None, concert.ticketing_links)
-        if site_key is None:
-            return
-
-        crawler = _CRAWLERS.get(site_key)
-        if crawler is None:
-            return
+        candidates = _pick_crawl_candidates(None, concert.ticketing_links)
 
         # 실제 크롤링 전에 먼저 시각을 찍고 커밋 - crawl_and_save와 동일하게, 크롤링 도중 배치가
         # 죽어도 다음 사이클에 무한정 재시도하지 않도록 함
         concert.lineup_check_attempted_at = now
         await db.commit()
 
-        capture = await crawler(concert, direct_url=direct_url, capture_lineup_snapshot=True)
+        if candidates:
+            site_key, capture = await _crawl_first_success(concert, candidates, capture_lineup_snapshot=True)
+        else:
+            # 지원 사이트 링크가 하나도 없는 경우(티켓링크 전용 등) - crawl_and_save와 동일하게
+            # KOPIS 상세페이지로 폴백
+            site_key = "kopis"
+            capture = await crawl_kopis(concert, capture_lineup_snapshot=True)
         if capture is None:
             return
 
@@ -900,7 +1064,12 @@ async def _check_festival_lineup(concert_id) -> None:
 
 async def _check_festival_lineup_limited(semaphore: asyncio.Semaphore, concert_id) -> None:
     async with semaphore:
-        await _check_festival_lineup(concert_id)
+        try:
+            await asyncio.wait_for(_check_festival_lineup(concert_id), timeout=_FESTIVAL_LINEUP_CHECK_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error(f"페스티벌 라인업 재확인 타임아웃({_FESTIVAL_LINEUP_CHECK_TIMEOUT}초 초과): {concert_id}")
+        except Exception:
+            logger.exception(f"페스티벌 라인업 재확인 실패: {concert_id}")
 
 
 # 자정 배치: event_type=FESTIVAL로 확정된 진행예정 공연들의 라인업이 직전과 달라졌는지 매일 재확인.

@@ -6,11 +6,11 @@
 보고 나서 손댈 곳은 inference.py가 아니라 이 파일이 되어야 한다.
 
 LLM팀 실제 SYSTEM_PROMPT(Qwen2.5-VL) + vLLM response_format(json_schema, POSTER_INFO_SCHEMA)
-강제 출력 포맷 기준(2026-08-18 ticketing_date 추가):
+강제 출력 포맷 기준:
 {
     "timetable": [{"performance_date": "2026-09-19", "time": "18:00", "artist": "...", "stage": "MAIN"}] | null,
     "lineup": [{"artist": "...", "performance_date": "2026-09-19"}],   # 항상 배열(null 아님)
-    "ticketing_date": "2026-08-25" | null,
+    "ticketing_date": [{"phase": "선예매", "date": "2026-08-25"|null}, ...] | null,
     "ticket_delivery_date": "2026-09-10" | null,
     "ticket_prices": [{"seat_type": "VIP", "price": 198000}] | null,
     "other_info": {"food_allowed": "가능"|"불가능"|"일부허용"|null},   # 객체 자체는 항상 존재
@@ -18,8 +18,11 @@ LLM팀 실제 SYSTEM_PROMPT(Qwen2.5-VL) + vLLM response_format(json_schema, POST
 POSTER_INFO_SCHEMA는 최상위에 additionalProperties: False + 위 6개 키만 required라서
 venue_layout은 지금 이 경로로는 나올 수 없음(안 쓰기로 결정해 매핑 자체를 없앰).
 ticketing_date는 크롤링 "완료" 판정에 쓰이는 필드라(crawler.py의 Concert.ticketing_date)
-이게 안 채워지면 같은 공연이 24시간 쿨다운마다 계속 재크롤링됨 - 이번에 스키마에 추가되기
-전까지 실제로 그런 상태였음.
+이게 안 채워지면 같은 공연이 24시간 쿨다운마다 계속 재크롤링됨. 이 필드는 여전히 단일
+날짜 컬럼/필드라(schemas.py 참고) 선예매/1차/2차 등 여러 단계 중 가장 이른 날짜 하나로
+접어서 보낸다 - _earliest_ticketing_date 참고. 화면에 전체 단계를 보여주기 위한 원본
+배열은 별도로 ticketing_phases(Concert.ticketing_phases)에 그대로
+실어보낸다 - _normalize_ticketing_phases 참고.
 """
 
 from datetime import date, datetime
@@ -33,17 +36,80 @@ def _to_date_string(value) -> str | None:
     return str(value)
 
 
-# lineup(우선) 또는 timetable에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
+# [{"phase": "선예매", "date": "..."}] 배열로 바뀜(선예매/1차/2차 등 여러 단계를 모두 받기
+# 위함). Concert.ticketing_date는 크롤링 "완료" 판정에 쓰는 단일 DateTime 컬럼이라 원래
+# LLM 프롬프트 지시대로도 "가장 이른 날짜"만 있으면 되므로(유저가 놓치면 안 되는 첫 기회),
+# 배열 중 가장 이른 날짜 하나로 접어 반환한다. 예전 형태(단일 문자열/날짜)로 오는 경우도
+# 그대로 지원. 단계별 전체 내역은 별도로 _normalize_ticketing_phases가 담당.
+def _earliest_ticketing_date(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        dates = [
+            _to_date_string(entry.get("date"))
+            for entry in value
+            if isinstance(entry, dict) and entry.get("date")
+        ]
+        return min(dates) if dates else None
+    return _to_date_string(value)
+
+
+# 화면에 선예매/1차/2차 등 단계를 전부 보여주기 위한 원본 배열.
+# ticketing_date와 같은 원본 값을 받아 phase가 있는 항목만 골라 date를
+# 문자열로 정리해 돌려준다. 예전 단일 문자열 형태는 phase 구분이 없어 여기서는 다루지 않음
+# (그 경우 ticketing_date만 채워지고 ticketing_phases는 생략됨).
+def _normalize_ticketing_phases(value) -> list[dict] | None:
+    if not isinstance(value, list):
+        return None
+    phases = [
+        {"phase": entry.get("phase"), "date": _to_date_string(entry.get("date"))}
+        for entry in value
+        if isinstance(entry, dict) and entry.get("phase")
+    ]
+    return phases or None
+
+
+# 라인업 미공개 포스터에서 모델이 진짜 null 대신 문자열로 뱉는 경우.
+# 이대로 두면 "null"이라는 이름의 가짜 아티스트가 DB artist_name에 박힘
+_NULL_LITERALS = {"null", "none", "n/a", "na", "unknown", "미상"}
+
+
+def _is_null_literal(name: str) -> bool:
+    return name.strip().lower() in _NULL_LITERALS
+
+
+# entries(lineup 또는 timetable)에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
 # 반환. 블라인드 라인업(artist=None)은 자연히 걸러짐 - 순서는 처음 등장한 순서 유지
-def _extract_artist_names(raw: dict) -> list[str]:
-    entries = raw.get("lineup") or raw.get("timetable") or []
+def _unique_artist_names(entries: list[dict]) -> list[str]:
     seen: set[str] = set()
     names: list[str] = []
     for entry in entries:
         name = entry.get("artist")
-        if name and name not in seen:
+        if name and not _is_null_literal(name) and name not in seen:
             seen.add(name)
             names.append(name)
+    return names
+
+
+# 원칙 6(event_type-라인업 개수 일치)을 프롬프트로만 지시했을 때 모델이 안 지켜서 생기던
+# 자기모순(전수조사 확정 버그 37건 중 21건)을 여기서 결정론적으로 강제 - 진짜 페스티벌이면
+# 서로 다른 이름이 1개만 나올 수 없음. extract_poster.py 쪽은 event_type이 없어 영향 없음.
+# 단, 이 이름이 concert_name에도 그대로 등장하면(예: "백현진: 한여름밤의 꿈 페스티벌") 시리즈
+# 브랜드명에 "페스티벌"이 섞여 event_type만 잘못 판단된 것일 뿐 이름 자체는 맞을 가능성이
+# 높아 - 제목이 독립적인 교차검증 신호가 되므로 이 경우엔 지우지 않고 예외로 살려둠.
+def _is_untrustworthy_single_festival_artist(raw: dict, names: list[str], concert_name: str | None = None) -> bool:
+    if raw.get("event_type") != "FESTIVAL" or len(names) != 1:
+        return False
+    if concert_name and names[0].strip().lower() in concert_name.strip().lower():
+        return False
+    return True
+
+
+def _extract_artist_names(raw: dict, concert_name: str | None = None) -> list[str]:
+    entries = raw.get("lineup") or raw.get("timetable") or []
+    names = _unique_artist_names(entries)
+    if _is_untrustworthy_single_festival_artist(raw, names, concert_name):
+        return []
     return names
 
 
@@ -67,7 +133,33 @@ def _to_timetable_entry(entry: dict) -> dict:
     }
 
 
-def normalize_crawl_result(raw: dict) -> dict:
+# lineup에서 아티스트명+출연일이 둘 다 채워진 항목만 뽑아 백엔드 concert_lineups 웹훅
+# 페이로드로 만든다. 날짜를 모르는 항목(performance_date=null)은 여기서 버림 - 백엔드
+# 테이블은 "날짜가 있는 배정"만 저장하고, 날짜 모르는 아티스트는 저장 안 해도 항상 폴백(전체
+# 표시)되니 보낼 필요가 없음. 같은 (artist,date) 조합 중복도 제거. crawl/artist 두 경로가
+# 공유(analyze_crawl_screenshot/extract_artists_from_poster 둘 다 lineup을 이 형태로 반환).
+def normalize_lineup_entries(raw, concert_name: str | None = None) -> list[dict]:
+    if not isinstance(raw, dict):
+        return []
+    entries = raw.get("lineup") or []
+    if _is_untrustworthy_single_festival_artist(raw, _unique_artist_names(entries), concert_name):
+        return []
+    seen: set[tuple[str, str]] = set()
+    result: list[dict] = []
+    for entry in entries:
+        name = entry.get("artist")
+        perf_date = entry.get("performance_date")
+        if not name or _is_null_literal(name) or not perf_date:
+            continue
+        key = (name, perf_date)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"artist": name, "performance_date": perf_date})
+    return result
+
+
+def normalize_crawl_result(raw: dict, concert_name: str | None = None) -> dict:
     body: dict = {}
 
     if raw.get("timetable") is not None:
@@ -79,15 +171,26 @@ def normalize_crawl_result(raw: dict) -> dict:
     # venue_layout은 안 쓰기로 결정해 매핑 없음 (POSTER_INFO_SCHEMA에도 없는 키)
 
     # 크롤링 "완료" 판정에 쓰이는 필드(crawler.py) - 없으면 계속 재크롤링 대상으로 남음
-    if raw.get("ticketing_date") is not None:
-        body["ticketing_date"] = _to_date_string(raw["ticketing_date"])
+    raw_ticketing_date = raw.get("ticketing_date")
+    ticketing_date = _earliest_ticketing_date(raw_ticketing_date)
+    if ticketing_date is not None:
+        body["ticketing_date"] = ticketing_date
+
+    # 화면에 선예매/1차/2차 전체를 보여주기 위한 원본 - 위 ticketing_date와 같은 값에서 뽑음
+    ticketing_phases = _normalize_ticketing_phases(raw_ticketing_date)
+    if ticketing_phases is not None:
+        body["ticketing_phases"] = ticketing_phases
 
     if raw.get("ticket_delivery_date") is not None:
         body["delivery_date"] = _to_date_string(raw["ticket_delivery_date"])
 
-    artist_names = _extract_artist_names(raw)
+    artist_names = _extract_artist_names(raw, concert_name)
     if artist_names:
         body["artist_name"] = artist_names
+
+    lineup = normalize_lineup_entries(raw, concert_name)
+    if lineup:
+        body["lineup"] = lineup
 
     food_allowed = (raw.get("other_info") or {}).get("food_allowed")
     if food_allowed is not None:
@@ -99,12 +202,24 @@ def normalize_crawl_result(raw: dict) -> dict:
 # extract_artists_from_poster가 analyze_crawl_screenshot과 같은 추론 함수를 재사용하므로
 # (포스터든 크롤링 스크린샷이든 같은 전체 스키마를 반환), raw가 dict면 그 안에서 아티스트명만
 # 뽑아낸다. 혹시 나중에 단순 리스트를 반환하도록 바뀌어도 그대로 동작하게 이중으로 처리
-def normalize_artist_list(raw) -> list[str]:
+def normalize_artist_list(raw, concert_name: str | None = None) -> list[str]:
     if raw is None:
         return []
     if isinstance(raw, dict):
-        return _extract_artist_names(raw)
+        return _extract_artist_names(raw, concert_name)
     return [str(name) for name in raw]
+
+
+# extract_poster.py 결과에는 이 키가 없으므로 자연히 None이 된다. 백엔드 ArtistExtractionResult
+# 스키마와 값이 정확히 같아야 그대로 실어보낼 수 있어서, 셋 중 하나가 아니면 신호 없음(None)으로 취급
+_VALID_EVENT_TYPES = {"SOLO", "FESTIVAL", "UNKNOWN"}
+
+
+def normalize_event_type(raw) -> str | None:
+    if not isinstance(raw, dict):
+        return None
+    value = raw.get("event_type")
+    return value if value in _VALID_EVENT_TYPES else None
 
 
 def normalize_diary_text(raw) -> str:

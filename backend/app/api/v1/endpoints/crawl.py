@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,8 +12,11 @@ from app.core.deps import verify_llm_api_key
 from app.models.concert import Concert
 from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtractionResponse
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
+from app.models.lineup import ConcertLineup
 from app.services.artist_matching import get_known_artist_names, merge_artist_names
+from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization
 from app.services.kopis import _create_news_feeds_for_concert
+from app.services.lineup import upsert_concert_lineup
 from app.services.notification import schedule_ticketing_day_notifications
 from app.services.ticket import (
     backfill_delivery_date_from_concert,
@@ -99,6 +102,23 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 ticketing_date 형식: {body.ticketing_date}")
 
+    # 선예매/1차/2차 등 단계별 전체 내역 - ticketing_date(가장 이른 날짜, 완료 판정용)와는
+    # 별개로 화면 표시용 원본을 그대로 저장. 같은 크롤링 결과에서 같이 오므로 매번 통째로
+    # 덮어써도 되고(병합할 과거 값이 따로 없음), date가 있는 항목만 형식 검증한다
+    if body.ticketing_phases is not None:
+        valid_phases = []
+        for entry in body.ticketing_phases:
+            if entry.date is not None:
+                try:
+                    date.fromisoformat(entry.date)
+                except ValueError:
+                    logger.warning(f"잘못된 ticketing_phases date 형식: {entry.date}")
+                    continue
+            valid_phases.append({"phase": entry.phase, "date": entry.date})
+        if valid_phases:
+            concert.ticketing_phases = valid_phases
+            updated.append("ticketing_phases")
+
     delivery_date: datetime | None = None
     if body.delivery_date is not None:
         try:
@@ -112,13 +132,28 @@ async def receive_crawl_result(
     # 크롤링 결과와 포스터 기반 추출(artist-result 웹훅) 양쪽에서 아티스트가 들어올 수 있고,
     # 페스티벌은 1차/2차/3차로 시간차를 두고 라인업이 늘어나므로 덮어쓰지 않고 합집합으로 병합
     upgraded_to_festival = False
-    if body.artist_name:
+    known_artist_names: set[str] | None = None
+    if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)
+
+    if body.artist_name:
         merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             updated.append("artist_name")
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+
+    # 아티스트별 실제 출연일 upsert(union-only, 삭제 없음) - source="crawl"이 포스터 추출보다
+    # 우선순위 높음(app/services/lineup.py). concert.artist_name(방금 병합된 값 포함)까지
+    # known_names에 섞어서 표기를 최대한 맞춤
+    if body.lineup:
+        lineup_known_names = set(known_artist_names or set()) | set(concert.artist_name or [])
+        entries = [e.model_dump() for e in body.lineup]
+        lineup_changed = await upsert_concert_lineup(
+            db, concert_id, entries, source="crawl", known_names=lineup_known_names, commit=False
+        )
+        if lineup_changed:
+            updated.append("lineup")
 
     if updated:
         await db.commit()
@@ -150,6 +185,7 @@ async def receive_crawl_result(
 async def receive_artist_extraction_result(
     concert_id: UUID,
     body: ArtistExtractionResult,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
@@ -158,16 +194,21 @@ async def receive_artist_extraction_result(
     if concert is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
 
-    if body.artist_name:
+    known_artist_names: set[str] | None = None
+    if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)
-        # KOPIS 원본이 채운 소규모(단독 추정, 4명 미만) 공연이면 포스터 결과를 더 신뢰해서
-        # 교체(KOPIS prfcast가 본명/멤버명인 경우가 많아서) - 이미 4명 이상(페스티벌 등)이면
-        # 라인업 유실 방지를 위해 기존처럼 합집합 유지
-        replace = concert.kopis_detail_synced_at is not None and len(concert.artist_name or []) < 4
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names, replace=replace)
+
+    if body.artist_name:
+        # 항상 합집합 병합 - 예전엔 소규모(4명 미만) 공연에서 KOPIS가 본명/멤버명을 주는 문제
+        # (존박→박성규 등) 때문에 replace=True로 KOPIS 쪽을 통째로 버렸지만, LLM이 포스터에서
+        # 일부 멤버를 놓치면 그만큼 라인업이 사라지는 부작용이 있었음. 이제 MusicBrainz alias
+        # 매칭(services/artist_normalization.py)이 본명↔활동명을 배치로 자동 정리해주므로 그냥
+        # 합집합으로 두고 정리는 정규화 배치에 맡김. merge_artist_names의 replace=True 자체는
+        # 다른 상황에 필요할 수 있어 남겨둠(artist_matching.py)
+        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
-            upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
+            upgraded_to_festival = upgrade_event_type_if_multi_artist(concert, body.event_type)
             await db.commit()
             await db.refresh(concert)
             # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
@@ -176,6 +217,29 @@ async def receive_artist_extraction_result(
             # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
             if upgraded_to_festival:
                 await backfill_first_last_day_from_concert(db, concert_id)
+
+    # 아티스트별 실제 출연일 upsert(union-only, 삭제 없음) - 크롤링 쪽(source="crawl")이 이미
+    # 같은 (아티스트,날짜)를 확인해뒀으면 포스터 쪽(source="poster")은 그 row를 안 밀어냄
+    # (app/services/lineup.py)
+    if body.lineup:
+        lineup_known_names = set(known_artist_names or set()) | set(concert.artist_name or [])
+        entries = [e.model_dump() for e in body.lineup]
+        await upsert_concert_lineup(db, concert_id, entries, source="poster", known_names=lineup_known_names)
+
+    # MusicBrainz 정규화 큐잉 - pending row만 적립하고 끝(외부 호출 없음, 콜백 타임아웃과 무관).
+    # 실제 조회/치환은 별도 배치(services/artist_normalization.py)가 수행. concert.artist_name뿐
+    # 아니라 방금 upsert된 concert_lineups 표기도 같이 큐잉해 둘이 어긋나는 경우를 놓치지 않음
+    queue_names = set(concert.artist_name or [])
+    if body.lineup:
+        lineup_result = await db.execute(
+            select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert_id)
+        )
+        queue_names |= set(lineup_result.scalars().all())
+    if queue_names:
+        await queue_for_normalization(db, concert_id, list(queue_names))
+        # 다음날 밤 정기 배치를 기다리지 않고 바로 시도 - 응답 이후 백그라운드로 실행되므로
+        # 웹훅 응답 시간엔 영향 없음(services/artist_normalization.py의 normalize_specific_artists 참고)
+        background_tasks.add_task(normalize_specific_artists, concert_id, list(queue_names))
 
     logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)

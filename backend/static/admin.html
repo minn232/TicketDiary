@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TicketDiary 아티스트 관리</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e3e1dc;
+    --text: #2a2a28;
+    --muted: #8a8781;
+    --accent: #c0562f;
+    --accent-soft: #f4e3da;
+    --danger: #b0473a;
+    --ok: #4a7c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  input[type="text"], input[type="password"] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    background: #fff;
+    color: var(--text);
+  }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  button {
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--danger); border-color: var(--danger); background: #fff; }
+  button.danger:hover { background: #fbecea; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  #status-line { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: #faf9f7; }
+  tr:last-child td { border-bottom: none; }
+  tr.row:hover { background: #faf6f2; cursor: pointer; }
+  .poster-thumb { width: 44px; height: 60px; object-fit: cover; border-radius: 4px; background: var(--border); display: block; }
+  .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .badge-flag { display: inline-block; background: var(--danger); color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
+
+  /* 상세 패널 */
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(20,18,15,0.4); align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 10; }
+  #overlay.open { display: flex; }
+  #detail { background: var(--panel); border-radius: 10px; width: 100%; max-width: 720px; padding: 20px; }
+  #detail h2 { margin: 0 0 4px; font-size: 16px; }
+  #detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  #detail .body { display: flex; gap: 16px; }
+  #detail img.poster { width: 180px; border-radius: 8px; border: 1px solid var(--border); flex-shrink: 0; }
+  .artist-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
+  .artist-row .name { font-size: 13px; }
+  .artist-row .status-tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; margin-left: 8px; }
+  .status-matched { background: #e4efe7; color: var(--ok); }
+  .status-unconfirmed { background: #efe9e0; color: var(--muted); }
+  .status-ambiguous { background: #fbeadf; color: var(--accent); }
+  .status-pending { background: #eee; color: var(--muted); }
+  .artist-row .actions button { padding: 3px 8px; font-size: 12px; margin-left: 4px; }
+  #detail .close-row { text-align: right; margin-top: 14px; }
+  .ticket-links { margin: 10px 0 14px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .ticket-links a { display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; text-decoration: none; }
+  .ticket-links a:hover { background: var(--accent); color: #fff; }
+  #msg { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 20; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎫 TicketDiary 아티스트 관리</h1>
+  <div class="field">
+    <label>관리자 키</label>
+    <input type="password" id="admin-key" placeholder="Bearer key" />
+    <button onclick="saveKey()">저장</button>
+  </div>
+  <div class="field" style="flex:1; min-width:200px;">
+    <input type="text" id="search" placeholder="공연명 / kopis_id / 아티스트 검색" style="width:100%;" />
+  </div>
+  <div class="field">
+    <input type="checkbox" id="flagged-only" checked onchange="load(1)" />
+    <label for="flagged-only">확인 필요만 보기</label>
+  </div>
+  <button onclick="load(1)">검색</button>
+</header>
+
+<main>
+  <div id="status-line"></div>
+  <table>
+    <thead>
+      <tr><th></th><th>공연</th><th>아티스트</th><th>공연일</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="pager">
+    <button onclick="prevPage()">이전</button>
+    <span id="page-label"></span>
+    <button onclick="nextPage()">다음</button>
+  </div>
+</main>
+
+<div id="overlay" onclick="if(event.target===this) closeDetail()">
+  <div id="detail"></div>
+</div>
+<div id="msg"></div>
+
+<script>
+const API = '/api/v1/admin';
+let page = 1, pageSize = 20, totalPages = 1;
+
+function adminKey() { return localStorage.getItem('td_admin_key') || ''; }
+function saveKey() {
+  localStorage.setItem('td_admin_key', document.getElementById('admin-key').value.trim());
+  toast('키 저장됨');
+}
+document.getElementById('admin-key').value = adminKey();
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey(), ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function toast(text) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 2500);
+}
+
+async function load(p) {
+  page = p || page;
+  const search = document.getElementById('search').value.trim();
+  const flaggedOnly = document.getElementById('flagged-only').checked;
+  const qs = new URLSearchParams({ page, page_size: pageSize, flagged_only: flaggedOnly });
+  if (search) qs.set('search', search);
+
+  document.getElementById('status-line').textContent = '불러오는 중...';
+  try {
+    const data = await api('/concerts?' + qs.toString());
+    renderRows(data.items);
+    totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+    document.getElementById('page-label').textContent = `${data.page} / ${totalPages} (총 ${data.total}건)`;
+    document.getElementById('status-line').textContent = '';
+  } catch (e) {
+    document.getElementById('status-line').textContent = '오류: ' + e.message;
+  }
+}
+
+function prevPage() { if (page > 1) load(page - 1); }
+function nextPage() { if (page < totalPages) load(page + 1); }
+
+function renderRows(items) {
+  const tbody = document.getElementById('rows');
+  tbody.innerHTML = '';
+  for (const c of items) {
+    const tr = document.createElement('tr');
+    tr.className = 'row';
+    tr.onclick = () => openDetail(c.id);
+    const poster = c.poster_url ? `<img class="poster-thumb" src="${esc(c.poster_url)}" />` : '';
+    const chips = (c.artist_name || []).map(n => `<span class="chip">${esc(n)}</span>`).join('');
+    const flag = c.flagged_count > 0 ? `<span class="badge-flag">확인 필요 ${c.flagged_count}</span>` : '';
+    tr.innerHTML = `
+      <td>${poster}</td>
+      <td>${esc(c.name)}${flag}<div style="color:var(--muted);font-size:11px;">${esc(c.kopis_id || '')}</div></td>
+      <td>${chips}</td>
+      <td>${(c.start_date || '').slice(0, 10)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function openDetail(id) {
+  try {
+    const c = await api(`/concerts/${id}`);
+    renderDetail(c);
+    document.getElementById('overlay').classList.add('open');
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+function closeDetail() { document.getElementById('overlay').classList.remove('open'); }
+
+function statusOf(c, name) {
+  const found = (c.statuses || []).find(s => s.artist_text === name);
+  return found ? found.status : null;
+}
+
+function renderDetail(c) {
+  const poster = c.poster_url ? `<img class="poster" src="${esc(c.poster_url)}" />` : '';
+  const links = Object.entries(c.ticketing_links || {})
+    .map(([site, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(site)} 예매 ↗</a>`)
+    .join('');
+  const rows = (c.artist_name || []).map(name => {
+    const st = statusOf(c, name);
+    const tag = st ? `<span class="status-tag status-${st}">${st}</span>` : '';
+    return `
+      <div class="artist-row" data-concert-id="${c.id}" data-name="${esc(name)}">
+        <span class="name">${esc(name)}${tag}</span>
+        <span class="actions">
+          <button onclick="startRename(this)">수정</button>
+          <button onclick="startDisplayName(this)">표시명</button>
+          <button class="danger" onclick="startDeleteConfirm(this)">삭제</button>
+        </span>
+      </div>`;
+  }).join('');
+
+  document.getElementById('detail').innerHTML = `
+    <h2>${esc(c.name)}</h2>
+    <div class="sub">${esc(c.kopis_id || '')} · ${esc(c.venue || '')} · ${(c.start_date || '').slice(0, 10)}</div>
+    ${links ? `<div class="ticket-links">${links}</div>` : ''}
+    <div class="body">
+      ${poster}
+      <div style="flex:1;">
+        ${rows || '<div style="color:var(--muted)">아티스트 없음</div>'}
+        <div class="artist-row" data-concert-id="${c.id}" style="border-style:dashed;">
+          <input type="text" class="add-input" placeholder="놓친 아티스트명 입력" style="flex:1; margin-right:8px; border:none;" />
+          <button onclick="submitAdd(this)">추가</button>
+        </div>
+      </div>
+    </div>
+    <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
+  `;
+  const addInput = document.querySelector('.add-input');
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAdd(addInput);
+  });
+}
+
+async function submitAdd(el) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.querySelector('.add-input').value.trim();
+  if (!name) return;
+  try {
+    await api(`/concerts/${concertId}/artist-name`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    toast('추가됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// prompt()/confirm() 네이티브 다이얼로그는 브라우저가 몇 번 닫으면("이 페이지에서 다시
+// 표시 안 함") 이후 호출을 조용히 막아버려서 실사용 중 먹통처럼 보이는 문제가 있었음 -
+// 그 자리에서 바로 입력/확인하는 인라인 UI로 교체
+
+// 아티스트명을 onclick 문자열 인자로 직접 넣으면 JSON.stringify가 만드는 큰따옴표가
+// onclick="..."의 큰따옴표와 충돌해서 속성 자체가 깨짐(따옴표/특수문자 있는 이름마다 버튼이
+// 먹통이 됨) - data-* 속성에 담아두고 클릭 시 DOM에서 읽어오는 방식으로 이 문제를 피한다
+function startRename(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const originalName = row.dataset.name;
+  row.innerHTML = `
+    <input type="text" class="rename-input" value="${esc(originalName)}" style="flex:1; margin-right:8px;" />
+    <span class="actions">
+      <button onclick="submitRename(this)">저장</button>
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+  const input = row.querySelector('.rename-input');
+  input.focus();
+  input.select();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitRename(input);
+    if (e.key === 'Escape') openDetail(concertId);
+  });
+}
+
+async function submitRename(el) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const originalName = row.dataset.name;
+  const next = row.querySelector('.rename-input').value.trim();
+  if (!next || next === originalName) { openDetail(concertId); return; }
+  try {
+    await api(`/concerts/${concertId}/artist-name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ original_name: originalName, confirmed_name: next }),
+    });
+    toast('수정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// canonical_id는 UUID라 따옴표/특수문자 걱정 없이 onclick 인자로 바로 넣어도 안전
+async function startDisplayName(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  let data;
+  try {
+    data = await api(`/canonical-artist?name=${encodeURIComponent(name)}`);
+  } catch (e) {
+    toast('오류: ' + e.message);  // 아직 매칭 안 된 아티스트면 404
+    return;
+  }
+  const opts = data.options.map(o =>
+    `<option value="${esc(o.text)}" ${o.text === data.current ? 'selected' : ''}>${esc(o.text)} (${esc(o.source)})</option>`
+  ).join('');
+  row.innerHTML = `
+    <select class="display-select" style="flex:1; margin-right:8px;">${opts}</select>
+    <span class="actions">
+      <button onclick="submitDisplayName(this, '${data.canonical_id}')">저장</button>
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+}
+
+async function submitDisplayName(el, canonicalId) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const value = row.querySelector('.display-select').value;
+  try {
+    await api(`/canonical-artist/${canonicalId}/display-name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name: value }),
+    });
+    toast('표시명 변경됨(관련 공연 전체에 반영)');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+function startDeleteConfirm(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const actions = button.closest('.actions');
+  actions.innerHTML = `
+    <span style="font-size:12px; color:var(--danger); margin-right:6px;">삭제할까요?</span>
+    <button class="danger" onclick="submitDelete(this, false)">삭제만</button>
+    <button class="danger" onclick="submitDelete(this, true)" title="이 이름이 다른 콘서트에서 또 잘못 추출돼도 자동으로 걸러지게 함">삭제+차단</button>
+    <button onclick="openDetail('${concertId}')">취소</button>`;
+}
+
+async function submitDelete(button, blocklist) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  try {
+    const qs = new URLSearchParams({ name, blocklist });
+    await api(`/concerts/${concertId}/artist-name?${qs.toString()}`, { method: 'DELETE' });
+    toast(blocklist ? '삭제+차단됨(다음부터 자동으로 안 뽑힘)' : '삭제됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+
+load(1);
+</script>
+</body>
+</html>

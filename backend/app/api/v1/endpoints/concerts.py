@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, HTTPException
 from sqlalchemy import select
@@ -13,7 +14,14 @@ from app.core.deps import (
 )
 from app.models.concert import Concert
 from app.models.user import User
-from app.schemas.concert import ConcertResponse, TicketScanExtracted, TicketScanResponse
+from app.schemas.concert import (
+    ArtistNameConfirmRequest,
+    ArtistNameConfirmResponse,
+    ConcertResponse,
+    TicketScanExtracted,
+    TicketScanResponse,
+)
+from app.services.artist_normalization import confirm_artist_name_change
 from app.services.kopis import (
     search_concerts as kopis_search,
     search_concerts_multi as kopis_search_multi,
@@ -149,3 +157,17 @@ async def get_concert(
 
     # KOPIS API
     return await get_concert_detail(db, kopis_id)
+
+
+# 미확정(MusicBrainz로 못 찾은) 아티스트 표기를 유저가 직접 확정하는 API(G안, 프론트 UI는 아직
+# 없음) - 실제 관람 유저가 크롤러/LLM보다 정확한 소스라는 전제. 로그인만 하면 아무 공연이나
+# 고칠 수 있는 건 프로토타입 단계라 임시 허용한 것(런칭 전 티켓 보유자 제한 등 정책 재검토 필요)
+@router.patch("/{concert_id}/artist-name/confirm", response_model=ArtistNameConfirmResponse)
+async def confirm_artist_name(
+    concert_id: UUID,
+    body: ArtistNameConfirmRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    concert = await confirm_artist_name_change(db, concert_id, body.original_name, body.confirmed_name)
+    return ArtistNameConfirmResponse(artist_name=concert.artist_name)

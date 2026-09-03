@@ -25,6 +25,16 @@ LINEUP_ENTRY_SCHEMA = {
     "additionalProperties": False,
 }
 
+TICKETING_DATE_ENTRY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "phase": {"type": "string"},
+        "date": {"anyOf": [{"type": "string", "pattern": DATE_PATTERN}, {"type": "null"}]},
+    },
+    "required": ["phase", "date"],
+    "additionalProperties": False,
+}
+
 TICKET_PRICE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -50,7 +60,7 @@ POSTER_INFO_SCHEMA = {
         },
         "ticketing_date": {
             "anyOf": [
-                {"type": "string", "pattern": DATE_PATTERN},
+                {"type": "array", "items": TICKETING_DATE_ENTRY_SCHEMA},
                 {"type": "null"},
             ]
         },

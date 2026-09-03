@@ -1,5 +1,6 @@
 import logging
 from collections import Counter
+from datetime import date
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry
+from app.services.lineup import get_lineup_artists_for_date
 from app.services.setlistfm import search_setlists_by_artist
 
 logger = logging.getLogger(__name__)
@@ -24,12 +26,45 @@ async def _get_concert(db: AsyncSession, concert_id: UUID) -> Concert:
     return concert
 
 
-# DB에서 예상 셋리스트 조회
-async def get_pre_setlist(db: AsyncSession, concert_id: UUID) -> PreSetlist:
+# DB에서 예상 셋리스트 조회. 날짜를 특정할 수 있고 그 날짜에 concert_lineups 배정이 있으면
+# songs를 그 아티스트로 좁혀서 반환(원본 row는 안 건드리고 서빙 시점에만 좁힘 - 다른 날짜
+# 조회에도 같은 row를 재사용해야 함). 날짜/배정 정보가 없으면 전체 반환(폴백).
+async def get_pre_setlist(
+    db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
+) -> PreSetlist | dict:
     result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
     pre_setlist = result.scalar_one_or_none()
     if pre_setlist is None:
         raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
+
+    performance_date = explicit_date
+    if performance_date is None:
+        concert = await _get_concert(db, concert_id)
+        if concert.start_date.date() == concert.end_date.date():
+            performance_date = concert.start_date.date()
+        # 여러 날짜에 걸친 공연인데 날짜를 특정할 수 없으면 필터링 없이 전체 반환(실제
+        # 셋리스트와 달리 여긴 400을 안 던짐 - 날짜 힌트가 없으면 "일단 전체 보여주기"가
+        # 더 유용한 기본값이라고 판단)
+
+    if performance_date is not None:
+        lineup_artists = await get_lineup_artists_for_date(db, concert_id, performance_date)
+        if lineup_artists:
+            allowed = set(lineup_artists)
+            filtered_songs = [
+                song for song in pre_setlist.songs if not song.get("artist") or song["artist"] in allowed
+            ]
+            # 필터링 결과가 하나도 안 남으면(그 날짜 아티스트의 예상 데이터가 아직 없는 등)
+            # 빈 화면보다 전체를 보여주는 쪽이 나으니 폴백
+            if filtered_songs:
+                return {
+                    "id": pre_setlist.id,
+                    "concert_id": pre_setlist.concert_id,
+                    "setlistfm_id": pre_setlist.setlistfm_id,
+                    "songs": filtered_songs,
+                    "is_user_edited": pre_setlist.is_user_edited,
+                    "edited_user_nickname": pre_setlist.edited_user_nickname,
+                }
+
     return pre_setlist
 
 
