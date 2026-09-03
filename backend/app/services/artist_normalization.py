@@ -302,13 +302,20 @@ def decide_match(candidates: list[ArtistCandidate], query_name: str) -> tuple[st
     return "matched", top
 
 
-# concert.artist_name 배열 + 같은 표기를 쓰는 concert_lineups row들의 표기를 canonical로
-# 치환한다. concert_lineups는 (concert_id, artist, performance_date) unique 제약이 있어서,
-# 치환 대상 자리에 canonical 표기가 이미 있으면 원본 row는 지우고(중복 방지), 없으면 이름만 바꾼다.
+# canonical의 화면 표시용 문자열 - display_name이 있으면 그걸(Wikidata 한글 label 자동 채택
+# 또는 admin 수동 선택), 없으면 canonical_name(MusicBrainz 원문) 그대로
+def _display_value(canonical: CanonicalArtist) -> str:
+    return canonical.display_name or canonical.canonical_name
+
+
+# concert.artist_name 배열 + 같은 표기를 쓰는 concert_lineups row들의 표기를 display_value로
+# 치환한다(매칭 키인 canonical_name이 아니라 실제 화면에 보일 문자열). concert_lineups는
+# (concert_id, artist, performance_date) unique 제약이 있어서, 치환 대상 자리에 display_value가
+# 이미 있으면 원본 row는 지우고(중복 방지), 없으면 이름만 바꾼다.
 async def apply_canonical_replacement(
-    db: AsyncSession, concert_id, raw_text: str, canonical_name: str
+    db: AsyncSession, concert_id, raw_text: str, display_value: str
 ) -> None:
-    if raw_text == canonical_name:
+    if raw_text == display_value:
         return
 
     concert = await db.get(Concert, concert_id)
@@ -317,7 +324,7 @@ async def apply_canonical_replacement(
 
     if concert.artist_name and raw_text in concert.artist_name:
         concert.artist_name = sorted(
-            {canonical_name if n == raw_text else n for n in concert.artist_name}
+            {display_value if n == raw_text else n for n in concert.artist_name}
         )
 
     result = await db.execute(
@@ -331,7 +338,7 @@ async def apply_canonical_replacement(
 
     existing_result = await db.execute(
         select(ConcertLineup).where(
-            ConcertLineup.concert_id == concert_id, ConcertLineup.artist == canonical_name
+            ConcertLineup.concert_id == concert_id, ConcertLineup.artist == display_value
         )
     )
     existing_by_date = {row.performance_date: row for row in existing_result.scalars().all()}
@@ -339,10 +346,10 @@ async def apply_canonical_replacement(
     for row in raw_rows:
         target = existing_by_date.get(row.performance_date)
         if target is None:
-            row.artist = canonical_name
+            row.artist = display_value
             existing_by_date[row.performance_date] = row
         else:
-            # 이미 canonical 표기의 row가 그 날짜에 있음 - 더 신뢰도 높은 source만 승격시키고
+            # 이미 display_value 표기의 row가 그 날짜에 있음 - 더 신뢰도 높은 source만 승격시키고
             # 원본(raw_text) row는 중복이라 삭제 (lineup.py의 _SOURCE_PRIORITY와 동일한 취지)
             if row.source == "crawl" and target.source != "crawl":
                 target.source = "crawl"
@@ -496,6 +503,66 @@ async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
         logger.info(f"관리자 추가 아티스트 MusicBrainz 연결 완료: {canonical.canonical_name} -> {winner.name}")
 
 
+# 표시명 후보 목록 - canonical_name(MusicBrainz 원문, 항상 포함) + 그동안 등록된 alias 전부
+# (source: musicbrainz/wikidata/user_input/admin). admin 페이지 드롭다운에 그대로 씀
+async def _name_options_for_canonical(db: AsyncSession, canonical: CanonicalArtist) -> list[dict]:
+    alias_rows = (
+        await db.execute(
+            select(ArtistAlias.alias_text, ArtistAlias.source).where(
+                ArtistAlias.canonical_artist_id == canonical.id
+            )
+        )
+    ).all()
+    options = {canonical.canonical_name: "canonical"}
+    for text, source in alias_rows:
+        options.setdefault(text, source)
+    return [{"text": text, "source": source} for text, source in options.items()]
+
+
+# admin 페이지가 이름 하나(concert.artist_name에 뜬 문자열)로 canonical을 찾아 표시명 후보를
+# 보여줄 때 씀 - find_canonical_by_alias와 동일한 방식으로 resolve(alias/canonical_name 둘 다 확인)
+async def get_canonical_name_options(db: AsyncSession, name: str) -> tuple[CanonicalArtist, list[dict]] | None:
+    canonical = await find_canonical_by_alias(db, name)
+    if canonical is None:
+        return None
+    return canonical, await _name_options_for_canonical(db, canonical)
+
+
+# display_name이 바뀔 때 이미 그 표기로 확정돼있는 콘서트들도 같이 갱신 - 안 하면 admin이
+# 표시명을 바꿔도 새로 매치되는 콘서트에만 적용되고 기존 콘서트는 예전 표기로 남아 혼란스러움
+async def _reapply_display_name(db: AsyncSession, old_value: str, new_value: str) -> None:
+    if old_value == new_value:
+        return
+    concert_ids = (
+        await db.execute(select(ConcertLineup.concert_id).distinct().where(ConcertLineup.artist == old_value))
+    ).scalars().all()
+    for concert_id in concert_ids:
+        await apply_canonical_replacement(db, concert_id, old_value, new_value)
+
+
+# admin이 여러 표기 중 하나를 화면 표시명으로 직접 선택 - canonical_name(매칭 키)은 안 건드리고
+# display_name만 바꾼 뒤, 이미 이 아티스트가 확정돼있는 콘서트 전부에 소급 반영
+async def set_display_name(db: AsyncSession, canonical_id, display_name: str) -> CanonicalArtist:
+    canonical = await db.get(CanonicalArtist, canonical_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+
+    display_name = display_name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="표시명이 비어있습니다.")
+    if is_blocklisted_artist_name(display_name):
+        raise HTTPException(status_code=400, detail="표시명으로 쓸 수 없는 값입니다.")
+
+    old_value = _display_value(canonical)
+    canonical.display_name = display_name
+    await _register_alias_if_new(db, canonical, display_name, source="admin")
+    await _reapply_display_name(db, old_value, display_name)
+
+    await db.commit()
+    await db.refresh(canonical)
+    return canonical
+
+
 # 매치된 멤버들의 그룹 로스터와 대조해 사실상 그룹 전체 공연이면 멤버 표기 대신 그룹명으로
 # 정리한다. 그룹명이 이미 있거나 로스터 전원이 있으면 바로, 1명이라도 빠졌으면 concert.name에
 # 그룹명이 언급될 때만 허용(추출 누락으로 간주) - 근거 없이 안 오는 사람까지 왔다고 하는 게 더 위험함
@@ -583,8 +650,13 @@ async def _register_wikidata_korean_alias(db: AsyncSession, canonical: Canonical
         logger.warning(f"Wikidata 한글 별칭 보강 실패, 건너뜀 (mbid={canonical.mbid}): {e}")
         return
 
-    if label:
-        await _register_alias_if_new(db, canonical, label, source="wikidata")
+    if not label:
+        return
+    await _register_alias_if_new(db, canonical, label, source="wikidata")
+    if canonical.display_name is None:
+        # 최초로 한글 label을 얻은 시점에만 자동으로 표시명을 채택 - 이후 admin이 수동으로
+        # 바꾸면(set_display_name) 여기가 다시 안 도니 덮어쓸 일 없음
+        canonical.display_name = label
 
 
 async def _process_one(
@@ -593,7 +665,7 @@ async def _process_one(
     canonical = await find_canonical_by_alias(db, row.artist_text)
     if canonical is not None:
         await _register_wikidata_korean_alias(db, canonical, client)
-        await apply_canonical_replacement(db, row.concert_id, row.artist_text, canonical.canonical_name)
+        await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
         row.status = "matched"
         return "matched"
 
@@ -610,7 +682,7 @@ async def _process_one(
         if created:
             await _fetch_and_store_group_relations(db, canonical, client)
         await _register_wikidata_korean_alias(db, canonical, client)
-        await apply_canonical_replacement(db, row.concert_id, row.artist_text, canonical.canonical_name)
+        await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
 
     return status
 

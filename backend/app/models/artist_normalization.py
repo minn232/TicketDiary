@@ -16,6 +16,9 @@ class CanonicalArtist(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mbid = Column(String, nullable=True, unique=True, index=True)
     canonical_name = Column(String, nullable=False)
+    # 매칭 키(canonical_name)와 화면 표시를 분리하는 필드 - NULL이면 canonical_name 그대로 표시.
+    # Wikidata 한글 label 자동 채택(_register_wikidata_korean_alias) 또는 admin 수동 선택으로 채워짐
+    display_name = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     aliases = relationship("ArtistAlias", back_populates="canonical_artist", cascade="all, delete-orphan")

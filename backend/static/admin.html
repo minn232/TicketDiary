@@ -233,6 +233,7 @@ function renderDetail(c) {
         <span class="name">${esc(name)}${tag}</span>
         <span class="actions">
           <button onclick="startRename(this)">수정</button>
+          <button onclick="startDisplayName(this)">표시명</button>
           <button class="danger" onclick="startDeleteConfirm(this)">삭제</button>
         </span>
       </div>`;
@@ -316,6 +317,46 @@ async function submitRename(el) {
       body: JSON.stringify({ original_name: originalName, confirmed_name: next }),
     });
     toast('수정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// canonical_id는 UUID라 따옴표/특수문자 걱정 없이 onclick 인자로 바로 넣어도 안전
+async function startDisplayName(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  let data;
+  try {
+    data = await api(`/canonical-artist?name=${encodeURIComponent(name)}`);
+  } catch (e) {
+    toast('오류: ' + e.message);  // 아직 매칭 안 된 아티스트면 404
+    return;
+  }
+  const opts = data.options.map(o =>
+    `<option value="${esc(o.text)}" ${o.text === data.current ? 'selected' : ''}>${esc(o.text)} (${esc(o.source)})</option>`
+  ).join('');
+  row.innerHTML = `
+    <select class="display-select" style="flex:1; margin-right:8px;">${opts}</select>
+    <span class="actions">
+      <button onclick="submitDisplayName(this, '${data.canonical_id}')">저장</button>
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+}
+
+async function submitDisplayName(el, canonicalId) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const value = row.querySelector('.display-select').value;
+  try {
+    await api(`/canonical-artist/${canonicalId}/display-name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name: value }),
+    });
+    toast('표시명 변경됨(관련 공연 전체에 반영)');
     openDetail(concertId);
     load(page);
   } catch (e) {

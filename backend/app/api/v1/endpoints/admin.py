@@ -13,15 +13,19 @@ from app.models.concert import Concert
 from app.schemas.admin import (
     AdminArtistAddRequest,
     AdminArtistRenameRequest,
+    AdminCanonicalNameOptions,
     AdminConcertDetail,
     AdminConcertListItem,
     AdminConcertListResponse,
+    AdminDisplayNameRequest,
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_normalization import (
     add_artist_name,
     confirm_artist_name_change,
+    get_canonical_name_options,
     remove_artist_name,
+    set_display_name,
     try_link_canonical_to_musicbrainz,
 )
 
@@ -149,6 +153,38 @@ async def delete_artist(
         # 배포 없이 즉시 반영 - DB 저장 + 이 프로세스의 인메모리 캐시 갱신까지 add_to_blocklist가 처리
         await add_to_blocklist(db, name)
     return await get_concert_detail(concert_id, db)
+
+
+@router.get("/canonical-artist", response_model=AdminCanonicalNameOptions)
+async def get_canonical_artist_name_options(name: str = Query(...), db: AsyncSession = Depends(get_db)):
+    result = await get_canonical_name_options(db, name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="아직 매칭되지 않은 아티스트입니다.")
+    canonical, options = result
+    return AdminCanonicalNameOptions(
+        canonical_id=canonical.id,
+        canonical_name=canonical.canonical_name,
+        display_name=canonical.display_name,
+        current=canonical.display_name or canonical.canonical_name,
+        mbid=canonical.mbid,
+        options=options,
+    )
+
+
+@router.patch("/canonical-artist/{canonical_id}/display-name", response_model=AdminCanonicalNameOptions)
+async def patch_canonical_artist_display_name(
+    canonical_id: UUID, body: AdminDisplayNameRequest, db: AsyncSession = Depends(get_db)
+):
+    canonical = await set_display_name(db, canonical_id, body.display_name)
+    _, options = await get_canonical_name_options(db, canonical.display_name)
+    return AdminCanonicalNameOptions(
+        canonical_id=canonical.id,
+        canonical_name=canonical.canonical_name,
+        display_name=canonical.display_name,
+        current=canonical.display_name or canonical.canonical_name,
+        mbid=canonical.mbid,
+        options=options,
+    )
 
 
 _PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin.html"

@@ -266,6 +266,68 @@ async def test_try_link_canonical_leaves_mbid_none_when_unmatched():
         assert canonical.mbid is None  # 매치 안 됐으니 그대로
 
 
+# GET/PATCH /canonical-artist - admin이 표시명 후보를 보고 직접 고르는 엔드포인트
+
+@pytest.mark.asyncio
+async def test_get_canonical_artist_options_endpoint():
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=hangul_name, source="wikidata"))
+        await db.commit()
+        canonical_id = canonical.id
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/canonical-artist", params={"name": latin_name}, headers=_admin_headers()
+            )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["canonical_id"] == str(canonical_id)
+    assert body["current"] == latin_name  # display_name 미설정이라 canonical_name이 그대로 현재값
+    texts = {o["text"] for o in body["options"]}
+    assert texts == {latin_name, hangul_name}
+
+
+@pytest.mark.asyncio
+async def test_get_canonical_artist_options_404_for_unmatched_name():
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/canonical-artist",
+                params={"name": f"매칭안됨_{uuid.uuid4().hex[:6]}"},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_patch_canonical_artist_display_name_endpoint():
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.commit()
+        canonical_id = canonical.id
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.patch(
+                f"/api/v1/admin/canonical-artist/{canonical_id}/display-name",
+                json={"display_name": hangul_name},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["display_name"] == hangul_name
+    assert body["current"] == hangul_name
+
+
 # DELETE ?blocklist=true - 삭제와 동시에 배포 없이 즉시 차단 목록에 등록되는지
 
 @pytest.mark.asyncio

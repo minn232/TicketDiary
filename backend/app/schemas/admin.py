@@ -56,3 +56,23 @@ class AdminArtistRenameRequest(BaseModel):
 class AdminArtistAddRequest(BaseModel):
     # add_artist_name에 그대로 넘기는 페이로드 - LLM/KOPIS 둘 다 놓친 아티스트 수기 추가용
     name: str
+
+
+class AdminNameOption(BaseModel):
+    # 표시명 후보 하나 - source: canonical(MusicBrainz 원문) / musicbrainz / wikidata / user_input / admin
+    text: str
+    source: str
+
+
+class AdminCanonicalNameOptions(BaseModel):
+    # 표시명 선택 UI(admin.html)가 그대로 렌더링하는 응답 - current가 지금 화면에 뜨는 값
+    canonical_id: UUID
+    canonical_name: str
+    display_name: str | None
+    current: str
+    mbid: str | None
+    options: list[AdminNameOption]
+
+
+class AdminDisplayNameRequest(BaseModel):
+    display_name: str

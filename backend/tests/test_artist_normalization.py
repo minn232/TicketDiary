@@ -3,6 +3,7 @@ from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select
 
@@ -21,9 +22,11 @@ from app.services.artist_normalization import (
     decide_match,
     expand_follow_index_with_group_relations,
     find_canonical_by_alias,
+    get_canonical_name_options,
     normalize_pending_artists,
     normalize_specific_artists,
     queue_for_normalization,
+    set_display_name,
 )
 from app.services.kopis import _build_follow_index, _create_news_feeds_for_concert
 from app.services.musicbrainz import ArtistCandidate, BandRelation
@@ -749,6 +752,11 @@ async def test_normalize_pending_artists_registers_wikidata_korean_alias_on_fres
         wikidata_alias = next(a for a in alias_rows if a.source == "wikidata")
         assert wikidata_alias.alias_text == hangul_name
 
+        # 최초로 얻은 한글 label이 표시명으로 자동 채택돼 화면(artist_name)에도 그대로 반영됨
+        assert canonical.display_name == hangul_name
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [hangul_name]
+
 
 @pytest.mark.asyncio
 async def test_normalize_pending_artists_skips_wikidata_lookup_when_alias_already_registered():
@@ -850,11 +858,110 @@ async def test_normalize_pending_artists_resolves_hangul_sibling_via_wikidata_al
         rows = {r.artist_text: r.status for r in status_result.scalars().all()}
         assert rows == {latin_name: "matched", hangul_name: "matched"}
 
+        # 중복 없이 하나로 합쳐지고, 표시명은 자동 채택된 한글 표기로 감(David가 아니라 데이비드)
         concert = await db.get(Concert, concert_id)
-        assert concert.artist_name == [latin_name]  # 중복 없이 하나로 합쳐짐
+        assert concert.artist_name == [hangul_name]
 
         lineup_result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == concert_id))
-        assert [row.artist for row in lineup_result.scalars().all()] == [latin_name]  # concert_lineups도 병합됨
+        assert [row.artist for row in lineup_result.scalars().all()] == [hangul_name]  # concert_lineups도 병합됨
+
+
+# admin 표시명 선택 (get_canonical_name_options / set_display_name)
+
+@pytest.mark.asyncio
+async def test_get_canonical_name_options_returns_none_for_unknown_name():
+    async with AsyncSessionLocal() as db:
+        result = await get_canonical_name_options(db, f"존재안함_{uuid.uuid4().hex[:6]}")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_canonical_name_options_lists_canonical_and_aliases():
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=hangul_name, source="wikidata"))
+        await db.commit()
+        canonical_id = canonical.id
+
+        result = await get_canonical_name_options(db, hangul_name)  # alias로도 resolve 돼야 함
+        assert result is not None
+        found, options = result
+        assert found.id == canonical_id
+
+        by_text = {o["text"]: o["source"] for o in options}
+        assert by_text == {latin_name: "canonical", hangul_name: "wikidata"}
+
+
+@pytest.mark.asyncio
+async def test_set_display_name_updates_existing_concerts_and_registers_alias():
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_DISP_{uuid.uuid4().hex[:6]}", latin_name, token))
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.flush()
+        canonical_id = canonical.id
+        db.add(
+            ConcertLineup(concert_id=concert_id, artist=latin_name, performance_date=date(2030, 6, 1), source="poster")
+        )
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        canonical = await set_display_name(db, canonical_id, hangul_name)
+        assert canonical.display_name == hangul_name
+
+        alias = (
+            await db.execute(
+                select(ArtistAlias).where(
+                    ArtistAlias.canonical_artist_id == canonical_id, ArtistAlias.alias_text == hangul_name
+                )
+            )
+        ).scalar_one()
+        assert alias.source == "admin"
+
+        # 이미 latin_name으로 확정돼있던 콘서트도 소급 반영됨
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [hangul_name]
+        lineup_rows = (
+            await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == concert_id))
+        ).scalars().all()
+        assert [r.artist for r in lineup_rows] == [hangul_name]
+
+
+@pytest.mark.asyncio
+async def test_set_display_name_rejects_blank_and_blocklisted():
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=f"블록테스트_{uuid.uuid4().hex[:6]}")
+        db.add(canonical)
+        await db.flush()
+        canonical_id = canonical.id
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        with pytest.raises(HTTPException) as exc:
+            await set_display_name(db, canonical_id, "  ")
+        assert exc.value.status_code == 400
+
+    with patch("app.services.artist_normalization.is_blocklisted_artist_name", return_value=True):
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(HTTPException) as exc:
+                await set_display_name(db, canonical_id, "차단된이름")
+            assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_display_name_404_for_unknown_canonical():
+    async with AsyncSessionLocal() as db:
+        with pytest.raises(HTTPException) as exc:
+            await set_display_name(db, uuid.uuid4(), "아무이름")
+        assert exc.value.status_code == 404
 
 
 # _collapse_members_to_group_names - 멤버 표기를 그룹명으로 정리하는 정책
