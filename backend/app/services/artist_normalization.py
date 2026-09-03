@@ -470,8 +470,8 @@ async def add_artist_name(db: AsyncSession, concert_id, name: str) -> tuple[Conc
 
 
 # add_artist_name이 건너뛴 MusicBrainz 조회를 응답 이후 백그라운드에서 한 번 시도 - 매치되면
-# mbid/관계까지 채워지고(그룹이면 로스터까지 확보), 실패해도 무해하게 mbid=None 그대로 남음.
-# canonical_name은 admin이 정한 표기를 그대로 유지(조회 결과로 덮어쓰지 않음)
+# mbid/관계/Wikidata 한글 별칭까지 채워지고(그룹이면 로스터까지 확보), 실패해도 무해하게
+# mbid=None 그대로 남음. canonical_name은 admin이 정한 표기를 그대로 유지(조회 결과로 덮어쓰지 않음)
 async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
     async with AsyncSessionLocal() as db:
         canonical = await db.get(CanonicalArtist, canonical_id)
@@ -487,6 +487,7 @@ async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
                 canonical.mbid = winner.mbid
                 await _register_alias_if_new(db, canonical, winner.name, source="musicbrainz")
                 await _fetch_and_store_group_relations(db, canonical, client)
+                await _register_wikidata_korean_alias(db, canonical, client)
         except Exception as e:
             logger.warning(f"관리자 추가 아티스트 MusicBrainz 연결 실패, 건너뜀 ({canonical.canonical_name}): {e}")
             return

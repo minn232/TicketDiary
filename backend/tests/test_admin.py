@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
-from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
+from app.models.artist_normalization import ArtistAlias, ArtistGroupMembership, CanonicalArtist
 from app.services.artist_normalization import try_link_canonical_to_musicbrainz
 from app.services.musicbrainz import ArtistCandidate, BandRelation
 from conftest import _get_token, kopis_mock
@@ -223,6 +223,10 @@ async def test_try_link_canonical_sets_mbid_and_relations_on_match():
         "app.services.artist_normalization.search_artist", new=AsyncMock(return_value=[_kr_candidate(name)])
     ), patch(
         "app.services.artist_normalization.fetch_member_of_band_relations", new=AsyncMock(return_value=relations)
+    ), patch(
+        "app.services.artist_normalization.fetch_wikidata_qid", new=AsyncMock(return_value="Q1")
+    ), patch(
+        "app.services.artist_normalization.fetch_korean_label", new=AsyncMock(return_value=f"한글{name}")
     ):
         await try_link_canonical_to_musicbrainz(canonical_id)
 
@@ -237,6 +241,12 @@ async def test_try_link_canonical_sets_mbid_and_relations_on_match():
             )
         ).scalars().all()
         assert len(memberships) == 1  # 관계까지 채워짐
+
+        alias_rows = (
+            await db.execute(select(ArtistAlias).where(ArtistAlias.canonical_artist_id == canonical_id))
+        ).scalars().all()
+        wikidata_alias = next(a for a in alias_rows if a.source == "wikidata")
+        assert wikidata_alias.alias_text == f"한글{name}"  # Wikidata 별칭도 같이 채워짐
 
 
 @pytest.mark.asyncio
