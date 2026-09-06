@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,6 +10,15 @@ from app.core.database import AsyncSessionLocal
 from app.api.v1.endpoints.admin import page_router as admin_page_router
 from app.api.v1.router import api_router
 from app.services.artist_blocklist import refresh_blocklist_cache
+
+# root logger 기본값(WARNING)이라 서비스 코드의 logger.info() 호출(배치 완료 로그 등)이
+# journalctl에 전혀 안 남았음 - INFO까지 노출. force=True로 SQLAlchemy echo가 먼저 설정해둔
+# root 핸들러가 있어도 덮어씀 (echo.py가 core.database import 시점에 자체 basicConfig를 호출함)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    force=True,
+)
 
 
 # 앱 시작/종료 시 스케줄러 실행 및 중지, 관리자 페이지가 추가한 블록리스트를 인메모리로 로드

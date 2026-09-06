@@ -938,8 +938,10 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     return len(concerts)
 
 
-# 재시도 배치에서 동시에 띄우는 브라우저 프로세스 수 상한 (무제한 병렬은 메모리/CPU 부담이 큼)
-_RETRY_CRAWL_CONCURRENCY = 4
+# 재시도 배치에서 동시에 띄우는 브라우저 프로세스 수 상한 (무제한 병렬은 메모리/CPU 부담이 큼).
+# 서버 RAM이 1.9GB/스왑 0이라 4는 이미 위태로운 수준 - 밤배치 도중 OOM killer가 headless_shell을
+# 반복해서 죽이는 문제(2026-09-04, 09-05) 확인 후 2로 완화함
+_RETRY_CRAWL_CONCURRENCY = 2
 
 
 async def _crawl_and_save_limited(semaphore: asyncio.Semaphore, concert_id) -> None:
