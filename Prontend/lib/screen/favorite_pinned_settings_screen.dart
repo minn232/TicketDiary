@@ -16,13 +16,19 @@ import 'package:ticketdiary/widgets/responsive_text.dart';
 /// 화면(라우트로 진입할 때 사용). 실제 내용은 [FavoritePinnedPanel]이며,
 /// 소식 탭에서는 프레임 없이 이 패널만 페이지 안에 끼워 씁니다.
 class FavoritePinnedSettingsScreen extends StatelessWidget {
-  const FavoritePinnedSettingsScreen({super.key});
+  /// 테스트에서 실제 네트워크 없이 주입할 수 있도록 둔 서비스.
+  final ArtistRecommendationService? recommendationService;
+
+  const FavoritePinnedSettingsScreen({super.key, this.recommendationService});
 
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
-      child: FavoritePinnedPanel(onBack: () => Navigator.pop(context)),
+      child: FavoritePinnedPanel(
+        onBack: () => Navigator.pop(context),
+        recommendationService: recommendationService,
+      ),
     );
   }
 }
@@ -45,7 +51,15 @@ class FavoritePinnedPanel extends StatefulWidget {
   /// 박스/바깥 여백을 없애고 창에 꽉 차게 그립니다(테두리는 액자가 담당).
   final bool windowMode;
 
-  const FavoritePinnedPanel({super.key, this.onBack, this.windowMode = false});
+  /// 테스트에서 실제 네트워크 없이 주입할 수 있도록 둔 서비스.
+  final ArtistRecommendationService? recommendationService;
+
+  const FavoritePinnedPanel({
+    super.key,
+    this.onBack,
+    this.windowMode = false,
+    this.recommendationService,
+  });
 
   @override
   State<FavoritePinnedPanel> createState() => _FavoritePinnedPanelState();
@@ -55,8 +69,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   final ArtistSearchService _artistSearchService = BackendArtistSearchService();
   final ConcertSearchService _concertSearchService =
       BackendConcertSearchService();
-  final ArtistRecommendationService _recommendationService =
-      BackendArtistRecommendationService();
+  late final ArtistRecommendationService _recommendationService =
+      widget.recommendationService ?? BackendArtistRecommendationService();
   final FavoritesStore _favorites = FavoritesStore.instance;
 
   // [백엔드 수정]
@@ -638,7 +652,10 @@ class _SearchResultsGrid<T> extends StatelessWidget {
         final cardWidth =
             (constraints.maxWidth - _spacing * (_crossAxisCount - 1)) /
             _crossAxisCount;
-        final cellHeight = cardWidth + 34;
+        // 이미지 아래 라벨 한 줄 높이 - 태블릿처럼 context.sp/rs 배율이 커지는
+        // 기기에서 고정값(34)보다 텍스트가 커져 1px 넘치던 걸 방지하려고
+        // 같은 배율(rs)로 같이 키움.
+        final cellHeight = cardWidth + context.rs(34);
 
         return GridView.builder(
           padding: EdgeInsets.zero,
