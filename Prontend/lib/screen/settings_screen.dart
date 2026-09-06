@@ -296,19 +296,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _divider,
                       // [백엔드 수정]
                       // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
-                      _MenuRow(
-                        title: '알림함',
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              settings: const RouteSettings(
-                                name: DiaryRoutes.notifications,
-                              ),
-                              builder: (context) => const NotificationsScreen(),
-                            ),
-                          );
-                        },
+                      // 전체 화면 전환 대신, 다른 오버레이들과 통일된 느낌의
+                      // 슬라이드업 패널로 띔 - Builder로 이 항목 자신의
+                      // context를 받아야 DiaryFrameScale을 찾을 수 있음
+                      // (SettingsScreen 자신의 context는 DiaryPageFrame의
+                      // 자손이 아니라 그 결과물과 별개 위치라 못 찾음).
+                      Builder(
+                        builder: (menuContext) => _MenuRow(
+                          title: '알림함',
+                          onTap: () => NotificationsScreen.show(
+                            menuContext,
+                            frameScale: DiaryFrameScale.maybeOf(menuContext) ??
+                                diaryScaleFromMediaQuery(menuContext),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 10),
                     ],
