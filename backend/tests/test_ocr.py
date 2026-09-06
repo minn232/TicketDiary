@@ -775,6 +775,38 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
     assert data["candidates"][0]["kopis_id"] == "PF_OCR_001"
 
 
+# 목록 검색으로만 upsert된 후보(pcseguidance 없음)는 상세 조회를 아직 한 번도
+# 안 해서 price가 비어있으므로, /scan이 자동으로 상세 조회까지 채워 반환해야
+# 함(모바일 티켓처럼 사진 자체에 가격/좌석이 없는 경우 프론트가 이 가격표로
+# 사용자에게 고르게 하는 기능의 전제 조건).
+@pytest.mark.asyncio
+async def test_scan_backfills_price_for_new_candidate(get_auth_token):
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<dbs><db>"
+        "<mt20id>PF_OCR_PRICE</mt20id>"
+        "<prfnm>BTS World Tour</prfnm>"
+        "<prfpdfrom>2030.06.01</prfpdfrom>"
+        "<prfpdto>2030.06.30</prfpdto>"
+        "<fcltynm>잠실올림픽주경기장</fcltynm>"
+        "<genrenm>대중음악</genrenm>"
+        "<pcseguidance>R석 200,000원, S석 175,000원</pcseguidance>"
+        "</db></dbs>"
+    ).encode("utf-8")
+    with _ocr_mock(_SAMPLE_EXTRACTED), kopis_mock(xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers={"Authorization": f"Bearer {get_auth_token}"},
+            )
+
+    assert response.status_code == 200
+    prices = response.json()["candidates"][0]["price"]
+    assert {"seat_type": "R석", "price": 200000} in prices
+    assert {"seat_type": "S석", "price": 175000} in prices
+
+
 # 실제 티켓 정보가 뽑히는("의미있는") 스캔은 유저당 시간당 10회로 제한되는지 테스트
 # (Vision 호출 비용 남용 방지 - 카메라 오인식 문제와 별개로, 진짜 스캔 시도 자체의 상한)
 # 연달아 호출하는 테스트라 스캔 쿨다운(is_within_scan_cooldown)에 걸리지 않도록 꺼둠 -
