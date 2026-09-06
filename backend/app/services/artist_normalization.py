@@ -17,8 +17,15 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.services.artist_blocklist import is_blocklisted_artist_name
 from app.services.artist_matching import _compact, _contains_hangul, normalize_artist_names
-from app.services.musicbrainz import ArtistCandidate, fetch_member_of_band_relations, fetch_wikidata_qid, search_artist
-from app.services.wikidata import fetch_korean_label
+from app.services.musicbrainz import (
+    ArtistCandidate,
+    fetch_member_of_band_relations,
+    fetch_spotify_artist_url,
+    fetch_wikidata_qid,
+    search_artist,
+)
+from app.services.spotify import fetch_oembed_thumbnail
+from app.services.wikidata import fetch_artist_image_url, fetch_korean_label
 
 logger = logging.getLogger(__name__)
 
@@ -495,6 +502,7 @@ async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
                 await _register_alias_if_new(db, canonical, winner.name, source="musicbrainz")
                 await _fetch_and_store_group_relations(db, canonical, client)
                 await _register_wikidata_korean_alias(db, canonical, client)
+                await _register_artist_image(db, canonical, client)
         except Exception as e:
             logger.warning(f"관리자 추가 아티스트 MusicBrainz 연결 실패, 건너뜀 ({canonical.canonical_name}): {e}")
             return
@@ -659,12 +667,39 @@ async def _register_wikidata_korean_alias(db: AsyncSession, canonical: Canonical
         canonical.display_name = label
 
 
+# canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 공식으로 연결해둔 Spotify
+# 아티스트 링크(있으면 앨범아트/컨셉사진 수준이라 우선)를 먼저 시도하고, 없으면 Wikidata 항목의
+# 대표 이미지(P18)로 대체한다 - 둘 다 mbid 앵커라 동명이인 오매칭 위험이 없음. Deezer/Spotify
+# 자체 검색(이름 기반)은 실측으로 오매칭 확인돼 안 씀(2026-09-07). 이미 있으면 재조회 안 하고,
+# 실패/미존재는 조용히 건너뜀(화면에서 플레이스홀더 아이콘으로 대체됨)
+async def _register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
+    if not canonical.mbid or canonical.profile_image_url:
+        return
+
+    try:
+        image_url = None
+        spotify_url = await fetch_spotify_artist_url(canonical.mbid, client)
+        if spotify_url:
+            image_url = await fetch_oembed_thumbnail(spotify_url, client)
+        if image_url is None:
+            qid = await fetch_wikidata_qid(canonical.mbid, client)
+            if qid:
+                image_url = await fetch_artist_image_url(qid, client)
+    except Exception as e:
+        logger.warning(f"아티스트 사진 보강 실패, 건너뜀 (mbid={canonical.mbid}): {e}")
+        return
+
+    if image_url:
+        canonical.profile_image_url = image_url
+
+
 async def _process_one(
     db: AsyncSession, client: httpx.AsyncClient, row: ArtistNormalizationStatus
 ) -> str:
     canonical = await find_canonical_by_alias(db, row.artist_text)
     if canonical is not None:
         await _register_wikidata_korean_alias(db, canonical, client)
+        await _register_artist_image(db, canonical, client)
         await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
         row.status = "matched"
         return "matched"
@@ -682,6 +717,7 @@ async def _process_one(
         if created:
             await _fetch_and_store_group_relations(db, canonical, client)
         await _register_wikidata_korean_alias(db, canonical, client)
+        await _register_artist_image(db, canonical, client)
         await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
 
     return status

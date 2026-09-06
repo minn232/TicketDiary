@@ -140,6 +140,27 @@ async def fetch_wikidata_qid(mbid: str, client: httpx.AsyncClient | None = None)
         return await _fetch(c)
 
 
+# canonical의 mbid로 MusicBrainz가 공식으로 걸어둔 Spotify 아티스트 링크를 찾는다(fetch_wikidata_qid와
+# 같은 url-rels 관계, "streaming" 타입 중 open.spotify.com/artist 링크만 골라냄). 이름 검색이 아니라
+# mbid 앵커라 동명이인 위험이 없음 - Deezer/Spotify 자체 검색(이름 기반)은 실측으로 오매칭 확인됨
+# (2026-09-07, docs 미기록·세션 기록만 있음)
+async def fetch_spotify_artist_url(mbid: str, client: httpx.AsyncClient | None = None) -> str | None:
+    async def _fetch(c: httpx.AsyncClient) -> str | None:
+        data = await _get_with_retry(
+            c, f"/artist/{mbid}", {"inc": "url-rels", "fmt": "json"}, f"spotify url mbid={mbid}"
+        )
+        for rel in data.get("relations", []):
+            resource = (rel.get("url") or {}).get("resource", "")
+            if "open.spotify.com/artist/" in resource:
+                return resource
+        return None
+
+    if client is not None:
+        return await _fetch(client)
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        return await _fetch(c)
+
+
 # 아티스트 하나(mbid)의 "member of band" 관계를 전부 가져온다. 밴드를 조회하면 멤버 목록이,
 # 멤버를 조회하면 소속 밴드가 나오는 대칭 관계(실측으로 잔나비 조회해서 확인: 밴드 조회 시
 # direction="backward"로 5명의 현재/과거 멤버가 나옴). relations[].end 필드로 탈퇴 여부를 구분.
