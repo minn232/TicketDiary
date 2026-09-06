@@ -945,8 +945,8 @@ class _VendorButtons extends StatelessWidget {
   /// 예매처별 표시 이름 + 상징 색.
   static const Map<String, ({String label, Color color})> _vendors = {
     'MELON': (label: '멜론티켓', color: Color(0xFF00C639)),
-    'INTERPARK': (label: '인터파크', color: Color(0xFFE51937)),
-    'YES24': (label: '예스24', color: Color(0xFF0A4DA1)),
+    'INTERPARK': (label: '인터파크', color: Color(0xFF8B2FC9)),
+    'YES24': (label: '예스24', color: Color(0xFF1877F2)),
     'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B)),
   };
 
