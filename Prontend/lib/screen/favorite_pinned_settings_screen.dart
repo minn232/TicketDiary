@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:ticketdiary/models/artist_model.dart';
 import 'package:ticketdiary/models/concert_model.dart';
+import 'package:ticketdiary/services/artist_recommendation_service.dart';
 import 'package:ticketdiary/services/artist_search_service.dart';
 import 'package:ticketdiary/services/concert_search_service.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
@@ -54,7 +55,13 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   final ArtistSearchService _artistSearchService = BackendArtistSearchService();
   final ConcertSearchService _concertSearchService =
       BackendConcertSearchService();
+  final ArtistRecommendationService _recommendationService =
+      BackendArtistRecommendationService();
   final FavoritesStore _favorites = FavoritesStore.instance;
+
+  // [백엔드 수정]
+  // 검색창이 비어있을 때 보여줄 추천 아티스트 목록(GET /recommendations/artists) 신규 연동.
+  List<ArtistModel> _recommendedArtists = const [];
 
   final TextEditingController _artistQueryController = TextEditingController();
   final TextEditingController _concertQueryController = TextEditingController();
@@ -93,6 +100,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     _favorites.load();
     // 다른 기기/이전 세션에서 서버에 저장해둔 찜도 불러와 합칩니다.
     unawaited(_favorites.syncFromServer());
+    unawaited(_loadRecommendations());
     _favorites.addListener(_onFavoritesChanged);
     // 자동 검색은 안 하지만, 지웠을 때 이전 검색 결과가 남아있지 않도록
     // 빈 텍스트가 됐는지만 감지합니다(네트워크 요청 없음).
@@ -156,6 +164,18 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
         _artistSearching = false;
         _artistSearchFailed = true;
       });
+    }
+  }
+
+  // [백엔드 수정]
+  // 아티스트 추천 API 신규 연동.
+  Future<void> _loadRecommendations() async {
+    try {
+      final recommendations = await _recommendationService.getRecommendations();
+      if (!mounted) return;
+      setState(() => _recommendedArtists = recommendations);
+    } catch (_) {
+      // 실패 시 조용히 무시.
     }
   }
 
@@ -253,6 +273,11 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     );
   }
 
+  // [백엔드 수정]
+  // 검색어 미입력 시 빈 결과 대신 추천 아티스트를 보여줌.
+  bool get _showingArtistRecommendations =>
+      _artistQueryController.text.trim().isEmpty && _recommendedArtists.isNotEmpty;
+
   Widget _buildContent() {
     return Column(
       children: [
@@ -278,7 +303,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
               _CategorySearchPage<ArtistModel>(
                 controller: _artistQueryController,
                 hintText: '아티스트 이름 검색',
-                items: _artistResults,
+                items: _showingArtistRecommendations ? _recommendedArtists : _artistResults,
+                sectionLabel: _showingArtistRecommendations ? '이런 아티스트는 어때요?' : null,
                 searching: _artistSearching,
                 statusText: _artistStatusText,
                 nameOf: (a) => a.name,
@@ -327,6 +353,9 @@ class _CategorySearchPage<T> extends StatelessWidget {
   final ValueChanged<T> onTap;
   final ValueChanged<String> onSubmitted;
 
+  /// [items] 위에 표시할 안내 문구(추천 등). null이면 안 보여줌.
+  final String? sectionLabel;
+
   const _CategorySearchPage({
     super.key,
     required this.controller,
@@ -340,6 +369,7 @@ class _CategorySearchPage<T> extends StatelessWidget {
     required this.isFavoritedOf,
     required this.onTap,
     required this.onSubmitted,
+    this.sectionLabel,
   });
 
   @override
@@ -355,6 +385,17 @@ class _CategorySearchPage<T> extends StatelessWidget {
             onSubmitted: onSubmitted,
           ),
           const SizedBox(height: 14),
+          if (sectionLabel != null) ...[
+            Text(
+              sectionLabel!,
+              style: TextStyle(
+                fontSize: context.sp(12),
+                fontWeight: FontWeight.w900,
+                color: Colors.black.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
           Expanded(
             child: _SearchResultsGrid<T>(
               items: items,
