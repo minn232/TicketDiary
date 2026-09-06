@@ -942,12 +942,12 @@ class _VendorButtons extends StatelessWidget {
   final Map<String, String>? ticketingLinks;
   final double scale;
 
-  /// 예매처별 표시 이름 + 상징 색.
-  static const Map<String, ({String label, Color color})> _vendors = {
-    'MELON': (label: '멜론티켓', color: Color(0xFF00C639)),
-    'INTERPARK': (label: '인터파크', color: Color(0xFFE51937)),
-    'YES24': (label: '예스24', color: Color(0xFF0A4DA1)),
-    'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B)),
+  /// 예매처별 표시 이름 + 상징 색 + 앱 아이콘(플레이스토어/공식 가이드에서 받은 원본).
+  static const Map<String, ({String label, Color color, String icon})> _vendors = {
+    'MELON': (label: '멜론티켓', color: Color(0xFF00C639), icon: 'assets/images/vendors/melon.webp'),
+    'INTERPARK': (label: '인터파크', color: Color(0xFF3549FF), icon: 'assets/images/vendors/interpark.webp'),
+    'YES24': (label: '예스24', color: Color(0xFF000000), icon: 'assets/images/vendors/yes24.webp'),
+    'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B), icon: 'assets/images/vendors/ticketlink.webp'),
   };
 
   /// 각 예매처 앱의 실제 Android 패키지명(여러 개면 순서대로 시도).
@@ -1023,10 +1023,10 @@ class _VendorButtons extends StatelessWidget {
   }
 }
 
-/// 예매처 버튼 하나(가로 꽉 참, 예매처 상징색). 왼쪽에 예매처 이니셜 뱃지.
+/// 예매처 버튼 하나(가로 꽉 참, 예매처 상징색). 왼쪽에 예매처 앱 아이콘.
 class _VendorButton extends StatelessWidget {
   final String vendor;
-  final ({String label, Color color})? info;
+  final ({String label, Color color, String icon})? info;
   final double scale;
   final VoidCallback onTap;
 
@@ -1053,22 +1053,28 @@ class _VendorButton extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 22 * k,
-                height: 22 * k,
-                alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  vendor.isNotEmpty ? vendor.substring(0, 1) : '?',
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    fontWeight: FontWeight.w900,
-                    color: color,
-                  ),
-                ),
+              ClipOval(
+                child: info != null
+                    ? Image.asset(
+                        info!.icon,
+                        width: 24 * k,
+                        height: 24 * k,
+                        fit: BoxFit.cover,
+                      )
+                    : Container(
+                        width: 24 * k,
+                        height: 24 * k,
+                        alignment: Alignment.center,
+                        color: Colors.white,
+                        child: Text(
+                          vendor.isNotEmpty ? vendor.substring(0, 1) : '?',
+                          style: TextStyle(
+                            fontSize: context.sp(12),
+                            fontWeight: FontWeight.w900,
+                            color: color,
+                          ),
+                        ),
+                      ),
               ),
               SizedBox(width: 9 * k),
               Text(
