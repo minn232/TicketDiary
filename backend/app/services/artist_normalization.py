@@ -667,11 +667,9 @@ async def _register_wikidata_korean_alias(db: AsyncSession, canonical: Canonical
         canonical.display_name = label
 
 
-# canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 공식으로 연결해둔 Spotify
-# 아티스트 링크(있으면 앨범아트/컨셉사진 수준이라 우선)를 먼저 시도하고, 없으면 Wikidata 항목의
-# 대표 이미지(P18)로 대체한다 - 둘 다 mbid 앵커라 동명이인 오매칭 위험이 없음. Deezer/Spotify
-# 자체 검색(이름 기반)은 실측으로 오매칭 확인돼 안 씀(2026-09-07). 이미 있으면 재조회 안 하고,
-# 실패/미존재는 조용히 건너뜀(화면에서 플레이스홀더 아이콘으로 대체됨)
+# canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 연결해둔 Spotify 링크
+# 우선(앨범아트 수준), 없으면 Wikidata 대표 이미지(P18)로 대체 - 둘 다 mbid 앵커라 이름
+# 검색(Deezer 등, 오매칭 실측 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함.
 async def _register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid or canonical.profile_image_url:
         return
