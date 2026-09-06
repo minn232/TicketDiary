@@ -478,7 +478,12 @@ class DiaryPageFrame extends StatelessWidget {
       // 안의 AspectRatio 프레임(다이어리 페이지) 전체가 작아지고 위로
       // 밀립니다. 키보드는 그 위에 그냥 겹쳐서 그려지도록 false로 둡니다.
       resizeToAvoidBottomInset: false,
-      body: useSafeArea ? SafeArea(child: sizedFrame) : sizedFrame,
+      // maintainBottomViewPadding: 안 켜면 SafeArea가 하단 padding을
+      // 키보드에 "먹힌" 걸로 치고 그만큼 프레임을 매번 미세하게
+      // 키웠다줄였다 함(화면이 확대/축소되는 것처럼 보이던 원인).
+      body: useSafeArea
+          ? SafeArea(maintainBottomViewPadding: true, child: sizedFrame)
+          : sizedFrame,
     );
 
     if (!isTabRoot) return scaffold;

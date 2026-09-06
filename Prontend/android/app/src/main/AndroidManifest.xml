@@ -7,6 +7,10 @@
         android:label="ticketdiary"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- adjustResize(기본값)는 키보드가 뜰 때 창 자체를 줄여
+             resizeToAvoidBottomInset: false를 무력화시킴 - 창 크기를 절대
+             안 건드리는 MainActivity.kt의 setDecorFitsSystemWindows(false)와
+             안 부딪히게 "아무 것도 하지 마라"로 맞춰둠. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -15,7 +19,7 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustNothing">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues

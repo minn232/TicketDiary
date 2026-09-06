@@ -341,6 +341,9 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     bool forceCovered = false,
   }) {
     return SafeArea(
+      // DiaryPageFrame과 값이 다르면 전환 중 속지와 실제 프레임 위치가
+      // 어긋나 보여서 맞춰둠(이유는 diary_page_frame.dart 참고).
+      maintainBottomViewPadding: true,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final availableWidth = constraints.maxWidth;

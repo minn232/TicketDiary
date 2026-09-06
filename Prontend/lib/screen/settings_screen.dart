@@ -296,11 +296,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _divider,
                       // [백엔드 수정]
                       // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
-                      // 전체 화면 전환 대신, 다른 오버레이들과 통일된 느낌의
-                      // 슬라이드업 패널로 띔 - Builder로 이 항목 자신의
-                      // context를 받아야 DiaryFrameScale을 찾을 수 있음
-                      // (SettingsScreen 자신의 context는 DiaryPageFrame의
-                      // 자손이 아니라 그 결과물과 별개 위치라 못 찾음).
+                      // Builder로 감싼 이유: DiaryFrameScale 조회에 필요한
+                      // 자손 context를 얻기 위함.
                       Builder(
                         builder: (menuContext) => _MenuRow(
                           title: '알림함',

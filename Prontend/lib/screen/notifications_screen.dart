@@ -8,8 +8,7 @@ import '../widgets/responsive_text.dart';
 
 // [백엔드 수정]
 // 인앱 알림함 (GET/PATCH/DELETE /notifications)
-// 완전히 새 화면으로 넘어가는 대신, 소식 상세 등 다른 오버레이들과 같은
-// 톤으로 지금 화면 위에 슬라이드업되는 다이어리 스타일 패널로 재구성.
+// 전체 화면 전환 대신 슬라이드업 오버레이+다이어리 스타일로 재구성.
 /// 인앱 알림함. 설정 화면 등에서 진입.
 class NotificationsScreen extends StatefulWidget {
   /// 탭한 순간 설정 화면에서 쓰이던 [DiaryFrameScale] 배율.
@@ -55,10 +54,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   List<NotificationModel>? _items;
   String? _errorMessage;
 
-  // 목록을 매번 새로 fetch해서 FutureBuilder로 그리면, Dismissible로 스와이프
-  // 삭제한 항목이 애니메이션 종료 직후에도 다음 build까지 트리에 남아있어
-  // "A dismissed Dismissible widget is still part of the tree" 예외가 남 -
-  // 로컬에서 직접 들고 있다가 낙관적으로 갱신.
+  // 매번 새로 fetch하는 FutureBuilder 대신 목록을 로컬에서 직접 들고
+  // 낙관적으로 갱신 - 안 그러면 Dismissible 스와이프 삭제 직후 "still
+  // part of the tree" 예외가 남.
   final Set<String> _locallyRead = {};
 
   late final AnimationController _controller;
@@ -127,9 +125,8 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final items = _items;
     if (items == null) return;
     final index = items.indexOf(item);
-    // 스와이프 애니메이션이 이미 항목을 지운 뒤라, API 실패 시에도 원래
-    // 자리로 되돌리는 대신 안내만 함(다시 삭제를 시도할 수 있게 목록은
-    // 지워진 채로 둠 - 되돌리면 방금 지운 카드가 다시 나타나 어색함).
+    // 스와이프로 이미 지워진 뒤라, API 실패해도 되돌리지 않고 안내만 함
+    // (되돌리면 방금 지운 카드가 다시 나타나 어색함).
     setState(() => items.removeAt(index));
     try {
       await _service.delete(item.id);
