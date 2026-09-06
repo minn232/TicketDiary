@@ -21,11 +21,19 @@ class NewsDetailOverlay extends StatefulWidget {
 
   final NewsModel news;
 
+  /// 탭한 순간 소식 그리드에서 쓰이던 [DiaryFrameScale] 배율.
+  //
+  // [백엔드 수정]
+  // showGeneralDialog는 새 라우트라 안에서 DiaryFrameScale을 못 찾음 -
+  // 탭 시점 값을 그대로 넘겨받아 오버레이 안에서도 동일하게 사용.
+  final double frameScale;
+
   const NewsDetailOverlay({
     super.key,
     required this.startRect,
     required this.collapsedCard,
     required this.news,
+    required this.frameScale,
   });
 
   /// 다이어리/소식 화면 위에 오버레이를 띄우는 헬퍼.
@@ -34,6 +42,7 @@ class NewsDetailOverlay extends StatefulWidget {
     required Rect startRect,
     required Widget collapsedCard,
     required NewsModel news,
+    required double frameScale,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -45,6 +54,7 @@ class NewsDetailOverlay extends StatefulWidget {
           startRect: startRect,
           collapsedCard: collapsedCard,
           news: news,
+          frameScale: frameScale,
         );
       },
     );
@@ -61,6 +71,11 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
 
   /// 상세 콘텐츠(포스터 위 흰 카드) 페이드 인
   late final Animation<double> _contentOpacity;
+
+  // [백엔드 수정]
+  // 크로스페이드를 Animation<double>+FadeTransition으로 교체.
+  late final Animation<double> _expandedOpacity;
+  late final Animation<double> _collapsedOpacity;
 
   /// 흰 카드 영역 "바깥"을 눌렀을 때만 닫히도록 판정하기 위한 key
   final GlobalKey _pageKey = GlobalKey();
@@ -132,6 +147,15 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
       parent: _controller,
       curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic),
     );
+    // [백엔드 수정]
+    // 크로스페이드 구간을 중앙 8%로 좁힘.
+    _expandedOpacity = CurvedAnimation(
+      parent: _t,
+      curve: const Interval(0.46, 0.54, curve: Curves.easeInOut),
+    );
+    _collapsedOpacity = _expandedOpacity.drive(
+      Tween<double>(begin: 1.0, end: 0.0),
+    );
     _controller.forward();
   }
 
@@ -142,14 +166,17 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     super.dispose();
   }
 
-  Rect _getRectForT(Size screen, double t) {
-    final end = Rect.fromCenter(
+  // [백엔드 수정]
+  // t와 무관한 최종 Rect만 따로 뽑음(고정 크기 레이아웃용).
+  Rect _endRect(Size screen) {
+    return Rect.fromCenter(
       center: screen.center(Offset.zero),
       width: screen.width * 0.90,
       height: screen.height * 0.90,
     );
-    return Rect.lerp(widget.startRect, end, t)!;
   }
+
+  Rect _getRectForT(Rect end, double t) => Rect.lerp(widget.startRect, end, t)!;
 
   double _getRadiusForT(double t) => lerpDouble(4, 18, t)!;
 
@@ -201,89 +228,109 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final screenSize = media.size;
+    final end = _endRect(screenSize);
 
-    return Listener(
-      onPointerDown: _onPinchPointerDown,
-      onPointerMove: _onPinchPointerMove,
-      onPointerUp: _onPinchPointerEnd,
-      onPointerCancel: _onPinchPointerEnd,
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, result) {
-          if (didPop) return;
-          if (_posterExpanded) {
-            _collapsePoster();
-            return;
-          }
-          _close();
-        },
-        child: Material(
-          type: MaterialType.transparency,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              final t = _t.value;
-              final rect = _getRectForT(screenSize, t);
-              final radius = _getRadiusForT(t);
-              final dimOpacity = lerpDouble(0.0, 0.40, t)!;
-              final expandedOpacity = Curves.easeIn.transform(
-                ((t - 0.20) / 0.80).clamp(0.0, 1.0),
-              );
-              final collapsedOpacity = 1.0 - expandedOpacity;
+    // [백엔드 수정]
+    // 두 레이어를 고정 크기(startRect/end)+FittedBox로 한 번만 빌드.
+    // [백엔드 수정]
+    // startRect/rect 가로세로 비율 차이가 커서 contain의 레터박스 여백이
+    // 프레임마다 바뀌어 카드가 밀리는 것처럼 보임 - fill로 여백 없이 고정.
+    final collapsedLayer = Positioned.fill(
+      child: IgnorePointer(
+        child: FadeTransition(
+          opacity: _collapsedOpacity,
+          child: FittedBox(
+            fit: BoxFit.fill,
+            child: SizedBox(
+              width: widget.startRect.width,
+              height: widget.startRect.height,
+              child: widget.collapsedCard,
+            ),
+          ),
+        ),
+      ),
+    );
 
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        color: Colors.black.withValues(alpha: dimOpacity),
+    final expandedLayer = Positioned.fill(
+      child: FadeTransition(
+        opacity: _expandedOpacity,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          child: SizedBox(
+            width: end.width,
+            height: end.height,
+            child: _ExpandedNewsDetail(
+              pageKey: _pageKey,
+              contentOpacity: _contentOpacity,
+              news: widget.news,
+              onOutsideTap: _handleOutsideTap,
+              onPosterTap: _openPoster,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return DiaryFrameScale(
+      scale: widget.frameScale,
+      marginEachSide: 0,
+      child: Listener(
+        onPointerDown: _onPinchPointerDown,
+        onPointerMove: _onPinchPointerMove,
+        onPointerUp: _onPinchPointerEnd,
+        onPointerCancel: _onPinchPointerEnd,
+        child: PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            if (_posterExpanded) {
+              _collapsePoster();
+              return;
+            }
+            _close();
+          },
+          child: Material(
+            type: MaterialType.transparency,
+            child: AnimatedBuilder(
+              animation: _controller,
+              child: Stack(children: [collapsedLayer, expandedLayer]),
+              builder: (context, child) {
+                final t = _t.value;
+                final rect = _getRectForT(end, t);
+                final radius = _getRadiusForT(t);
+                final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: dimOpacity),
+                        ),
                       ),
                     ),
-                  ),
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTapDown: _onBackgroundTap,
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  Positioned.fromRect(
-                    rect: rect,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(radius),
-                      clipBehavior: Clip.antiAlias,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: Opacity(
-                                opacity: collapsedOpacity,
-                                child: widget.collapsedCard,
-                              ),
-                            ),
-                          ),
-                          Positioned.fill(
-                            child: Opacity(
-                              opacity: expandedOpacity,
-                              child: _ExpandedNewsDetail(
-                                pageKey: _pageKey,
-                                contentOpacity: _contentOpacity,
-                                news: widget.news,
-                                onOutsideTap: _handleOutsideTap,
-                                onPosterTap: _openPoster,
-                              ),
-                            ),
-                          ),
-                        ],
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTapDown: _onBackgroundTap,
+                        child: const SizedBox.expand(),
                       ),
                     ),
-                  ),
-                  // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
-                  // rect가 아니라 최상위라 상태바 영역까지 꽉 참).
-                  if (_posterExpanded) _buildFullscreenPoster(),
-                ],
-              );
-            },
+                    Positioned.fromRect(
+                      rect: rect,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(radius),
+                        clipBehavior: Clip.antiAlias,
+                        child: child,
+                      ),
+                    ),
+                    // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
+                    // rect가 아니라 최상위라 상태바 영역까지 꽉 참).
+                    if (_posterExpanded) _buildFullscreenPoster(),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),

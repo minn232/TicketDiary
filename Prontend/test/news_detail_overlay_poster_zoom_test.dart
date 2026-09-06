@@ -33,6 +33,7 @@ void main() {
           startRect: const Rect.fromLTWH(0, 0, 100, 100),
           collapsedCard: const SizedBox(),
           news: news,
+          frameScale: 1.0,
         ),
       ),
     );

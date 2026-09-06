@@ -37,6 +37,7 @@ void main() {
                   startRect: const Rect.fromLTWH(20, 20, 120, 160),
                   collapsedCard: const SizedBox(),
                   news: news,
+                  frameScale: 1.0,
                 ),
                 child: const Text('open'),
               ),

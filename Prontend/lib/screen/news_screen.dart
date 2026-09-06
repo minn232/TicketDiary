@@ -348,8 +348,15 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     if (ctx == null) return;
     final box = ctx.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize) return;
-    final topLeft = box.localToGlobal(Offset.zero);
-    final startRect = topLeft & box.size;
+    // [백엔드 수정]
+    // 모서리 대신 중심점으로 계산 - PressableScale의 탭 애니메이션(중심
+    // 기준 확대/축소)이 아직 진행 중이면 모서리 좌표가 흔들림.
+    final center = box.localToGlobal(box.size.center(Offset.zero));
+    final startRect = Rect.fromCenter(
+      center: center,
+      width: box.size.width,
+      height: box.size.height,
+    );
 
     // 안 읽은 소식이면: 화면에서 먼저 읽음으로 바꾸고(NEW 배지 제거),
     // 서버에도 읽음 처리를 보냅니다(실패해도 다음 조회에서 다시 미읽음으로 올 뿐).
@@ -364,6 +371,11 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       startRect: startRect,
       collapsedCard: _PolaroidCard(data: item, angle: angle),
       news: item,
+      // [백엔드 수정]
+      // 이 그리드에서 쓰이는 배율을 그대로 넘김 - DiaryPageFrame은
+      // NewsScreen.build()가 반환하는 결과물(자손)이라, State 자신의
+      // context가 아니라 카드 자체의 context(ctx)로 조회해야 함.
+      frameScale: DiaryFrameScale.maybeOf(ctx) ?? diaryScaleFromMediaQuery(ctx),
     );
   }
 
