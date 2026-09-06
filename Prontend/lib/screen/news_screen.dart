@@ -309,7 +309,15 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     }
 
     // 찜한 공연은 아티스트 매칭을 거치지 않고 그대로 카드로 보여줍니다.
+    // D-day(공연 시작일) 당일부터는 카드에서 제외(찜 상태는 유지).
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
     final favoritedConcertCards = FavoritesStore.instance.favoriteConcerts
+        .where((c) {
+          final start = c.startDate;
+          if (start == null) return true;
+          return DateTime(start.year, start.month, start.day).isAfter(todayDate);
+        })
         .map(NewsModel.fromFavoritedConcert)
         .toList();
 
