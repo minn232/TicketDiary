@@ -13,6 +13,10 @@ import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart';
 import 'package:ticketdiary/widgets/app_network_image.dart';
 
+// [백엔드 수정]
+// 신규 추천 카드 테두리 글로우가 사라지는 애니메이션 길이(_ThumbCard).
+const _kNewHighlightDuration = Duration(seconds: 3);
+
 /// 선호 아티스트 / 찜 공연 검색 화면을 [DiaryPageFrame]으로 감싼 독립
 /// 화면(라우트로 진입할 때 사용). 실제 내용은 [FavoritePinnedPanel]이며,
 /// 소식 탭에서는 프레임 없이 이 패널만 페이지 안에 끼워 씁니다.
@@ -77,6 +81,18 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   // [백엔드 수정]
   // 검색창이 비어있을 때 보여줄 추천 아티스트 목록(GET /recommendations/artists) 신규 연동.
   List<ArtistModel> _recommendedArtists = const [];
+
+  // [백엔드 수정]
+  // 팔로우 직후 새로 나타난 추천 이름 집합(그리드 카드에 NEW 배지).
+  // 최초 로딩 때는 비교 대상이 없어 강조 안 함.
+  Set<String> _newlyRecommendedNames = const {};
+
+  // [백엔드 수정]
+  // 테두리 글로우가 언제 끝나는지 절대 시각으로 기록 - 그리드가 화면
+  // 밖으로 나갔다 다시 들어오면 카드 위젯이 새로 만들어져서 로컬 애니메이션
+  // 경과 시간이 초기화되는데, 이 값 기준으로 "남은 시간"만 계산해서 재생하면
+  // 스크롤할 때마다 글로우가 처음부터 다시 나오지 않고 딱 한 번만 재생됨.
+  DateTime? _newHighlightExpiresAt;
 
   final TextEditingController _artistQueryController = TextEditingController();
   final TextEditingController _concertQueryController = TextEditingController();
@@ -183,15 +199,93 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   }
 
   // [백엔드 수정]
-  // 아티스트 추천 API 신규 연동.
-  Future<void> _loadRecommendations() async {
+  // 아티스트 추천 API 신규 연동. 팔로우/언팔로우 직후에도 다시 호출되므로,
+  // 응답이 뒤섞여 도착해도 마지막 요청 결과만 반영되도록 순번을 둠.
+  int _recommendationRequestSeq = 0;
+
+  // [백엔드 수정]
+  // highlightNew: true면 새로 나타난 이름을 _newlyRecommendedNames에
+  // 담아 NEW 배지로 표시하고, 기존에 보이던 순서는 유지한 채 새 항목만
+  // 그 사이에 끼워 넣음(_mergeKeepingOrder 참고).
+  Future<void> _loadRecommendations({bool highlightNew = false}) async {
+    final seq = ++_recommendationRequestSeq;
+    final previousOrder = _recommendedArtists;
+    final previousNames = previousOrder.map((a) => a.name).toSet();
     try {
       final recommendations = await _recommendationService.getRecommendations();
-      if (!mounted) return;
-      setState(() => _recommendedArtists = recommendations);
+      if (!mounted || seq != _recommendationRequestSeq) return;
+      final newlyAdded = highlightNew
+          ? {
+              for (final a in recommendations)
+                if (!previousNames.contains(a.name)) a.name,
+            }
+          : <String>{};
+      setState(() {
+        _recommendedArtists = highlightNew
+            ? _mergeKeepingOrder(previousOrder, recommendations)
+            : recommendations;
+        _newlyRecommendedNames = newlyAdded;
+        if (newlyAdded.isNotEmpty) {
+          _newHighlightExpiresAt = DateTime.now().add(_kNewHighlightDuration);
+        }
+      });
     } catch (_) {
       // 실패 시 조용히 무시.
     }
+  }
+
+  /// [oldOrder]에 있던 항목은 순서를 그대로 유지하고, [newList]에만 새로
+  /// 나타난 항목은 [newList]가 매긴 순위대로 그 사이사이에 끼워 넣습니다.
+  /// 예: oldOrder가 [1,2,3,4]이고 newList가 [1,2,5,3,4]면(서버가 5를 2와
+  /// 3 사이로 랭크) 결과도 [1,2,5,3,4] - 기존 카드들이 화면에서 위치를
+  /// 갑자기 바꾸며 재배치되지 않도록 함.
+  List<ArtistModel> _mergeKeepingOrder(
+    List<ArtistModel> oldOrder,
+    List<ArtistModel> newList,
+  ) {
+    final byName = {for (final a in newList) a.name: a};
+    final newNames = newList.map((a) => a.name).toSet();
+    final survivors = [
+      for (final a in oldOrder)
+        if (newNames.contains(a.name)) a.name,
+    ];
+    final survivorSet = survivors.toSet();
+
+    // newList를 순서대로 훑으면서, survivor를 만나기 전까지 쌓인
+    // "신규" 이름들을 그 survivor 바로 앞에 끼워 넣을 목록으로 기록.
+    final beforeSurvivor = <String, List<String>>{};
+    var pendingNew = <String>[];
+    for (final a in newList) {
+      if (survivorSet.contains(a.name)) {
+        beforeSurvivor[a.name] = pendingNew;
+        pendingNew = [];
+      } else {
+        pendingNew.add(a.name);
+      }
+    }
+    final trailingNew = pendingNew; // 마지막 survivor 이후에 남은 신규 항목
+
+    final orderedNames = <String>[
+      for (final name in survivors) ...[
+        ...?beforeSurvivor[name],
+        name,
+      ],
+      ...trailingNew,
+    ];
+    return [for (final name in orderedNames) byName[name]!];
+  }
+
+  // [백엔드 수정]
+  // 팔로우 직후 추천 목록을 바로 다시 불러와 반영(추천 API가 캐시 없이
+  // 라이브 계산이라 다시 부르기만 하면 됨).
+  Future<void> _toggleArtist(ArtistModel a) async {
+    await _favorites.toggleArtist(a);
+    unawaited(_loadRecommendations(highlightNew: true));
+  }
+
+  Future<void> _removeArtist(String name) async {
+    await _favorites.removeArtist(name);
+    unawaited(_loadRecommendations(highlightNew: true));
   }
 
   void _onConcertQueryTextChanged() {
@@ -309,7 +403,11 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
         // (이 위젯 자체가 이미 _onFavoritesChanged로 찜 변경마다
         // 통째로 다시 그려지므로, 별도 리스너 없이 최신 목록을
         // 그대로 넘겨받습니다.)
-        _FavoritedStrip(category: _currentCategory, favorites: _favorites),
+        _FavoritedStrip(
+          category: _currentCategory,
+          favorites: _favorites,
+          onArtistRemoved: _removeArtist,
+        ),
         Expanded(
           child: PageView(
             controller: _categoryPageController,
@@ -320,6 +418,10 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                 hintText: '아티스트 이름 검색',
                 items: _showingArtistRecommendations ? _recommendedArtists : _artistResults,
                 sectionLabel: _showingArtistRecommendations ? '이런 아티스트는 어때요?' : null,
+                newlyAddedNames: _showingArtistRecommendations
+                    ? _newlyRecommendedNames
+                    : const {},
+                newHighlightExpiresAt: _newHighlightExpiresAt,
                 searching: _artistSearching,
                 statusText: _artistStatusText,
                 nameOf: (a) => a.name,
@@ -328,7 +430,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
                 // 사람 아이콘 플레이스홀더를 보여줍니다.
                 placeholderIcon: Icons.person_outline,
                 isFavoritedOf: (a) => _favorites.isArtistFavorited(a.name),
-                onTap: (a) => _favorites.toggleArtist(a),
+                onTap: _toggleArtist,
                 onSubmitted: _onArtistSubmitted,
               ),
               _CategorySearchPage<ConcertModel>(
@@ -371,6 +473,14 @@ class _CategorySearchPage<T> extends StatelessWidget {
   /// [items] 위에 표시할 안내 문구(추천 등). null이면 안 보여줌.
   final String? sectionLabel;
 
+  // [백엔드 수정]
+  // 팔로우 직후 새로 나타난 추천 카드 강조용 이름 집합(NEW 배지).
+  final Set<String> newlyAddedNames;
+
+  // [백엔드 수정]
+  // 테두리 글로우 종료 절대 시각(_ThumbCard가 남은 시간만 재생).
+  final DateTime? newHighlightExpiresAt;
+
   const _CategorySearchPage({
     super.key,
     required this.controller,
@@ -385,6 +495,8 @@ class _CategorySearchPage<T> extends StatelessWidget {
     required this.onTap,
     required this.onSubmitted,
     this.sectionLabel,
+    this.newlyAddedNames = const {},
+    this.newHighlightExpiresAt,
   });
 
   @override
@@ -412,15 +524,23 @@ class _CategorySearchPage<T> extends StatelessWidget {
             const SizedBox(height: 8),
           ],
           Expanded(
-            child: _SearchResultsGrid<T>(
-              items: items,
-              searching: searching,
-              statusText: statusText,
-              nameOf: nameOf,
-              imageUrlOf: imageUrlOf,
-              placeholderIcon: placeholderIcon,
-              isFavoritedOf: isFavoritedOf,
-              onTap: onTap,
+            // [백엔드 수정]
+            // 결과 목록이 바뀔 때 뚝 끊기지 않도록 크로스페이드 추가.
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: _SearchResultsGrid<T>(
+                key: ValueKey(items.map(nameOf).join('|')),
+                items: items,
+                searching: searching,
+                statusText: statusText,
+                nameOf: nameOf,
+                imageUrlOf: imageUrlOf,
+                placeholderIcon: placeholderIcon,
+                isFavoritedOf: isFavoritedOf,
+                onTap: onTap,
+                newlyAddedNames: newlyAddedNames,
+                newHighlightExpiresAt: newHighlightExpiresAt,
+              ),
             ),
           ),
         ],
@@ -607,7 +727,16 @@ class _SearchResultsGrid<T> extends StatelessWidget {
   final bool Function(T) isFavoritedOf;
   final ValueChanged<T> onTap;
 
+  // [백엔드 수정]
+  // 팔로우 직후 새로 나타난 카드 강조용 이름 집합(NEW 배지).
+  final Set<String> newlyAddedNames;
+
+  // [백엔드 수정]
+  // 테두리 글로우 종료 절대 시각(_ThumbCard가 남은 시간만 재생).
+  final DateTime? newHighlightExpiresAt;
+
   const _SearchResultsGrid({
+    super.key,
     required this.items,
     required this.searching,
     required this.statusText,
@@ -616,6 +745,8 @@ class _SearchResultsGrid<T> extends StatelessWidget {
     this.placeholderIcon = Icons.broken_image_outlined,
     required this.isFavoritedOf,
     required this.onTap,
+    this.newlyAddedNames = const {},
+    this.newHighlightExpiresAt,
   });
 
   static const _crossAxisCount = 3;
@@ -675,6 +806,8 @@ class _SearchResultsGrid<T> extends StatelessWidget {
               imageUrl: imageUrlOf(item),
               placeholderIcon: placeholderIcon,
               favorited: isFavoritedOf(item),
+              isNew: newlyAddedNames.contains(nameOf(item)),
+              newHighlightExpiresAt: newHighlightExpiresAt,
               onTap: () => onTap(item),
             );
           },
@@ -691,12 +824,26 @@ class _ThumbCard extends StatelessWidget {
   final bool favorited;
   final VoidCallback onTap;
 
+  // [백엔드 수정]
+  // 팔로우 직후 새로 나타난 추천 카드 표시 - 테두리 글로우는 3초만,
+  // NEW 배지는 다음 갱신 전까지 계속 유지.
+  final bool isNew;
+
+  // [백엔드 수정]
+  // 글로우 종료 절대 시각 - 위젯 자체 경과 시간이 아니라 이 값 기준
+  // "남은 시간"만 재생해서, 스크롤로 카드가 화면 밖에 나갔다 다시
+  // 들어와도(=위젯이 새로 만들어져도) 글로우가 처음부터 다시 재생되지
+  // 않고 한 번만 나옴(만료 후 재진입하면 아예 안 나옴).
+  final DateTime? newHighlightExpiresAt;
+
   const _ThumbCard({
     required this.label,
     required this.imageUrl,
     this.placeholderIcon = Icons.broken_image_outlined,
     required this.favorited,
     required this.onTap,
+    this.isNew = false,
+    this.newHighlightExpiresAt,
   });
 
   @override
@@ -710,29 +857,39 @@ class _ThumbCard extends StatelessWidget {
             aspectRatio: 1,
             child: Stack(
               children: [
+                // [백엔드 수정]
+                // 테두리가 이미지 뒤로 가려 보이던 문제 - 이미지는
+                // ClipRRect로 꽉 채워 클리핑만 하고, 테두리는 별도 레이어로
+                // 그 위에 그려서 항상 온전히 보이게 분리.
                 Positioned.fill(
-                  child: Container(
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: ColoredBox(
                       color: Colors.white.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: favorited
-                            ? const Color(0xFFEF4444)
-                            : Colors.black.withValues(alpha: 0.20),
-                        width: favorited ? 2.4 : 1.2,
+                      child: imageUrl.isEmpty
+                          ? _ThumbPlaceholder(icon: placeholderIcon)
+                          : AppNetworkImage(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context) =>
+                                  _ThumbPlaceholder(icon: placeholderIcon),
+                            ),
+                    ),
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: favorited
+                              ? const Color(0xFFEF4444)
+                              : Colors.black.withValues(alpha: 0.20),
+                          width: favorited ? 2.4 : 1.2,
+                        ),
                       ),
                     ),
-                    // [백엔드 수정]
-                    // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
-                    child: imageUrl.isEmpty
-                        ? _ThumbPlaceholder(icon: placeholderIcon)
-                        : AppNetworkImage(
-                            imageUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context) =>
-                                _ThumbPlaceholder(icon: placeholderIcon),
-                          ),
                   ),
                 ),
                 if (favorited)
@@ -749,6 +906,72 @@ class _ThumbCard extends StatelessWidget {
                         Icons.favorite,
                         size: 12,
                         color: Colors.white,
+                      ),
+                    ),
+                  ),
+                // [백엔드 수정]
+                // 테두리 글로우: newHighlightExpiresAt까지 "남은 시간"만
+                // 재생(위젯이 새로 만들어져도 처음부터 다시 재생 안 됨,
+                // 이미 만료됐으면 아예 안 나옴). 아래 NEW 배지와는 분리.
+                if (isNew &&
+                    newHighlightExpiresAt != null &&
+                    newHighlightExpiresAt!.isAfter(DateTime.now()))
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 1.0, end: 0.0),
+                        duration: newHighlightExpiresAt!.difference(
+                          DateTime.now(),
+                        ),
+                        curve: Curves.easeOut,
+                        builder: (context, value, child) {
+                          if (value <= 0.02) return const SizedBox.shrink();
+                          const accent = Color(0xFF7C3AED);
+                          return DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: accent.withValues(alpha: value),
+                                width: 2.4,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: accent.withValues(alpha: 0.35 * value),
+                                  blurRadius: 10,
+                                  spreadRadius: 1,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                // [백엔드 수정]
+                // NEW 배지: 애니메이션 없이 isNew인 동안 계속 표시.
+                if (isNew)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF7C3AED),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          'NEW',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -798,7 +1021,16 @@ class _FavoritedStrip extends StatelessWidget {
   final _FavCategory category;
   final FavoritesStore favorites;
 
-  const _FavoritedStrip({required this.category, required this.favorites});
+  // [백엔드 수정]
+  // 아티스트 찜 해제 직후 추천 목록도 다시 불러오도록 콜백 추가(공연은 추천과
+  // 무관해서 그대로 favorites.removeConcert 직접 호출).
+  final ValueChanged<String>? onArtistRemoved;
+
+  const _FavoritedStrip({
+    required this.category,
+    required this.favorites,
+    this.onArtistRemoved,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -835,7 +1067,9 @@ class _FavoritedStrip extends StatelessWidget {
                       label: a.name,
                       imageUrl: a.profileImageUrl,
                       placeholderIcon: Icons.person_outline,
-                      onRemove: () => favorites.removeArtist(a.name),
+                      onRemove: onArtistRemoved == null
+                          ? () => favorites.removeArtist(a.name)
+                          : () => onArtistRemoved!(a.name),
                     );
                   }
                   final c = concerts[index];
@@ -879,27 +1113,43 @@ class _FavoritedChip extends StatelessWidget {
           children: [
             Stack(
               children: [
-                Container(
+                // [백엔드 수정]
+                // 테두리가 이미지 뒤로 가려 보이던 문제 - 이미지는
+                // ClipRRect로 꽉 채워 클리핑만 하고, 테두리는 별도 레이어로
+                // 그 위에 그려서 항상 온전히 보이게 분리.
+                SizedBox(
                   width: 54,
                   height: 54,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: const Color(0xFFEF4444),
-                      width: 2.4,
-                    ),
-                  ),
-                  // [백엔드 수정]
-                  // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
-                  child: imageUrl.isEmpty
-                      ? _ThumbPlaceholder(icon: placeholderIcon)
-                      : AppNetworkImage(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context) =>
-                              _ThumbPlaceholder(icon: placeholderIcon),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: imageUrl.isEmpty
+                              ? _ThumbPlaceholder(icon: placeholderIcon)
+                              : AppNetworkImage(
+                                  imageUrl,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context) =>
+                                      _ThumbPlaceholder(icon: placeholderIcon),
+                                ),
                         ),
+                      ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: const Color(0xFFEF4444),
+                                width: 2.4,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 Positioned(
                   top: 3,
