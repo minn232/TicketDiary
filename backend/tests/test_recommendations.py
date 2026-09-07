@@ -6,6 +6,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.artist_similarity import ArtistSimilarity
 from app.models.artist_genre import ArtistGenre
 from app.models.ticket import Ticket
@@ -69,6 +70,23 @@ async def _follow_artist(token: str, artist_name: str) -> None:
             headers={"Authorization": f"Bearer {token}"},
         )
     assert res.status_code == 200
+
+
+# CanonicalArtist(+선택적으로 alias) 직접 삽입 - 정규화가 이미 끝난 아티스트를 시뮬레이션
+async def _insert_canonical_artist(
+    canonical_name: str, profile_image_url: str | None, alias_text: str | None = None
+) -> None:
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=canonical_name, profile_image_url=profile_image_url)
+        db.add(canonical)
+        await db.flush()
+        if alias_text:
+            db.add(
+                ArtistAlias(
+                    canonical_artist_id=canonical.id, alias_text=alias_text, source="user_input"
+                )
+            )
+        await db.commit()
 
 
 # lastfm.fetch_similar_artists 테스트
@@ -426,6 +444,45 @@ async def test_recommendations_basic_ranking_and_exclusions():
     assert seed not in names  # 이미 팔로우 중인 아티스트는 제외
     assert no_concert not in names  # 이 앱에 공연이 없는 아티스트는 제외
     assert names.index(high) < names.index(low)  # 점수 높은 순 정렬
+
+
+# [백엔드 수정]
+# 추천 결과에 사진이 채워지는지 테스트 - CanonicalArtist에 정규화된 이름(canonical_name
+# 또는 alias) 중 하나로 매칭되면 profile_image_url이 채워지고, 매칭 안 되면 null
+@pytest.mark.asyncio
+async def test_recommendations_include_profile_image_url():
+    token = await _get_token()
+    seed = f"팔로우아티스트_{uuid.uuid4().hex[:6]}"
+    canonical_match = f"정규화매칭_{uuid.uuid4().hex[:6]}"
+    alias_match = f"별칭매칭원본_{uuid.uuid4().hex[:6]}"
+    alias_text = f"별칭매칭정규화_{uuid.uuid4().hex[:6]}"
+    no_photo = f"사진없음_{uuid.uuid4().hex[:6]}"
+
+    await _create_concert(f"PF_RECIMG_SEED_{uuid.uuid4().hex[:6]}", seed, token)
+    await _create_concert(f"PF_RECIMG_CANON_{uuid.uuid4().hex[:6]}", canonical_match, token)
+    await _create_concert(f"PF_RECIMG_ALIAS_{uuid.uuid4().hex[:6]}", alias_match, token)
+    await _create_concert(f"PF_RECIMG_NONE_{uuid.uuid4().hex[:6]}", no_photo, token)
+
+    await _follow_artist(token, seed)
+    await _insert_similarity(seed, canonical_match, 0.9)
+    await _insert_similarity(seed, alias_match, 0.8)
+    await _insert_similarity(seed, no_photo, 0.5)
+
+    await _insert_canonical_artist(canonical_match, "https://example.com/canon.jpg")
+    # alias_match는 canonical_name이 아니라 alias로만 연결됨(정규화가 표기를 통일한 경우)
+    await _insert_canonical_artist(
+        alias_text, "https://example.com/alias.jpg", alias_text=alias_match
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/recommendations/artists", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 200
+    by_name = {r["artist_name"]: r for r in res.json()["recommendations"]}
+
+    assert by_name[canonical_match]["profile_image_url"] == "https://example.com/canon.jpg"
+    assert by_name[alias_match]["profile_image_url"] == "https://example.com/alias.jpg"
+    assert by_name[no_photo]["profile_image_url"] is None
 
 
 # 서로 다른 시드 아티스트가 같은 실제 아티스트를 다른 대소문자로 참조해도(Last.fm 캐시가 시드별로
