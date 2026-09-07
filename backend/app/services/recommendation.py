@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.artist_similarity import ArtistSimilarity
 from app.models.concert import Concert
 from app.models.social import ArtistFollow
@@ -73,5 +74,36 @@ async def get_artist_recommendations(db: AsyncSession, user_id: UUID, limit: int
         ),
         key=lambda entry: entry["score"],
         reverse=True,
+    )[:limit]
+
+    await _attach_profile_images(db, ranked)
+    return ranked
+
+
+# [백엔드 수정]
+# 추천 목록에 사진을 채워줌(원래 이름/score만 반환해서 그리드에 늘 플레이스홀더만
+# 뜨던 버그) - artist_search.py와 같은 소스(CanonicalArtist)를 canonical_name/
+# alias 양쪽으로 대조. 추천 이름은 정규화 전 원본 문자열일 수 있어 검색과
+# 동일하게 별칭까지 맞춰봐야 매치율이 높음.
+async def _attach_profile_images(db: AsyncSession, entries: list[dict]) -> None:
+    if not entries:
+        return
+    names_lower = {entry["artist_name"].lower() for entry in entries}
+
+    canonical_result = await db.execute(
+        select(CanonicalArtist).where(func.lower(CanonicalArtist.canonical_name).in_(names_lower))
     )
-    return ranked[:limit]
+    photo_by_name_lower: dict[str, str | None] = {
+        c.canonical_name.lower(): c.profile_image_url for c in canonical_result.scalars().all()
+    }
+
+    alias_result = await db.execute(
+        select(ArtistAlias.alias_text, CanonicalArtist.profile_image_url)
+        .join(CanonicalArtist, ArtistAlias.canonical_artist_id == CanonicalArtist.id)
+        .where(func.lower(ArtistAlias.alias_text).in_(names_lower))
+    )
+    for alias_text, photo_url in alias_result.all():
+        photo_by_name_lower.setdefault(alias_text.lower(), photo_url)
+
+    for entry in entries:
+        entry["profile_image_url"] = photo_by_name_lower.get(entry["artist_name"].lower())
