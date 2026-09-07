@@ -25,7 +25,10 @@ class BackendArtistRecommendationService implements ArtistRecommendationService 
       for (final entry in list)
         ArtistModel(
           name: (entry as Map<String, dynamic>)['artist_name'] as String,
-          profileImageUrl: '',
+          // [백엔드 수정]
+          // profile_image_url 파싱 추가(그동안 빈 문자열 고정이라 추천
+          // 그리드엔 항상 플레이스홀더만 뜸 - 정규화된 아티스트만 채워짐).
+          profileImageUrl: entry['profile_image_url'] as String? ?? '',
         ),
     ];
   }
