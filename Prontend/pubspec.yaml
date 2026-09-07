@@ -53,6 +53,9 @@ dependencies:
   firebase_messaging: ^15.1.5
   image_cropper: ^12.2.1
   android_intent_plus: ^6.1.0
+  # [백엔드 수정]
+  # 네트워크 이미지 디스크 캐싱(포스터/썸네일이 앱 재시작마다 다시 안 받게).
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:

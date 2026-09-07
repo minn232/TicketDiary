@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'responsive_text.dart';
+import 'app_network_image.dart';
 
 /// 공연 포스터 배경.
 ///
@@ -21,20 +22,15 @@ class PosterBackground extends StatelessWidget {
       return const PosterGradientPlaceholder();
     }
 
+    // [백엔드 수정]
+    // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
     return Opacity(
       opacity: 0.85,
-      child: Image.network(
+      child: AppNetworkImage(
         url,
         fit: BoxFit.cover,
-        // KOPIS 등 CORS 헤더가 없는 이미지 서버는 웹에서 일반 로드가
-        // 실패하므로, 실패 시 <img> 태그로 대신 렌더링합니다(웹 전용).
-        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-        loadingBuilder: (context, child, progress) {
-          if (progress == null) return child;
-          return const PosterGradientPlaceholder();
-        },
-        errorBuilder: (context, error, stackTrace) =>
-            const PosterGradientPlaceholder(),
+        placeholderBuilder: (context) => const PosterGradientPlaceholder(),
+        errorBuilder: (context) => const PosterGradientPlaceholder(),
       ),
     );
   }

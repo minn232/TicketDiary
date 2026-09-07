@@ -92,7 +92,13 @@ class SocialService {
   /// 그대로 보존), 새로 추가할 이름이 있을 때만 교체 요청을 보냅니다.
   /// 대신 로컬에서 찜을 해제해도 서버에서는 지워지지 않는데, 멀티 기기
   /// 사용 시의 유실 위험보다 안전한 쪽을 택한 것입니다.
-  Future<void> syncArtistFollows(List<String> artistNames) async {
+  //
+  // [백엔드 수정]
+  // 동기화 후 최신 팔로우 목록을 반환(호출부가 getArtistFollowEntries()를
+  // 다시 부르지 않고 재사용하도록).
+  Future<List<Map<String, dynamic>>> syncArtistFollows(
+    List<String> artistNames,
+  ) async {
     final entries = await getArtistFollowEntries();
     final existingNames = {
       for (final e in entries) e['artist_name'] as String,
@@ -101,16 +107,13 @@ class SocialService {
       for (final name in artistNames)
         if (!existingNames.contains(name)) name,
     ];
-    if (newNames.isEmpty) return;
+    if (newNames.isEmpty) return entries;
 
-    await _client.patch(
-      '/social/artists',
-      body: {
-        'artists': [
-          ...entries,
-          for (final name in newNames) {'artist_name': name},
-        ],
-      },
-    );
+    final List<Map<String, dynamic>> merged = [
+      ...entries,
+      for (final name in newNames) {'artist_name': name},
+    ];
+    await _client.patch('/social/artists', body: {'artists': merged});
+    return merged;
   }
 }

@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/news_model.dart';
 import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
+import '../widgets/app_network_image.dart';
 
 /// 소식 폴라로이드 카드를 누르면, "공연 전" 티켓과 동일한 방식으로 카드가
 /// 화면 전체로 확장되며 소식 상세(포스터 + 정보 카드)를 보여주는 오버레이.
@@ -401,13 +402,14 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
         ),
       );
     }
+    // [백엔드 수정]
+    // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Image.network(
+      child: AppNetworkImage(
         url,
         fit: BoxFit.contain,
-        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-        errorBuilder: (context, error, stackTrace) => const AspectRatio(
+        errorBuilder: (context) => const AspectRatio(
           aspectRatio: 3 / 4,
           child: PosterGradientPlaceholder(),
         ),

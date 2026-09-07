@@ -11,6 +11,7 @@ import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart';
+import 'package:ticketdiary/widgets/app_network_image.dart';
 
 /// 선호 아티스트 / 찜 공연 검색 화면을 [DiaryPageFrame]으로 감싼 독립
 /// 화면(라우트로 진입할 때 사용). 실제 내용은 [FavoritePinnedPanel]이며,
@@ -722,18 +723,14 @@ class _ThumbCard extends StatelessWidget {
                         width: favorited ? 2.4 : 1.2,
                       ),
                     ),
+                    // [백엔드 수정]
+                    // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
                     child: imageUrl.isEmpty
                         ? _ThumbPlaceholder(icon: placeholderIcon)
-                        : Image.network(
+                        : AppNetworkImage(
                             imageUrl,
                             fit: BoxFit.cover,
-                            // KOPIS 포스터 서버는 CORS 헤더를 주지 않아 웹에서
-                            // 일반 로드가 실패합니다. 실패 시 <img> 태그로
-                            // 대신 렌더링해 포스터가 보이게 합니다(웹 전용,
-                            // 모바일에는 영향 없음).
-                            webHtmlElementStrategy:
-                                WebHtmlElementStrategy.fallback,
-                            errorBuilder: (context, error, stackTrace) =>
+                            errorBuilder: (context) =>
                                 _ThumbPlaceholder(icon: placeholderIcon),
                           ),
                   ),
@@ -893,14 +890,14 @@ class _FavoritedChip extends StatelessWidget {
                       width: 2.4,
                     ),
                   ),
+                  // [백엔드 수정]
+                  // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
                   child: imageUrl.isEmpty
                       ? _ThumbPlaceholder(icon: placeholderIcon)
-                      : Image.network(
+                      : AppNetworkImage(
                           imageUrl,
                           fit: BoxFit.cover,
-                          webHtmlElementStrategy:
-                              WebHtmlElementStrategy.fallback,
-                          errorBuilder: (context, error, stackTrace) =>
+                          errorBuilder: (context) =>
                               _ThumbPlaceholder(icon: placeholderIcon),
                         ),
                 ),

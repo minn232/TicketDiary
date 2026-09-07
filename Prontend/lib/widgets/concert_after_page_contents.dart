@@ -11,6 +11,7 @@ import '../services/concert_detail_service.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
 import 'responsive_text.dart';
+import 'app_network_image.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
 /// `http(s)`로 시작하지 않습니다 — 이 차이로 [Image.network]/[Image.file] 중
@@ -85,13 +86,14 @@ Widget _buildFullPhoto(String url) {
     size: 48,
     color: Colors.white54,
   );
+  // [백엔드 수정]
+  // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
   return _withPolaroidFilter(
     _isNetworkUrl(url)
-        ? Image.network(
+        ? AppNetworkImage(
             url,
             fit: BoxFit.contain,
-            webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-            errorBuilder: (context, error, stackTrace) => errorIcon,
+            errorBuilder: (context) => errorIcon,
           )
         : Image.file(
             File(url),
@@ -200,34 +202,41 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
   Future<void> _editReview() async {
     if (!_ensureEditable() || _savingReview) return;
 
+    // [백엔드 수정]
+    // 다이얼로그 닫힌 뒤 controller.dispose() 호출 추가(메모리 누수 수정).
     final controller = TextEditingController(text: _ticketInfo?.review ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('공연 소감'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 5,
-          minLines: 3,
-          maxLength: 500,
-          decoration: const InputDecoration(
-            hintText: '오늘 공연은 어떠셨나요?',
-            border: OutlineInputBorder(),
+    final String? result;
+    try {
+      result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('공연 소감'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLines: 5,
+            minLines: 3,
+            maxLength: 500,
+            decoration: const InputDecoration(
+              hintText: '오늘 공연은 어떠셨나요?',
+              border: OutlineInputBorder(),
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('저장'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('저장'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
     if (result == null) return; // 취소
 
     setState(() => _savingReview = true);
@@ -1038,15 +1047,16 @@ class _PolaroidCard extends StatelessWidget {
                 ),
               ],
             ),
+            // [백엔드 수정]
+            // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
             child: _withPolaroidFilter(
               _isNetworkUrl(url)
-                  ? Image.network(
+                  ? AppNetworkImage(
                       url,
                       fit: BoxFit.cover,
                       width: double.infinity,
                       height: double.infinity,
-                      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                      errorBuilder: (context, error, stackTrace) => const Center(child: errorIcon),
+                      errorBuilder: (context) => const Center(child: errorIcon),
                     )
                   // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
                   : Image.file(

@@ -280,8 +280,12 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     final artistNames = FavoritesStore.instance.favoriteArtists
         .map((a) => a.name)
         .toList();
+    // [백엔드 수정]
+    // syncArtistFollows()가 반환하는 최신 목록을 재사용(getArtistFollowEntries()
+    // 중복 호출 제거), 동기화 실패 시에만 아래에서 별도로 다시 조회함.
+    List<Map<String, dynamic>>? entries;
     try {
-      await _socialService.syncArtistFollows(artistNames);
+      entries = await _socialService.syncArtistFollows(artistNames);
     } catch (_) {
       // 동기화에 실패해도(네트워크 순단 등) 기존 서버 팔로우 목록 기준의
       // 피드는 조회할 수 있으므로 계속 진행합니다.
@@ -294,7 +298,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // 반환), 지금 실제로 팔로우 중인 아티스트의 소식만 화면에 남깁니다.
     List<NewsModel> filteredFeed;
     try {
-      final entries = await _socialService.getArtistFollowEntries();
+      entries ??= await _socialService.getArtistFollowEntries();
       final currentFollows = {
         for (final e in entries)
           if ((e['artist_name'] as String?)?.isNotEmpty ?? false)
