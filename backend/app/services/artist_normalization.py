@@ -724,8 +724,16 @@ async def _process_one(
 # row 목록을 순서대로 정규화 처리하며 결과를 집계 (normalize_pending_artists/normalize_specific_artists
 # 공통 루프). 실패(네트워크 오류 등)는 status를 안 바꾸고 pending으로 남겨둬서 다음 실행이 자동으로
 # 재시도하게 함 - 확정 응답을 받은 것만 상태를 바꿈.
+# commit_each_row=True(기본)면 매 행마다 바로 커밋함 - limit이 큰 실행을 통째로 한
+# 트랜잭션에 담으면 몇 시간씩 락을 쥐다가 끊겼을 때 "idle in transaction" 좀비 커넥션이
+# 무관한 쿼리까지 막아버림(2026-09-07 실서버 장애). dry_run 호출은 False로 넘겨 기존
+# 전체 롤백 동작을 유지함.
 async def _process_rows(
-    db: AsyncSession, client: httpx.AsyncClient, rows: list[ArtistNormalizationStatus]
+    db: AsyncSession,
+    client: httpx.AsyncClient,
+    rows: list[ArtistNormalizationStatus],
+    *,
+    commit_each_row: bool = True,
 ) -> dict[str, int]:
     stats = {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
     for row in rows:
@@ -736,6 +744,9 @@ async def _process_rows(
             logger.warning(f"아티스트 정규화 실패, pending 유지 (artist_text={row.artist_text!r}): {e}")
             stats["error"] += 1
             continue
+        finally:
+            if commit_each_row:
+                await db.commit()
         stats["processed"] += 1
     return stats
 
@@ -770,7 +781,7 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
 
         logger.info(f"MusicBrainz 정규화 대상 {len(rows)}건")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            stats = await _process_rows(db, client, rows)
+            stats = await _process_rows(db, client, rows, commit_each_row=not dry_run)
 
         for concert_id in {row.concert_id for row in rows}:
             await _collapse_members_to_group_names(db, concert_id)
