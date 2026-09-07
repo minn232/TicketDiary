@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/screen/news_screen.dart';
@@ -87,6 +88,16 @@ class TicketDiaryApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Ticket Diary',
       theme: ThemeData(fontFamily: 'Roboto'),
+      // 날짜 선택기(showDatePicker) 등 Material 위젯의 기본 문구("OK"/"CANCEL"
+      // 등)와 달력 요일/월 이름이 앱의 나머지 UI(전부 한국어)와 다르게 영어로
+      // 뜨던 것을 고쳐, 항상 한국어로 표시되도록 고정합니다.
+      locale: const Locale('ko', 'KR'),
+      supportedLocales: const [Locale('ko', 'KR')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       initialRoute: DiaryRoutes.splash,
       // Navigator가 그리는 화면(child) 위에, 화면 전환과 무관하게 항상
       // 같은 자리에 있는 보이지 않는 탭 히트 캐처를 겹쳐 그립니다

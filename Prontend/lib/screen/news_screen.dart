@@ -57,8 +57,29 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
   final SocialService _socialService = SocialService();
 
-  /// 카드 확장 애니메이션의 시작 Rect를 구하기 위한, 카드 인덱스별 key.
-  final List<GlobalKey> _cardKeys = [];
+  /// 카드 확장 애니메이션의 시작 Rect를 구하기 위한, 카드 항목별 key.
+  /// 다이어리의 [TicketData.overlayKey]처럼 인덱스가 아니라 카드
+  /// 인스턴스([NewsModel])에 귀속시켜, 목록이 재정렬/새로고침돼도 엉뚱한
+  /// 카드의 키를 재사용하지 않도록 합니다.
+  final Map<NewsModel, GlobalKey> _cardKeysByItem = {};
+
+  GlobalKey _cardKeyFor(NewsModel item) =>
+      _cardKeysByItem.putIfAbsent(item, () => GlobalKey());
+
+  /// 오버레이가 떠 있는 동안 "숨김" 대상으로 지정된 카드의 key. 다이어리
+  /// 티켓 오버레이의 `_overlayHiddenRegionKey`/`_hideWhileOverlayOpen`과
+  /// 완전히 같은 방식으로, 오버레이가 열려 있는 동안 그리드의 실제 카드를
+  /// 투명하게 감춰서(오버레이의 축소 상태 복사본과 겹쳐 보이지 않게) 실제
+  /// 티켓을 눌렀을 때와 같은 느낌을 냅니다.
+  Key? _overlayHiddenRegionKey;
+
+  Widget _hideWhileOverlayOpen({required Key regionKey, required Widget child}) {
+    final hidden = _overlayHiddenRegionKey == regionKey;
+    return IgnorePointer(
+      ignoring: hidden,
+      child: Opacity(opacity: hidden ? 0.0 : 1.0, child: child),
+    );
+  }
 
   // ─── 풀탭 전환 상태 ───────────────────────────────────────────────
   /// 풀탭 위치이자 체커보드 진행도의 원천. 0.0=소식/왼쪽, 1.0=찜/오른쪽.
@@ -328,14 +349,19 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     return combined;
   }
 
-  GlobalKey _cardKeyFor(int index) {
-    while (_cardKeys.length <= index) {
-      _cardKeys.add(GlobalKey());
-    }
-    return _cardKeys[index];
-  }
-
-  void _openNewsDetail(NewsModel item, GlobalKey cardKey, double angle) {
+  /// 카드를 누르는 시점부터 오버레이가 완전히 닫히는 시점까지의 흐름을
+  /// 다이어리 티켓 오버레이([_DiaryScreenState]의 "공연 전"/"공연 후" 티켓
+  /// 탭 처리)와 동일한 4단계로 맞춥니다:
+  /// 1) 카드의 현재 화면상 Rect를 구하고,
+  /// 2) 그 카드를 "숨김" 대상으로 지정(실제 카드가 즉시 투명해짐),
+  /// 3) 오버레이를 띄우고 닫힐 때까지 기다렸다가,
+  /// 4) 숨김을 해제해 실제 카드를 다시 보여줍니다(이미 오버레이는 사라진
+  ///    뒤라 겹쳐 보이지 않습니다).
+  Future<void> _openNewsDetail(
+    NewsModel item,
+    GlobalKey cardKey,
+    double angle,
+  ) async {
     final ctx = cardKey.currentContext;
     if (ctx == null) return;
     final box = ctx.findRenderObject() as RenderBox?;
@@ -351,12 +377,16 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       unawaited(_socialService.markFeedRead(feedId).catchError((_) {}));
     }
 
-    NewsDetailOverlay.show(
+    setState(() => _overlayHiddenRegionKey = cardKey);
+    await NewsDetailOverlay.show(
       context,
       startRect: startRect,
       collapsedCard: _PolaroidCard(data: item, angle: angle),
       news: item,
+      frameScale:
+          DiaryFrameScale.maybeOf(context) ?? diaryScaleFromMediaQuery(context),
     );
+    if (mounted) setState(() => _overlayHiddenRegionKey = null);
   }
 
   @override
@@ -569,15 +599,18 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
           2 => 0.012,
           _ => -0.015,
         };
-        final cardKey = _cardKeyFor(index);
+        final cardKey = _cardKeyFor(item);
 
         return PressableScale(
-          onTap: () => _openNewsDetail(item, cardKey, angle),
+          onTap: () => unawaited(_openNewsDetail(item, cardKey, angle)),
           pressScale: 0.97,
           tapScale: 1.02,
-          child: KeyedSubtree(
-            key: cardKey,
-            child: _PolaroidCard(data: item, angle: angle),
+          child: _hideWhileOverlayOpen(
+            regionKey: cardKey,
+            child: KeyedSubtree(
+              key: cardKey,
+              child: _PolaroidCard(data: item, angle: angle),
+            ),
           ),
         );
       },

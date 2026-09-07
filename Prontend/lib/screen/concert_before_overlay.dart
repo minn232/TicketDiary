@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../models/ticket_info.dart';
 import '../widgets/concert_before_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
-import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
 
 /// 다이어리 화면 위에 "공연 전" 상세를 오버레이로 띄우는 위젯.
@@ -13,13 +12,11 @@ import '../widgets/responsive_text.dart';
 /// 요구사항 요약
 /// - 다이어리 화면 위에 그대로 그려짐(새 페이지로 완전히 전환 X)
 /// - 공연 전 티켓을 누르면, 티켓(시작 Rect)이 전체 화면으로 자연스럽게 확장
-/// - 배경은 공연 포스터 느낌(placeholder)
-/// - 그 위에 "메인 페이지"(흰 종이) + 포스트잇들이 서서히(Fade) 나타남
-/// - 닫기: 포스트잇이 있는 메인 페이지 "바깥"(어두운/불투명 영역)을 눌렀을 때만 닫힘
-///
-/// NOTE
-/// - 포스터 이미지는 [PosterBackground] 위젯이 담당하며, [TicketInfo.posterImageUrl]이
-///   없으면 샘플 그라데이션을 보여줍니다.
+/// - 확장 후에는 화면을 꽉 채우는 신문지색 카드 한 장 위에 신문 1면
+///   ([ConcertBeforePageContents])이 서서히(Fade) 나타남 — 공연 후 페이지와
+///   동일한 "단일 카드" 틀입니다(예전의 반투명 포스터 배경/떠 있는 작은 흰
+///   카드는 제거).
+/// - 닫기: 카드 바깥(어두운 여백) 또는 카드 안 빈 자리를 눌렀을 때만 닫힘
 class ConcertBeforeOverlay extends StatefulWidget {
   /// 애니메이션 시작 위치/크기 (다이어리에서 눌린 티켓의 전역 Rect)
   final Rect startRect;
@@ -41,6 +38,9 @@ class ConcertBeforeOverlay extends StatefulWidget {
   // 탭 시점의 배율을 그대로 넘겨받아 오버레이 안에서도 동일하게 사용.
   final double frameScale;
 
+  /// 이 티켓이 몇 번째로 등록됐는지(신문 "제 N 호"). 다이어리에서 계산해 넘김.
+  final int issueNumber;
+
   const ConcertBeforeOverlay({
     super.key,
     required this.startRect,
@@ -48,6 +48,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
     required this.concertTitle,
     required this.frameScale,
     this.ticketInfo,
+    this.issueNumber = 1,
   });
 
   /// 다이어리 위에 오버레이를 띄우는 헬퍼.
@@ -58,6 +59,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
     required String concertTitle,
     required double frameScale,
     TicketInfo? ticketInfo,
+    int issueNumber = 1,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -72,6 +74,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
           concertTitle: concertTitle,
           frameScale: frameScale,
           ticketInfo: ticketInfo,
+          issueNumber: issueNumber,
         );
       },
     );
@@ -284,6 +287,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
               postItOpacity: _postItOpacity,
               concertTitle: widget.concertTitle,
               ticketInfo: widget.ticketInfo,
+              issueNumber: widget.issueNumber,
               onOutsideTap: _handleOutsideTap,
             ),
           ),
@@ -375,101 +379,95 @@ class _ExpandedConcertBefore extends StatelessWidget {
   final Animation<double> postItOpacity;
   final String concertTitle;
   final TicketInfo? ticketInfo;
+  final int issueNumber;
   final VoidCallback onOutsideTap;
 
   const _ExpandedConcertBefore({
     required this.postItOpacity,
     required this.concertTitle,
     required this.onOutsideTap,
+    required this.issueNumber,
     this.ticketInfo,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        // 포스터: 가로/세로 여백을 동일하게 두고 안쪽에만 채웁니다(예전엔
-        // Positioned.fill로 여백 없이 꽉 차서 너무 커 보였습니다). 포스터를
-        // 뿌옇게 밝히던 흰색 반투명 레이어("불투명한 페이지")는 제거해서,
-        // 화면 전체는 포스터 배경 + 공연 전 페이지(흰 카드) 이렇게 2개
-        // 레이어만 존재합니다.
-        //
-        // 흰 카드 안에서 포스트잇(스와이프 카드)이 아닌 자리(제목/D-day/
-        // 안내 문구, 카드 주변 여백)를 누르면 흰 카드 쪽에서 아무도 그
-        // 탭을 받지 않아(콘텐츠는 IgnorePointer, Container 장식은 아래
-        // ClipRRect 밖에 분리해둠) 이 자리까지 그대로 전달됩니다 — 그래서
-        // 포스터를 눌러도 오버레이가 닫힙니다.
-        Positioned.fill(
-          child: Padding(
-            padding: const EdgeInsets.all(26), // 24 * 1.1
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onOutsideTap,
-                child: PosterBackground(imageUrl: ticketInfo?.posterImageUrl),
-              ),
-            ),
-          ),
-        ),
+    // 공연 후 페이지([_ExpandedConcertAfter])와 동일한 "단일 카드" 틀:
+    // 화면을 꽉 채우는 신문지색 카드 한 장 위에 신문 1면을 얹습니다.
+    // 예전의 전체화면 반투명 포스터 배경 + 떠 있는 작은 흰 카드 구조는
+    // 제거했습니다.
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 562),
+            child: Stack(
+              children: [
+                // 카드 배경(신문지색/테두리/그림자)만 그리는 장식용 레이어.
+                // IgnorePointer로 히트테스트에서 완전히 제외해야, 이 색만
+                // 있는 자리(콘텐츠가 비어 있는 곳)를 눌렀을 때 탭이 이
+                // 레이어에 막히지 않고 아래 "바깥 탭으로 닫기" 감지기까지
+                // 그대로 전달됩니다. 그림자가 모서리 클립에 잘리지 않도록
+                // 클립 레이어 바깥(이 자리)에 둡니다.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        // 신문지(newsprint) 느낌 — 약간 회색끼 도는 미색.
+                        color: const Color(0xFFE9E6DC),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.black.withValues(alpha: 0.10),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.22),
+                            blurRadius: 18,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
 
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20), // 18 * 1.1
-            child: Center(
-              child: FractionallySizedBox(
-                // 내부 메인 페이지(흰 종이)는 원래 배경(포스터 영역)보다
-                // 20% 작았는데(0.8), 세로만 20% 더 키워서(0.8*1.2=0.96)
-                // 배경 세로 길이에 거의 맞닿도록 늘렸습니다. 가로는 그대로.
-                widthFactor: 0.8,
-                heightFactor: 0.96,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 562),
+                // 콘텐츠는 카드와 같은 둥근 모서리 밖으로 삐져나오지 않도록
+                // 별도로 clip합니다.
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  clipBehavior: Clip.antiAlias,
                   child: Stack(
                     children: [
-                      // 카드 배경(색/테두리/그림자)만 그리는 장식용
-                      // 레이어. IgnorePointer로 히트테스트에서 제외해야,
-                      // 콘텐츠가 비어 있는 자리를 눌렀을 때 탭이 이
-                      // 레이어에 막히지 않고 뒤(포스터)까지 전달됩니다.
+                      // 빈 곳 탭 = 닫기 감지기(투명). 신문 지면의 인터랙티브
+                      // 요소는 이 Stack에서 나중에(=위에) 그려져 먼저 히트되므로
+                      // 경합하지 않고, 지면이 아닌 빈 자리를 눌렀을 때만 이
+                      // 감지기가 받아 오버레이를 닫습니다.
                       Positioned.fill(
-                        child: IgnorePointer(
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.92),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: Colors.black.withValues(alpha: 0.10),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.18),
-                                  blurRadius: 18,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                          ),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onOutsideTap,
+                          child: const SizedBox.expand(),
                         ),
                       ),
                       Padding(
-                        // 19 * 1.2 * 1.1 ≈ 25. 카드가 커진 만큼 안쪽
-                        // 여백도 키웠습니다.
-                        padding: const EdgeInsets.fromLTRB(25, 25, 25, 25),
+                        padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
                         child: ConcertBeforePageContents(
                           concertTitle: concertTitle,
                           ticketInfo: ticketInfo,
                           postItOpacity: postItOpacity,
+                          issueNumber: issueNumber,
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }

@@ -10,8 +10,11 @@ import '../models/news_model.dart';
 import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
 
-/// 소식 폴라로이드 카드를 누르면, "공연 전" 티켓과 동일한 방식으로 카드가
-/// 화면 전체로 확장되며 소식 상세(포스터 + 정보 카드)를 보여주는 오버레이.
+/// 소식 폴라로이드 카드를 누르면, 다이어리 탭의 "공연 전"/"공연 후" 티켓
+/// 오버레이([ConcertBeforeOverlay]/[ConcertAfterOverlay])와 완전히 같은
+/// 방식(시작 Rect -> 화면 전체로 확장하는 커스텀 [AnimationController] +
+/// [Rect.lerp], 콘텐츠는 한 번만 빌드해 [FittedBox]로 스케일)으로 카드가
+/// 확장되며 소식 상세(포스터 + 정보 카드)를 보여주는 오버레이.
 class NewsDetailOverlay extends StatefulWidget {
   /// 애니메이션 시작 위치/크기(눌린 카드의 전역 Rect)
   final Rect startRect;
@@ -21,11 +24,20 @@ class NewsDetailOverlay extends StatefulWidget {
 
   final NewsModel news;
 
+  /// 탭한 순간 소식 그리드에서 쓰이던 [DiaryFrameScale] 배율.
+  //
+  // showGeneralDialog는 DiaryPageFrame 바깥의 새 라우트라 안에서
+  // DiaryFrameScale을 못 찾고 화면 전체 폭 기준으로 폴백함(다이어리
+  // 티켓 오버레이와 동일한 문제) - 탭 시점의 배율을 그대로 넘겨받아
+  // 오버레이 안에서도 그리드 카드와 같은 배율을 씁니다.
+  final double frameScale;
+
   const NewsDetailOverlay({
     super.key,
     required this.startRect,
     required this.collapsedCard,
     required this.news,
+    required this.frameScale,
   });
 
   /// 다이어리/소식 화면 위에 오버레이를 띄우는 헬퍼.
@@ -34,6 +46,7 @@ class NewsDetailOverlay extends StatefulWidget {
     required Rect startRect,
     required Widget collapsedCard,
     required NewsModel news,
+    required double frameScale,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -45,6 +58,7 @@ class NewsDetailOverlay extends StatefulWidget {
           startRect: startRect,
           collapsedCard: collapsedCard,
           news: news,
+          frameScale: frameScale,
         );
       },
     );
@@ -61,6 +75,12 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
 
   /// 상세 콘텐츠(포스터 위 흰 카드) 페이드 인
   late final Animation<double> _contentOpacity;
+
+  // 축소 카드 <-> 확장 콘텐츠 크로스페이드. 다이어리 티켓 오버레이와 같이
+  // 미리 만든 Animation<double>로 중간 지점 근처 짧은 구간에서만 바뀌게 해,
+  // 매 프레임 겹침 정도를 새로 계산하지 않고 스위치되듯 보이게 합니다.
+  late final Animation<double> _expandedOpacity;
+  late final Animation<double> _collapsedOpacity;
 
   /// 흰 카드 영역 "바깥"을 눌렀을 때만 닫히도록 판정하기 위한 key
   final GlobalKey _pageKey = GlobalKey();
@@ -132,6 +152,13 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
       parent: _controller,
       curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic),
     );
+    _expandedOpacity = CurvedAnimation(
+      parent: _t,
+      curve: const Interval(0.46, 0.54, curve: Curves.easeInOut),
+    );
+    _collapsedOpacity = _expandedOpacity.drive(
+      Tween<double>(begin: 1.0, end: 0.0),
+    );
     _controller.forward();
   }
 
@@ -142,14 +169,27 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     super.dispose();
   }
 
-  Rect _getRectForT(Size screen, double t) {
-    final end = Rect.fromCenter(
-      center: screen.center(Offset.zero),
-      width: screen.width * 0.90,
-      height: screen.height * 0.90,
+  // [백엔드 수정]
+  // t와 무관한 최종(다 커졌을 때) Rect만 따로 뽑음 - 다이어리 티켓
+  // 오버레이와 같이, 확장 콘텐츠를 이 고정 크기로 한 번만 레이아웃하고
+  // FittedBox로 지금 박스 크기에 맞춰 통째로 확대/축소합니다(애니메이션
+  // 중 매 프레임 재레이아웃하지 않음). SafeArea(상태바/홈 인디케이터)도
+  // 피해서 배치합니다.
+  Rect _endRect(Size screen, EdgeInsets safePadding) {
+    final safeWidth = screen.width - safePadding.left - safePadding.right;
+    final safeHeight = screen.height - safePadding.top - safePadding.bottom;
+    final safeCenter = Offset(
+      safePadding.left + safeWidth / 2,
+      safePadding.top + safeHeight / 2,
     );
-    return Rect.lerp(widget.startRect, end, t)!;
+    return Rect.fromCenter(
+      center: safeCenter,
+      width: safeWidth * 0.90,
+      height: safeHeight * 0.90,
+    );
   }
+
+  Rect _getRectForT(Rect end, double t) => Rect.lerp(widget.startRect, end, t)!;
 
   double _getRadiusForT(double t) => lerpDouble(4, 18, t)!;
 
@@ -200,90 +240,118 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
-    final screenSize = media.size;
+    final end = _endRect(media.size, media.padding);
 
+    // [백엔드 수정]
+    // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김(다이어리 티켓
+    // 오버레이와 동일) - 애니메이션 중엔 위치/크기만 갱신되고 콘텐츠
+    // 서브트리는 매 프레임 재빌드되지 않습니다.
+    final collapsedLayer = Positioned.fill(
+      child: IgnorePointer(
+        child: FadeTransition(
+          opacity: _collapsedOpacity,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: widget.startRect.width,
+              height: widget.startRect.height,
+              child: widget.collapsedCard,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final expandedLayer = Positioned.fill(
+      child: FadeTransition(
+        opacity: _expandedOpacity,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          child: SizedBox(
+            width: end.width,
+            height: end.height,
+            child: _ExpandedNewsDetail(
+              pageKey: _pageKey,
+              contentOpacity: _contentOpacity,
+              news: widget.news,
+              onOutsideTap: _handleOutsideTap,
+              onPosterTap: _openPoster,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // [백엔드 수정]
+    // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
+    // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
+    // context.sp()가 그리드에서 보이던 것과 같은 배율 사용.
     return Listener(
       onPointerDown: _onPinchPointerDown,
       onPointerMove: _onPinchPointerMove,
       onPointerUp: _onPinchPointerEnd,
       onPointerCancel: _onPinchPointerEnd,
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (didPop, result) {
-          if (didPop) return;
-          if (_posterExpanded) {
-            _collapsePoster();
-            return;
-          }
-          _close();
-        },
-        child: Material(
-          type: MaterialType.transparency,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              final t = _t.value;
-              final rect = _getRectForT(screenSize, t);
-              final radius = _getRadiusForT(t);
-              final dimOpacity = lerpDouble(0.0, 0.40, t)!;
-              final expandedOpacity = Curves.easeIn.transform(
-                ((t - 0.20) / 0.80).clamp(0.0, 1.0),
-              );
-              final collapsedOpacity = 1.0 - expandedOpacity;
+      child: DiaryFrameScale(
+        scale: widget.frameScale,
+        marginEachSide: 0,
+        child: PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) {
+            if (didPop) return;
+            if (_posterExpanded) {
+              _collapsePoster();
+              return;
+            }
+            _close();
+          },
+          child: Material(
+            type: MaterialType.transparency,
+            child: Stack(
+              children: [
+                AnimatedBuilder(
+                  animation: _controller,
+                  child: Stack(children: [collapsedLayer, expandedLayer]),
+                  builder: (context, child) {
+                    final t = _t.value;
+                    final rect = _getRectForT(end, t);
+                    final radius = _getRadiusForT(t);
+                    final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
-              return Stack(
-                children: [
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Container(
-                        color: Colors.black.withValues(alpha: dimOpacity),
-                      ),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTapDown: _onBackgroundTap,
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  Positioned.fromRect(
-                    rect: rect,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(radius),
-                      clipBehavior: Clip.antiAlias,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: Opacity(
-                                opacity: collapsedOpacity,
-                                child: widget.collapsedCard,
-                              ),
+                    return Stack(
+                      children: [
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: Container(
+                              color: Colors.black.withValues(alpha: dimOpacity),
                             ),
                           ),
-                          Positioned.fill(
-                            child: Opacity(
-                              opacity: expandedOpacity,
-                              child: _ExpandedNewsDetail(
-                                pageKey: _pageKey,
-                                contentOpacity: _contentOpacity,
-                                news: widget.news,
-                                onOutsideTap: _handleOutsideTap,
-                                onPosterTap: _openPoster,
-                              ),
-                            ),
+                        ),
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.translucent,
+                            onTapDown: _onBackgroundTap,
+                            child: const SizedBox.expand(),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
-                  // rect가 아니라 최상위라 상태바 영역까지 꽉 참).
-                  if (_posterExpanded) _buildFullscreenPoster(),
-                ],
-              );
-            },
+                        ),
+                        Positioned.fromRect(
+                          rect: rect,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(radius),
+                            clipBehavior: Clip.antiAlias,
+                            child: child,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
+                // rect가 아니라 최상위라 상태바 영역까지 꽉 참). 애니메이션
+                // 컨트롤러와 무관하게 항상 최상단에 있어야 하므로
+                // AnimatedBuilder 바깥(형제)에 둡니다.
+                if (_posterExpanded) _buildFullscreenPoster(),
+              ],
+            ),
           ),
         ),
       ),

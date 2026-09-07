@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -11,131 +12,13 @@ import '../services/concert_detail_service.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
 import 'responsive_text.dart';
+import 'scrapbook_page_background.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
 /// `http(s)`로 시작하지 않습니다 — 이 차이로 [Image.network]/[Image.file] 중
 /// 무엇을 쓸지 결정합니다.
 bool _isNetworkUrl(String value) =>
     value.startsWith('http://') || value.startsWith('https://');
-
-/// 폴라로이드 카드 안쪽 흰 여백(실제 폴라로이드처럼 아래쪽이 더 두꺼움).
-/// 사진을 등록하기 전 잘라낼 목표 비율을 계산할 때도 동일한 값을 뺍니다
-/// ([_PhotoBoard]의 추가 탭 핸들러 참고) — 그래야 사용자가 잘라온 사진이
-/// [_PolaroidCard]의 사진 자리에 여백 없이 꽉 맞습니다.
-EdgeInsets _polaroidPadding(BuildContext context) => EdgeInsets.fromLTRB(
-      context.rs(10),
-      context.rs(10),
-      context.rs(10),
-      context.rs(28),
-    );
-
-/// 폴라로이드 필름 특유의 색감(살짝 빛바랜 대비 + 노란빛이 도는 따뜻한
-/// 색조 + 옅어진 채도)을 흉내 내는 색상 행렬. [_PolaroidCard]와 확대
-/// 보기([_buildFullPhoto]) 양쪽에 동일하게 적용해, 확대해도 "같은 사진"
-/// 처럼 보이게 합니다.
-const List<double> _polaroidFilterMatrix = <double>[
-  0.79, 0.12, 0.01, 0, 18,
-  0.04, 0.87, 0.01, 0, 8,
-  0.04, 0.12, 0.77, 0, -6,
-  0, 0, 0, 1, 0,
-];
-
-/// 사진 위젯에 [_polaroidFilterMatrix]로 색감을 입힌 뒤, 그 위에 중앙은
-/// 살짝 밝고 테두리는 살짝 어두워지는 비네팅을 겹칩니다. 비네팅은 색보정이
-/// 끝난 결과 위에 얹어야 하므로 [ColorFiltered]의 자식이 아니라 형제로 둡니다.
-/// 실제 렌더 크기는 image 쪽(사진 원본 비율)이 정하고, [Stack]이 그 크기
-/// 그대로 감싸므로 [_PolaroidVignette]는 항상 사진 전체를 정확히 덮습니다.
-Widget _withPolaroidFilter(Widget image) => Stack(
-      children: [
-        ColorFiltered(
-          colorFilter: const ColorFilter.matrix(_polaroidFilterMatrix),
-          child: image,
-        ),
-        const Positioned.fill(child: IgnorePointer(child: _PolaroidVignette())),
-      ],
-    );
-
-/// 사진 가장자리를 살짝 어둡게, 중앙을 살짝 밝게 해 조리개 비네팅 느낌을
-/// 더하는 오버레이. 상대 좌표(0~1) 그라데이션이라 사진 크기와 무관하게
-/// 항상 같은 비율로 밝기 차이가 생깁니다.
-class _PolaroidVignette extends StatelessWidget {
-  const _PolaroidVignette();
-
-  @override
-  Widget build(BuildContext context) {
-    return const DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: RadialGradient(
-          radius: 0.85,
-          colors: [
-            Color(0x26FFFFFF), // 중앙: 흰색을 살짝 섞어 밝게
-            Colors.transparent,
-            Color(0x4D000000), // 테두리: 검정을 살짝 섞어 어둡게
-          ],
-          stops: [0.0, 0.55, 1.0],
-        ),
-      ),
-    );
-  }
-}
-
-Widget _buildFullPhoto(String url) {
-  const errorIcon = Icon(
-    Icons.broken_image_outlined,
-    size: 48,
-    color: Colors.white54,
-  );
-  return _withPolaroidFilter(
-    _isNetworkUrl(url)
-        ? Image.network(
-            url,
-            fit: BoxFit.contain,
-            webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-            errorBuilder: (context, error, stackTrace) => errorIcon,
-          )
-        : Image.file(
-            File(url),
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) => errorIcon,
-          ),
-  );
-}
-
-/// 폴라로이드 썸네일을 눌렀을 때, 원본 사진을 화면 전체에 크게 보여줍니다.
-/// 바깥(사진 바깥 여백)을 누르면 닫힙니다.
-void _openFullPhoto(BuildContext context, String url) {
-  showGeneralDialog(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: '사진 확대 닫기',
-    barrierColor: Colors.black.withValues(alpha: 0.85),
-    transitionDuration: const Duration(milliseconds: 220),
-    pageBuilder: (context, animation, secondaryAnimation) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => Navigator.of(context).pop(),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Center(
-              child: GestureDetector(
-                // 사진 자체를 눌렀을 때는 닫히지 않도록 이벤트를 흡수합니다.
-                onTap: () {},
-                child: _buildFullPhoto(url),
-              ),
-            ),
-          ),
-        ),
-      );
-    },
-    transitionBuilder: (context, animation, secondaryAnimation, child) {
-      return FadeTransition(
-        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
-        child: child,
-      );
-    },
-  );
-}
 
 /// "공연 후" 페이지 콘텐츠.
 ///
@@ -180,7 +63,6 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
   final ImagePicker _imagePicker = ImagePicker();
 
   late TicketInfo? _ticketInfo = widget.ticketInfo;
-  bool _savingReview = false;
   bool _uploadingPhoto = false;
 
   String? get _ticketId => _ticketInfo?.ticketId;
@@ -197,56 +79,25 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     return false;
   }
 
-  Future<void> _editReview() async {
-    if (!_ensureEditable() || _savingReview) return;
-
-    final controller = TextEditingController(text: _ticketInfo?.review ?? '');
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('공연 소감'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 5,
-          minLines: 3,
-          maxLength: 500,
-          decoration: const InputDecoration(
-            hintText: '오늘 공연은 어떠셨나요?',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('저장'),
-          ),
-        ],
-      ),
-    );
-    if (result == null) return; // 취소
-
-    setState(() => _savingReview = true);
+  /// 인라인 텍스트 상자에서 편집이 끝나면(포커스 해제/닫힘) 호출됩니다.
+  /// 별도 다이얼로그 없이 바로 저장합니다(변경이 없으면 아무 것도 안 함).
+  Future<void> _saveReviewInline(String text) async {
+    final trimmed = text.trim();
+    if (trimmed == (_ticketInfo?.review ?? '')) return; // 변경 없음
+    if (_ticketId == null) {
+      // 서버 미등록(로컬 예시) 티켓 — 저장은 못 하지만 화면 상태는 유지.
+      return;
+    }
     try {
-      final updated = await _ticketService.updateTicket(_ticketId!, review: result);
+      final updated =
+          await _ticketService.updateTicket(_ticketId!, review: trimmed);
       if (!mounted) return;
       setState(() {
-        _ticketInfo = _ticketInfo?.copyWith(review: updated.review ?? '');
+        _ticketInfo = _ticketInfo?.copyWith(review: updated.review ?? trimmed);
       });
       if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
-      _showSnack('소감을 저장했어요.');
-    } on TicketNotFoundException {
-      _showSnack('티켓을 찾을 수 없어요.');
-    } on ApiException catch (e) {
-      _showSnack('저장에 실패했어요: ${e.message}');
     } catch (_) {
-      _showSnack('저장 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
-    } finally {
-      if (mounted) setState(() => _savingReview = false);
+      // 인라인 저장 실패는 조용히 무시(다음 편집/재시도 때 다시 저장 시도).
     }
   }
 
@@ -368,801 +219,29 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
   Widget build(BuildContext context) {
     final photoUrls = _ticketInfo?.concertPhotoUrls ?? const <String>[];
 
-    final grid = Column(
-      children: [
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(
-                // 사진이 등록되면, 점선 안내 칸(_DashedPhotoCard) 대신 같은
-                // 자리를 실제 폴라로이드 사진(_PolaroidCard)이 통째로 대신한다.
-                child: photoUrls.isNotEmpty
-                    ? _PolaroidCard(
-                        url: photoUrls.first,
-                        onLongPress: _uploadingPhoto
-                            ? null
-                            : () => _confirmDeletePhoto(photoUrls.first),
-                      )
-                    : _DashedPhotoCard(
-                        icon: Icons.photo_camera_outlined,
-                        label: '사진',
-                        child: _PhotoBoard(
-                          uploading: _uploadingPhoto,
-                          onAddTap: _uploadingPhoto ? null : _addPhoto,
-                        ),
-                      ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: _MemoryCard(
-                  icon: Icons.edit_note,
-                  label: '공연 소감',
-                  color: const Color(0xFFFFD6E8),
-                  onTap: _savingReview ? null : _editReview,
-                  child: _savingReview
-                      ? const Center(
-                          child: SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2.5),
-                          ),
-                        )
-                      : _ReviewContent(review: _ticketInfo?.review),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 14),
-        Expanded(
-          child: Row(
-            children: [
-              Expanded(
-                child: _MemoryCard(
-                  icon: Icons.workspace_premium_outlined,
-                  label: '업적 도장',
-                  color: const Color(0xFFCFF5E7),
-                  child: const _StampsPlaceholder(),
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: _MemoryCard(
-                  icon: Icons.queue_music,
-                  label: '실제 셋리스트',
-                  color: const Color(0xFFD9E8FF),
-                  // [백엔드 수정]
-                  // concertId → ticketId 기준 조회로 바뀜.
-                  child: _RealSetlistContent(ticketId: _ticketId),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+    // 첨부한 스크랩북처럼, 크래프트 종이 위에 메모지(포스터/공연정보/폴라로이드
+    // 사진/실제 셋리스트/공연 후기/타임테이블)를 겹쳐 붙이고, 편집모드에서
+    // 드래그 이동·두 손가락 확대축소·회전·후기 타이핑을 할 수 있는 캔버스입니다.
+    final canvas = _ScrapbookCanvas(
+      layoutKey: _ticketId ?? 'local_after_${identityHashCode(this)}',
+      concertTitle: widget.concertTitle,
+      ticketInfo: _ticketInfo,
+      reviewText: _ticketInfo?.review,
+      onReviewChanged: _saveReviewInline,
+      photoUrl: photoUrls.isNotEmpty ? photoUrls.first : null,
+      uploadingPhoto: _uploadingPhoto,
+      onAddPhoto: _uploadingPhoto ? null : _addPhoto,
+      onDeletePhoto: _uploadingPhoto ? null : _confirmDeletePhoto,
+      setlistTicketId: _ticketId,
+      concertId: _ticketInfo?.concertId,
     );
 
-    // 공연 포스터는 이 위젯(패딩 안쪽) 대신, 호출부가 페이지 컨테이너 자체의
-    // 배경으로 겹쳐줍니다(페이지의 둥근 모서리 모양 그대로 꽉 채우기 위해).
-    // 여기서는 카드(_MemoryCard)들만 완전 불투명이 아니라 살짝 비치게 해서,
-    // 뒤에 깔린 포스터가 카드 영역에서도 고르게 드러나 보이게 합니다.
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 헤더는 순전히 표시용이라 히트테스트에서 제외합니다(IgnorePointer) —
-        // 그래야 이 자리를 눌렀을 때 뒤에 겹친 포스터의 "바깥 탭으로 닫기"
-        // 감지기까지 탭이 그대로 통과합니다.
-        IgnorePointer(
-          child: _DiaryHeader(
-            title: widget.concertTitle,
-            date: _ticketInfo?.date,
-          ),
-        ),
-        const SizedBox(height: 16),
-        // 4개 기능(사진/공연 소감/업적 도장/실제 셋리스트)을 스크롤도
-        // 스와이프도 없이 한 화면에 2x2로 모두 보여줍니다.
-        Expanded(
-          child: widget.postItOpacity == null
-              ? grid
-              : FadeTransition(opacity: widget.postItOpacity!, child: grid),
-        ),
-        if (widget.showCloseHint) ...[
-          const SizedBox(height: 10),
-          Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
-          const SizedBox(height: 10),
-          IgnorePointer(
-            child: Text(
-              '닫기: 페이지 바깥을 눌러주세요.',
-              style: TextStyle(
-                fontSize: context.sp(12),
-                color: Colors.black.withValues(alpha: 0.45),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
+    return widget.postItOpacity == null
+        ? canvas
+        : FadeTransition(opacity: widget.postItOpacity!, child: canvas);
   }
 }
 
-/// 포스트잇 색을 입힌 카드 한 장. [onTap]을 주면 카드 전체를 눌러 편집할
-/// 수 있습니다(예: 공연 소감).
-class _MemoryCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final Widget child;
-  final VoidCallback? onTap;
-
-  const _MemoryCard({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.child,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        // 완전 불투명 — 뒤에 겹친 포스터가 카드 영역까지 옅게 비쳐 보이면
-        // 포스트잇이 지저분해 보인다는 피드백으로, 포스트잇 부분은 포스터와
-        // 무관하게 온전한 색으로만 보이도록 바꿨습니다.
-        color: color,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.14),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(icon, size: 15, color: Colors.black.withValues(alpha: 0.65)),
-                    const SizedBox(width: 5),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: context.sp(13),
-                          fontWeight: FontWeight.w900,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Expanded(child: child),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// "사진" 칸 전용 카드. 다른 3장(공연 소감/업적 도장/실제 셋리스트)과 달리
-/// 포스트잇 색 배경을 쓰지 않고, 다이어리 페이지 위에 직접 사진을 붙여둔
-/// 자리처럼 경계를 점선으로만 표시합니다. 경계 위쪽엔 찢어진 마스킹테이프
-/// 조각([_TornTapePiece])을 겹쳐서 "종이를 여기 붙여뒀다"는 느낌을 냅니다.
-/// (디자인 초안 — 사용자 확인 후 조정 예정)
-class _DashedPhotoCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Widget child;
-
-  const _DashedPhotoCard({
-    required this.icon,
-    required this.label,
-    required this.child,
-  });
-
-  static const double _radius = 14;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        CustomPaint(
-          painter: const _DashedBorderPainter(
-            color: Color(0x59000000), // Colors.black.withValues(alpha: 0.35)
-            radius: _radius,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(icon, size: 15, color: Colors.black.withValues(alpha: 0.65)),
-                    const SizedBox(width: 5),
-                    Flexible(
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: context.sp(13),
-                          fontWeight: FontWeight.w900,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Expanded(child: child),
-              ],
-            ),
-          ),
-        ),
-
-        // 위쪽 경계선에 걸쳐 붙인 찢어진 테이프 조각.
-        const Positioned(
-          top: -9,
-          left: 0,
-          right: 0,
-          child: Center(child: _TornTapePiece()),
-        ),
-      ],
-    );
-  }
-}
-
-/// 찢어진 마스킹테이프 한 조각. 위/아래 변은 곧고, 좌/우 짧은 변은 손으로
-/// 뜯은 것처럼 삐죽삐죽한 지그재그로 그립니다.
-class _TornTapePiece extends StatelessWidget {
-  const _TornTapePiece();
-
-  static const double _width = 50;
-  static const double _height = 18;
-  static const double _angle = -0.035;
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.rotate(
-      angle: _angle,
-      child: CustomPaint(
-        size: const Size(_width, _height),
-        painter: const _TornTapePainter(),
-      ),
-    );
-  }
-}
-
-class _TornTapePainter extends CustomPainter {
-  const _TornTapePainter();
-
-  /// 지그재그 삐죽함(짧은 변에서 안쪽으로 파고드는 최대 깊이).
-  static const double _notch = 3.2;
-
-  /// 짧은 변 하나에 들어가는 지그재그 산의 개수.
-  static const int _teeth = 4;
-
-  Path _tornPath(Size size) {
-    final path = Path()..moveTo(0, 0);
-    path.lineTo(size.width, 0); // 위쪽 변(곧음)
-
-    // 오른쪽 변: 위 -> 아래로 내려가며 안쪽/바깥쪽을 번갈아 찔러 톱니를 만듦.
-    for (var i = 1; i <= _teeth; i++) {
-      final y = size.height * i / _teeth;
-      final x = size.width - (i.isOdd ? _notch : 0.0);
-      path.lineTo(x, y);
-    }
-
-    path.lineTo(0, size.height); // 아래쪽 변(곧음)
-
-    // 왼쪽 변: 아래 -> 위로 올라가며 마찬가지로 톱니를 만듦.
-    for (var i = _teeth - 1; i >= 0; i--) {
-      final y = size.height * i / _teeth;
-      final x = i.isOdd ? _notch : 0.0;
-      path.lineTo(x, y);
-    }
-    path.close();
-    return path;
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = _tornPath(size);
-    canvas.drawPath(path, Paint()..color = Colors.white.withValues(alpha: 0.68));
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.10)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _TornTapePainter oldDelegate) => false;
-}
-
-/// 공연 후 페이지 전반에서 쓰는 포인트 색(빨간 도장 잉크 색과 통일).
-const Color _memoryAccent = Color(0xFFD64545);
-
-/// 일기장 표제 느낌의 상단 헤더: 날짜, 공연 제목, 빨간 "관람 완료" 도장.
-class _DiaryHeader extends StatelessWidget {
-  final String title;
-  final DateTime? date;
-
-  const _DiaryHeader({required this.title, this.date});
-
-  // 원래는 날짜 · 공연장을 함께 보여줬지만, 날짜만 남기기로 했습니다.
-  String? get _metaLine {
-    final d = date;
-    if (d == null) return null;
-    return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final meta = _metaLine;
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (meta != null) ...[
-                Text(
-                  meta,
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                    color: Colors.black,
-                  ),
-                ),
-                const SizedBox(height: 4),
-              ],
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: context.sp(20),
-                  fontWeight: FontWeight.w900,
-                  color: Colors.black87,
-                  height: 1.2,
-                ),
-              ),
-              const SizedBox(height: 6),
-              // 손으로 그은 밑줄 느낌
-              Container(
-                width: 132,
-                height: 3,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFD64545).withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: 10),
-        const _WatchedStamp(),
-      ],
-    );
-  }
-}
-
-/// 여권 도장처럼 비스듬히 찍힌 빨간 "관람 완료" 도장.
-class _WatchedStamp extends StatelessWidget {
-  const _WatchedStamp();
-
-  @override
-  Widget build(BuildContext context) {
-    const inkColor = _memoryAccent;
-
-    return Transform.rotate(
-      angle: -0.20,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          border: Border.all(color: inkColor.withValues(alpha: 0.75), width: 2.4),
-          borderRadius: BorderRadius.circular(8),
-          color: inkColor.withValues(alpha: 0.06),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '관람 완료',
-              style: TextStyle(
-                fontSize: context.sp(14),
-                fontWeight: FontWeight.w900,
-                letterSpacing: 2,
-                color: inkColor.withValues(alpha: 0.85),
-              ),
-            ),
-            const SizedBox(height: 1),
-            Text(
-              'TICKET DIARY',
-              style: TextStyle(
-                fontSize: context.sp(7),
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.5,
-                color: inkColor.withValues(alpha: 0.55),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// "공연 소감" 포스트잇 내용. 줄노트 위에 쓴 손글씨 느낌으로 보여주고,
-/// 아직 없으면 살짝 흐린 안내 문구를 보여줍니다.
-class _ReviewContent extends StatelessWidget {
-  final String? review;
-
-  const _ReviewContent({required this.review});
-
-  @override
-  Widget build(BuildContext context) {
-    final text = review;
-    final hasReview = text != null && text.isNotEmpty;
-
-    return CustomPaint(
-      painter: _RuledPaperPainter(),
-      child: SizedBox.expand(
-        child: hasReview
-            ? SingleChildScrollView(
-                child: Text(
-                  text,
-                  style: TextStyle(
-                    fontSize: context.sp(13),
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black87,
-                    height: 22 / 13, // 줄노트 간격(22px)에 맞춤
-                  ),
-                ),
-              )
-            : Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.mode_edit_outline_outlined,
-                      size: 22,
-                      color: Colors.black.withValues(alpha: 0.3),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '탭해서 오늘의\n감상을 적어보세요',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: context.sp(12),
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black.withValues(alpha: 0.35),
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-      ),
-    );
-  }
-}
-
-/// 줄노트처럼 옅은 가로줄을 일정 간격으로 긋는 페인터.
-class _RuledPaperPainter extends CustomPainter {
-  static const double lineGap = 22;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.10)
-      ..strokeWidth = 1;
-    for (double y = lineGap; y < size.height; y += lineGap) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _RuledPaperPainter oldDelegate) => false;
-}
-
-/// "사진" 카드가 비어있을 때의 내용 — 사진이 등록되면 이 위젯 대신
-/// [_PolaroidCard]가 같은 자리를 통째로 대신합니다(호출부인
-/// [ConcertAfterPageContentsState.build] 참고).
-/// 카드 배경/테두리는 [_DashedPhotoCard]가 이미 그려주므로 여기선 내용만 둡니다.
-class _PhotoBoard extends StatelessWidget {
-  final bool uploading;
-
-  /// 사용자가 탭한 순간, 이 칸(폴라로이드 사진 자리)의 실제 가로/세로 비율을
-  /// 계산해 넘겨줍니다 — 사진 편집(자르기) 화면의 목표 비율로 씁니다.
-  final ValueChanged<double>? onAddTap;
-
-  const _PhotoBoard({required this.uploading, required this.onAddTap});
-
-  @override
-  Widget build(BuildContext context) {
-    if (uploading) {
-      return const Center(
-        child: SizedBox(
-          width: 22,
-          height: 22,
-          child: CircularProgressIndicator(strokeWidth: 2.5),
-        ),
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final pad = _polaroidPadding(context);
-        final slotWidth =
-            (constraints.maxWidth - pad.horizontal).clamp(1.0, double.infinity);
-        final slotHeight =
-            (constraints.maxHeight - pad.vertical).clamp(1.0, double.infinity);
-
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onAddTap == null
-              ? null
-              : () => onAddTap!(slotWidth / slotHeight),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.add_a_photo_outlined,
-                  size: 26,
-                  color: Colors.black.withValues(alpha: 0.35),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '탭해서 사진을\n붙여보세요',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black.withValues(alpha: 0.4),
-                    height: 1.4,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// 둥근 모서리 사각형을 점선으로 그리는 페인터(사진 붙이는 자리 표시).
-class _DashedBorderPainter extends CustomPainter {
-  final Color color;
-  final double radius;
-  static const double dashLength = 7;
-  static const double gapLength = 5;
-
-  const _DashedBorderPainter({
-    required this.color,
-    required this.radius,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6;
-
-    final path = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(0, 0, size.width, size.height),
-          Radius.circular(radius),
-        ),
-      );
-
-    // 경로를 따라가며 dash/gap 간격으로 잘라 그립니다.
-    for (final metric in path.computeMetrics()) {
-      double distance = 0;
-      while (distance < metric.length) {
-        final end = (distance + dashLength).clamp(0, metric.length).toDouble();
-        canvas.drawPath(metric.extractPath(distance, end), paint);
-        distance = end + gapLength;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashedBorderPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.radius != radius;
-  }
-}
-
-/// 사진이 등록되면 점선 안내 칸([_DashedPhotoCard]) 자리를 통째로 대신하는,
-/// 실제 폴라로이드 사진처럼 보이는 흰 카드(가로/세로는 부모가 준 자리를
-/// 그대로 채움 — 곧 그 점선 칸과 같은 모양/크기). [_PhotoBoard]가 사용자가
-/// 사진을 등록하기 전에 바로 이 카드의 사진 자리 비율을 계산해 자르기
-/// 화면에 넘기므로, 여기서는 [BoxFit.cover]로 빈틈없이 채우기만 합니다.
-class _PolaroidCard extends StatelessWidget {
-  final String url;
-  final VoidCallback? onLongPress;
-
-  const _PolaroidCard({required this.url, this.onLongPress});
-
-  @override
-  Widget build(BuildContext context) {
-    const errorIcon = Icon(Icons.broken_image_outlined, size: 24, color: Colors.black26);
-
-    return GestureDetector(
-      onTap: () => _openFullPhoto(context, url),
-      onLongPress: onLongPress,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: double.infinity,
-            height: double.infinity,
-            padding: _polaroidPadding(context),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(_DashedPhotoCard._radius),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  blurRadius: 6,
-                  offset: const Offset(1.5, 3),
-                ),
-              ],
-            ),
-            child: _withPolaroidFilter(
-              _isNetworkUrl(url)
-                  ? Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                      webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                      errorBuilder: (context, error, stackTrace) => const Center(child: errorIcon),
-                    )
-                  // 게스트 로그인 상태에서 로컬(기기)에 저장된 사진 경로.
-                  : Image.file(
-                      File(url),
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      height: double.infinity,
-                      errorBuilder: (context, error, stackTrace) => const Center(child: errorIcon),
-                    ),
-            ),
-          ),
-
-          // 위쪽 가운데 테이프 — 사진을 종이에 붙여둔 느낌
-          Positioned(
-            top: -context.rs(6),
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Transform.rotate(
-                angle: -0.08,
-                child: Container(
-                  width: context.rs(30),
-                  height: context.rs(11),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.65),
-                    borderRadius: BorderRadius.circular(2),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      width: 1,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// "업적 도장" 카드 내용. 아직 기능 연동 전이라, 도장이 찍힐 자리를
-/// 흐린 원 두 개로 보여주는 장식용 placeholder입니다.
-class _StampsPlaceholder extends StatelessWidget {
-  const _StampsPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                _StampCircle(label: '첫콘', color: Color(0xFFD64545), angle: -0.12),
-                SizedBox(width: 10),
-                _StampCircle(label: '막콘', color: Color(0xFF4A5FBF), angle: 0.10),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '도장 기능 준비 중',
-            style: TextStyle(
-              fontSize: context.sp(11),
-              fontWeight: FontWeight.w700,
-              color: Colors.black.withValues(alpha: 0.3),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 도장이 찍힐 자리(흐린 잉크 원) placeholder.
-class _StampCircle extends StatelessWidget {
-  final String label;
-  final Color color;
-  final double angle;
-
-  const _StampCircle({
-    required this.label,
-    required this.color,
-    required this.angle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.rotate(
-      angle: angle,
-      child: Container(
-        width: 54,
-        height: 54,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: color.withValues(alpha: 0.3), width: 2.2),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: context.sp(13),
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1,
-              color: color.withValues(alpha: 0.35),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // [백엔드 수정]
 // /concerts/{concertId}/setlist → /tickets/{ticketId}/setlist.
@@ -1173,8 +252,9 @@ class _StampCircle extends StatelessWidget {
 /// 아직 등록 전이면 안내 문구 표시.
 class _RealSetlistContent extends StatefulWidget {
   final String? ticketId;
+  final Color ink;
 
-  const _RealSetlistContent({required this.ticketId});
+  const _RealSetlistContent({required this.ticketId, this.ink = _kraftInk});
 
   @override
   State<_RealSetlistContent> createState() => _RealSetlistContentState();
@@ -1217,7 +297,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
           Icon(
             Icons.music_note_outlined,
             size: 22,
-            color: Colors.black.withValues(alpha: 0.3),
+            color: widget.ink.withValues(alpha: 0.4),
           ),
           const SizedBox(height: 6),
           Text(
@@ -1226,7 +306,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
             style: TextStyle(
               fontSize: context.sp(12),
               fontWeight: FontWeight.w700,
-              color: Colors.black.withValues(alpha: 0.35),
+              color: widget.ink.withValues(alpha: 0.5),
               height: 1.4,
             ),
           ),
@@ -1266,7 +346,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       return SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: _buildRealSongRows(context, only),
+          children: _buildRealSongRows(context, only, widget.ink),
         ),
       );
     }
@@ -1279,7 +359,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     ];
 
     return SingleChildScrollView(
-      child: _RealSetlistGroupedByArtist(groups: groupList),
+      child: _RealSetlistGroupedByArtist(groups: groupList, ink: widget.ink),
     );
   }
 }
@@ -1287,11 +367,12 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
 // [백엔드 수정]
 // 곡마다 번호 매긴 Row + 앙코르 시작 지점 구분선을 만드는 헬퍼.
 // 단독 공연 목록/아코디언 펼친 목록 둘 다 재사용
-List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
+List<Widget> _buildRealSongRows(
+    BuildContext context, List<SongEntry> songs, Color ink) {
   return [
     for (var i = 0; i < songs.length; i++) ...[
       if (songs[i].encore && (i == 0 || !songs[i - 1].encore))
-        const _EncoreDivider(),
+        _EncoreDivider(ink: ink),
       Padding(
         padding: const EdgeInsets.only(bottom: 5),
         child: Row(
@@ -1302,7 +383,7 @@ List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
               style: TextStyle(
                 fontSize: context.sp(11),
                 fontWeight: FontWeight.w900,
-                color: Colors.black.withValues(alpha: 0.35),
+                color: ink.withValues(alpha: 0.55),
               ),
             ),
             const SizedBox(width: 6),
@@ -1312,6 +393,7 @@ List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
                 style: TextStyle(
                   fontSize: context.sp(12),
                   fontWeight: FontWeight.w700,
+                  color: ink,
                 ),
               ),
             ),
@@ -1329,8 +411,9 @@ List<Widget> _buildRealSongRows(BuildContext context, List<SongEntry> songs) {
 /// 펼친 아티스트 위치로 화면 스크롤.
 class _RealSetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
+  final Color ink;
 
-  const _RealSetlistGroupedByArtist({required this.groups});
+  const _RealSetlistGroupedByArtist({required this.groups, this.ink = _kraftInk});
 
   @override
   State<_RealSetlistGroupedByArtist> createState() =>
@@ -1376,6 +459,7 @@ class _RealSetlistGroupedByArtistState
               songs: widget.groups[g].value,
               expanded: g == _expandedIndex,
               onTap: () => _toggle(g),
+              ink: widget.ink,
             ),
           ),
       ],
@@ -1388,12 +472,14 @@ class _RealSetlistArtistSection extends StatelessWidget {
   final List<SongEntry> songs;
   final bool expanded;
   final VoidCallback onTap;
+  final Color ink;
 
   const _RealSetlistArtistSection({
     required this.artistName,
     required this.songs,
     required this.expanded,
     required this.onTap,
+    this.ink = _kraftInk,
   });
 
   @override
@@ -1413,7 +499,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
                       ? Icons.expand_more_rounded
                       : Icons.chevron_right_rounded,
                   size: 16,
-                  color: Colors.black.withValues(alpha: 0.4),
+                  color: ink.withValues(alpha: 0.6),
                 ),
                 const SizedBox(width: 2),
                 Expanded(
@@ -1422,6 +508,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
                     style: TextStyle(
                       fontSize: context.sp(12.5),
                       fontWeight: FontWeight.w900,
+                      color: ink,
                     ),
                   ),
                 ),
@@ -1439,12 +526,12 @@ class _RealSetlistArtistSection extends StatelessWidget {
                     style: TextStyle(
                       fontSize: context.sp(11.5),
                       fontWeight: FontWeight.w600,
-                      color: Colors.black.withValues(alpha: 0.35),
+                      color: ink.withValues(alpha: 0.5),
                     ),
                   )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: _buildRealSongRows(context, songs),
+                    children: _buildRealSongRows(context, songs, ink),
                   ),
           ),
       ],
@@ -1455,7 +542,8 @@ class _RealSetlistArtistSection extends StatelessWidget {
 // [백엔드 수정]
 /// 실제 셋리 곡 목록 중 앙코르가 시작되는 지점에 한 번만 표시하는 구분선.
 class _EncoreDivider extends StatelessWidget {
-  const _EncoreDivider();
+  final Color ink;
+  const _EncoreDivider({this.ink = _kraftInk});
 
   @override
   Widget build(BuildContext context) {
@@ -1464,7 +552,7 @@ class _EncoreDivider extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Container(height: 1, color: Colors.black.withValues(alpha: 0.15)),
+            child: Container(height: 1, color: ink.withValues(alpha: 0.3)),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1474,13 +562,1037 @@ class _EncoreDivider extends StatelessWidget {
                 fontSize: context.sp(9.5),
                 fontWeight: FontWeight.w900,
                 letterSpacing: 1.2,
-                color: Colors.black.withValues(alpha: 0.4),
+                color: ink.withValues(alpha: 0.6),
               ),
             ),
           ),
           Expanded(
-            child: Container(height: 1, color: Colors.black.withValues(alpha: 0.15)),
+            child: Container(height: 1, color: ink.withValues(alpha: 0.3)),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// ===== 공연 후 "신문 기사" 레이아웃 =====
+// 왼쪽 1/3: 제목 + 포스터(제목·공연정보가 차지하고 남은 여백을 채움, 탭하면
+// 확대) + 공연 정보. 오른쪽 2/3(가운데+오른쪽 병합, 사이 선 없음): 통째로
+// 감상 본문 텍스트박스이고, 그 위에 크기조절/크롭 가능한 사진이 얹혀 텍스트가
+// 사진을 피해 실시간으로 둘러싸입니다. 실제 셋 리스트는 오른쪽 아래에 신문
+// 광고처럼 고정으로 자리합니다.
+// =============================================================================
+
+/// 신문 잉크색/세리프.
+const Color _articleInk = Color(0xFF1A1A1A);
+const String _articleSerif = 'Georgia';
+const List<String> _articleSerifFallback = ['Times New Roman', 'Times', 'serif'];
+
+/// 좁은 왼쪽 단에서 날짜/공연장 같은 값이 글자 단위로 쪼개지지 않도록, 공백
+/// (단어) 경계에서만 줄바꿈되게 각 토큰 안에 WORD JOINER(U+2060)를 끼웁니다.
+String _keepWords(String text) {
+  const wj = '\u{2060}';
+  return text.split(' ').map((t) => t.split('').join(wj)).join(' ');
+}
+
+TextStyle _articleText(
+  BuildContext context, {
+  double size = 14,
+  FontWeight weight = FontWeight.w400,
+  Color color = _articleInk,
+  double? height,
+  FontStyle? fontStyle,
+}) {
+  return TextStyle(
+    fontFamily: _articleSerif,
+    fontFamilyFallback: _articleSerifFallback,
+    fontSize: context.sp(size),
+    fontWeight: weight,
+    color: color,
+    height: height,
+    fontStyle: fontStyle,
+  );
+}
+
+// =============================================================================
+// ===== 공연 후 "스크랩북" 자유배치 캔버스 =====
+// 크래프트 종이 위에 메모지(포스터/공연정보/폴라로이드 사진/실제 셋리스트/
+// 공연 후기/타임테이블)를 겹쳐 붙입니다. 빈 곳을 꾹 누르면 편집↔잠금이
+// 토글되고, 편집모드에서 각 메모지를 드래그(이동)·두 손가락(확대축소+회전)
+// 할 수 있으며, 공연 후기는 더블탭하면 타이핑할 수 있습니다. 배치/크기/회전은
+// 서버에 저장하지 않고 세션 동안만 [_scrapStore]에 담아둡니다.
+// =============================================================================
+
+const Color _kraftInk = Color(0xFF463C2E);
+
+/// 메모지 색을 하양과 섞어 더 옅게(연하게) 만듭니다.
+Color _lighten(Color c, [double factor = 0.72]) {
+  return Color.lerp(c, Colors.white, factor)!;
+}
+
+/// 공연 제목 글꼴(기본 글꼴).
+TextStyle _handTitle(BuildContext context) => TextStyle(
+      fontSize: context.sp(24),
+      fontWeight: FontWeight.w800,
+      color: _kraftInk,
+      height: 1.15,
+    );
+
+/// 메모지 한 장의 세션 배치 상태. offset은 캔버스 내 절대 위치(좌상단,
+/// 회전/확대 적용 전 기준).
+class _MemoTransform {
+  Offset offset = Offset.zero;
+  double scale = 1;
+  double rotation = 0;
+  bool placed = false; // 기본 위치가 한 번 설정됐는지.
+
+  /// 드래그/확대 시작 시점에 측정해두는 메모지의 실제(배율 1) 크기.
+  /// 경계 클램프 계산에 씁니다([_clampToCanvas] 참고).
+  Size measuredSize = Size.zero;
+}
+
+/// [offset](회전/확대 전 좌상단)에 [scale]/[rotation]을 적용했을 때 메모지가
+/// 캔버스([canvasW]×[canvasH]) 밖으로 나가지 않도록 offset을 보정합니다.
+///
+/// 회전과 확대는 모두 메모지 자신의 중심을 기준으로 적용되므로, 최종 화면상
+/// 중심 좌표는 항상 `offset + size/2`와 같습니다. 그 중심을 기준으로 회전된
+/// 사각형의 축 정렬 바운딩 박스(AABB) 절반만큼 캔버스 안쪽으로 여유를 두면,
+/// 어떤 회전 각도에서도 메모지 전체가 캔버스 경계를 넘지 않습니다.
+Offset _clampToCanvas(
+  Offset offset,
+  double scale,
+  double rotation,
+  Size size,
+  double canvasW,
+  double canvasH,
+) {
+  if (size == Size.zero || canvasW <= 0 || canvasH <= 0) return offset;
+
+  final w = size.width * scale;
+  final h = size.height * scale;
+  final cosA = math.cos(rotation).abs();
+  final sinA = math.sin(rotation).abs();
+  final aabbW = w * cosA + h * sinA;
+  final aabbH = w * sinA + h * cosA;
+
+  final centerX = offset.dx + size.width / 2;
+  final centerY = offset.dy + size.height / 2;
+
+  final minCenterX = aabbW / 2;
+  final maxCenterX = canvasW - aabbW / 2;
+  final minCenterY = aabbH / 2;
+  final maxCenterY = canvasH - aabbH / 2;
+
+  // 메모지가 캔버스보다 커서 범위가 뒤집히면(minCenter > maxCenter),
+  // 캔버스 가운데로 고정합니다.
+  final clampedCenterX = minCenterX > maxCenterX
+      ? canvasW / 2
+      : centerX.clamp(minCenterX, maxCenterX);
+  final clampedCenterY = minCenterY > maxCenterY
+      ? canvasH / 2
+      : centerY.clamp(minCenterY, maxCenterY);
+
+  return Offset(
+    clampedCenterX - size.width / 2,
+    clampedCenterY - size.height / 2,
+  );
+}
+
+/// ticketId(또는 로컬 키)별 메모 배치. 세션 동안만 유지(앱 재시작 시 초기화).
+final Map<String, Map<String, _MemoTransform>> _scrapStore = {};
+
+class _ScrapbookCanvas extends StatefulWidget {
+  final String layoutKey;
+  final String concertTitle;
+  final TicketInfo? ticketInfo;
+  final String? reviewText;
+  final Future<void> Function(String) onReviewChanged;
+  final String? photoUrl;
+  final bool uploadingPhoto;
+  final Future<void> Function(double)? onAddPhoto;
+  final Future<void> Function(String)? onDeletePhoto;
+  final String? setlistTicketId;
+  final String? concertId;
+
+  const _ScrapbookCanvas({
+    required this.layoutKey,
+    required this.concertTitle,
+    required this.ticketInfo,
+    required this.reviewText,
+    required this.onReviewChanged,
+    required this.photoUrl,
+    required this.uploadingPhoto,
+    required this.onAddPhoto,
+    required this.onDeletePhoto,
+    required this.setlistTicketId,
+    required this.concertId,
+  });
+
+  @override
+  State<_ScrapbookCanvas> createState() => _ScrapbookCanvasState();
+}
+
+class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
+  bool _edit = false;
+  late final TextEditingController _review =
+      TextEditingController(text: widget.reviewText ?? '');
+  final FocusNode _reviewFocus = FocusNode();
+  late final Map<String, _MemoTransform> _t =
+      _scrapStore.putIfAbsent(widget.layoutKey, () => {});
+
+  /// 그리는 순서(마지막이 맨 앞). 만진 메모를 앞으로 올립니다.
+  final List<String> _z = [
+    'poster',
+    'info',
+    'timetable',
+    'setlist',
+    'polaroid',
+    'review',
+  ];
+
+  // 제스처 시작 시점 스냅샷.
+  double _startScale = 1;
+  double _startRot = 0;
+  Offset _startOffset = Offset.zero;
+  Offset _startFocal = Offset.zero;
+
+  _MemoTransform _tf(String k) => _t.putIfAbsent(k, () => _MemoTransform());
+
+  /// 메모지별 GlobalKey(경계 클램프를 위한 실제 크기 측정용). 세션 배치와
+  /// 달리 이 상태(State) 자신의 생애주기 동안만 유효합니다.
+  final Map<String, GlobalKey> _memoKeys = {};
+  GlobalKey _keyFor(String k) => _memoKeys.putIfAbsent(k, () => GlobalKey());
+
+  @override
+  void initState() {
+    super.initState();
+    _reviewFocus.addListener(() {
+      if (!_reviewFocus.hasFocus) widget.onReviewChanged(_review.text);
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScrapbookCanvas old) {
+    super.didUpdateWidget(old);
+    if (old.reviewText != widget.reviewText &&
+        !_reviewFocus.hasFocus &&
+        widget.reviewText != _review.text) {
+      _review.text = widget.reviewText ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _reviewFocus.dispose();
+    _review.dispose();
+    super.dispose();
+  }
+
+  void _toggleMode() {
+    setState(() {
+      _edit = !_edit;
+      if (!_edit) _reviewFocus.unfocus();
+    });
+  }
+
+  void _bringFront(String k) {
+    if (_z.isNotEmpty && _z.last == k) return;
+    setState(() {
+      _z.remove(k);
+      _z.add(k);
+    });
+  }
+
+  void _placeDefaults(double w, double h) {
+    void def(String k, double dx, double dy, double rot) {
+      final t = _tf(k);
+      if (!t.placed) {
+        t.offset = Offset(dx, dy);
+        t.rotation = rot;
+        t.placed = true;
+      }
+    }
+
+    // 첨부 스크랩북처럼 살짝 기울여 겹쳐 배치(제목 아래에서 시작). review가
+    // 가로 2배(2단, 항상 10줄 고정 높이)로 커서, 세로로 겹치지 않도록
+    // 위에서부터 포스터/폴라로이드 → 공연정보/타임테이블 → 후기 → 셋리스트
+    // 순으로 단을 나눠 배치합니다(예전엔 후기가 공연정보·타임테이블과 같은
+    // 높이에 있어 그 아래 두 메모지를 완전히 덮어 버렸습니다).
+    const double reviewTop = 0.52;
+    def('poster', w * 0.05, h * 0.03, -0.05);
+    def('polaroid', w * 0.54, h * 0.03, 0.06);
+    def('info', w * 0.05, h * 0.35, 0.02);
+    def('timetable', w * 0.55, h * 0.35, -0.04);
+    def('review', w * 0.03, h * reviewTop, -0.01);
+
+    // 후기는 항상 10줄 고정 높이라(요청 이력 참고) 다른 메모지보다 훨씬 큽니다.
+    // 셋리스트를 h의 "비율"로 어림잡아 놓으면 기기별 글자 배율에 따라 후기가
+    // 셋리스트를 덮어버릴 수 있어, [_reviewBody]와 같은 식으로 실제 높이를
+    // 정확히 계산해 그 바로 아래 자리에 놓습니다.
+    final reviewHeight = context.sp(12.5) +
+        context.rs(6) +
+        context.sp(13) * 1.5 * 10 +
+        context.rs(11) * 2;
+    def('setlist', w * 0.14, h * reviewTop + reviewHeight + context.rs(10), 0.03);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final h = c.maxHeight;
+        _placeDefaults(w, h);
+
+        // 후기 메모지 가로 폭: 기존(0.52w)의 2배(1.04w)이되, 캔버스를 넘어
+        // 2단 텍스트가 잘리지 않도록 0.94w로 상한.
+        final reviewW = w * 1.04 > w * 0.94 ? w * 0.94 : w * 1.04;
+
+        final items = <String, Widget>{
+          'poster': _memo(
+            'poster',
+            baseW: w * 0.42,
+            canvasW: w,
+            canvasH: h,
+            child: _PosterMemo(imageUrl: widget.ticketInfo?.posterImageUrl),
+          ),
+          'polaroid': _memo(
+            'polaroid',
+            baseW: w * 0.38,
+            canvasW: w,
+            canvasH: h,
+            child: _PolaroidMemo(
+              url: widget.photoUrl,
+              uploading: widget.uploadingPhoto,
+              onAdd: widget.onAddPhoto,
+              onDelete: widget.onDeletePhoto,
+            ),
+          ),
+          'info': _memo(
+            'info',
+            baseW: w * 0.42,
+            canvasW: w,
+            canvasH: h,
+            child: _InfoNote(
+              fields: widget.ticketInfo?.displayFields ?? const [],
+              paper: _lighten(const Color(0xFF884000)),
+              ink: Colors.black,
+            ),
+          ),
+          'timetable': _memo(
+            'timetable',
+            baseW: w * 0.44,
+            canvasW: w,
+            canvasH: h,
+            shrinkToContent: true,
+            child: _RealTimetableNote(
+              concertId: widget.concertId,
+              paper: _lighten(const Color(0xFF7A3803)),
+              ink: Colors.black,
+            ),
+          ),
+          'setlist': _memo(
+            'setlist',
+            baseW: w * 0.44,
+            canvasW: w,
+            canvasH: h,
+            child: _SetlistNote(
+              ticketId: widget.setlistTicketId,
+              paper: _lighten(const Color(0xFF4B382A)),
+              ink: Colors.black,
+            ),
+          ),
+          'review': _memo(
+            'review',
+            baseW: reviewW,
+            canvasW: w,
+            canvasH: h,
+            child: _reviewBody(context),
+          ),
+        };
+
+        return ClipRect(
+          child: Stack(
+            children: [
+              const Positioned.fill(child: ScrapbookPageBackground()),
+              // (2페이지 크래프트 배경 제거) 메모지는 이제 1페이지(카드) 위에
+              // 바로 놓입니다 — 배경은 오버레이 카드 색이 그대로 비칩니다.
+              // 빈 곳을 꾹 누르면 편집↔잠금 토글(요청4). 탭은 뒤(오버레이의
+              // "바깥 탭으로 닫기")로 흘려보내고, 롱프레스만 여기서 처리합니다.
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onLongPress: _toggleMode,
+                ),
+              ),
+              // 상단 공연 제목(필기체). 요청1: 메모지가 순서상 제목보다 위에
+              // 있어야 하므로(=메모지를 제목 위로 겹쳐 옮길 수 있도록), 제목을
+              // 메모지 리스트보다 먼저(뒤에) 그립니다.
+              Positioned(
+                top: h * 0.015,
+                left: w * 0.06,
+                right: w * 0.06,
+                child: IgnorePointer(
+                  child: Text(
+                    widget.concertTitle,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: _handTitle(context),
+                  ),
+                ),
+              ),
+              for (final k in _z)
+                if (items[k] != null) items[k]!,
+              // 편집/잠금 상태 배지(제목과 겹치지 않게 하단 가운데에).
+              Positioned(
+                bottom: context.rs(8),
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: Center(child: _ModeBadge(edit: _edit)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 각 메모지: 위치(offset)+회전+배율을 적용하고, 편집모드에선 드래그/두 손가락
+  /// 확대축소+회전 제스처를 붙입니다. 공연 후기는 (모드와 무관하게) 더블탭으로
+  /// 타이핑 시작. [canvasW]/[canvasH]는 페이지 전체 크기 — 메모지를 페이지
+  /// 어디로든 옮길 수 있게 하되, 그 경계 밖으로는 나가지 못하게 막는 데 씁니다.
+  /// [shrinkToContent]가 true면 폭을 [baseW]로 고정하지 않고, 내용이 그보다
+  /// 좁으면(예: 타임테이블 "미정" 안내 문구) 그 내용 폭에 맞춰 카드(와 테이프)가
+  /// 함께 작아집니다 — 내용이 [baseW]보다 넓으면 그대로 [baseW]에서 줄바꿈됩니다.
+  Widget _memo(
+    String key, {
+    required double baseW,
+    required double canvasW,
+    required double canvasH,
+    required Widget child,
+    bool shrinkToContent = false,
+  }) {
+    final t = _tf(key);
+    final content = shrinkToContent
+        ? ConstrainedBox(
+            key: _keyFor(key),
+            constraints: BoxConstraints(
+              minWidth: context.rs(110),
+              maxWidth: baseW,
+            ),
+            child: IntrinsicWidth(child: child),
+          )
+        : SizedBox(key: _keyFor(key), width: baseW, child: child);
+    final reviewFocused = key == 'review' && _reviewFocus.hasFocus;
+
+    Widget gestured;
+    if (reviewFocused) {
+      // 타이핑 중엔 TextField가 모든 입력을 받아야 하므로 제스처를 걷어냅니다.
+      gestured = content;
+    } else if (_edit) {
+      gestured = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onScaleStart: (d) {
+          _bringFront(key);
+          _startScale = t.scale;
+          _startRot = t.rotation;
+          _startOffset = t.offset;
+          _startFocal = d.focalPoint;
+          // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
+          // 경계 클램프 계산에 필요합니다.
+          final box =
+              _keyFor(key).currentContext?.findRenderObject() as RenderBox?;
+          if (box != null && box.hasSize) t.measuredSize = box.size;
+        },
+        onScaleUpdate: (d) => setState(() {
+          // 한 손가락=이동, 두 손가락=확대축소(scale)+회전(rotation) 동시.
+          final rawOffset = _startOffset + (d.focalPoint - _startFocal);
+          final newScale = (_startScale * d.scale).clamp(0.4, 3.2);
+          final newRotation = _startRot + d.rotation;
+          t.scale = newScale;
+          t.rotation = newRotation;
+          t.offset = _clampToCanvas(
+            rawOffset,
+            newScale,
+            newRotation,
+            t.measuredSize,
+            canvasW,
+            canvasH,
+          );
+        }),
+        onDoubleTap:
+            key == 'review' ? () => _reviewFocus.requestFocus() : null,
+        child: content,
+      );
+    } else if (key == 'review') {
+      gestured = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onDoubleTap: () => _reviewFocus.requestFocus(),
+        // 후기 카드가 커서 캔버스를 많이 덮으므로, 카드를 꾹 눌러도
+        // 편집↔잠금이 토글되도록 합니다(빈 곳 롱프레스와 동일).
+        onLongPress: _toggleMode,
+        child: content,
+      );
+    } else {
+      gestured = content;
+    }
+
+    // key가 없으면 _z 재정렬 시 Stack이 인덱스 기준으로 엘리먼트를 재사용해
+    // (1) 진행 중인 드래그 제스처가 다른 메모지로 옮겨가고,
+    // (2) 셋리스트/타임테이블 State가 파기·재생성되어 재조회됩니다.
+    // ValueKey로 메모지 정체성을 고정해 두 문제를 함께 막습니다.
+    return Positioned(
+      key: ValueKey('memo_$key'),
+      left: 0,
+      top: 0,
+      child: Transform.translate(
+        offset: t.offset,
+        child: Transform.rotate(
+          angle: t.rotation,
+          child: Transform.scale(scale: t.scale, child: gestured),
+        ),
+      ),
+    );
+  }
+
+  Widget _reviewBody(BuildContext context) {
+    const ink = Colors.black; // 요청2: 후기 텍스트 검정.
+    final textStyle = _articleText(context, size: 13, height: 1.5, color: ink);
+    const maxLinesPerColumn = 10;
+    final lineHeight = context.sp(13) * 1.5;
+    // 요청3: 세로 크기는 텍스트가 10줄을 다 채웠을 때를 기준으로 고정.
+    final columnsHeight = lineHeight * maxLinesPerColumn;
+
+    return _NoteCard(
+      tapeColor: const Color(0x66E9D6B4),
+      paper: _lighten(const Color(0xFF795C32)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('공연 후기', style: _noteHeader(context, color: ink)),
+          SizedBox(height: context.rs(6)),
+          SizedBox(
+            height: columnsHeight,
+            child: _reviewFocus.hasFocus
+                ? _buildReviewEditor(context, textStyle)
+                : _buildReviewColumns(
+                    context, textStyle, maxLinesPerColumn),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 포커스(입력) 상태: 두 단 폭 전체를 채우는 단일 입력창으로 편하게 타이핑.
+  /// 입력을 마치면(포커스 해제) [_buildReviewColumns]가 2단으로 다시 흘려 배치.
+  Widget _buildReviewEditor(BuildContext context, TextStyle style) {
+    return TextField(
+      controller: _review,
+      focusNode: _reviewFocus,
+      maxLines: null,
+      expands: true,
+      textAlignVertical: TextAlignVertical.top,
+      keyboardType: TextInputType.multiline,
+      cursorColor: Colors.black,
+      style: style,
+      onTapOutside: (_) => _reviewFocus.unfocus(),
+      decoration: InputDecoration(
+        isDense: true,
+        border: InputBorder.none,
+        contentPadding: EdgeInsets.zero,
+        hintText: '공연 후기를 적어보세요',
+        hintStyle: style.copyWith(color: Colors.black.withValues(alpha: 0.4)),
+      ),
+    );
+  }
+
+  /// 잠금(표시) 상태: 왼쪽 단부터 채우고, 10줄을 넘기면 오른쪽 단으로 이어
+  /// 흘려 배치합니다(신문 단 나눔). 각 단은 최대 10줄까지만 보여줍니다.
+  Widget _buildReviewColumns(
+    BuildContext context,
+    TextStyle style,
+    int maxLines,
+  ) {
+    final text = _review.text;
+    if (text.trim().isEmpty) {
+      return Text(
+        '공연 후기를 적어보세요\n(더블탭하면 입력)',
+        style: style.copyWith(color: Colors.black.withValues(alpha: 0.4)),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, c) {
+        final gap = context.rs(12);
+        final colW = (c.maxWidth - gap) / 2;
+        final split = _splitTextAtLine(text, style, colW, maxLines);
+        final left = text.substring(0, split);
+        final right = text.substring(split);
+        Widget col(String t, TextOverflow of) => SizedBox(
+              width: colW,
+              child: Text(t, style: style, maxLines: maxLines, overflow: of),
+            );
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            col(left, TextOverflow.clip),
+            SizedBox(width: gap),
+            col(right, TextOverflow.ellipsis),
+          ],
+        );
+      },
+    );
+  }
+
+  /// [width] 폭에서 [maxLines]줄까지 채운 뒤 그 다음 줄이 시작되는 글자
+  /// 인덱스(=오른쪽 단 시작점)를 돌려줍니다. 전부 [maxLines] 안에 들어가면
+  /// 문자열 길이를 그대로 돌려줍니다(오른쪽 단은 비어 있음).
+  int _splitTextAtLine(
+    String text,
+    TextStyle style,
+    double width,
+    int maxLines,
+  ) {
+    if (width <= 0) return text.length;
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: width);
+    final lines = tp.computeLineMetrics();
+    if (lines.length <= maxLines) return text.length;
+    final y = lines[maxLines].baseline;
+    final pos = tp.getPositionForOffset(Offset(0, y));
+    return pos.offset.clamp(0, text.length).toInt();
+  }
+}
+
+TextStyle _noteHeader(BuildContext context, {Color color = _kraftInk}) =>
+    _articleText(
+      context,
+      size: 12.5,
+      weight: FontWeight.w900,
+      color: color,
+    );
+
+/// 편집/잠금 상태 배지.
+class _ModeBadge extends StatelessWidget {
+  final bool edit;
+  const _ModeBadge({required this.edit});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: context.rs(8),
+        vertical: context.rs(4),
+      ),
+      decoration: BoxDecoration(
+        color: (edit ? const Color(0xFF7A6A52) : _kraftInk)
+            .withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(edit ? Icons.edit : Icons.lock_outline,
+              size: context.rs(12), color: Colors.white),
+          SizedBox(width: context.rs(4)),
+          Text(
+            edit ? '편집 모드' : '잠금 (꾹 눌러 편집)',
+            style: TextStyle(
+              fontSize: context.sp(10),
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 메모지 상단 경계선 중앙에 '정중앙'이 오도록 붙는 워시테이프 한 조각.
+/// (반드시 `clipBehavior: Clip.none` Stack 안에서, 카드 크기와 같은 폭으로 사용.)
+class _WashiTape extends StatelessWidget {
+  final Color color;
+  const _WashiTape({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final h = context.rs(15);
+    return Positioned(
+      // 테이프의 세로 중앙(h/2)이 카드 상단선(y=0)에 오도록 위로 h/2 만큼 올림.
+      top: -h / 2,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Transform.rotate(
+          angle: -0.04,
+          child: Container(
+            width: context.rs(46),
+            height: h,
+            color: color,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 위에 워시테이프 한 조각을 얹은 종이 메모 카드.
+class _NoteCard extends StatelessWidget {
+  final Widget child;
+  final Color tapeColor;
+  final Color paper;
+
+  const _NoteCard({
+    required this.child,
+    this.tapeColor = const Color(0x66C9B08A),
+    this.paper = const Color(0xFFF3ECDD),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          padding: EdgeInsets.all(context.rs(11)),
+          decoration: BoxDecoration(
+            color: paper,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 6,
+                offset: const Offset(1, 3),
+              ),
+            ],
+          ),
+          child: child,
+        ),
+        _WashiTape(color: tapeColor),
+      ],
+    );
+  }
+}
+
+/// 포스터 메모(테이프로 붙인 사진 느낌). 없으면 예시 자리.
+class _PosterMemo extends StatelessWidget {
+  final String? imageUrl;
+  const _PosterMemo({required this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final url = imageUrl;
+    final Widget img = (url == null || url.isEmpty)
+        ? Container(
+            color: Colors.white.withValues(alpha: 0.08),
+            alignment: Alignment.center,
+            child: Text('POSTER',
+                style: _articleText(context,
+                    size: 13,
+                    weight: FontWeight.w900,
+                    color: Colors.black.withValues(alpha: 0.5))),
+          )
+        : (_isNetworkUrl(url)
+            ? Image.network(url,
+                fit: BoxFit.cover,
+                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+                errorBuilder: (c, e, s) =>
+                    Container(color: Colors.white.withValues(alpha: 0.08)))
+            : Image.file(File(url), fit: BoxFit.cover));
+
+    return _NoteCard(
+      tapeColor: const Color(0x66B9C4A8),
+      paper: _lighten(const Color(0xFF613613)),
+      child: AspectRatio(
+        aspectRatio: 3 / 4,
+        child: SizedBox(width: double.infinity, child: img),
+      ),
+    );
+  }
+}
+
+/// 폴라로이드 사진 메모(추가/삭제). 사진이 없으면 추가 버튼.
+class _PolaroidMemo extends StatelessWidget {
+  final String? url;
+  final bool uploading;
+  final Future<void> Function(double)? onAdd;
+  final Future<void> Function(String)? onDelete;
+
+  const _PolaroidMemo({
+    required this.url,
+    required this.uploading,
+    required this.onAdd,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final has = url != null && url!.isNotEmpty;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        _polaroid(context, has),
+        const _WashiTape(color: Color(0x66E9D6B4)),
+      ],
+    );
+  }
+
+  Widget _polaroid(BuildContext context, bool has) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        context.rs(8),
+        context.rs(8),
+        context.rs(8),
+        context.rs(22), // 폴라로이드 아래쪽 흰 여백.
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 6,
+            offset: const Offset(1, 3),
+          ),
+        ],
+      ),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: has
+            ? GestureDetector(
+                onLongPress:
+                    onDelete == null ? null : () => onDelete!(url!),
+                child: _isNetworkUrl(url!)
+                    ? Image.network(url!,
+                        fit: BoxFit.cover,
+                        webHtmlElementStrategy:
+                            WebHtmlElementStrategy.fallback,
+                        errorBuilder: (c, e, s) =>
+                            const ColoredBox(color: Color(0x22000000)))
+                    : Image.file(File(url!), fit: BoxFit.cover),
+              )
+            : GestureDetector(
+                onTap: uploading ? null : () => onAdd?.call(1.0),
+                child: Container(
+                  color: const Color(0xFFECE7DD),
+                  alignment: Alignment.center,
+                  child: uploading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add_a_photo_outlined,
+                                size: context.rs(22),
+                                color: _kraftInk.withValues(alpha: 0.6)),
+                            SizedBox(height: context.rs(4)),
+                            Text('사진 추가',
+                                style: _articleText(context,
+                                    size: 10.5,
+                                    color: _kraftInk.withValues(alpha: 0.6))),
+                          ],
+                        ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+/// 공연 정보 메모.
+class _InfoNote extends StatelessWidget {
+  final List<MapEntry<String, String>> fields;
+  final Color paper;
+  final Color ink;
+  const _InfoNote({
+    required this.fields,
+    this.paper = const Color(0xFFF3ECDD),
+    this.ink = _kraftInk,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _NoteCard(
+      tapeColor: const Color(0x66E9D6B4),
+      paper: paper,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('공연 정보', style: _noteHeader(context, color: ink)),
+          SizedBox(height: context.rs(6)),
+          for (final f in fields)
+            Padding(
+              padding: EdgeInsets.only(bottom: context.rs(3)),
+              child: RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: '${f.key}  ',
+                      style: _articleText(context,
+                          size: 11,
+                          weight: FontWeight.w700,
+                          color: ink.withValues(alpha: 0.65)),
+                    ),
+                    TextSpan(
+                      text: _keepWords(f.value),
+                      style: _articleText(context,
+                          size: 12.5,
+                          weight: FontWeight.w600,
+                          color: ink),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 실제 셋 리스트 메모.
+class _SetlistNote extends StatelessWidget {
+  final String? ticketId;
+  final Color paper;
+  final Color ink;
+  const _SetlistNote({
+    required this.ticketId,
+    this.paper = const Color(0xFFF3ECDD),
+    this.ink = _kraftInk,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _NoteCard(
+      tapeColor: const Color(0x66E9D6B4),
+      paper: paper,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('실제 셋 리스트', style: _noteHeader(context, color: ink)),
+          SizedBox(height: context.rs(6)),
+          _RealSetlistContent(ticketId: ticketId, ink: ink),
+        ],
+      ),
+    );
+  }
+}
+
+/// 타임테이블 메모(공연 상세 조회). 미등록/조회 전이면 안내.
+class _RealTimetableNote extends StatefulWidget {
+  final String? concertId;
+  final Color paper;
+  final Color ink;
+  const _RealTimetableNote({
+    required this.concertId,
+    this.paper = const Color(0xFFF3ECDD),
+    this.ink = _kraftInk,
+  });
+
+  @override
+  State<_RealTimetableNote> createState() => _RealTimetableNoteState();
+}
+
+class _RealTimetableNoteState extends State<_RealTimetableNote> {
+  final ConcertDetailService _service = ConcertDetailService();
+  List<TimetableEntry> _rows = const [];
+  String _status = 'loading'; // loading | empty | error | loaded
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final id = widget.concertId;
+    if (id == null) {
+      setState(() => _status = 'empty');
+      return;
+    }
+    try {
+      final res = await _service.getTimetable(id);
+      if (!mounted) return;
+      setState(() {
+        _rows = res.contents
+            .map((e) => TimetableEntry(
+                  time: e.time ?? '',
+                  label: e.stage != null ? '${e.stage} · ${e.event}' : e.event,
+                ))
+            .toList();
+        _status = _rows.isEmpty ? 'empty' : 'loaded';
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _status = e.statusCode == 404 ? 'empty' : 'error');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _status = 'error');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ink = widget.ink;
+    Widget body;
+    if (_status == 'loaded') {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final r in _rows)
+            Padding(
+              padding: EdgeInsets.only(bottom: context.rs(3)),
+              child: RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: r.time.isEmpty ? '· ' : '${r.time}  ',
+                      style: _articleText(context,
+                          size: 11.5,
+                          weight: FontWeight.w900,
+                          color: ink),
+                    ),
+                    TextSpan(
+                      text: _keepWords(r.label),
+                      style: _articleText(context,
+                          size: 12, color: ink),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    } else {
+      body = Text(
+        _status == 'loading'
+            ? '조회 중'
+            : _status == 'error'
+                ? '오류'
+                : '미정',
+        style: _articleText(context,
+            size: 12,
+            weight: FontWeight.w700,
+            color: ink.withValues(alpha: 0.55)),
+      );
+    }
+    return _NoteCard(
+      tapeColor: const Color(0x66E9D6B4),
+      paper: widget.paper,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('타임테이블', style: _noteHeader(context, color: ink)),
+          SizedBox(height: context.rs(6)),
+          body,
         ],
       ),
     );

@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import '../models/ticket_info.dart';
 import '../widgets/concert_after_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
-import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
 
 /// 다이어리 화면 위에 "공연 후" 상세를 오버레이로 띄우는 위젯.
@@ -398,9 +397,10 @@ class _ExpandedConcertAfter extends StatelessWidget {
                   child: IgnorePointer(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        // DiaryPageFrame.pageColor 기본값과 동일한
-                        // 다이어리 종이색.
-                        color: const Color(0xFFF4F1E1),
+                        // 예전 스크랩북 캔버스(2페이지)의 크래프트 색을 그대로
+                        // 카드(1페이지) 색으로 사용 — 2페이지를 없애고 메모지를
+                        // 이 위에 바로 올립니다.
+                        color: const Color(0xFFD6C6A6),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
                           color: Colors.black.withValues(alpha: 0.10),
@@ -425,33 +425,24 @@ class _ExpandedConcertAfter extends StatelessWidget {
                   clipBehavior: Clip.antiAlias,
                   child: Stack(
                     children: [
-                      // 공연 포스터를 카드 배경 전체에 살짝 투명하게
-                      // 겹칩니다. 콘텐츠(2x2 카드)의 인터랙티브 요소가
-                      // 그려지는 자리는 이 Stack에서 나중에(=위에) 그려져
-                      // 먼저 히트되므로 이 감지기와 경합(arena)하지
-                      // 않습니다 — 포스트잇이 아닌 자리(헤더/안내 문구/
-                      // 카드 사이 여백)를 눌렀을 때만 이 감지기가 받아서
-                      // 오버레이를 닫습니다.
+                      // 빈 곳 탭 = 닫기(투명). 요청9에 따라 반투명 포스터 배경은
+                      // 제거했습니다. 스크랩북 캔버스의 빈 자리를 (탭)누르면 이
+                      // 감지기까지 전달돼 오버레이가 닫히고, 캔버스 위 메모/
+                      // 롱프레스(편집·잠금 토글)는 위에서 먼저 처리됩니다.
                       Positioned.fill(
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: onOutsideTap,
-                          child: Opacity(
-                            opacity: 0.4,
-                            child: PosterBackground(
-                              imageUrl: ticketInfo?.posterImageUrl,
-                            ),
-                          ),
+                          child: const SizedBox.expand(),
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
-                        child: ConcertAfterPageContents(
-                          concertTitle: concertTitle,
-                          ticketInfo: ticketInfo,
-                          postItOpacity: postItOpacity,
-                          onTicketInfoChanged: onTicketInfoChanged,
-                        ),
+                      // 요청2: 안쪽 여백을 없애 카드(페이지)의 실제 경계
+                      // 자체가 메모지를 놓을 수 있는 경계가 되도록 합니다.
+                      ConcertAfterPageContents(
+                        concertTitle: concertTitle,
+                        ticketInfo: ticketInfo,
+                        postItOpacity: postItOpacity,
+                        onTicketInfoChanged: onTicketInfoChanged,
                       ),
                     ],
                   ),
