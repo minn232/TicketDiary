@@ -17,8 +17,15 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.services.artist_blocklist import is_blocklisted_artist_name
 from app.services.artist_matching import _compact, _contains_hangul, normalize_artist_names
-from app.services.musicbrainz import ArtistCandidate, fetch_member_of_band_relations, fetch_wikidata_qid, search_artist
-from app.services.wikidata import fetch_korean_label
+from app.services.musicbrainz import (
+    ArtistCandidate,
+    fetch_member_of_band_relations,
+    fetch_spotify_artist_url,
+    fetch_wikidata_qid,
+    search_artist,
+)
+from app.services.spotify import fetch_oembed_thumbnail
+from app.services.wikidata import fetch_artist_image_url, fetch_korean_label
 
 logger = logging.getLogger(__name__)
 
@@ -495,6 +502,7 @@ async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
                 await _register_alias_if_new(db, canonical, winner.name, source="musicbrainz")
                 await _fetch_and_store_group_relations(db, canonical, client)
                 await _register_wikidata_korean_alias(db, canonical, client)
+                await _register_artist_image(db, canonical, client)
         except Exception as e:
             logger.warning(f"관리자 추가 아티스트 MusicBrainz 연결 실패, 건너뜀 ({canonical.canonical_name}): {e}")
             return
@@ -659,12 +667,37 @@ async def _register_wikidata_korean_alias(db: AsyncSession, canonical: Canonical
         canonical.display_name = label
 
 
+# canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 연결해둔 Spotify 링크
+# 우선(앨범아트 수준), 없으면 Wikidata 대표 이미지(P18)로 대체 - 둘 다 mbid 앵커라 이름
+# 검색(Deezer 등, 오매칭 실측 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함.
+async def _register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
+    if not canonical.mbid or canonical.profile_image_url:
+        return
+
+    try:
+        image_url = None
+        spotify_url = await fetch_spotify_artist_url(canonical.mbid, client)
+        if spotify_url:
+            image_url = await fetch_oembed_thumbnail(spotify_url, client)
+        if image_url is None:
+            qid = await fetch_wikidata_qid(canonical.mbid, client)
+            if qid:
+                image_url = await fetch_artist_image_url(qid, client)
+    except Exception as e:
+        logger.warning(f"아티스트 사진 보강 실패, 건너뜀 (mbid={canonical.mbid}): {e}")
+        return
+
+    if image_url:
+        canonical.profile_image_url = image_url
+
+
 async def _process_one(
     db: AsyncSession, client: httpx.AsyncClient, row: ArtistNormalizationStatus
 ) -> str:
     canonical = await find_canonical_by_alias(db, row.artist_text)
     if canonical is not None:
         await _register_wikidata_korean_alias(db, canonical, client)
+        await _register_artist_image(db, canonical, client)
         await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
         row.status = "matched"
         return "matched"
@@ -682,6 +715,7 @@ async def _process_one(
         if created:
             await _fetch_and_store_group_relations(db, canonical, client)
         await _register_wikidata_korean_alias(db, canonical, client)
+        await _register_artist_image(db, canonical, client)
         await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
 
     return status
@@ -690,8 +724,16 @@ async def _process_one(
 # row 목록을 순서대로 정규화 처리하며 결과를 집계 (normalize_pending_artists/normalize_specific_artists
 # 공통 루프). 실패(네트워크 오류 등)는 status를 안 바꾸고 pending으로 남겨둬서 다음 실행이 자동으로
 # 재시도하게 함 - 확정 응답을 받은 것만 상태를 바꿈.
+# commit_each_row=True(기본)면 매 행마다 바로 커밋함 - limit이 큰 실행을 통째로 한
+# 트랜잭션에 담으면 몇 시간씩 락을 쥐다가 끊겼을 때 "idle in transaction" 좀비 커넥션이
+# 무관한 쿼리까지 막아버림(2026-09-07 실서버 장애). dry_run 호출은 False로 넘겨 기존
+# 전체 롤백 동작을 유지함.
 async def _process_rows(
-    db: AsyncSession, client: httpx.AsyncClient, rows: list[ArtistNormalizationStatus]
+    db: AsyncSession,
+    client: httpx.AsyncClient,
+    rows: list[ArtistNormalizationStatus],
+    *,
+    commit_each_row: bool = True,
 ) -> dict[str, int]:
     stats = {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
     for row in rows:
@@ -702,6 +744,9 @@ async def _process_rows(
             logger.warning(f"아티스트 정규화 실패, pending 유지 (artist_text={row.artist_text!r}): {e}")
             stats["error"] += 1
             continue
+        finally:
+            if commit_each_row:
+                await db.commit()
         stats["processed"] += 1
     return stats
 
@@ -736,7 +781,7 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
 
         logger.info(f"MusicBrainz 정규화 대상 {len(rows)}건")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            stats = await _process_rows(db, client, rows)
+            stats = await _process_rows(db, client, rows, commit_each_row=not dry_run)
 
         for concert_id in {row.concert_id for row in rows}:
             await _collapse_members_to_group_names(db, concert_id)

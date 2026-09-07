@@ -26,6 +26,7 @@ import 'package:ticketdiary/widgets/sparkle_highlight.dart';
 import 'package:ticketdiary/widgets/ticket_flip_card.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart';
 import 'package:ticketdiary/widgets/ticket_scan_camera_screen.dart';
+import 'package:ticketdiary/widgets/app_network_image.dart';
 
 class TicketData {
   final String title;
@@ -664,6 +665,35 @@ class _DiaryScreenState extends State<DiaryScreen> {
         : await _pickConcertCandidate(candidates);
     if (selected == null || !mounted) return; // 여러 후보 중 아무것도 선택 안 하고 취소함
 
+    final extracted = scanResult.extracted;
+    // 모바일 티켓 캡쳐처럼 사진에 가격/좌석이 없는 경우, KOPIS 가격표
+    // (candidate.price)로 채움 - 하나만 없으면 자동 추정, 추정 실패하거나
+    // 둘 다 없으면 강제 선택 시트(닫기로 건너뛸 수 없음)로 넘어감.
+    int? finalPrice = extracted.price;
+    String? finalSeat = extracted.seat?.isNotEmpty == true
+        ? extracted.seat
+        : null;
+    final tiers = selected.price;
+    if (tiers != null && tiers.isNotEmpty) {
+      PriceEntry? matched;
+      if (finalPrice == null && finalSeat != null) {
+        matched = _matchTierBySeat(finalSeat, tiers);
+        if (matched != null) finalPrice = matched.price;
+      } else if (finalPrice != null && finalSeat == null) {
+        matched = _matchTierByPaidPrice(finalPrice, tiers);
+        if (matched != null) finalSeat = matched.seatType;
+      }
+
+      // 자동 추정 실패(애초에 둘 다 없던 경우 포함)하면 반드시 고르게 함.
+      if (finalPrice == null || finalSeat == null) {
+        if (!mounted) return;
+        final picked = await _pickPriceEntry(tiers);
+        if (picked == null || !mounted) return; // 시트 안 고르고 화면 이탈
+        finalPrice = picked.price;
+        finalSeat = picked.seatType;
+      }
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -672,7 +702,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
 
     try {
-      final extracted = scanResult.extracted;
       final ticket = await _ticketService.createTicket(
         concertId: selected.id,
         deliveryDate: _parseYmd(extracted.shippingDate),
@@ -683,8 +712,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
         // extracted.date(OCR 관람일)도 같은 이유로 넘기도록 수정.
         attendedDate: _parseYmd(extracted.date),
         ticketingSite: extracted.platform,
-        price: extracted.price,
-        seatType: extracted.seat,
+        price: finalPrice,
+        seatType: finalSeat,
       );
 
       if (!mounted) return;
@@ -755,6 +784,83 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
       ),
     );
+  }
+
+  /// 티켓 사진에 가격/좌석 정보가 없을 때, KOPIS 좌석 등급별 가격표 중
+  /// 하나를 반드시 고르게 하는 시트 - 가격/좌석이 항상 채워지도록 바깥
+  /// 탭·드래그·뒤로가기로는 못 닫고 항목을 선택해야만 닫힙니다.
+  Future<PriceEntry?> _pickPriceEntry(List<PriceEntry> prices) {
+    return showModalBottomSheet<PriceEntry>(
+      context: context,
+      backgroundColor: Colors.white,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => PopScope(
+        canPop: false,
+        child: SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                child: Text(
+                  '티켓에서 가격/좌석 정보를 찾지 못했어요.\n예매한 좌석을 선택해주세요.',
+                  style: TextStyle(
+                    fontSize: context.sp(15),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              for (final entry in prices)
+                ListTile(
+                  title: Text(
+                    entry.seatType,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  trailing: Text('${_formatPrice(entry.price)}원'),
+                  onTap: () => Navigator.pop(context, entry),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 천 단위 콤마(예: 160000 -> "160,000").
+  String _formatPrice(int price) {
+    return price.toString().replaceAllMapped(
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
+  }
+
+  /// OCR이 뽑은 좌석 문구(예: "R석")와 같은 등급을 가격표에서 찾음(공백/대소문자
+  /// 무시, 못 찾으면 부분 일치도 시도).
+  PriceEntry? _matchTierBySeat(String seat, List<PriceEntry> tiers) {
+    final target = seat.replaceAll(' ', '').toLowerCase();
+    for (final tier in tiers) {
+      if (tier.seatType.replaceAll(' ', '').toLowerCase() == target) return tier;
+    }
+    for (final tier in tiers) {
+      final tierSeat = tier.seatType.replaceAll(' ', '').toLowerCase();
+      if (target.contains(tierSeat) || tierSeat.contains(target)) return tier;
+    }
+    return null;
+  }
+
+  /// 결제 금액으로 좌석 등급을 추정. 수수료/배송비 때문에 결제액이 정가보다
+  /// 조금 높은 게 보통이라, 정가가 결제액보다 큰 등급은 제외하고 남은 것 중
+  /// 가장 가까운(=가장 비싼) 걸 고름. 전부 결제액보다 비싸면 포기(null).
+  PriceEntry? _matchTierByPaidPrice(int paidPrice, List<PriceEntry> tiers) {
+    final affordable = tiers.where((t) => t.price <= paidPrice).toList();
+    if (affordable.isEmpty) return null;
+    affordable.sort((a, b) => a.price.compareTo(b.price));
+    return affordable.last; // 결제액 이하 중 가장 비싼(=가장 가까운) 등급
   }
 
   /// "YYYY-MM-DD" 문자열(백엔드 `shipping_date` 등)을 [DateTime]으로 변환합니다.
@@ -2328,15 +2434,14 @@ class _PosterTicketFace extends StatelessWidget {
               ),
             ),
           ),
+          // [백엔드 수정]
+          // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
           if (posterUrl != null && posterUrl.isNotEmpty)
-            Image.network(
+            AppNetworkImage(
               posterUrl,
               fit: BoxFit.cover,
-              // KOPIS처럼 CORS 헤더가 없는 이미지 서버는 웹에서 일반 로드가
-              // 실패하므로, 실패 시 <img> 태그로 대신 렌더링합니다(웹 전용).
-              webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
               // 그래도 실패하면 아무것도 그리지 않아 아래 그라데이션이 보임
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              errorBuilder: (_) => const SizedBox.shrink(),
             ),
           // 텍스트 가독성을 위한 스크림(위/아래를 더 어둡게)
           DecoratedBox(

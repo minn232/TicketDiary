@@ -111,6 +111,17 @@ async def scan_ticket(
         except HTTPException:
             pass
 
+    # 목록 검색(kopis_search_multi)은 가격표(pcseguidance)를 안 주므로, 상세
+    # 조회를 아직 한 번도 안 한 후보는 여기서 채워둠 - 프론트가 티켓 사진에
+    # 없는 가격/좌석을 이 가격표로 보강해 사용자에게 고르게 함(get_concert 의
+    # kopis_detail_synced_at 캐시 패턴과 동일).
+    for i, candidate in enumerate(candidates):
+        if candidate.kopis_id and candidate.kopis_detail_synced_at is None:
+            try:
+                candidates[i] = await get_concert_detail(db, candidate.kopis_id)
+            except HTTPException:
+                pass
+
     return TicketScanResponse(extracted=extracted, candidates=candidates)
 
 

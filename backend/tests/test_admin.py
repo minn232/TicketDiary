@@ -227,6 +227,8 @@ async def test_try_link_canonical_sets_mbid_and_relations_on_match():
         "app.services.artist_normalization.fetch_wikidata_qid", new=AsyncMock(return_value="Q1")
     ), patch(
         "app.services.artist_normalization.fetch_korean_label", new=AsyncMock(return_value=f"한글{name}")
+    ), patch(
+        "app.services.artist_normalization._register_artist_image", new=AsyncMock(return_value=None)
     ):
         await try_link_canonical_to_musicbrainz(canonical_id)
 

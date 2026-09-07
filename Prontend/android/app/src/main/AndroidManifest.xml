@@ -7,6 +7,14 @@
         android:label="ticketdiary"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- adjustResize(기본값)는 키보드가 뜰 때 창 자체를 줄여
+             resizeToAvoidBottomInset: false를 무력화시킴 - 창 크기를 절대
+             안 건드리는 MainActivity.kt의 setDecorFitsSystemWindows(false)와
+             안 부딪히게 "아무 것도 하지 마라"로 맞춰둠. -->
+        <!-- main.dart의 런타임 orientation 잠금만 믿으면 큰 화면 기기에서
+             무시될 수 있어 매니페스트로도 세로 고정. resizeableActivity을
+             명시 안 하면 시스템이 "universal resizeable override"를 켜서
+             방향 제한을 무시함(dumpsys activity activities로 확인). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -15,7 +23,9 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustNothing"
+            android:screenOrientation="sensorPortrait"
+            android:resizeableActivity="false">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues
@@ -28,6 +38,18 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 아래 두 프로퍼티: 설정 > 앱 > 화면 비율의 "전체 화면" 옵션과
+                 display 레벨 ignoreOrientationRequest(둘 다 큰 화면에서 앱의
+                 방향 요청을 무시하는 시스템 정책)를 이 앱만 opt-out. 단
+                 Android 17+ 큰 화면 기기는 이 opt-out 자체가 제거돼 있어
+                 안 먹힘(유저가 "화면 비율"에서 직접 앱 기본값을 골라야 함,
+                 developer.android.com/about/versions/17/changes/ff-restrictions-ignored). -->
+            <property
+                android:name="android.window.PROPERTY_COMPAT_ALLOW_USER_ASPECT_RATIO_OVERRIDE"
+                android:value="false" />
+            <property
+                android:name="android.window.PROPERTY_COMPAT_ALLOW_ORIENTATION_OVERRIDE"
+                android:value="false" />
         </activity>
         <!-- image_cropper(uCrop) 사진 편집 화면. 없으면 안드로이드에서
              크롭 화면이 열리지 않습니다. -->

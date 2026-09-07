@@ -3,7 +3,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.services.musicbrainz import fetch_member_of_band_relations, fetch_wikidata_qid, search_artist
+from app.services.musicbrainz import (
+    fetch_member_of_band_relations,
+    fetch_spotify_artist_url,
+    fetch_wikidata_qid,
+    search_artist,
+)
 
 
 def _resp(status_code: int, artists: list[dict] | None = None) -> MagicMock:
@@ -165,3 +170,38 @@ async def test_fetch_wikidata_qid_none_when_no_wikidata_relation():
         qid = await fetch_wikidata_qid("band-mbid", client=client)
 
     assert qid is None
+
+
+# fetch_spotify_artist_url
+
+
+@pytest.mark.asyncio
+async def test_fetch_spotify_artist_url_extracts_url_from_relations():
+    client = MagicMock()
+    client.get = AsyncMock(
+        return_value=_url_rels_resp(
+            [
+                {"type": "official homepage", "url": {"resource": "https://example.com"}},
+                {
+                    "type": "streaming",
+                    "url": {"resource": "https://open.spotify.com/artist/57okaLdCtv3nVBSn5otJkp"},
+                },
+            ]
+        )
+    )
+
+    with patch("app.services.musicbrainz._MIN_REQUEST_INTERVAL", 0):
+        url = await fetch_spotify_artist_url("band-mbid", client=client)
+
+    assert url == "https://open.spotify.com/artist/57okaLdCtv3nVBSn5otJkp"
+
+
+@pytest.mark.asyncio
+async def test_fetch_spotify_artist_url_none_when_no_spotify_relation():
+    client = MagicMock()
+    client.get = AsyncMock(return_value=_url_rels_resp([{"type": "official homepage", "url": {"resource": "x"}}]))
+
+    with patch("app.services.musicbrainz._MIN_REQUEST_INTERVAL", 0):
+        url = await fetch_spotify_artist_url("band-mbid", client=client)
+
+    assert url is None

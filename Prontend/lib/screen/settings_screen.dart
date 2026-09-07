@@ -296,19 +296,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       _divider,
                       // [백엔드 수정]
                       // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
-                      _MenuRow(
-                        title: '알림함',
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              settings: const RouteSettings(
-                                name: DiaryRoutes.notifications,
-                              ),
-                              builder: (context) => const NotificationsScreen(),
-                            ),
-                          );
-                        },
+                      // Builder로 감싼 이유: DiaryFrameScale 조회에 필요한
+                      // 자손 context를 얻기 위함.
+                      Builder(
+                        builder: (menuContext) => _MenuRow(
+                          title: '알림함',
+                          onTap: () => NotificationsScreen.show(
+                            menuContext,
+                            frameScale: DiaryFrameScale.maybeOf(menuContext) ??
+                                diaryScaleFromMediaQuery(menuContext),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 10),
                     ],

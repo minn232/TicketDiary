@@ -24,6 +24,12 @@ void main() {
       top: viewPaddingTop,
       bottom: viewPaddingBottom,
     );
+    // padding/viewPadding은 테스트에서 각각 독립적으로 fake해야 함
+    // (maintainBottomViewPadding: true가 viewPadding을 직접 읽음).
+    tester.view.viewPadding = FakeViewPadding(
+      top: viewPaddingTop,
+      bottom: viewPaddingBottom,
+    );
     addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
@@ -51,6 +57,12 @@ void main() {
     tester.view.physicalSize = viewSize;
     tester.view.devicePixelRatio = 1.0;
     tester.view.padding = FakeViewPadding(
+      top: viewPaddingTop,
+      bottom: viewPaddingBottom,
+    );
+    // padding/viewPadding은 테스트에서 각각 독립적으로 fake해야 함
+    // (maintainBottomViewPadding: true가 viewPadding을 직접 읽음).
+    tester.view.viewPadding = FakeViewPadding(
       top: viewPaddingTop,
       bottom: viewPaddingBottom,
     );

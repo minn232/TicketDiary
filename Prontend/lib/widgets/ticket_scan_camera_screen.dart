@@ -193,13 +193,19 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
         fit: StackFit.expand,
         children: [
           if (ready)
-            CameraPreview(controller)
+            // Stack(fit: expand)의 꽉 찬 제약을 그대로 받으면 CameraPreview
+            // 내부 AspectRatio가 못 지켜져 화면에 맞게 늘어남(태블릿에서
+            // 눈에 띄게 찌그러짐) - Center로 느슨한 제약을 줘서 레터박스함.
+            Center(child: CameraPreview(controller))
           else
             const Center(child: CircularProgressIndicator(color: Colors.white)),
 
           if (ready)
             _ScanGuideOverlay(
               stage: _stage,
+              // 세로 모드 전용 앱(main.dart에서 portraitUp/Down으로 고정)이라
+              // CameraPreview와 똑같이 1/aspectRatio를 씀.
+              previewAspectRatio: 1 / controller.value.aspectRatio,
               autoAlignUnsupported: _autoAlignUnsupported,
             ),
 
@@ -258,13 +264,35 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   }
 }
 
+/// [available] 안에서 [aspectRatio](width/height)를 유지한 채 최대로 맞춘
+/// 사각형을 가운데 정렬해 반환합니다(`BoxFit.contain`과 같은 계산). 화면비가
+/// [aspectRatio]와 다르면 위아래 또는 좌우로 레터박스 여백이 남습니다.
+Rect fitPreviewRect(Size available, double aspectRatio) {
+  double width = available.width;
+  double height = width / aspectRatio;
+  if (height > available.height) {
+    height = available.height;
+    width = height * aspectRatio;
+  }
+  final left = (available.width - width) / 2;
+  final top = (available.height - height) / 2;
+  return Rect.fromLTWH(left, top, width, height);
+}
+
 class _ScanGuideOverlay extends StatelessWidget {
   const _ScanGuideOverlay({
     required this.stage,
+    required this.previewAspectRatio,
     this.autoAlignUnsupported = false,
   });
 
   final _ScanStage stage;
+
+  /// 실제 카메라 프리뷰가 그려지는 비율(세로 모드 기준, width/height).
+  /// 가이드 박스를 화면 전체가 아니라 이 비율로 레터박스된 프리뷰 영역
+  /// 기준으로 계산해야, 화면비가 카메라와 많이 다른 태블릿에서도 가이드
+  /// 박스가 실제 촬영되는 영역과 어긋나지 않습니다.
+  final double previewAspectRatio;
 
   /// true면 이 환경에서는 자동 정렬 인식이 동작하지 않는다는 안내로 문구를 바꿉니다.
   final bool autoAlignUnsupported;
@@ -289,44 +317,33 @@ class _ScanGuideOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // 기존 기준(화면 폭의 86%에 14.9:6 비율)의 짧은 변 길이를 그대로
-        // 구한 뒤, 90도 돌려(가로↔세로 맞바꿈) 세로로 긴 가이드 박스로
-        // 만들고, 전체 크기를 30% 키웁니다. 긴 변 비율은 6:14.9(입장권까지
-        // 붙어 있는 티켓 전체 규격)를 기준으로 하되, 세로(긴 변)만 30% 더
-        // 늘려 6:19.37 비율로 만듭니다(가로 폭은 그대로 유지).
-        const verticalRatioBoost = 1.3;
-        final baseShortSide = constraints.maxWidth * 0.86 * 6 / 14.9;
-        final baseLongSide =
-            baseShortSide * (14.9 * verticalRatioBoost) / 6; // 6:19.37 비율
-        const enlargeFactor = 1.3;
-        final guideWidth = baseShortSide * enlargeFactor;
-        // 세로 그리드 길이를 1/10만큼 줄임(0.9배).
-        final guideHeight = baseLongSide * enlargeFactor * 0.9;
-        final guideRect = Rect.fromCenter(
-          center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2 - 30),
-          width: guideWidth,
-          height: guideHeight,
+        // 화면 전체가 아니라 레터박스된 실제 프리뷰 영역 기준(previewAspectRatio
+        // 필드 설명 참고).
+        final previewRect = fitPreviewRect(
+          Size(constraints.maxWidth, constraints.maxHeight),
+          previewAspectRatio,
         );
 
-        // 박스 위쪽에서 kTicketStubHeightRatio(14.9 중 4.5)만큼이
-        // "입장티켓" 영역입니다(다이어리 화면에서 입장 티켓 영역을 왼쪽에
-        // 두는 것과 맞추기 위해, 사용자가 폰을 시계반대방향으로 90도 돌려
-        // 찍었을 때 최종적으로 왼쪽에 오도록 위쪽에 배치). 공연을 이미 본
-        // 뒤 추가하는 티켓은 입장권 스텁이 뜯겨 있을 수 있어, 점선으로
-        // 경계를 표시해 두 영역을 구분해 보여줍니다(인식 자체는 둘 중
-        // 하나만 채워도 통과합니다 — [LiveTicketAlignmentDetector] 참고).
-        //
-        // 경계선(stubBottom)은 원래(확장 전) 높이 기준으로 고정해두고,
-        // 박스 아래쪽 테두리만 세로 길이의 1/20만큼 더 내립니다 — 그래서
-        // 경계선 위치는 그대로인 채 "티켓" 영역의 길이만 늘어납니다.
+        // 실기기에 10% 격자를 띄워 실측한 값(previewRect 기준 위 20%/
+        // 아래 78%/폭 41.4%) - 스텁 경계선 비율(kTicketStubHeightRatio)은
+        // 원래 값이 이미 정확했고, 어긋났던 건 박스 전체 위치/높이였음.
+        final guideWidth = previewRect.width * 0.414;
+        final guideTop = previewRect.top + previewRect.height * 0.20;
+        final guideBottom = previewRect.top + previewRect.height * 0.78;
+        final guideRect = Rect.fromLTWH(
+          previewRect.center.dx - guideWidth / 2,
+          guideTop,
+          guideWidth,
+          guideBottom - guideTop,
+        );
+
+        // 박스 위쪽 kTicketStubHeightRatio만큼이 "입장티켓" 영역(폰을
+        // 시계반대방향으로 90도 돌려 찍었을 때 다이어리 화면처럼 왼쪽에
+        // 오도록 배치) - 뜯긴 스텁도 대응하려고 점선으로 경계만 표시하고,
+        // 인식은 둘 중 하나만 채워도 통과함([LiveTicketAlignmentDetector]).
         final stubBottom =
             guideRect.top + guideRect.height * kTicketStubHeightRatio;
-        final displayRect = Rect.fromLTRB(
-          guideRect.left,
-          guideRect.top,
-          guideRect.right,
-          guideRect.bottom + guideHeight / 20,
-        );
+        final displayRect = guideRect;
         final stubZone = Rect.fromLTRB(
           guideRect.left,
           guideRect.top,

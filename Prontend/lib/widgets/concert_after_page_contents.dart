@@ -13,6 +13,7 @@ import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
 import 'responsive_text.dart';
 import 'scrapbook_page_background.dart';
+import 'app_network_image.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
 /// `http(s)`로 시작하지 않습니다 — 이 차이로 [Image.network]/[Image.file] 중
@@ -1299,10 +1300,11 @@ class _PosterMemo extends StatelessWidget {
                     color: Colors.black.withValues(alpha: 0.5))),
           )
         : (_isNetworkUrl(url)
-            ? Image.network(url,
+            // [백엔드 수정]
+            // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
+            ? AppNetworkImage(url,
                 fit: BoxFit.cover,
-                webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-                errorBuilder: (c, e, s) =>
+                errorBuilder: (c) =>
                     Container(color: Colors.white.withValues(alpha: 0.08)))
             : Image.file(File(url), fit: BoxFit.cover));
 
@@ -1367,12 +1369,12 @@ class _PolaroidMemo extends StatelessWidget {
             ? GestureDetector(
                 onLongPress:
                     onDelete == null ? null : () => onDelete!(url!),
+                // [백엔드 수정]
+                // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
                 child: _isNetworkUrl(url!)
-                    ? Image.network(url!,
+                    ? AppNetworkImage(url!,
                         fit: BoxFit.cover,
-                        webHtmlElementStrategy:
-                            WebHtmlElementStrategy.fallback,
-                        errorBuilder: (c, e, s) =>
+                        errorBuilder: (c) =>
                             const ColoredBox(color: Color(0x22000000)))
                     : Image.file(File(url!), fit: BoxFit.cover),
               )

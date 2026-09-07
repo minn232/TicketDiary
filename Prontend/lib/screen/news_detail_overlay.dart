@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/news_model.dart';
 import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
+import '../widgets/app_network_image.dart';
 
 /// 소식 폴라로이드 카드를 누르면, 다이어리 탭의 "공연 전"/"공연 후" 티켓
 /// 오버레이([ConcertBeforeOverlay]/[ConcertAfterOverlay])와 완전히 같은
@@ -152,6 +153,8 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
       parent: _controller,
       curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic),
     );
+    // [백엔드 수정]
+    // 크로스페이드 구간을 중앙 8%로 좁힘.
     _expandedOpacity = CurvedAnimation(
       parent: _t,
       curve: const Interval(0.46, 0.54, curve: Curves.easeInOut),
@@ -169,7 +172,6 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     super.dispose();
   }
 
-  // [백엔드 수정]
   // t와 무관한 최종(다 커졌을 때) Rect만 따로 뽑음 - 다이어리 티켓
   // 오버레이와 같이, 확장 콘텐츠를 이 고정 크기로 한 번만 레이아웃하고
   // FittedBox로 지금 박스 크기에 맞춰 통째로 확대/축소합니다(애니메이션
@@ -246,12 +248,16 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김(다이어리 티켓
     // 오버레이와 동일) - 애니메이션 중엔 위치/크기만 갱신되고 콘텐츠
     // 서브트리는 매 프레임 재빌드되지 않습니다.
+    //
+    // [백엔드 수정]
+    // startRect/rect 가로세로 비율 차이가 커서 contain의 레터박스 여백이
+    // 프레임마다 바뀌어 카드가 밀리는 것처럼 보임 - fill로 여백 없이 고정.
     final collapsedLayer = Positioned.fill(
       child: IgnorePointer(
         child: FadeTransition(
           opacity: _collapsedOpacity,
           child: FittedBox(
-            fit: BoxFit.contain,
+            fit: BoxFit.fill,
             child: SizedBox(
               width: widget.startRect.width,
               height: widget.startRect.height,
@@ -422,13 +428,14 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
         ),
       );
     }
+    // [백엔드 수정]
+    // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Image.network(
+      child: AppNetworkImage(
         url,
         fit: BoxFit.contain,
-        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-        errorBuilder: (context, error, stackTrace) => const AspectRatio(
+        errorBuilder: (context) => const AspectRatio(
           aspectRatio: 3 / 4,
           child: PosterGradientPlaceholder(),
         ),
@@ -963,12 +970,12 @@ class _VendorButtons extends StatelessWidget {
   final Map<String, String>? ticketingLinks;
   final double scale;
 
-  /// 예매처별 표시 이름 + 상징 색.
-  static const Map<String, ({String label, Color color})> _vendors = {
-    'MELON': (label: '멜론티켓', color: Color(0xFF00C639)),
-    'INTERPARK': (label: '인터파크', color: Color(0xFFE51937)),
-    'YES24': (label: '예스24', color: Color(0xFF0A4DA1)),
-    'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B)),
+  /// 예매처별 표시 이름 + 상징 색 + 앱 아이콘(플레이스토어/공식 가이드에서 받은 원본).
+  static const Map<String, ({String label, Color color, String icon})> _vendors = {
+    'MELON': (label: '멜론티켓', color: Color(0xFF00C639), icon: 'assets/images/vendors/melon.webp'),
+    'INTERPARK': (label: '인터파크', color: Color(0xFF3549FF), icon: 'assets/images/vendors/interpark.webp'),
+    'YES24': (label: '예스24', color: Color(0xFF000000), icon: 'assets/images/vendors/yes24.webp'),
+    'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B), icon: 'assets/images/vendors/ticketlink.webp'),
   };
 
   /// 각 예매처 앱의 실제 Android 패키지명(여러 개면 순서대로 시도).
@@ -1044,10 +1051,10 @@ class _VendorButtons extends StatelessWidget {
   }
 }
 
-/// 예매처 버튼 하나(가로 꽉 참, 예매처 상징색). 왼쪽에 예매처 이니셜 뱃지.
+/// 예매처 버튼 하나(가로 꽉 참, 예매처 상징색). 왼쪽에 예매처 앱 아이콘.
 class _VendorButton extends StatelessWidget {
   final String vendor;
-  final ({String label, Color color})? info;
+  final ({String label, Color color, String icon})? info;
   final double scale;
   final VoidCallback onTap;
 
@@ -1074,22 +1081,28 @@ class _VendorButton extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 22 * k,
-                height: 22 * k,
-                alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  vendor.isNotEmpty ? vendor.substring(0, 1) : '?',
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    fontWeight: FontWeight.w900,
-                    color: color,
-                  ),
-                ),
+              ClipOval(
+                child: info != null
+                    ? Image.asset(
+                        info!.icon,
+                        width: 24 * k,
+                        height: 24 * k,
+                        fit: BoxFit.cover,
+                      )
+                    : Container(
+                        width: 24 * k,
+                        height: 24 * k,
+                        alignment: Alignment.center,
+                        color: Colors.white,
+                        child: Text(
+                          vendor.isNotEmpty ? vendor.substring(0, 1) : '?',
+                          style: TextStyle(
+                            fontSize: context.sp(12),
+                            fontWeight: FontWeight.w900,
+                            color: color,
+                          ),
+                        ),
+                      ),
               ),
               SizedBox(width: 9 * k),
               Text(

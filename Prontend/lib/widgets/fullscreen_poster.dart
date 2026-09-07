@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_network_image.dart';
 import 'poster_background.dart';
 
 /// 포스터를 전체화면으로 확대해서 보여줍니다(소식 탭 상세의 포스터 확대와
@@ -137,13 +138,14 @@ class _LargePoster extends StatelessWidget {
         ),
       );
     }
+    // [백엔드 수정]
+    // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
-      child: Image.network(
+      child: AppNetworkImage(
         url,
         fit: BoxFit.contain,
-        webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
-        errorBuilder: (context, error, stackTrace) => const AspectRatio(
+        errorBuilder: (context) => const AspectRatio(
           aspectRatio: 3 / 4,
           child: PosterGradientPlaceholder(),
         ),
