@@ -229,18 +229,30 @@ class _StageCollage extends StatefulWidget {
   ];
 
   List<_Sticker> get _fans {
-    final n = ticketCount.clamp(0, _fanSlots.length);
+    final n = ticketCount.clamp(0, 999);
     return [
-      for (var i = 0; i < n; i++)
-        _Sticker(
-          'fan${i + 1}',
-          _fanSlots[i].$1,
-          _fanSlots[i].$2,
-          _fanSlots[i].$3,
-          _fanSlots[i].$4,
-          crowd: true,
-        ),
+      for (var i = 0; i < n; i++) _fanSticker(i),
     ];
+  }
+
+  /// [index]번째(0부터) 관객 스티커. 그림/자리는 9종류뿐이라, 9명을 넘으면
+  /// 처음 자리부터 다시 돌며 씁니다(주석에 적혀 있던 원래 의도 — clamp
+  /// 때문에 실제로는 동작하지 않던 부분을 고침). 완전히 같은 자리에
+  /// 겹치면 화면상 아무 변화가 없어 보이므로, 몇 바퀴째인지에 따라 자리를
+  /// 조금씩 밀어(지그재그) 관객이 계속 늘어나 빽빽해지는 것처럼 보이게 합니다.
+  _Sticker _fanSticker(int index) {
+    final slot = _fanSlots[index % _fanSlots.length];
+    final round = index ~/ _fanSlots.length;
+    final jitterX = round.isOdd ? 0.025 * round : -0.025 * round;
+    final jitterY = -0.02 * round; // 라운드가 늘수록 살짝 위/뒤로 밀림
+    return _Sticker(
+      'fan${(index % _fanSlots.length) + 1}',
+      (slot.$1 + jitterX).clamp(0.04, 0.96),
+      (slot.$2 + jitterY).clamp(0.30, 0.80),
+      slot.$3,
+      slot.$4,
+      crowd: true,
+    );
   }
 
   @override

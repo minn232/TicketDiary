@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'concert_after_overlay.dart';
@@ -222,14 +223,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   /// 티켓 데이터 리스트 (백엔드 연동을 위해 초기값을 비웁니다)
   ///
-  /// 단, "배송 전" 상태는 실제 플로우로는 아직 도달할 방법이 없어 화면을
-  /// 확인할 수 있도록 예시 티켓을 하나 미리 넣어둡니다.
-  ///
-  /// "공연 전 티켓 예시"는 일부러 "공연 전" 상태 + 이미 지난 공연 날짜(=공연
-  /// 시간이 지난 뒤의 첫 실행)로 만들어뒀습니다. 이렇게 공연 시간이 지난
-  /// "공연 전" 티켓은 [_isDueForPromotion]이 true를 반환해 반짝이는 효과
-  /// ([SparkleHighlight])가 표시되고, 사용자가 이 티켓을 누르면 그때
-  /// [_runTicketPromotionAnimation]이 실행되어 "공연 후"로 전환됩니다.
+  /// 예전엔 "배송 전"/"공연 전" 상태를 눈으로 확인하기 위한 예시 티켓을
+  /// 미리 넣어뒀지만, 이제는 [_buildDebugTestTicketTab]([TEST-ONLY] 왼쪽
+  /// 아래 테스트 탭)으로 원하는 상태의 더미 티켓을 언제든 즉석에서 추가해
+  /// 볼 수 있어 필요 없어졌습니다.
   ///
   /// `static`인 이유: 다른 탭으로 이동했다가 "다이어리" 탭으로 돌아오면
   /// [DiaryTab] 라우팅 구조상(diary_tabs.dart의 `pushNamedAndRemoveUntil`)
@@ -238,16 +235,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 티켓이 다시 "공연 전"으로 리셋되는 문제가 있었습니다. `static`으로 두면
   /// 앱이 실행되는 동안 State가 몇 번을 새로 생기든 같은 리스트를 계속
   /// 공유하므로 전환 결과가 유지됩니다.
-  static final List<TicketData> _tickets = [
-    TicketData(title: '배송 전 티켓 예시', status: TicketStatus.beforeDelivery),
-    TicketData(
-      title: '공연 전 티켓 예시',
-      status: TicketStatus.beforeConcert,
-      info: TicketInfo(
-        date: DateTime.now().subtract(const Duration(minutes: 1)),
-      ),
-    ),
-  ];
+  static final List<TicketData> _tickets = [];
 
   /// 공연 전 -> 공연 후로 전환 중인 티켓의 id들. 비어있지 않으면, 이 티켓을
   /// 제외한 화면 전체를 어둡게 해서 "지금 이 티켓이 바뀌고 있다"는 걸 강조합니다.
@@ -493,6 +481,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return 1 + extraPages;
   }
 
+  /// 공연 전 신문의 "제 N 호" — 이 티켓이 몇 번째로 등록됐는지. _tickets는
+  /// 최신 티켓이 앞(index 0)이라, 뒤에서부터 센 순번(오래된 것=1, 최신=총
+  /// 개수)을 씁니다. 목록에서 못 찾으면(index -1) 총 개수로 둡니다.
+  int _issueNumberForIndex(int index) =>
+      index < 0 ? _tickets.length : _tickets.length - index;
+
   /// 해당 페이지에 표시할 티켓 목록(최신 티켓이 항상 앞쪽 페이지에 오도록 순서 유지).
   List<TicketData> _ticketsForPage(int pageIndex) {
     if (pageIndex == 0) {
@@ -624,6 +618,30 @@ class _DiaryScreenState extends State<DiaryScreen> {
     await _registerTicketFromScan(result);
   }
 
+  /// 새 티켓을 다이어리에 추가합니다. 방금 등록한 공연과 같은 "배송 전"
+  /// 티켓이 이미 있었다면(같은 [matchConcertId], 또는 concertId가 없는
+  /// 예시/테스트 티켓처럼 매칭할 값이 없으면 [matchTitle]로) 그 자리를
+  /// 대신하는 것이므로 지우고 새 티켓으로 교체합니다. 실제 스캔 등록
+  /// ([_registerTicketFromScan])과 테스트용 더미 티켓 추가가 이 로직을
+  /// 그대로 공유합니다.
+  void _insertTicketReplacingBeforeDelivery(
+    TicketData newTicket, {
+    String? matchConcertId,
+    required String matchTitle,
+  }) {
+    setState(() {
+      final normalizedTitle = matchTitle.trim().toLowerCase();
+      _tickets.removeWhere((t) {
+        if (t.status != TicketStatus.beforeDelivery) return false;
+        final sameConcertId =
+            matchConcertId != null && t.info?.concertId == matchConcertId;
+        final sameTitle = t.title.trim().toLowerCase() == normalizedTitle;
+        return sameConcertId || sameTitle;
+      });
+      _tickets.insert(0, newTicket);
+    });
+  }
+
   /// 스캔 결과(OCR 추출 정보 + KOPIS 매칭 후보)를 바탕으로 백엔드에 티켓을
   /// 등록합니다.
   ///
@@ -672,12 +690,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
       if (!mounted) return;
       Navigator.pop(context); // 로딩 다이얼로그 닫기
 
-      setState(() {
-        _tickets.insert(
-          0,
-          TicketData.fromBackend(ticket, scanExtracted: extracted),
-        );
-      });
+      _insertTicketReplacingBeforeDelivery(
+        TicketData.fromBackend(ticket, scanExtracted: extracted),
+        matchConcertId: ticket.concertId,
+        matchTitle: ticket.concert?.name ?? selected.name,
+      );
       _showSnack('다이어리에 티켓이 추가되었습니다.');
     } on TicketAlreadyRegisteredException {
       if (!mounted) return;
@@ -832,8 +849,226 @@ class _DiaryScreenState extends State<DiaryScreen> {
       children: [
         _buildDiaryPageFrameWithFlip(_currentPageIndex, nextPageIndex),
         _buildTransitionSpotlightOverlay(),
+        // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
+        // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
+        _buildDebugTestTicketTab(),
+        // ===== [TEST-ONLY] 끝 =====
       ],
     );
+  }
+
+  /// [TEST-ONLY] 왼쪽 아래에 붙는 테스트용 인덱스 탭. 누르면 실제 등록
+  /// 플로우를 거치지 않고 더미 티켓을 바로 추가해, 다이어리 화면(D-day
+  /// 배너/배송 전 카드의 "등록" 상태/중복 교체 등)이 실제 티켓 추가에
+  /// 어떻게 반응하는지 곧바로 확인할 수 있습니다. 지울 때는 이 메서드와
+  /// [_showDebugAddTestTicketFlow] 둘 다(또는 build()의 호출 한 줄만) 지우면
+  /// 됩니다 — 다른 코드는 이 둘을 참조하지 않습니다.
+  Widget _buildDebugTestTicketTab() {
+    return Positioned(
+      left: 0,
+      bottom: 60,
+      child: GestureDetector(
+        onTap: () => unawaited(_showDebugAddTestTicketFlow()),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.redAccent.withValues(alpha: 0.85),
+            borderRadius: const BorderRadius.horizontal(
+              right: Radius.circular(8),
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 4,
+                offset: Offset(2, 2),
+              ),
+            ],
+          ),
+          child: const Text(
+            'TEST',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 11,
+              letterSpacing: 1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// [TEST-ONLY] "배송 전"/"배송 후" 선택 -> 날짜 입력 -> 더미 티켓 삽입까지의
+  /// 흐름. 반복 테스트를 편하게 하기 위해, 실제 등록 때와 달리 "배송 전"
+  /// 중복 교체는 하지 않고(날짜/기존 항목과 무관하게 항상 새로 추가) 매번
+  /// 새 [TicketData]를 맨 앞에 그대로 끼워 넣습니다. 백엔드 호출이 없어
+  /// 앱을 완전히 종료하면(정적 [_tickets]가 메모리에서 사라지므로) 자동으로
+  /// 없어집니다.
+  Future<void> _showDebugAddTestTicketFlow() async {
+    final bool? isBeforeDelivery = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Text(
+                '[TEST] 어떤 상태의 티켓을 추가할까요?',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.local_shipping_outlined,
+                color: Colors.redAccent,
+              ),
+              title: const Text('배송 전'),
+              subtitle: const Text('배송일자를 고릅니다'),
+              onTap: () => Navigator.pop(context, true),
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.confirmation_num_outlined,
+                color: Colors.redAccent,
+              ),
+              title: const Text('배송 후'),
+              subtitle: const Text('공연 날짜를 고릅니다(미래면 공연 전, 과거면 공연 후)'),
+              onTap: () => Navigator.pop(context, false),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (isBeforeDelivery == null || !mounted) return;
+
+    final DateTime? pickedDate = await _pickDebugTestDateByTyping(
+      isBeforeDelivery ? '배송일자' : '공연 날짜',
+    );
+    if (pickedDate == null || !mounted) return;
+
+    const testInfoBase = TicketInfo(
+      concertName: '테스트 공연',
+      venueName: '테스트',
+      price: '0',
+      seat: '테스트',
+      vendorName: '테스트',
+    );
+    final TicketData testTicket = isBeforeDelivery
+        ? TicketData(
+            title: '테스트 공연',
+            status: TicketStatus.beforeDelivery,
+            info: testInfoBase.copyWith(deliveryDate: pickedDate),
+          )
+        : TicketData(
+            title: '테스트 공연',
+            status: pickedDate.isAfter(DateTime.now())
+                ? TicketStatus.beforeConcert
+                : TicketStatus.afterConcert,
+            info: testInfoBase.copyWith(date: pickedDate),
+          );
+
+    // 반복 테스트 편의를 위해 배송 전 중복 교체 없이 항상 새로 추가합니다.
+    setState(() => _tickets.insert(0, testTicket));
+    _showSnack('[TEST] 테스트 티켓이 추가되었습니다 (${_debugStatusLabel(testTicket.status)}).');
+  }
+
+  /// [TEST-ONLY] 달력 대신 숫자만 입력받아 날짜를 만듭니다. "2026826"처럼
+  /// 입력하면 입력 중에도 실시간으로 "2026년 8월 26일"로 보이도록
+  /// [_DebugYmdInputFormatter]가 표시 문자열을 다시 그려줍니다. 연/월/일이
+  /// 모두 채워지지 않은 채 확인을 누르면 안내만 하고 닫지 않습니다.
+  Future<DateTime?> _pickDebugTestDateByTyping(String label) {
+    final controller = TextEditingController();
+    return showModalBottomSheet<DateTime>(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        void submit() {
+          final parsed = _parseDebugYmdDigits(controller.text);
+          if (parsed == null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('연/월/일을 모두 입력해주세요. 예: 2026826')),
+            );
+            return;
+          }
+          Navigator.pop(context, parsed);
+        }
+
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '[TEST] $label 입력 (숫자만)',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    '예: 2026826 -> 2026년 8월 26일',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    inputFormatters: [const _DebugYmdInputFormatter()],
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      hintText: 'YYYYMD',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    onSubmitted: (_) => submit(),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: submit,
+                      child: const Text('확인'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// [TEST-ONLY] 완료 스낵바에 보여줄 상태 한글 라벨.
+  String _debugStatusLabel(TicketStatus status) {
+    switch (status) {
+      case TicketStatus.beforeDelivery:
+        return '배송 전';
+      case TicketStatus.beforeConcert:
+        return '공연 전';
+      case TicketStatus.afterConcert:
+        return '공연 후';
+      case TicketStatus.error:
+        return '오류';
+    }
   }
 
   /// 전환 중인 티켓을 제외한 화면 전체를 어둡게 덮고, 그 위에 전환 중인 티켓을
@@ -1108,9 +1343,12 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     // 카드 높이는 고정값이 아니라, 실제 렌더링 너비(가로 Padding 25*2를 뺀 값)를
     // 기준으로 _ticketAspectRatio에서 역산합니다(버튼도 티켓과 같은 비율·높이를 씀).
-    // _buildTicketPocket이 실제로는 이 너비의 1.1배로 그리므로 그만큼 반영합니다.
+    // _buildTicketPocket이 요청하는 너비(*1.1)는 Center가 준 느슨한 제약의
+    // 최대치(=이 itemWidth)로 다시 clamp되어 실제로는 1.1배가 적용되지
+    // 않으므로(실측 확인됨), 여기서도 배율 없이 그대로 역산해야 실제
+    // 렌더링 높이와 맞아떨어집니다.
     final double itemWidth = constraints.maxWidth - 50;
-    final double itemHeight = (itemWidth * 1.1) / _ticketAspectRatio;
+    final double itemHeight = itemWidth / _ticketAspectRatio;
 
     // 첫 페이지: 버튼 1개 + 티켓 3개(총 4개, 모두 같은 높이) + 항목 사이 간격 3곳
     // 이후 페이지: 티켓 4개(모두 같은 높이) + 항목 사이 간격 3곳
@@ -1119,6 +1357,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
               (_ticketSpacing * _firstPageTicketCapacity)
         : (itemHeight * _otherPageTicketCapacity) +
               (_ticketSpacing * (_otherPageTicketCapacity - 1));
+    // 이 위젯이 그리는 크림색 종이(Container)는 DiaryPageFrame이 이미
+    // defaultPageTop/Bottom(10/20)만큼 바깥 프레임에서 잘라낸 "종이 안쪽"
+    // 영역 전체를 자기 크기로 그대로 씁니다 - 즉 constraints(=이 함수의
+    // maxHeight)가 곧 사용자 눈에 보이는 종이의 실제 높이입니다. 사용자가
+    // 비교하는 "위/아래 여백"은 바로 이 종이의 위 가장자리~첫 티켓,
+    // 마지막 티켓~종이의 아래 가장자리이므로, 프레임 바깥(눈에 보이지
+    // 않는) 위/아래 비대칭과는 무관하게 이 종이 안에서 단순히 반씩
+    // 나누기만 하면 됩니다. (예전엔 바깥 프레임의 10/20 비대칭까지
+    // 보정하려다 오히려 눈에 보이는 종이 안쪽 여백이 위로 쏠렸습니다.)
     final double fixedTopPadding =
         (constraints.maxHeight - targetTotalHeight) / 2;
 
@@ -1136,6 +1383,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
             children: [
               SizedBox(
                 height: fixedTopPadding.clamp(20.0, double.infinity),
+                // 첫 페이지에서만, 계산된 상단 여백 안에 다음 공연 D-day를
+                // 표시합니다(여백 높이 자체는 그대로라 페이지 레이아웃/
+                // 위아래 균형에는 영향이 없습니다).
+                child: isFirstPage ? _buildUpcomingDDayBanner(context) : null,
               ), // 계산된 고정 상단 여백
               if (isFirstPage) ...[
                 _buildAddTicketArea(context),
@@ -1251,6 +1502,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     ),
                     concertTitle: ticket.title,
                     ticketInfo: ticket.info,
+                    issueNumber: _issueNumberForIndex(
+                      _tickets.indexWhere((t) => t.id == ticket.id),
+                    ),
                     // [백엔드 수정]
                     // 이 리스트에서 쓰이는 배율을 그대로 넘김.
                     frameScale:
@@ -1428,6 +1682,57 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
   }
 
+  /// 등록된 티켓들 중 앞으로 시작할 공연이 가장 빠른 "공연 전" 티켓.
+  /// 없으면(등록된 공연이 없거나 전부 지난 공연이면) null.
+  TicketData? _nearestUpcomingTicket() {
+    final now = DateTime.now();
+    TicketData? nearest;
+    for (final ticket in _tickets) {
+      if (ticket.status != TicketStatus.beforeConcert) continue;
+      final date = ticket.info?.date;
+      if (date == null || !date.isAfter(now)) continue;
+      if (nearest == null || date.isBefore(nearest.info!.date!)) {
+        nearest = ticket;
+      }
+    }
+    return nearest;
+  }
+
+  /// 첫 페이지 상단 여백에 표시하는, 가장 빠르게 시작하는 공연의 D-day+제목.
+  /// 다가오는 공연이 없으면 빈 공간을 그대로 둡니다.
+  ///
+  /// 이 배너가 차지하는 높이 자체는 상/하단 여백을 맞추는 계산([_buildPageContent]의
+  /// fixedTopPadding)에 전혀 영향을 주지 않도록 그 여백 칸 안에 그대로
+  /// 끼워 넣습니다 - 다만 [Center]로 칸 한가운데 두면, 글씨가 넓은 빈
+  /// 공간의 중간에 떠 있어서 "위쪽 여백에 뭔가 들어있다"는 인상이 강해져
+  /// 실제로는 위/아래 여백 높이가 같아도 위쪽이 더 커 보였습니다. 페이지
+  /// 맨 위에 붙는 얇은 헤더처럼 보이도록 위쪽에 살짝만 띄워 붙여서, 나머지
+  /// 대부분은 아래쪽처럼 완전히 빈 여백으로 보이게 합니다.
+  Widget _buildUpcomingDDayBanner(BuildContext context) {
+    final nearest = _nearestUpcomingTicket();
+    if (nearest == null) return const SizedBox.shrink();
+    final dDay = _deliveryDDayLabel(nearest.info!.date);
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: EdgeInsets.only(top: context.rs(10)),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            '$dDay  ${nearest.title}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: context.sp(13),
+              fontWeight: FontWeight.w800,
+              color: Colors.black.withValues(alpha: 0.55),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTicketBeforeDelivery({required String title, TicketInfo? info}) {
     final dDayLabel = _deliveryDDayLabel(info?.deliveryDate);
     final isRegisterReady = _isDeliveryDue(info?.deliveryDate);
@@ -1435,47 +1740,52 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ? '등록'
         : ((info?.vendorName?.isNotEmpty ?? false) ? info!.vendorName! : '예매처');
 
+    // 배송 예정일이 되면(isRegisterReady) 실물 티켓을 등록하라는 안내
+    // 문구를 함께 보여주고, "티켓 추가" 버튼을 거치지 않고도 이 카드를
+    // 직접 눌러 바로 카메라 스캔으로 실물 티켓을 등록할 수 있게 합니다.
+    final readyMessage = isRegisterReady ? '배송이 시작되었습니다!' : null;
+    final onReadyTap = isRegisterReady && !_isAddTicketExpanded
+        ? () => _startCameraScan()
+        : null;
+
     // 뜯는 부분(스티커/라벨)을 카드 왼쪽으로, 공연 정보(포스터/D-day)를
     // 오른쪽으로 — 바깥쪽 모서리 둥글림도 함께 뒤집는다.
     if (_usePosterTicketDesign) {
-      return Row(
-        children: [
-          Expanded(
-            flex: 13,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: isRegisterReady && !_isAddTicketExpanded
-                  ? () => _startCameraScan()
-                  : null,
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onReadyTap,
+        child: Row(
+          children: [
+            Expanded(
+              flex: 13,
               child: _TicketStub(
                 label: vendorLabel,
                 labelColor: isRegisterReady ? const Color(0xFF16A34A) : null,
                 radiusOnLeft: true,
               ),
             ),
-          ),
-          Container(width: 1, color: Colors.grey.shade400),
-          Expanded(
-            flex: 27,
-            child: _PosterTicketFace(
-              title: title,
-              info: info,
-              bigCenterText: dDayLabel,
-              radiusOnRight: true,
+            Container(width: 1, color: Colors.grey.shade400),
+            Expanded(
+              flex: 27,
+              child: _PosterTicketFace(
+                title: title,
+                info: info,
+                bigCenterText: dDayLabel,
+                centerMessage: readyMessage,
+                radiusOnRight: true,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       );
     }
-    return Row(
-      children: [
-        Expanded(
-          flex: 13,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: isRegisterReady && !_isAddTicketExpanded
-                ? () => _startCameraScan()
-                : null,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onReadyTap,
+      child: Row(
+        children: [
+          Expanded(
+            flex: 13,
             child: Container(
               decoration: const BoxDecoration(
                 color: Colors.white,
@@ -1498,45 +1808,61 @@ class _DiaryScreenState extends State<DiaryScreen> {
               ),
             ),
           ),
-        ),
-        Container(width: 1, color: Colors.grey.shade400),
-        Expanded(
-          flex: 27,
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
-            ),
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                ),
-                const Spacer(),
-                Center(
-                  child: Text(
-                    dDayLabel,
-                    textAlign: TextAlign.center,
+          Container(width: 1, color: Colors.grey.shade400),
+          Expanded(
+            flex: 27,
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
+              ),
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
                     style: TextStyle(
-                      fontSize: context.sp(18),
+                      fontSize: context.sp(12),
                       fontWeight: FontWeight.bold,
+                      color: Colors.grey,
                     ),
                   ),
-                ),
-                const Spacer(),
-              ],
+                  const Spacer(),
+                  Center(
+                    child: Text(
+                      dDayLabel,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: context.sp(18),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  if (readyMessage != null) ...[
+                    const SizedBox(height: 4),
+                    Center(
+                      child: Text(
+                        readyMessage,
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: context.sp(11),
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF16A34A),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1740,9 +2066,33 @@ class _DiaryScreenState extends State<DiaryScreen> {
     VoidCallback? onTorn,
     ValueChanged<TicketInfo>? onInfoChanged,
   }) {
-    // 뜯는 부분(관람 완료 라벨/뜯긴 뒤 "공연전" 바로가기)을 카드 왼쪽으로,
-    // 공연 정보(포스터/제목)를 오른쪽으로 — 바깥쪽 모서리 둥글림도 함께
-    // 뒤집는다.
+    // 입장 티켓을 뜯은 뒤에는, 티켓 어디를 눌러도 "공연 후" 페이지가 뜹니다.
+    // (예전의 뜯긴 왼쪽 = "공연전" 바로가기/공연 전 페이지 진입은 제거.)
+    Future<void> openAfter() async {
+      final startRect = _globalRectOf(posterOverlayKey);
+      if (startRect == null) return;
+      setState(() => _overlayHiddenRegionKey = posterOverlayKey);
+      await ConcertAfterOverlay.show(
+        context,
+        startRect: startRect,
+        collapsedTicket: _buildAfterConcertPosterFace(
+          title: title,
+          info: info,
+          radiusOnRight: true,
+        ),
+        concertTitle: title,
+        ticketInfo: info,
+        onTicketInfoChanged: onInfoChanged,
+        // [백엔드 수정] 이 리스트에서 쓰이는 배율을 그대로 넘김.
+        frameScale:
+            DiaryFrameScale.maybeOf(context) ??
+            diaryScaleFromMediaQuery(context),
+      );
+      if (mounted) setState(() => _overlayHiddenRegionKey = null);
+    }
+
+    // 뜯는 부분(관람 완료 라벨/뜯긴 뒤 스텁)을 카드 왼쪽으로, 공연 정보(포스터/
+    // 제목)를 오른쪽으로 — 바깥쪽 모서리 둥글림도 함께 뒤집는다.
     return Row(
       children: [
         Expanded(
@@ -1774,83 +2124,23 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       ),
                     ),
                   ),
-            // 뜯긴 뒤: 지금의 "공연전" 디자인이 남아서 눌러볼 수 있게 됨
+            // 뜯긴 뒤: "공연전" 텍스트/바로가기 없이, 흰 배경도 없이 빈(투명)
+            // 영역만 남긴다. 눌러도 (오른쪽 포스터와 동일하게) 공연 후 페이지가 뜬다.
             revealed: _hideWhileOverlayOpen(
               regionKey: overlayKey,
               child: KeyedSubtree(
                 key: overlayKey,
-                child: Container(
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.horizontal(
-                      left: Radius.circular(8),
-                    ),
-                  ),
-                  child: _concertBeforeShortcutWidget(dark: true),
-                ),
+                child: const SizedBox.expand(),
               ),
             ),
-            onRevealedTap: () async {
-              final startRect = _globalRectOf(overlayKey);
-              if (startRect == null) return;
-              // [백엔드 수정]
-              // 오버레이가 떠있는 동안 리스트의 진짜 위젯(뜯긴 조각)만 숨겨서
-              // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함(왼쪽 포스터는
-              // 이 오버레이랑 무관하니 overlayKey로만 구분).
-              setState(() => _overlayHiddenRegionKey = overlayKey);
-              await ConcertBeforeOverlay.show(
-                context,
-                startRect: startRect,
-                collapsedTicket: _concertBeforeShortcutWidget(dark: true),
-                concertTitle: title,
-                ticketInfo: info,
-                // [백엔드 수정]
-                // 이 리스트에서 쓰이는 배율을 그대로 넘김.
-                frameScale:
-                    DiaryFrameScale.maybeOf(context) ??
-                    diaryScaleFromMediaQuery(context),
-              );
-              if (mounted) setState(() => _overlayHiddenRegionKey = null);
-            },
+            onRevealedTap: _isAddTicketExpanded ? null : openAfter,
           ),
         ),
         const _DashedVerticalDivider(),
         Expanded(
           flex: 27,
           child: PressableScale(
-            onTap: _isAddTicketExpanded
-                ? null
-                : () async {
-                    // "공연 전" 티켓과 동일한 로직: 일반 push 대신, 눌린
-                    // 티켓 위치(Rect)에서 자연스럽게 확장되는 오버레이로
-                    // 상세를 보여줍니다.
-                    final startRect = _globalRectOf(posterOverlayKey);
-                    if (startRect == null) return;
-
-                    // [백엔드 수정]
-                    // 오버레이가 떠있는 동안 리스트의 진짜 포스터만 숨겨서
-                    // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함(왼쪽
-                    // 뜯긴 조각은 이 오버레이랑 무관하니 posterOverlayKey로만 구분).
-                    setState(() => _overlayHiddenRegionKey = posterOverlayKey);
-                    await ConcertAfterOverlay.show(
-                      context,
-                      startRect: startRect,
-                      collapsedTicket: _buildAfterConcertPosterFace(
-                        title: title,
-                        info: info,
-                        radiusOnRight: true,
-                      ),
-                      concertTitle: title,
-                      ticketInfo: info,
-                      onTicketInfoChanged: onInfoChanged,
-                      // [백엔드 수정]
-                      // 이 리스트에서 쓰이는 배율을 그대로 넘김.
-                      frameScale:
-                          DiaryFrameScale.maybeOf(context) ??
-                          diaryScaleFromMediaQuery(context),
-                    );
-                    if (mounted) setState(() => _overlayHiddenRegionKey = null);
-                  },
+            onTap: _isAddTicketExpanded ? null : openAfter,
             pressScale: 0.985,
             tapScale: 1.03,
             child: _hideWhileOverlayOpen(
@@ -1913,22 +2203,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
               ],
             ),
           );
-  }
-
-  Widget _concertBeforeShortcutWidget({bool dark = false}) {
-    return Container(
-      color: dark ? const Color(0xFFE6E6E6) : Colors.white,
-      child: Center(
-        child: Text(
-          "공연전",
-          style: TextStyle(
-            fontSize: context.sp(12),
-            fontWeight: FontWeight.w800,
-            color: dark ? Colors.black54 : Colors.black54,
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -2012,12 +2286,17 @@ class _PosterTicketFace extends StatelessWidget {
     required this.title,
     this.info,
     this.bigCenterText,
+    this.centerMessage,
     this.radiusOnRight = false,
   });
 
   final String title;
   final TicketInfo? info;
   final String? bigCenterText;
+
+  /// [bigCenterText] 아래에 함께 보여줄 작은 안내 문구(예: 배송 전 티켓의
+  /// "배송이 시작되었습니다!"). null이면 표시하지 않습니다.
+  final String? centerMessage;
 
   /// 이 포스터 면이 카드의 오른쪽 끝에 놓일 때(예: 입장 티켓 라벨을 왼쪽으로
   /// 옮겨서 포스터가 오른쪽으로 밀린 경우) true로 줘서 바깥쪽 모서리
@@ -2102,14 +2381,34 @@ class _PosterTicketFace extends StatelessWidget {
         ),
         const Spacer(),
         Center(
-          child: Text(
-            bigCenterText!,
-            style: TextStyle(
-              fontSize: context.sp(20),
-              fontWeight: FontWeight.w900,
-              color: Colors.white,
-              shadows: _textShadows,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                bigCenterText!,
+                style: TextStyle(
+                  fontSize: context.sp(20),
+                  fontWeight: FontWeight.w900,
+                  color: Colors.white,
+                  shadows: _textShadows,
+                ),
+              ),
+              if (centerMessage != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  centerMessage!,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: context.sp(10),
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white.withValues(alpha: 0.92),
+                    shadows: _textShadows,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
         const Spacer(),
@@ -2120,7 +2419,6 @@ class _PosterTicketFace extends StatelessWidget {
   /// 공연 전/후 티켓: 큰 공연명 + 날짜·공연장 + 하단 좌석/가격.
   Widget _buildConcertLayout(BuildContext context) {
     final seat = info?.seat ?? '';
-    final price = info?.price ?? '';
     final metaParts = <String>[
       if (info?.date != null) info!.formattedDate,
       if (info != null && info!.venueName.isNotEmpty) info!.venueName,
@@ -2161,11 +2459,7 @@ class _PosterTicketFace extends StatelessWidget {
         ],
         const Spacer(),
         Row(
-          children: [
-            if (seat.isNotEmpty) _miniStat(context, '좌석', seat),
-            if (seat.isNotEmpty && price.isNotEmpty) const SizedBox(width: 14),
-            if (price.isNotEmpty) _miniStat(context, '가격', price),
-          ],
+          children: [if (seat.isNotEmpty) _miniStat(context, '좌석', seat)],
         ),
       ],
     );
@@ -2242,6 +2536,96 @@ class _TicketStub extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ===== [TEST-ONLY] 아래부터 파일 끝까지, "test 티켓 추가"의 숫자 날짜
+// 입력에만 쓰이는 순수 헬퍼입니다. 테스트 탭을 통째로 지울 때 이 아래
+// 내용도 함께 지우면 됩니다. =====
+
+/// 지금까지 입력된 숫자만("2026826")을 연/월/일 부분 문자열로 나눕니다.
+///
+/// 월은 첫 글자가 '0'이나 '1'이고 다음 글자까지 합쳐 1~12가 되면 2자리를,
+/// 그렇지 않으면(예: 첫 글자가 2~9거나 "13"~"19"처럼 무효한 조합) 1자리만
+/// 가져갑니다 — 그래야 "8"만 입력해도 곧바로 8월로 확정되고, 남은 숫자가
+/// 바로 "일"로 넘어갑니다("2026826" -> 년=2026, 월=8, 일=26). 일은 남은
+/// 숫자를 그대로(최대 2자리) 가져갑니다.
+({String year, String month, String day}) _debugYmdSegments(String digits) {
+  final capped = digits.length > 8 ? digits.substring(0, 8) : digits;
+  if (capped.length <= 4) return (year: capped, month: '', day: '');
+  final year = capped.substring(0, 4);
+  final rest = capped.substring(4);
+  final String month;
+  if (rest.length == 1) {
+    month = rest;
+  } else if (rest[0] == '0' || rest[0] == '1') {
+    final firstTwo = int.parse(rest.substring(0, 2));
+    month = (firstTwo >= 1 && firstTwo <= 12)
+        ? rest.substring(0, 2)
+        : rest.substring(0, 1);
+  } else {
+    month = rest.substring(0, 1);
+  }
+  final dayFull = rest.substring(month.length);
+  final day = dayFull.length > 2 ? dayFull.substring(0, 2) : dayFull;
+  return (year: year, month: month, day: day);
+}
+
+/// 입력 중인 숫자를 "2026년 8월 26일" 형태로 실시간 표시합니다. 연 4자리가
+/// 다 채워지기 전에는 숫자를 그대로 보여줍니다.
+String _formatDebugYmdDigits(String digits) {
+  final seg = _debugYmdSegments(digits);
+  if (seg.year.length < 4) return seg.year;
+  final buffer = StringBuffer('${seg.year}년');
+  if (seg.month.isNotEmpty) buffer.write(' ${int.parse(seg.month)}월');
+  if (seg.day.isNotEmpty) buffer.write(' ${int.parse(seg.day)}일');
+  return buffer.toString();
+}
+
+/// 화면에 표시된 문자열(또는 원시 숫자)에서 연/월/일을 모두 뽑아낼 수
+/// 있으면 [DateTime]으로 변환합니다. 아직 다 안 채워졌거나 월/일이
+/// 달력상 불가능한 값이면(예: 13월) null입니다.
+DateTime? _parseDebugYmdDigits(String raw) {
+  final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+  final seg = _debugYmdSegments(digits);
+  if (seg.year.length < 4 || seg.month.isEmpty || seg.day.isEmpty) {
+    return null;
+  }
+  final month = int.parse(seg.month);
+  final day = int.parse(seg.day);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return DateTime(int.parse(seg.year), month, day);
+}
+
+/// [TEST-ONLY] 숫자만 받아 [_formatDebugYmdDigits]로 실시간 재포맷하는
+/// [TextField] 전용 포매터.
+class _DebugYmdInputFormatter extends TextInputFormatter {
+  const _DebugYmdInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final oldDigits = oldValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    final String digits;
+    if (newValue.text.length < oldValue.text.length) {
+      // 삭제(백스페이스): 화면엔 "년/월/일" 같은 숫자가 아닌 글자도 섞여
+      // 있어서 마지막 한 글자를 그대로 지우면 그 글자만 사라지고 숫자는
+      // 그대로일 수 있습니다. 항상 "숫자" 기준 마지막 한 자리를 지운
+      // 것으로 취급합니다.
+      digits = oldDigits.isEmpty
+          ? ''
+          : oldDigits.substring(0, oldDigits.length - 1);
+    } else {
+      digits = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    }
+    final capped = digits.length > 8 ? digits.substring(0, 8) : digits;
+    final formatted = _formatDebugYmdDigits(capped);
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }

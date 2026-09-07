@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -8,18 +9,20 @@ import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
+import 'fullscreen_poster.dart';
+import 'poster_background.dart';
 import 'pressable_scale.dart';
 import 'responsive_text.dart';
 
-/// "공연 전" 페이지 콘텐츠.
+/// "공연 전" 페이지 콘텐츠 — 신문 1면 디자인.
 ///
-/// - 위: 공연명 + D-day 칩
-/// - 아래: 공연 정보 / 타임테이블(세로 타임라인) / 예상 셋 리스트(트랙리스트)를
-///   포스트잇 색을 입힌 카드로 나눠, 좌우로 스와이프(PageView)해서 한 장씩 봅니다.
-/// - 카드 내용이 길어지면 카드 안에서 세로로 스크롤됩니다(텍스트 잘림 없음).
+/// - 위: 신문 제호(masthead) + 발행일/D-day
+/// - 헤드라인: 공연명
+/// - 사진: 공연 포스터를 신문 사진처럼 프레임 + 캡션
+/// - 기사: 공연 정보 / 타임테이블 / 예상 셋 리스트 순서로 세로 스크롤
 ///
 /// NOTE
-/// - 오버레이에서는 [postItOpacity]에 애니메이션을 넘기면 콘텐츠가 Fade-in 됩니다.
+/// - 오버레이에서는 [postItOpacity]에 애니메이션을 넘기면 지면 전체가 Fade-in 됩니다.
 /// - 일반 스크린에서는 null로 두면 즉시 표시됩니다.
 /// - [ticketInfo]가 있으면 스캔된 티켓 정보(공연장/날짜/가격/좌석 등)를 그대로 보여주고,
 ///   없으면 예시용 placeholder 값을 보여줍니다.
@@ -29,86 +32,123 @@ class ConcertBeforePageContents extends StatelessWidget {
   final Animation<double>? postItOpacity;
   final bool showCloseHint;
 
+  /// 이 티켓이 몇 번째로 등록됐는지(신문 "제 N 호"). 호출부에서 등록 순번을
+  /// 넘겨줍니다. 단독 스크린 등 순번을 모르면 1로 둡니다.
+  final int issueNumber;
+
   const ConcertBeforePageContents({
     super.key,
     required this.concertTitle,
     this.ticketInfo,
     this.postItOpacity,
     this.showCloseHint = true,
+    this.issueNumber = 1,
   });
 
   @override
   Widget build(BuildContext context) {
-    final body = _ConcertBeforeBody(
+    final paper = _ConcertBeforeBody(
       concertTitle: concertTitle,
       ticketInfo: ticketInfo,
+      issueNumber: issueNumber,
     );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 제목/D-day/"공연 전" 라벨은 순전히 표시용이라 히트테스트에서
-        // 제외합니다(IgnorePointer) — 그래야 이 자리를 눌렀을 때 뒤에 겹친
-        // 포스터의 "바깥 탭으로 닫기" 감지기까지 탭이 그대로 통과합니다.
-        IgnorePointer(
-          // D-day를 제목과 같은 Row에 형제로 두면, 제목이 몇 줄로 늘어나든
-          // Row가 항상 칩만큼의 폭을 미리 비워두므로 절대 겹치지 않습니다.
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Text(
-                  concertTitle,
-                  style: TextStyle(
-                    fontSize: context.sp(19),
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              _DDayChip(label: _dDayLabel(ticketInfo?.date)),
-            ],
-          ),
-        ),
-        const SizedBox(height: 8),
-        IgnorePointer(
-          child: Text(
-            '공연 전',
-            style: TextStyle(
-              fontSize: context.sp(14),
-              fontWeight: FontWeight.w800,
-              color: Colors.black.withValues(alpha: 0.55),
-            ),
-          ),
-        ),
-        const SizedBox(height: 18),
+        // 지면(제호+기사) 전체를 하나로 페이드 인합니다. 지면이 아닌 빈
+        // 자리를 눌렀을 때 뒤(오버레이의 "바깥 탭으로 닫기")까지 탭이
+        // 전달되도록, 아래 신문 위젯들은 기본적으로 히트테스트를 붙잡지
+        // 않는 순수 텍스트/장식으로 두었습니다(스크롤·셋리스트 미리보기
+        // 같은 상호작용 요소만 예외).
         Expanded(
           child: postItOpacity == null
-              ? body
-              : FadeTransition(opacity: postItOpacity!, child: body),
+              ? paper
+              : FadeTransition(opacity: postItOpacity!, child: paper),
         ),
         if (showCloseHint) ...[
-          const SizedBox(height: 10),
-          // 카드 스와이프 영역과 고정된 안내 문구 사이의 경계를 명확히 합니다.
-          Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
-          const SizedBox(height: 10),
+          SizedBox(height: context.rs(10)),
+          Container(height: 1, color: _ink.withValues(alpha: 0.15)),
+          SizedBox(height: context.rs(8)),
           IgnorePointer(
             child: Text(
-              '닫기: 페이지 바깥(포스터 영역)을 눌러주세요.',
-              style: TextStyle(
-                fontSize: context.sp(12),
-                color: Colors.black.withValues(alpha: 0.45),
+              '닫기: 페이지 바깥을 눌러주세요.',
+              style: _serif(
+                context,
+                size: 12,
+                color: _ink.withValues(alpha: 0.45),
               ),
             ),
           ),
         ],
       ],
     );
+
+    // 요청4: 페이지 전체(모든 구성요소)에 신문지 질감 — 뒤에 구겨짐/얼룩
+    // 텍스처를 깔고(고정, 스크롤과 무관), 내용 위에 아주 옅은 구겨짐 그림자를
+    // 한 겹 더 얹어 글자 위로도 종이 결이 지나가는 느낌을 줍니다. 둘 다
+    // 히트테스트를 붙잡지 않아(포인터 무시) 탭/스크롤에 영향이 없습니다.
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: CustomPaint(painter: _NewsprintPainter(foreground: false)),
+        ),
+        content,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(painter: _NewsprintPainter(foreground: true)),
+          ),
+        ),
+      ],
+    );
   }
 }
 
-/// 티켓/섹션 전반에서 쓰는 포인트 색(짙은 자주색 — "티켓 잉크" 느낌).
-const Color _accent = Color(0xFF52406B);
+// =============================================================================
+// 신문 지면 공통 토큰(잉크색/세리프 글꼴)
+// =============================================================================
+
+/// 신문 잉크(거의 검정).
+const Color _ink = Color(0xFF1A1A1A);
+
+/// 신문지색(약간 회색끼가 도는 미색). 오버레이 카드 배경도 같은 색을 씁니다.
+const Color _newsprint = Color(0xFFE9E6DC);
+
+/// 영어/한글 모두 "공백(단어) 경계에서만" 줄바꿈되고, 한 단어(공백으로 구분된
+/// 토큰)가 중간에서 쪼개지지 않도록 각 토큰 안 글자 사이에 WORD JOINER
+/// (U+2060, 폭 없는 결합 문자)를 끼웁니다. 한글은 기본적으로 글자마다
+/// 줄바꿈될 수 있어 단어가 잘려 보이던 것을 막습니다.
+String _keepWords(String text) {
+  const wj = '\u{2060}'; // WORD JOINER
+  return text.split(' ').map((token) => token.split('').join(wj)).join(' ');
+}
+
+/// 세리프 글꼴(신문 느낌). 한글 글리프는 세리프 패밀리에 없으면 시스템
+/// 기본 한글 폰트로 자연스럽게 폴백됩니다(별도 폰트 번들 없음).
+const String _serifFamily = 'Georgia';
+const List<String> _serifFallback = ['Times New Roman', 'Times', 'serif'];
+
+/// 지면 전체에서 쓰는 세리프 텍스트 스타일 헬퍼.
+TextStyle _serif(
+  BuildContext context, {
+  double size = 14,
+  FontWeight weight = FontWeight.w400,
+  Color color = _ink,
+  double? height,
+  double? letterSpacing,
+  FontStyle? fontStyle,
+}) {
+  return TextStyle(
+    fontFamily: _serifFamily,
+    fontFamilyFallback: _serifFallback,
+    fontSize: context.sp(size),
+    fontWeight: weight,
+    color: color,
+    height: height,
+    letterSpacing: letterSpacing,
+    fontStyle: fontStyle,
+  );
+}
 
 String _dDayLabel(DateTime? date) {
   if (date == null) return 'D-12';
@@ -121,17 +161,30 @@ String _dDayLabel(DateTime? date) {
   return 'D+${-diff}';
 }
 
+/// 제호 아래 발행일 라인("2026년 8월 1일 토요일").
+String _publishDateLabel(DateTime? date) {
+  if (date == null) return '0000년 00월 00일';
+  const weekday = ['월', '화', '수', '목', '금', '토', '일'];
+  return '${date.year}년 ${date.month}월 ${date.day}일 '
+      '${weekday[date.weekday - 1]}요일';
+}
+
 class _ConcertBeforeBody extends StatefulWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
+  final int issueNumber;
 
-  const _ConcertBeforeBody({required this.concertTitle, this.ticketInfo});
+  const _ConcertBeforeBody({
+    required this.concertTitle,
+    this.ticketInfo,
+    required this.issueNumber,
+  });
 
   @override
   State<_ConcertBeforeBody> createState() => _ConcertBeforeBodyState();
 }
 
-/// 타임테이블/예상 셋리스트 포스트잇의 조회 상태.
+/// 타임테이블/예상 셋리스트 조회 상태.
 /// - [loading]: 조회 중(응답 대기)
 /// - [empty]: 조회는 끝났는데 아직 등록된 데이터가 없음(백엔드 404) — "미정"
 /// - [error]: 그 외 실패(500, 네트워크 오류 등) — 상태 코드를 같이 보여줌
@@ -316,7 +369,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       for (var i = 0; i < timetable.length; i++)
-        _TimelineRow(
+        _NewsTimeRow(
           time: timetable[i].time,
           label: timetable[i].label,
           isLast: i == timetable.length - 1,
@@ -348,207 +401,289 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   @override
   Widget build(BuildContext context) {
     final ticketInfo = widget.ticketInfo;
-    final fields = [
-      MapEntry('공연명', widget.concertTitle),
-      ...(ticketInfo?.displayFields ?? _placeholderFields),
-    ];
+    // 공연명은 제호로 이미 크게 나오므로 정보 표에서는 뺍니다(중복 제거).
+    // 공연장(venue)은 요청5에 따라 "공연 정보" 섹션에서만 보여주고,
+    // 여기(리드/포스터 캡션)에는 넣지 않습니다.
+    final fields = ticketInfo?.displayFields ?? _placeholderFields;
     final hasConcertId = ticketInfo?.concertId != null;
 
-    // 포스트잇처럼 색을 입힌 카드 3장을 좌우로 스와이프해서 하나씩
-    // 보여줍니다. 카드 내용이 길면 카드 안에서 세로 스크롤됩니다.
-    return _SwipeableCards(
-      pages: [
-        _SectionCard(
-          icon: Icons.confirmation_number_outlined,
-          label: '공연 정보',
-          color: const Color(0xFFFFD6E8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    // 요청: 한 화면에 2×2로 모두 표시(가로 슬라이드/2배 폭 제거).
+    //   왼위 포스터 · 왼아래 공연정보 · 오른위 예상 타임테이블 · 오른아래 셋리스트.
+    // 제호(공연명 + 제 N 호)는 위에 그대로 두고, 그 아래를 2단×2행으로 나눕니다.
+    // 세로가 넘칠 때만 FittedBox(scaleDown)로 지면을 줄여 한 화면에 담습니다.
+    final gap = context.rs(14);
+    final page = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _Masthead(
+          title: widget.concertTitle,
+          issueNumber: widget.issueNumber,
+          publishDate: _publishDateLabel(ticketInfo?.date),
+          dday: _dDayLabel(ticketInfo?.date),
+        ),
+        SizedBox(height: context.rs(14)),
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final field in fields)
-                _InfoRow(label: field.key, value: field.value),
+              // 왼쪽 단: 위=포스터, 아래=공연 정보
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _SpreadPoster(
+                      // 요청5: 공연장은 캡션에 넣지 않고 '공연 정보'에서만.
+                      imageUrl: ticketInfo?.posterImageUrl,
+                      caption: '공연 포스터',
+                    ),
+                    SizedBox(height: context.rs(16)),
+                    _ArticleSection(
+                      title: '공연 정보',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final field in fields)
+                            _NewsInfoRow(label: field.key, value: field.value),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: gap),
+              const _ColumnRule(),
+              SizedBox(width: gap),
+              // 오른쪽 단: 위=예상 타임테이블, 아래=예상 셋 리스트
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ArticleSection(
+                      title: '예상 타임테이블',
+                      child: _buildTimetableBody(hasConcertId),
+                    ),
+                    SizedBox(height: context.rs(16)),
+                    _ArticleSection(
+                      title: '예상 셋 리스트',
+                      child: _buildSetlistBody(hasConcertId),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-        _SectionCard(
-          icon: Icons.schedule_outlined,
-          label: '타임테이블',
-          color: const Color(0xFFCFF5E7),
-          child: _buildTimetableBody(hasConcertId),
-        ),
-        _SectionCard(
-          icon: Icons.queue_music_rounded,
-          label: '예상 셋 리스트',
-          color: const Color(0xFFD9E8FF),
-          child: _buildSetlistBody(hasConcertId),
-        ),
       ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.topCenter,
+          child: SizedBox(width: constraints.maxWidth, child: page),
+        );
+      },
     );
   }
 }
 
-/// 카드 여러 장을 좌우 스와이프(PageView)로 넘겨보는 컨테이너. 하단에
-/// 현재 몇 번째 카드인지 보여주는 점 인디케이터를 둡니다.
-class _SwipeableCards extends StatefulWidget {
-  final List<Widget> pages;
+// =============================================================================
+// 제호 / 헤드라인 / 사진 / 기사 섹션
+// =============================================================================
 
-  const _SwipeableCards({required this.pages});
+/// 신문 제호(masthead): 발행 정보 라인 + 큰 제호(=공연 제목) + 코너 라벨/D-day,
+/// 위아래를 굵은 괘선으로 감쌉니다. 제호는 공연 제목이라, 단어가 줄바꿈으로
+/// 쪼개지지 않도록([_keepWords]) 하고 최대 2줄까지 허용합니다.
+class _Masthead extends StatelessWidget {
+  final String title;
+  final int issueNumber;
+  final String publishDate;
+  final String dday;
 
-  @override
-  State<_SwipeableCards> createState() => _SwipeableCardsState();
-}
-
-class _SwipeableCardsState extends State<_SwipeableCards> {
-  // 뷰포트 비율을 1.0보다 작게 두면 옆 카드가 양쪽 끝에 살짝 삐져나와
-  // 보여서, 굳이 설명하지 않아도 "옆으로 넘길 수 있다"는 걸 바로
-  // 알아챌 수 있습니다.
-  final PageController _controller = PageController(viewportFraction: 0.9);
-  int _index = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    // 이 위젯은 오버레이가 작은 티켓 크기에서 전체 화면으로 확장되는
-    // 애니메이션(520ms) 동안 계속 레이아웃되는데, 그 사이 뷰포트 폭이
-    // 급격히 바뀌면서 PageView가 첫 페이지가 아닌 다른 페이지로 튀는
-    // 경우가 있었습니다. 확장 애니메이션이 끝난 뒤 한 번 더 첫 페이지로
-    // 고정해서 항상 "공연 정보"부터 보이도록 합니다.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future.delayed(const Duration(milliseconds: 560), () {
-        if (mounted && _controller.hasClients && (_controller.page ?? 0) != 0) {
-          _controller.jumpToPage(0);
-          setState(() => _index = 0);
-        }
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(
-          child: PageView(
-            controller: _controller,
-            // PageScrollPhysics는 스와이프 속도와 무관하게 항상 현재
-            // 페이지의 바로 옆(±1)까지만 이동하도록 스냅합니다 — 아무리
-            // 빠르게 슬라이드해도 한 번에 카드 한 장만 넘어갑니다.
-            physics: const PageScrollPhysics(),
-            onPageChanged: (i) => setState(() => _index = i),
-            children: widget.pages,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            for (var i = 0; i < widget.pages.length; i++)
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                width: i == _index ? 18 : 6,
-                height: 6,
-                decoration: BoxDecoration(
-                  color: i == _index
-                      ? _accent
-                      : _accent.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(3),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-/// 포스트잇처럼 색을 입힌 카드 한 장(스와이프 페이지 하나). 내용이 짧으면
-/// 카드가 그 내용 높이만큼만 차지하고(위에 붙고 아래는 비워둠), 내용이
-/// 카드 영역보다 길어지면 카드 안에서 세로로 스크롤됩니다.
-class _SectionCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final Widget child;
-
-  const _SectionCard({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.child,
+  const _Masthead({
+    required this.title,
+    required this.issueNumber,
+    required this.publishDate,
+    required this.dday,
   });
 
   @override
   Widget build(BuildContext context) {
-    // PageView가 각 페이지에 고정된(tight) 높이를 강제하는데, 그 높이를
-    // 그대로 Container에 넘기면 내용이 짧아도 카드가 항상 꽉 찬 높이로
-    // 늘어납니다. Align이 그 고정 높이를 "이 안에서는 원하는 만큼만
-    // 차지해도 됨"으로 풀어주고(loosen), 남는 공간은 투명하게 비워둡니다.
-    return Align(
-      alignment: Alignment.topCenter,
-      child: Container(
-        width: double.infinity,
-        // 카드 사이 간격을 넉넉히 둬서, 옆 카드가 삐져나와 보일 때 서로
-        // 붙어 보이지 않고 확실히 구분되도록 합니다.
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.10)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.14),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
+    final tiny = _serif(
+      context,
+      size: 10.5,
+      weight: FontWeight.w600,
+      color: _ink.withValues(alpha: 0.6),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(height: 1, color: _ink),
+        SizedBox(height: context.rs(6)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // 요청1: 이 티켓이 몇 번째로 등록됐는지.
+            Text('제 $issueNumber 호', style: tiny),
+            Text(publishDate, style: tiny),
           ],
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        SizedBox(height: context.rs(6)),
+        // 요청2: 제호를 공연 제목으로. 요청3: 단어가 줄바꿈으로 분리되지 않게.
+        Text(
+          _keepWords(title),
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: _serif(
+            context,
+            size: 23,
+            weight: FontWeight.w900,
+            height: 1.12,
+          ),
+        ),
+        SizedBox(height: context.rs(7)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _SectionHeader(icon: icon, label: label),
-            const SizedBox(height: 12),
-            // SingleChildScrollView는 스크롤 축(세로) 제약이 느슨하면
-            // 자기 자식(child) 크기에 맞춰지고, 자식이 더 크면 주어진
-            // 최대 높이로 잘려 그 안에서 스크롤됩니다. Flexible이 바로 그
-            // "느슨한 최대 높이"를 만들어줍니다(Expanded였다면 항상 꽉
-            // 채워서 내용이 짧아도 카드가 늘어남).
-            Flexible(child: SingleChildScrollView(child: child)),
+            _DDayStamp(label: dday),
           ],
+        ),
+        SizedBox(height: context.rs(8)),
+        // 제호 아래 이중 괘선(굵은 선 + 얇은 선).
+        Container(height: 3, color: _ink),
+        SizedBox(height: context.rs(2)),
+        Container(height: 1, color: _ink),
+      ],
+    );
+  }
+}
+
+/// 제호 오른쪽에 붙는 D-day 도장(테두리만 있는 신문 스탬프 느낌).
+class _DDayStamp extends StatelessWidget {
+  final String label;
+
+  const _DDayStamp({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: context.rs(10),
+        vertical: context.rs(4),
+      ),
+      decoration: BoxDecoration(
+        border: Border.all(color: _ink, width: 1.4),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(
+        label,
+        softWrap: false,
+        style: _serif(
+          context,
+          size: 13,
+          weight: FontWeight.w900,
+          letterSpacing: context.rs(1),
         ),
       ),
     );
   }
 }
 
-/// 섹션 제목(아이콘 + 라벨). 카드 자체가 색을 갖게 되어, 제목은 짙은
-/// 무채색으로 두어 어떤 카드 색 위에서도 잘 읽히게 합니다.
-class _SectionHeader extends StatelessWidget {
-  final IconData icon;
-  final String label;
+/// 공연 포스터 이미지(신문 사진용). 없거나 로딩/실패 시 예시 그라데이션.
+Widget _posterImage(String? url) {
+  if (url == null || url.isEmpty) return const PosterGradientPlaceholder();
+  return Image.network(
+    url,
+    fit: BoxFit.cover,
+    webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+    loadingBuilder: (context, child, progress) =>
+        progress == null ? child : const PosterGradientPlaceholder(),
+    errorBuilder: (context, error, stackTrace) =>
+        const PosterGradientPlaceholder(),
+  );
+}
 
-  const _SectionHeader({required this.icon, required this.label});
+/// 신문 단(段)을 나누는 세로 괘선. [IntrinsicHeight] Row 안에서 단 높이만큼
+/// 늘어납니다.
+class _ColumnRule extends StatelessWidget {
+  const _ColumnRule();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Container(width: 1, color: _ink.withValues(alpha: 0.25));
+  }
+}
+
+/// 스프레드 가운데 상단의 포스터. 신문 사진처럼 얇은 검정 프레임 + 캡션 +
+/// 확대 힌트 아이콘. 더블탭하면 전체화면으로 확대([showFullscreenPoster],
+/// 소식 탭 포스터 확대와 동일). 단일 탭은 흡수해, 지면을 눌러 오버레이가
+/// 닫히는 것과 헷갈리지 않게 합니다.
+class _SpreadPoster extends StatelessWidget {
+  final String? imageUrl;
+  final String caption;
+
+  const _SpreadPoster({required this.imageUrl, required this.caption});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 18, color: Colors.black.withValues(alpha: 0.65)),
-        const SizedBox(width: 7),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {}, // 단일 탭 흡수(오버레이 닫힘 방지).
+          onDoubleTap: () => showFullscreenPoster(context, imageUrl),
+          child: Stack(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  border: Border.all(color: _ink, width: 1.2),
+                ),
+                child: AspectRatio(
+                  aspectRatio: 3 / 4,
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: _posterImage(imageUrl),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: context.rs(6),
+                bottom: context.rs(6),
+                child: Container(
+                  padding: EdgeInsets.all(context.rs(4)),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Icon(
+                    Icons.zoom_in,
+                    size: context.rs(15),
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: context.rs(6)),
         Text(
-          label,
-          style: TextStyle(
-            fontSize: context.sp(16),
-            fontWeight: FontWeight.w900,
-            color: Colors.black87,
+          '▲ $caption',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: _serif(
+            context,
+            size: 10.5,
+            color: _ink.withValues(alpha: 0.6),
+            fontStyle: FontStyle.italic,
           ),
         ),
       ],
@@ -556,85 +691,57 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// 공연 정보 한 줄(라벨 고정폭 + 값). 값은 줄 수 제한 없이 필요한 만큼
-/// 자유롭게 줄바꿈됩니다(더 이상 스크롤 금지 제약이 없으므로 잘릴 걱정 없음).
-class _InfoRow extends StatelessWidget {
+/// 기사 섹션 한 덩어리: 세리프 소제목 + 오른쪽으로 이어지는 괘선, 그 아래 본문.
+class _ArticleSection extends StatelessWidget {
+  final String title;
+  final Widget child;
+
+  const _ArticleSection({required this.title, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: _serif(context, size: 15, weight: FontWeight.w900),
+        ),
+        SizedBox(height: context.rs(9)),
+        child,
+      ],
+    );
+  }
+}
+
+/// 공연 정보 한 줄. 좁은 단에서 값이 글자 단위로 쪼개지지 않도록, 라벨을 값
+/// 위에 얹어(세로 배치) 값에 단 전체 폭을 주고, 값은 공백(단어) 경계에서만
+/// 줄바꿈되도록 [_keepWords]를 씁니다.
+class _NewsInfoRow extends StatelessWidget {
   final String label;
   final String value;
 
-  const _InfoRow({required this.label, required this.value});
+  const _NewsInfoRow({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
+      padding: EdgeInsets.only(bottom: context.rs(8)),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            // [백엔드 수정]
-            // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈.
-            width: context.rs(62),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: context.sp(12.5),
-                fontWeight: FontWeight.w700,
-                color: Colors.black.withValues(alpha: 0.55),
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                fontSize: context.sp(15),
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 제목 옆에 붙는 D-day 칩(도장 느낌).
-class _DDayChip extends StatelessWidget {
-  final String label;
-
-  const _DDayChip({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: _accent,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: _accent.withValues(alpha: 0.35),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.event_rounded, size: 14, color: Colors.white),
-          const SizedBox(width: 5),
           Text(
             label,
-            softWrap: false, // "D-12"처럼 짧은 배지 텍스트라 줄바꿈되면 안 됩니다.
-            style: TextStyle(
-              fontSize: context.sp(15),
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-              color: Colors.white,
+            style: _serif(
+              context,
+              size: 11,
+              weight: FontWeight.w700,
+              color: _ink.withValues(alpha: 0.5),
             ),
+          ),
+          Text(
+            _keepWords(value),
+            style: _serif(context, size: 13.5, weight: FontWeight.w600),
           ),
         ],
       ),
@@ -642,14 +749,13 @@ class _DDayChip extends StatelessWidget {
   }
 }
 
-/// 타임테이블 한 줄: 왼쪽에 점+세로선으로 이어진 세로 타임라인, 오른쪽에
-/// 시간/라벨.
-class _TimelineRow extends StatelessWidget {
+/// 타임테이블 한 줄: 시간(굵게) + 내용. 시간이 없으면 가운뎃점으로 표시.
+class _NewsTimeRow extends StatelessWidget {
   final String time;
   final String label;
   final bool isLast;
 
-  const _TimelineRow({
+  const _NewsTimeRow({
     required this.time,
     required this.label,
     this.isLast = false,
@@ -657,52 +763,22 @@ class _TimelineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IntrinsicHeight(
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : context.rs(10)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            children: [
-              Container(
-                width: 9,
-                height: 9,
-                margin: const EdgeInsets.only(top: 3),
-                decoration: const BoxDecoration(
-                  color: _accent,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              if (!isLast)
-                Expanded(
-                  child: Container(
-                    width: 1.4,
-                    color: _accent.withValues(alpha: 0.25),
-                  ),
-                ),
-            ],
+          SizedBox(
+            width: context.rs(52),
+            child: Text(
+              time.isEmpty ? '·' : time,
+              style: _serif(context, size: 13.5, weight: FontWeight.w900),
+            ),
           ),
-          const SizedBox(width: 12),
           Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(bottom: isLast ? 0 : 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    time,
-                    style: TextStyle(
-                      fontSize: context.sp(14),
-                      fontWeight: FontWeight.w900,
-                      color: _accent,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    label,
-                    style: TextStyle(fontSize: context.sp(14.5), color: Colors.black87),
-                  ),
-                ],
-              ),
+            child: Text(
+              _keepWords(label),
+              style: _serif(context, size: 14, weight: FontWeight.w500),
             ),
           ),
         ],
@@ -788,7 +864,7 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
 }
 
 // [백엔드 수정]
-// (앵콜) 텍스트 제거. 
+// (앵콜) 텍스트 제거.
 List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
   return [
     for (var i = 0; i < songs.length; i++)
@@ -809,7 +885,7 @@ class _FlatNumberedSongs extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: _buildSongRows(songs, gap: 10),
+      children: _buildSongRows(songs, gap: context.rs(9)),
     );
   }
 }
@@ -883,7 +959,7 @@ class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
 }
 
 // [백엔드 수정]
-/// 아코디언 한 칸: 아티스트 이름(눌러서 펼치기/접기), 
+/// 아코디언 한 칸: 아티스트 이름(눌러서 펼치기/접기),
 /// 펼치면 그 아래에 이 아티스트만의 번호 매긴 곡 목록
 class _ArtistAccordionSection extends StatelessWidget {
   final String artistName;
@@ -907,7 +983,7 @@ class _ArtistAccordionSection extends StatelessWidget {
           onTap: onTap,
           pressScale: 0.99,
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
+            padding: EdgeInsets.symmetric(vertical: context.rs(6)),
             child: Row(
               children: [
                 Icon(
@@ -915,16 +991,16 @@ class _ArtistAccordionSection extends StatelessWidget {
                       ? Icons.expand_more_rounded
                       : Icons.chevron_right_rounded,
                   size: context.rs(18),
-                  color: _accent,
+                  color: _ink,
                 ),
-                const SizedBox(width: 2),
+                SizedBox(width: context.rs(2)),
                 Expanded(
                   child: Text(
-                    artistName,
-                    style: TextStyle(
-                      fontSize: context.sp(14.5),
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black87,
+                    _keepWords(artistName),
+                    style: _serif(
+                      context,
+                      size: 14.5,
+                      weight: FontWeight.w900,
                     ),
                   ),
                 ),
@@ -937,11 +1013,11 @@ class _ArtistAccordionSection extends StatelessWidget {
             padding: EdgeInsets.only(
               left: context.rs(24),
               top: 2,
-              bottom: 10,
+              bottom: context.rs(10),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: _buildSongRows(songs, gap: 8),
+              children: _buildSongRows(songs, gap: context.rs(8)),
             ),
           ),
       ],
@@ -949,8 +1025,7 @@ class _ArtistAccordionSection extends StatelessWidget {
   }
 }
 
-/// 번호 + 곡 이름 한 줄(앙코르 표시는 _EncoreDivider가 대신함). 단독/
-/// 아코디언 펼친 목록 둘 다 재사용.
+/// 번호 + 곡 이름 한 줄. 단독/아코디언 펼친 목록 둘 다 재사용.
 class _SongRow extends StatelessWidget {
   final int index;
   final SongEntry song;
@@ -963,26 +1038,17 @@ class _SongRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          // [백엔드 수정]
-          // 폰트와 같은 배율로 같이 커지도록 context.rs()로 바꿈.
           width: context.rs(22),
           child: Text(
             '$index',
             softWrap: false,
-            style: TextStyle(
-              fontSize: context.sp(14),
-              fontWeight: FontWeight.w900,
-              color: _accent,
-            ),
+            style: _serif(context, size: 14, weight: FontWeight.w900),
           ),
         ),
         Expanded(
-          // [백엔드 수정]
-          // 곡마다 "(앵콜)"을 반복해서 붙이지 않음 - _buildSongRows가
-          // 앙코르 시작 지점에 _EncoreDivider를 한 번만 끼워 넣음.
           child: Text(
-            song.name,
-            style: TextStyle(fontSize: context.sp(14.5), color: Colors.black87),
+            _keepWords(song.name),
+            style: _serif(context, size: 14.5, weight: FontWeight.w500),
           ),
         ),
       ],
@@ -1000,11 +1066,100 @@ class _UndecidedText extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       message,
-      style: TextStyle(
-        fontSize: context.sp(14),
-        fontWeight: FontWeight.w700,
-        color: Colors.black.withValues(alpha: 0.4),
+      style: _serif(
+        context,
+        size: 14,
+        weight: FontWeight.w700,
+        color: _ink.withValues(alpha: 0.4),
       ),
     );
   }
+}
+
+/// 신문지 질감(요청4): 약간 회색끼 도는 바탕 + 은은한 얼룩(mottle) + 구겨짐
+/// 주름(crease) + 미세한 종이 결(grain). [foreground]가 false면 내용 뒤에
+/// 까는 바탕(색 채움 + 얼룩 + 주름 + 결)이고, true면 내용 위에 아주 옅게
+/// 얹는 주름/비네팅만 그립니다(글자 위로도 종이 결이 지나가는 느낌).
+/// 고정 시드라 리빌드 때 무늬가 흔들리지 않습니다.
+class _NewsprintPainter extends CustomPainter {
+  final bool foreground;
+
+  const _NewsprintPainter({required this.foreground});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = math.Random(20260912);
+    final rect = Offset.zero & size;
+
+    if (!foreground) {
+      // 바탕색(회색끼 도는 신문지).
+      canvas.drawRect(rect, Paint()..color = _newsprint);
+
+      // 은은한 얼룩(밝고 어두운 큰 원들을 아주 옅게 겹쳐 종이 얼룩 느낌).
+      for (var i = 0; i < 16; i++) {
+        final c = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+        final r = size.shortestSide * (0.12 + rnd.nextDouble() * 0.22);
+        final dark = rnd.nextBool();
+        final paint = Paint()
+          ..shader = RadialGradient(
+            colors: [
+              (dark ? Colors.black : Colors.white)
+                  .withValues(alpha: dark ? 0.035 : 0.05),
+              const Color(0x00000000),
+            ],
+          ).createShader(Rect.fromCircle(center: c, radius: r));
+        canvas.drawCircle(c, r, paint);
+      }
+    }
+
+    // 구겨짐 주름: 밝은 선 + 바로 옆 어두운 선(접힌 능선처럼 보이게).
+    final creaseCount = foreground ? 5 : 9;
+    for (var i = 0; i < creaseCount; i++) {
+      final start = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+      final angle = rnd.nextDouble() * math.pi * 2;
+      final len = size.longestSide * (0.35 + rnd.nextDouble() * 0.55);
+      final dir = Offset(math.cos(angle), math.sin(angle));
+      final end = start + dir * len;
+      final perp = Offset(-dir.dy, dir.dx);
+      final lightA = foreground ? 0.03 : 0.06;
+      final darkA = foreground ? 0.025 : 0.05;
+      canvas.drawLine(
+        start,
+        end,
+        Paint()
+          ..color = Colors.white.withValues(alpha: lightA)
+          ..strokeWidth = 1.1,
+      );
+      canvas.drawLine(
+        start + perp * 1.3,
+        end + perp * 1.3,
+        Paint()
+          ..color = Colors.black.withValues(alpha: darkA)
+          ..strokeWidth = 1.0,
+      );
+    }
+
+    if (!foreground) {
+      // 미세한 종이 결(작은 점들).
+      final grain = Paint();
+      for (var i = 0; i < 260; i++) {
+        final p = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+        grain.color = Colors.black.withValues(alpha: rnd.nextDouble() * 0.03);
+        canvas.drawCircle(p, 0.6, grain);
+      }
+    } else {
+      // 가장자리 비네팅(살짝 어둡게) — 오래된 신문지 느낌.
+      final vignette = Paint()
+        ..shader = RadialGradient(
+          radius: 0.9,
+          colors: [const Color(0x00000000), Colors.black.withValues(alpha: 0.05)],
+          stops: const [0.75, 1.0],
+        ).createShader(rect);
+      canvas.drawRect(rect, vignette);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _NewsprintPainter old) =>
+      old.foreground != foreground;
 }
