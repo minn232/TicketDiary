@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -498,6 +498,64 @@ async def test_news_feed_created_immediately_on_follow_for_existing_concert():
     feed = res.json()
     assert len(feed) == 1
     assert feed[0]["artist_name"] == artist_name
+
+
+# D-day(공연 당일)/지나간 공연 소식은 조회 시점에 걸러지는지 테스트. 생성 시점엔
+# 미래 공연이라 정상 생성됐다가, 시간이 지나 당일/과거가 된 경우를 재현(한 번
+# 만들어진 NewsFeed는 안 지워지는 정책이라 생성 시점 필터만으론 못 잡는 케이스)
+@pytest.mark.asyncio
+async def test_news_feed_excludes_dday_and_past_concerts():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    artist_name = f"디데이아티스트_{uuid.uuid4().hex}"
+    kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    concert_id = await _fetch_concert(kopis_id, artist_name, token)
+
+    # 미래 공연(2030년)이라 소식이 정상 생성된 것을 먼저 확인
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+    assert len(res.json()) == 1
+
+    # start_date를 "오늘(KST) 당일" 값으로 조작 - KOPIS 관례상 그 날짜의 KST
+    # 자정을 UTC로 표기하므로 동일하게 구성
+    kst = timezone(timedelta(hours=9))
+    now_kst = datetime.now(timezone.utc).astimezone(kst)
+    today_as_stored = datetime(
+        now_kst.year, now_kst.month, now_kst.day, tzinfo=timezone.utc
+    )
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(start_date=today_as_stored)
+        )
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+    assert res.json() == [], "D-day 공연은 소식에 안 보여야 함"
+
+    # 지나간 공연으로 조작
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(start_date=datetime(2020, 1, 1, tzinfo=timezone.utc))
+        )
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+    assert res.json() == [], "지나간 공연은 소식에 안 보여야 함"
 
 
 # 이미 팔로우 중인 아티스트를 재저장(중복 포함)해도 뉴스피드 중복 생성 안 됨 테스트
