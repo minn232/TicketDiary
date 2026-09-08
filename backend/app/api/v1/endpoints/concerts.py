@@ -22,8 +22,8 @@ from app.schemas.concert import (
     TicketScanResponse,
 )
 from app.services.artist_normalization import confirm_artist_name_change
+from app.services.concert_search import search_concerts_db
 from app.services.kopis import (
-    search_concerts as kopis_search,
     search_concerts_multi as kopis_search_multi,
     search_concerts_by_venue as kopis_search_by_venue,
     get_concert_detail,
@@ -125,16 +125,18 @@ async def scan_ticket(
     return TicketScanResponse(extracted=extracted, candidates=candidates)
 
 
-# KOPIS 공연 검색 (keyword, start_date, end_date -> DB upsert)
+# 찜 공연 검색 - DB 기준(KOPIS 실시간 아님, 2026-09-09 결정). 매일 밤 배치로 이미 동기화된
+# 공연 안에서 공연명+아티스트명(별칭/원어 표기 포함)으로 즉시 검색 - 타이핑마다 호출해도 되도록
+# 외부 API를 안 탄다. 대신 KOPIS 대비 최대 하루 지연(신규 공연은 다음날 밤 배치 이후 검색 가능)과,
+# 아티스트 추출/정규화가 아직 안 된 공연은 아티스트명으로는 못 찾을 수 있음을 감수한 트레이드오프.
+# /scan(티켓 사진 스캔) 후보 검색은 이 엔드포인트를 안 쓰고 kopis.py의 KOPIS 실시간 검색을 그대로 씀.
 @router.get("/search", response_model=list[ConcertResponse])
 async def search_concerts(
     keyword: str = Query(...),
-    start_date: date | None = Query(None),
-    end_date: date | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await kopis_search(db, keyword, start_date, end_date)
+    return await search_concerts_db(db, keyword)
 
 
 # 공연장 + 날짜 기준 KOPIS 재검색 (/scan 후보 목록에 원하는 공연이 없을 때 사용)

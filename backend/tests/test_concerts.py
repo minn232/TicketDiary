@@ -1,11 +1,16 @@
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
-from app.services.kopis import _venue_candidates, _venue_overlaps
+from app.models.artist_normalization import ArtistAlias, ArtistGroupMembership, CanonicalArtist
+from app.models.concert import Concert
+from app.services.kopis import _venue_candidates, _venue_overlaps, search_concerts as kopis_search_concerts
 from app.services.site_aliases import find_site_key
 from conftest import _get_token, kopis_mock
 
@@ -41,85 +46,172 @@ def _make_kopis_xml(
 _EMPTY_XML = b'<?xml version="1.0" encoding="UTF-8"?><dbs></dbs>'
 
 
-# 공연 검색 테스트
+# 공연 검색 테스트 (/concerts/search - DB 기준, KOPIS 실시간 아님, 2026-09-09부터)
 
-# KOPIS 검색 성공 테스트
-@pytest.mark.asyncio
-async def test_search_concerts_success():
+# 콘서트 하나를 DB에 직접 생성 (search_concerts_db는 이미 동기화된 DB만 보므로 KOPIS mock 불필요)
+async def _make_concert(
+    *,
+    name: str,
+    artist_name: list[str] | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    kopis_id: str | None = None,
+    kopis_detail_synced_at: datetime | None = None,
+) -> Concert:
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        concert = Concert(
+            kopis_id=kopis_id or f"PF_SEARCHTEST_{uuid.uuid4().hex[:10]}",
+            name=name,
+            artist_name=artist_name or [],
+            start_date=start_date or now + timedelta(days=30),
+            end_date=end_date or now + timedelta(days=31),
+            kopis_detail_synced_at=kopis_detail_synced_at,
+        )
+        db.add(concert)
+        await db.commit()
+        await db.refresh(concert)
+        return concert
+
+
+async def _search(keyword: str) -> list[dict]:
     token = await _get_token()
-    xml = _make_kopis_xml("PF_SEARCH_001", "테스트 콘서트", "2030.06.01", "2030.06.30", "테스트아티스트")
-    with kopis_mock(xml):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "테스트"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get(
+            "/api/v1/concerts/search",
+            params={"keyword": keyword},
+            headers={"Authorization": f"Bearer {token}"},
+        )
     assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["kopis_id"] == "PF_SEARCH_001"
-    assert data[0]["name"] == "테스트 콘서트"
+    return response.json()
 
 
-# 검색 결과 없음 테스트
+@pytest.mark.asyncio
+async def test_search_concerts_matches_title():
+    concert = await _make_concert(name=f"검색제목테스트_{uuid.uuid4().hex[:8]} 콘서트")
+    data = await _search(concert.name[:12])
+    assert any(c["id"] == str(concert.id) for c in data)
+
+
+@pytest.mark.asyncio
+async def test_search_concerts_matches_artist_name():
+    artist = f"검색아티스트_{uuid.uuid4().hex[:8]}"
+    concert = await _make_concert(name="무제 콘서트", artist_name=[artist])
+    data = await _search(artist)
+    assert any(c["id"] == str(concert.id) for c in data)
+
+
 @pytest.mark.asyncio
 async def test_search_concerts_empty_result():
-    token = await _get_token()
-    with kopis_mock(_EMPTY_XML):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "없는공연xyz"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-
-    assert response.status_code == 200
-    assert response.json() == []
+    data = await _search(f"존재하지않는검색어_{uuid.uuid4().hex}")
+    assert data == []
 
 
-# KOPIS API 오류 시 502 반환 테스트
+# 종료된 공연은 찜할 의미가 없어 검색 결과에서 제외 (2026-09-09 결정)
 @pytest.mark.asyncio
-async def test_search_concerts_kopis_502():
-    token = await _get_token()
-    with kopis_mock(b"", status_code=500):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "테스트"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+async def test_search_concerts_excludes_ended_concerts():
+    now = datetime.now(timezone.utc)
+    artist = f"종료테스트_{uuid.uuid4().hex[:8]}"
+    await _make_concert(
+        name="이미 끝난 공연",
+        artist_name=[artist],
+        start_date=now - timedelta(days=10),
+        end_date=now - timedelta(days=9),
+    )
+    data = await _search(artist)
+    assert data == []
 
-    assert response.status_code == 502
 
-
-# 동일 공연 중복 검색 시 같은 ID 반환 테스트
+# 밴드 별칭/외국 밴드 한국어 표기로 검색해도 찾아지는지 테스트 (canonical_name/alias 경유)
 @pytest.mark.asyncio
-async def test_search_concerts_upsert_same_id():
-    token = await _get_token()
+async def test_search_concerts_matches_alias_and_korean_transliteration():
+    band_name = f"BAND_{uuid.uuid4().hex[:8].upper()}"
+    korean_alias = f"밴드_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=band_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=korean_alias, source="musicbrainz"))
+        await db.commit()
+
+    # DB에는 정규화된 원어 표기(band_name)로 저장돼 있고, 한국어 별칭으로 검색
+    concert = await _make_concert(name="원어표기 공연", artist_name=[band_name])
+    data = await _search(korean_alias)
+    assert any(c["id"] == str(concert.id) for c in data)
+
+
+# 밴드 멤버 이름으로 검색해도 그 멤버가 속한 그룹의 공연은 나오면 안 됨 (2026-09-09 결정).
+# artist_search.py의 search_artists()(아티스트 팔로우 검색)와 달리 멤버->그룹 확장을 안 하는 게 핵심 차이
+@pytest.mark.asyncio
+async def test_search_concerts_member_name_does_not_surface_group_concert():
+    group_name = f"GROUP_{uuid.uuid4().hex[:8].upper()}"
+    member_name = f"멤버_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        group = CanonicalArtist(canonical_name=group_name)
+        member = CanonicalArtist(canonical_name=member_name)
+        db.add_all([group, member])
+        await db.flush()
+        db.add(ArtistGroupMembership(member_canonical_id=member.id, group_canonical_id=group.id))
+        await db.commit()
+
+    # 그룹 공연의 artist_name엔 그룹 이름만 있고 멤버 개인 이름은 어디에도 없음
+    await _make_concert(name="그룹 단독 콘서트", artist_name=[group_name])
+    data = await _search(member_name)
+    assert data == []
+
+
+# kopis.py의 search_concerts() 자체 로직 테스트 - 더는 이 HTTP 엔드포인트를 안 타지만, /scan
+# 티켓 후보 검색(kopis_search_multi)에서 여전히 쓰이므로 축소/필터링 로직을 직접 호출로 계속 검증
+
+@pytest.mark.asyncio
+async def test_kopis_search_concerts_basic():
+    xml = _make_kopis_xml("PF_SEARCH_001", "테스트 콘서트", "2030.06.01", "2030.06.30", "테스트아티스트")
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(xml):
+            concerts = await kopis_search_concerts(db, "테스트")
+
+    assert len(concerts) == 1
+    assert concerts[0].kopis_id == "PF_SEARCH_001"
+    assert concerts[0].name == "테스트 콘서트"
+
+
+@pytest.mark.asyncio
+async def test_kopis_search_concerts_empty_result():
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(_EMPTY_XML):
+            concerts = await kopis_search_concerts(db, "없는공연xyz")
+
+    assert concerts == []
+
+
+@pytest.mark.asyncio
+async def test_kopis_search_concerts_502_on_kopis_error():
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(b"", status_code=500):
+            with pytest.raises(HTTPException) as exc_info:
+                await kopis_search_concerts(db, "테스트")
+
+    assert exc_info.value.status_code == 502
+
+
+# 동일 공연 중복 검색 시 같은 ID로 upsert되는지 테스트
+@pytest.mark.asyncio
+async def test_kopis_search_concerts_upsert_same_id():
     xml = _make_kopis_xml("PF_UPSERT_001", "업서트 테스트", "2030.07.01", "2030.07.31")
-    with kopis_mock(xml):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res1 = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "업서트"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-            res2 = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "업서트"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(xml):
+            first = await kopis_search_concerts(db, "업서트")
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(xml):
+            second = await kopis_search_concerts(db, "업서트")
 
-    assert res1.json()[0]["id"] == res2.json()[0]["id"]
+    assert first[0].id == second[0].id
 
 
 # 다단어 검색이 전부 실패하면 1단어까지 축소해서 재시도하는지 테스트
 # (KOPIS 등록명이 OCR 원문과 구두점/부제가 달라도 맨 앞 단어=아티스트명만으로 걸리는 경우가 많음)
 @pytest.mark.asyncio
-async def test_search_concerts_reduces_to_single_word():
-    token = await _get_token()
+async def test_kopis_search_concerts_reduces_to_single_word():
     single_word_xml = _make_kopis_xml("PF_ONEWORD_001", "SURL concert, ?YRU?", "2030.06.01", "2030.06.30")
 
     async def _mock_get(url, params=None, **kwargs):
@@ -134,25 +226,18 @@ async def test_search_concerts_reduces_to_single_word():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = _mock_get
 
-    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "SURL concert'? YRU?'"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+            concerts = await kopis_search_concerts(db, "SURL concert'? YRU?'")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["kopis_id"] == "PF_ONEWORD_001"
+    assert len(concerts) == 1
+    assert concerts[0].kopis_id == "PF_ONEWORD_001"
 
 
 # 2자 이하로 줄어드는 축소 단계는 건너뛰는지 테스트
 # (로마자 아티스트명이 "HA/HYUN/SANG"처럼 쪼개져 있으면 "HA"만으로 검색 시 무관한 결과가 대량으로 걸림)
 @pytest.mark.asyncio
-async def test_search_concerts_skips_too_short_reduction():
-    token = await _get_token()
+async def test_kopis_search_concerts_skips_too_short_reduction():
     seen_keywords = []
 
     async def _mock_get(url, params=None, **kwargs):
@@ -168,24 +253,18 @@ async def test_search_concerts_skips_too_short_reduction():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = _mock_get
 
-    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "HA HYUN SANG CONCERT"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+            concerts = await kopis_search_concerts(db, "HA HYUN SANG CONCERT")
 
-    assert response.status_code == 200
-    assert response.json() == []
+    assert concerts == []
     assert "HA" not in [k.strip() for k in seen_keywords]
 
 
 # 맨 앞이 연도인 제목은 연도를 떼어내고 검색하는지, 연도 단독으로는 검색하지 않는지 테스트
 # (끝단어 축소만으로는 연도만 남을 수 있는데, 연도 하나는 너무 광범위해 무관한 결과가 대량으로 걸림)
 @pytest.mark.asyncio
-async def test_search_concerts_strips_leading_year():
-    token = await _get_token()
+async def test_kopis_search_concerts_strips_leading_year():
     xml = _make_kopis_xml("PF_YEAR_001", "렛츠락 페스티벌", "2025.09.06", "2025.09.07")
     seen_keywords = []
 
@@ -202,26 +281,19 @@ async def test_search_concerts_strips_leading_year():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = _mock_get
 
-    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "2025 렛츠락 페스티벌"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+            concerts = await kopis_search_concerts(db, "2025 렛츠락 페스티벌")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["kopis_id"] == "PF_YEAR_001"
+    assert len(concerts) == 1
+    assert concerts[0].kopis_id == "PF_YEAR_001"
     assert "2025" not in [k.strip() for k in seen_keywords]
 
 
 # 결과가 API 상한(rows=50)에 도달하면 검색어가 너무 광범위하다고 보고 버리는지 테스트
 # (예: "ONE"이 "TONE"/"Resone" 등 무관한 공연 이름에 부분일치해서 대량으로 걸리는 경우)
 @pytest.mark.asyncio
-async def test_search_concerts_skips_result_hitting_row_cap():
-    token = await _get_token()
+async def test_kopis_search_concerts_skips_result_hitting_row_cap():
     many_dbs = "".join(
         f"<db><mt20id>PF_MANY_{i:03d}</mt20id><prfnm>공연{i}</prfnm>"
         f"<prfpdfrom>2030.01.{(i % 27) + 1:02d}</prfpdfrom><prfpdto>2030.01.{(i % 27) + 1:02d}</prfpdto>"
@@ -242,23 +314,17 @@ async def test_search_concerts_skips_result_hitting_row_cap():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = _mock_get
 
-    with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "ONE OK ROCK"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client):
+            concerts = await kopis_search_concerts(db, "ONE OK ROCK")
 
-    assert response.status_code == 200
-    assert response.json() == []
+    assert concerts == []
 
 
 # 후보가 여러 건일 때 요청 날짜 범위와 실제로 겹치는 공연이 앞쪽으로 정렬되는지 테스트
 # (동명이인/유사 제목으로 여러 건이 잡혀도 정확한 회차가 1순위 후보가 되어야 함)
 @pytest.mark.asyncio
-async def test_search_concerts_sorts_candidates_by_date_match():
-    token = await _get_token()
+async def test_kopis_search_concerts_sorts_candidates_by_date_match():
     dbs = "".join(
         f"<db><mt20id>{kid}</mt20id><prfnm>SURL {kid}</prfnm>"
         f"<prfpdfrom>{start}</prfpdfrom><prfpdto>{end}</prfpdto>"
@@ -271,22 +337,14 @@ async def test_search_concerts_sorts_candidates_by_date_match():
     )
     xml = f'<?xml version="1.0" encoding="UTF-8"?><dbs>{dbs}</dbs>'.encode("utf-8")
 
-    with kopis_mock(xml):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search",
-                params={
-                    "keyword": "SURL",
-                    "start_date": "2024-01-29",
-                    "end_date": "2024-07-27",
-                },
-                headers={"Authorization": f"Bearer {token}"},
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(xml):
+            concerts = await kopis_search_concerts(
+                db, "SURL", start_date=date(2024, 1, 29), end_date=date(2024, 7, 27)
             )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 3
-    assert data[0]["kopis_id"] == "PF_NEAR_001"
+    assert len(concerts) == 3
+    assert concerts[0].kopis_id == "PF_NEAR_001"
 
 
 # 공연 상세 조회 테스트
@@ -390,20 +448,19 @@ async def test_get_concert_detail_backfills_after_search_cache():
     # 매 실행마다 겹치지 않는 kopis_id 사용 (로컬 DB는 테스트 간 rollback되지 않고
     # 실제로 upsert된 채 남으므로, 고정 ID를 쓰면 이전 실행의 잔여 데이터와 충돌함)
     kopis_id = f"PF_BACKFILL_{uuid.uuid4().hex[:10]}"
-    list_xml = _make_kopis_xml(kopis_id, "백필 테스트 콘서트", "2030.11.01", "2030.11.30")
     detail_xml = _make_kopis_xml(
         kopis_id, "백필 테스트 콘서트", "2030.11.01", "2030.11.30", artist="백필아티스트"
     )
 
-    # 검색으로 먼저 upsert (list API에는 출연진 정보가 없어 artist_name이 빈 배열로 저장됨)
-    with kopis_mock(list_xml):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            search_res = await ac.get(
-                "/api/v1/concerts/search",
-                params={"keyword": "백필"},
-                headers=headers,
-            )
-    assert search_res.json()[0]["artist_name"] == []
+    # 목록 검색으로만 먼저 upsert된 상태를 직접 재현 (list API엔 출연진 정보가 없어 artist_name
+    # 빈 배열, kopis_detail_synced_at도 None - /search가 DB 기준으로 바뀐 뒤에도 상세조회 백필
+    # 로직 자체는 이 두 필드 상태로 판단하므로 직접 만들어도 동일하게 검증됨)
+    await _make_concert(
+        kopis_id=kopis_id,
+        name="백필 테스트 콘서트",
+        start_date=datetime(2030, 11, 1, tzinfo=timezone.utc),
+        end_date=datetime(2030, 11, 30, tzinfo=timezone.utc),
+    )
 
     # 상세 조회: DB에 이미 있어도 상세 미조회 상태라 KOPIS 상세 API를 다시 불러야 함
     with kopis_mock(detail_xml):
