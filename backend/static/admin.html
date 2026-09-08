@@ -34,6 +34,8 @@
     flex-wrap: wrap;
   }
   header h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  header a.nav-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  header a.nav-link:hover { text-decoration: underline; }
   .field { display: flex; align-items: center; gap: 6px; }
   .field label { color: var(--muted); font-size: 12px; }
   input[type="text"], input[type="password"] {
@@ -69,6 +71,7 @@
   .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
   .badge-flag { display: inline-block; background: var(--danger); color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .badge-llm { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin: 2px 4px 0 0; }
+  .badge-reviewed { display: inline-block; background: #e4efe7; color: var(--ok); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 
   /* 상세 패널 */
@@ -114,7 +117,12 @@
     <input type="checkbox" id="unsent-to-llm-only" onchange="load(1)" />
     <label for="unsent-to-llm-only">LLM 미전송 공연만 보기</label>
   </div>
+  <div class="field">
+    <input type="checkbox" id="unreviewed-only" onchange="load(1)" />
+    <label for="unreviewed-only">검수 안 된 것만 보기</label>
+  </div>
   <button onclick="load(1)">검색</button>
+  <a class="nav-link" href="/admin/artists">아티스트 조회 →</a>
 </header>
 
 <main>
@@ -140,6 +148,7 @@
 <script>
 const API = '/api/v1/admin';
 let page = 1, pageSize = 20, totalPages = 1;
+let currentDetail = null;
 
 function adminKey() { return localStorage.getItem('td_admin_key') || ''; }
 function saveKey() {
@@ -172,7 +181,11 @@ async function load(p) {
   const search = document.getElementById('search').value.trim();
   const flaggedOnly = document.getElementById('flagged-only').checked;
   const unsentToLlmOnly = document.getElementById('unsent-to-llm-only').checked;
-  const qs = new URLSearchParams({ page, page_size: pageSize, flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly });
+  const unreviewedOnly = document.getElementById('unreviewed-only').checked;
+  const qs = new URLSearchParams({
+    page, page_size: pageSize,
+    flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly, unreviewed_only: unreviewedOnly,
+  });
   if (search) qs.set('search', search);
 
   document.getElementById('status-line').textContent = '불러오는 중...';
@@ -200,10 +213,11 @@ function renderRows(items) {
     const poster = c.poster_url ? `<img class="poster-thumb" src="${esc(c.poster_url)}" />` : '';
     const chips = (c.artist_name || []).map(n => `<span class="chip">${esc(n)}</span>`).join('');
     const flag = c.flagged_count > 0 ? `<span class="badge-flag">확인 필요 ${c.flagged_count}</span>` : '';
+    const reviewed = c.admin_reviewed_at ? `<span class="badge-reviewed">검수완료</span>` : '';
     const llmReasons = (c.llm_exclusion_reasons || []).map(r => `<span class="badge-llm">LLM 미전송: ${esc(r)}</span>`).join('');
     tr.innerHTML = `
       <td>${poster}</td>
-      <td>${esc(c.name)}${flag}<div style="color:var(--muted);font-size:11px;">${esc(c.kopis_id || '')}</div></td>
+      <td>${esc(c.name)}${flag}${reviewed}<div style="color:var(--muted);font-size:11px;">${esc(c.kopis_id || '')}</div></td>
       <td>${chips}${llmReasons ? `<div>${llmReasons}</div>` : ''}</td>
       <td>${(c.start_date || '').slice(0, 10)}</td>
     `;
@@ -214,6 +228,7 @@ function renderRows(items) {
 async function openDetail(id) {
   try {
     const c = await api(`/concerts/${id}`);
+    currentDetail = c;
     renderDetail(c);
     document.getElementById('overlay').classList.add('open');
   } catch (e) {
@@ -235,9 +250,16 @@ function renderDetail(c) {
   const rows = (c.artist_name || []).map(name => {
     const st = statusOf(c, name);
     const tag = st ? `<span class="status-tag status-${st}">${st}</span>` : '';
+    const members = (c.group_memberships || {})[name];
+    const memberLine = members && members.length
+      ? `<div style="color:var(--muted); font-size:11px; margin-top:2px;">멤버: ${members.map(esc).join(', ')}</div>`
+      : '';
     return `
       <div class="artist-row" data-concert-id="${c.id}" data-name="${esc(name)}">
-        <span class="name">${esc(name)}${tag}</span>
+        <div style="flex:1;">
+          <span class="name">${esc(name)}${tag}</span>
+          ${memberLine}
+        </div>
         <span class="actions">
           <button onclick="startRename(this)">수정</button>
           <button onclick="startDisplayName(this)">표시명</button>
@@ -246,9 +268,14 @@ function renderDetail(c) {
       </div>`;
   }).join('');
 
+  const reviewStatus = c.admin_reviewed_at
+    ? `<span class="badge-reviewed">검수완료 (${esc(c.admin_reviewed_at.slice(0, 16).replace('T', ' '))})</span>`
+    : `<button onclick="submitMarkReviewed()">검수 완료로 표시</button>`;
+
   document.getElementById('detail').innerHTML = `
     <h2>${esc(c.name)}</h2>
     <div class="sub">${esc(c.kopis_id || '')} · ${esc(c.venue || '')} · ${(c.start_date || '').slice(0, 10)}</div>
+    <div style="margin-bottom:10px;">${reviewStatus}</div>
     ${links ? `<div class="ticket-links">${links}</div>` : ''}
     <div class="body">
       ${poster}
@@ -258,6 +285,8 @@ function renderDetail(c) {
           <input type="text" class="add-input" placeholder="놓친 아티스트명 입력" style="flex:1; margin-right:8px; border:none;" />
           <button onclick="submitAdd(this)">추가</button>
         </div>
+        ${(c.artist_name || []).length >= 2 ? `<div style="margin-top:6px;"><button onclick="startGroupCleanup()">밴드 멤버 정리</button></div>` : ''}
+        <div id="group-cleanup-area"></div>
       </div>
     </div>
     <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
@@ -279,6 +308,63 @@ async function submitAdd(el) {
       body: JSON.stringify({ name }),
     });
     toast('추가됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 수정 없이 봐도 이미 맞는 경우, 직접 검수 완료로 표시
+async function submitMarkReviewed() {
+  const concertId = currentDetail.id;
+  try {
+    await api(`/concerts/${concertId}/review`, { method: 'POST' });
+    toast('검수 완료로 표시됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// "밴드명 + 멤버 여러 명"이 개별 표기로 뽑힌 공연을 밴드명 하나로 접는 UI. currentDetail의
+// artist_name 전체를 라디오(밴드 하나 선택)+체크박스(멤버로 접을 이름들)로 보여줌
+function startGroupCleanup() {
+  const c = currentDetail;
+  const names = c.artist_name || [];
+  document.getElementById('group-cleanup-area').innerHTML = `
+    <div style="border:1px dashed var(--border); border-radius:6px; padding:10px; margin-top:6px;">
+      <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">밴드명 하나 선택 + 멤버로 접을 이름 체크</div>
+      ${names.map(n => `
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:13px;">
+          <input type="radio" name="group-pick" value="${esc(n)}" />
+          <input type="checkbox" class="member-pick" value="${esc(n)}" />
+          ${esc(n)}
+        </label>
+      `).join('')}
+      <div style="margin-top:8px;">
+        <button onclick="submitGroupCleanup()">적용</button>
+        <button onclick="document.getElementById('group-cleanup-area').innerHTML=''">취소</button>
+      </div>
+    </div>`;
+}
+
+async function submitGroupCleanup() {
+  const groupRadio = document.querySelector('input[name="group-pick"]:checked');
+  if (!groupRadio) { toast('밴드명을 선택하세요'); return; }
+  const groupName = groupRadio.value;
+  const memberNames = [...document.querySelectorAll('.member-pick:checked')]
+    .map(el => el.value)
+    .filter(v => v !== groupName);
+  if (memberNames.length === 0) { toast('멤버를 1명 이상 체크하세요'); return; }
+  const concertId = currentDetail.id;
+  try {
+    await api(`/concerts/${concertId}/group-membership`, {
+      method: 'POST',
+      body: JSON.stringify({ group_name: groupName, member_names: memberNames }),
+    });
+    toast('밴드로 정리됨');
     openDetail(concertId);
     load(page);
   } catch (e) {

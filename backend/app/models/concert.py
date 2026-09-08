@@ -66,6 +66,9 @@ class Concert(Base):
     lineup_snapshot_img_srcs = Column(ARRAY(String), nullable=True)
     # 라인업 재크롤링 마지막 시도 시각 (재시도 쿨다운 판단용, crawl_attempted_at과 별개 시계)
     lineup_check_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    # admin이 이 공연의 아티스트를 확인/수정한 시각 - NULL이면 미검수. KOPIS/크롤링/LLM 등 자동
+    # 파이프라인이 artist_name을 바꾸면 다시 NULL로 되돌아가 항상 최신 데이터 기준을 유지한다
+    admin_reviewed_at = Column(DateTime(timezone=True), nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)

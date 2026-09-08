@@ -9,7 +9,8 @@ class AdminConcertListItem(BaseModel):
 
     # 관리자 목록 한 줄 - flagged_count는 unconfirmed/ambiguous 상태인 아티스트 수(0이면 정상).
     # llm_exclusion_reasons가 비어있지 않으면 send_posters_for_artist_extraction 대상이 아니라는
-    # 뜻(포스터 LLM 추출이 영영 안 옴) - 크롤링 등 다른 경로로만 채워질 수 있으니 우선 확인 대상
+    # 뜻(포스터 LLM 추출이 영영 안 옴) - 크롤링 등 다른 경로로만 채워질 수 있으니 우선 확인 대상.
+    # admin_reviewed_at은 NULL이면 미검수
     id: UUID
     kopis_id: str | None
     name: str
@@ -18,6 +19,7 @@ class AdminConcertListItem(BaseModel):
     start_date: datetime
     flagged_count: int
     llm_exclusion_reasons: list[str]
+    admin_reviewed_at: datetime | None
 
 
 class AdminConcertListResponse(BaseModel):
@@ -38,7 +40,8 @@ class AdminArtistStatus(BaseModel):
 class AdminConcertDetail(BaseModel):
     model_config = {"from_attributes": True}
 
-    # 상세 화면 - 포스터 원본과 대조하며 검수/수정하기 위한 필드 구성
+    # 상세 화면 - 포스터 원본과 대조하며 검수/수정하기 위한 필드 구성.
+    # group_memberships: artist_name 중 밴드로 알려진 이름 -> 그 밴드의 현재 멤버명 목록
     id: UUID
     kopis_id: str | None
     name: str
@@ -48,6 +51,8 @@ class AdminConcertDetail(BaseModel):
     start_date: datetime
     ticketing_links: dict[str, str] | None
     statuses: list[AdminArtistStatus]
+    group_memberships: dict[str, list[str]]
+    admin_reviewed_at: datetime | None
 
 
 class AdminArtistRenameRequest(BaseModel):
@@ -59,6 +64,13 @@ class AdminArtistRenameRequest(BaseModel):
 class AdminArtistAddRequest(BaseModel):
     # add_artist_name에 그대로 넘기는 페이로드 - LLM/KOPIS 둘 다 놓친 아티스트 수기 추가용
     name: str
+
+
+class AdminGroupMembershipRequest(BaseModel):
+    # set_group_membership에 그대로 넘기는 페이로드 - 밴드명+멤버 여러 명이 개별 표기로 따로
+    # 뽑힌 걸 밴드명 하나로 접고 멤버 관계를 등록하기 위함
+    group_name: str
+    member_names: list[str]
 
 
 class AdminNameOption(BaseModel):
@@ -79,3 +91,53 @@ class AdminCanonicalNameOptions(BaseModel):
 
 class AdminDisplayNameRequest(BaseModel):
     display_name: str
+
+
+class AdminArtistListItem(BaseModel):
+    model_config = {"from_attributes": True}
+
+    # 아티스트 목록 한 줄 - is_group/member_of_count로 그룹/멤버 관계 유무를 한눈에 구분
+    id: UUID
+    canonical_name: str
+    display_name: str | None
+    mbid: str | None
+    alias_count: int
+    is_group: bool
+    member_of_count: int
+
+
+class AdminArtistListResponse(BaseModel):
+    items: list[AdminArtistListItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminArtistConcertItem(BaseModel):
+    # 아티스트 상세 화면의 "출연 공연" 한 줄
+    id: UUID
+    name: str
+    poster_url: str | None
+    start_date: datetime
+
+
+class AdminArtistDetail(BaseModel):
+    model_config = {"from_attributes": True}
+
+    # 아티스트 상세 - concerts는 이 아티스트 자신의 표기로 나온 공연, group_concerts는 이
+    # 아티스트가 멤버로 속한 그룹 이름으로 나온 공연(member_of가 있을 때만 채워짐)
+    id: UUID
+    canonical_name: str
+    display_name: str | None
+    mbid: str | None
+    profile_image_url: str | None
+    aliases: list[AdminNameOption]
+    group_members: list[str]
+    member_of: list[str]
+    concerts: list[AdminArtistConcertItem]
+    group_concerts: list[AdminArtistConcertItem]
+
+
+class AdminAddAliasRequest(BaseModel):
+    # add_artist_alias에 그대로 넘기는 페이로드
+    alias_text: str
