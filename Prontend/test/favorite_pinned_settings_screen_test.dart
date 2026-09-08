@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ticketdiary/models/artist_model.dart';
 import 'package:ticketdiary/screen/favorite_pinned_settings_screen.dart';
 import 'package:ticketdiary/services/artist_recommendation_service.dart';
+import 'package:ticketdiary/services/artist_search_service.dart';
 
 class _FakeArtistRecommendationService implements ArtistRecommendationService {
   const _FakeArtistRecommendationService(this.artists);
@@ -14,6 +15,21 @@ class _FakeArtistRecommendationService implements ArtistRecommendationService {
   @override
   Future<List<ArtistModel>> getRecommendations({int limit = 20}) async =>
       artists;
+}
+
+// [백엔드 수정]
+// 실제 네트워크 없이 자동 검색(디바운스) 트리거 여부를 세기 위한 가짜 서비스.
+class _FakeArtistSearchService implements ArtistSearchService {
+  _FakeArtistSearchService(this.results);
+
+  final List<ArtistModel> results;
+  int callCount = 0;
+
+  @override
+  Future<List<ArtistModel>> search(String query) async {
+    callCount++;
+    return results;
+  }
 }
 
 /// 선호 아티스트/찜 공연 검색이 한 화면 안에 세로로 같이 있던 것을 좌우
@@ -65,23 +81,33 @@ void main() {
   });
 
   // [백엔드 수정]
-  // 타이핑마다 자동 검색하던 걸 엔터(키보드 검색) 시에만 검색하도록 바꾼
-  // 회귀 테스트 - 타이핑만으로는 검색(네트워크 요청/로딩)이 시작되지 않아야 함.
-  testWidgets('타이핑만으로는 검색이 실행되지 않고 "검색을 눌러주세요" 안내만 보인다', (
-    tester,
-  ) async {
+  // 엔터 전용 -> 타이핑 디바운스(250ms) 자동 검색 회귀 테스트.
+  testWidgets('타이핑하면 디바운스 후 자동으로 검색된다', (tester) async {
+    final artistSearchService = _FakeArtistSearchService([
+      const ArtistModel(name: '아이유', profileImageUrl: ''),
+    ]);
+
     await tester.pumpWidget(
-      const MaterialApp(home: FavoritePinnedSettingsScreen()),
+      MaterialApp(
+        home: FavoritePinnedSettingsScreen(
+          artistSearchService: artistSearchService,
+        ),
+      ),
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
     await tester.enterText(find.byType(TextField), '아이유');
-    // 디바운스가 있었다면 여기서 자동 검색이 걸렸을 시간을 흘려보냄.
-    await tester.pump(const Duration(milliseconds: 600));
+    // 디바운스(250ms) 전엔 검색이 안 걸렸어야 하지만, 스피너는 입력 즉시 뜸.
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(artistSearchService.callCount, 0);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
+    // 디바운스 이후엔 자동으로 검색이 걸리고 결과가 뜸.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(artistSearchService.callCount, 1);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('키보드에서 검색을 눌러주세요.'), findsOneWidget);
   });
 
   // 실기기(태블릿)에서 라벨 높이 고정값(34)이 반응형 배율보다 작아

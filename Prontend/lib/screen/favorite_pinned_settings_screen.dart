@@ -23,8 +23,15 @@ const _kNewHighlightDuration = Duration(seconds: 3);
 class FavoritePinnedSettingsScreen extends StatelessWidget {
   /// 테스트에서 실제 네트워크 없이 주입할 수 있도록 둔 서비스.
   final ArtistRecommendationService? recommendationService;
+  final ArtistSearchService? artistSearchService;
+  final ConcertSearchService? concertSearchService;
 
-  const FavoritePinnedSettingsScreen({super.key, this.recommendationService});
+  const FavoritePinnedSettingsScreen({
+    super.key,
+    this.recommendationService,
+    this.artistSearchService,
+    this.concertSearchService,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +40,8 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
       child: FavoritePinnedPanel(
         onBack: () => Navigator.pop(context),
         recommendationService: recommendationService,
+        artistSearchService: artistSearchService,
+        concertSearchService: concertSearchService,
       ),
     );
   }
@@ -40,9 +49,7 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
 
 /// 선호 아티스트 / 찜 공연 검색 패널(프레임 없음).
 ///
-/// - 검색은 키보드 "검색/완료"(엔터)를 눌러야 실행됩니다. 타이핑 중간마다
-///   자동으로 백엔드(KOPIS 실시간 검색)를 부르면 한 번 검색하는 동안에도
-///   여러 번 호출돼(KOPIS 쪽 요청 급증) 차단 위험이 있어 이렇게 바꿨습니다.
+/// - 타이핑마다 디바운스(250ms)로 자동 검색됩니다(엔터도 즉시 검색).
 /// - 결과 카드를 누르면 찜 토글되며, 이 찜 목록은 [FavoritesStore]를 통해
 ///   기기 로컬과 서버(`/social/artists`, `/social/concerts`) 양쪽에 저장되어
 ///   소식 탭 피드 생성에 사용됩니다.
@@ -58,12 +65,16 @@ class FavoritePinnedPanel extends StatefulWidget {
 
   /// 테스트에서 실제 네트워크 없이 주입할 수 있도록 둔 서비스.
   final ArtistRecommendationService? recommendationService;
+  final ArtistSearchService? artistSearchService;
+  final ConcertSearchService? concertSearchService;
 
   const FavoritePinnedPanel({
     super.key,
     this.onBack,
     this.windowMode = false,
     this.recommendationService,
+    this.artistSearchService,
+    this.concertSearchService,
   });
 
   @override
@@ -71,9 +82,10 @@ class FavoritePinnedPanel extends StatefulWidget {
 }
 
 class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
-  final ArtistSearchService _artistSearchService = BackendArtistSearchService();
-  final ConcertSearchService _concertSearchService =
-      BackendConcertSearchService();
+  late final ArtistSearchService _artistSearchService =
+      widget.artistSearchService ?? BackendArtistSearchService();
+  late final ConcertSearchService _concertSearchService =
+      widget.concertSearchService ?? BackendConcertSearchService();
   late final ArtistRecommendationService _recommendationService =
       widget.recommendationService ?? BackendArtistRecommendationService();
   final FavoritesStore _favorites = FavoritesStore.instance;
@@ -96,6 +108,11 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
 
   final TextEditingController _artistQueryController = TextEditingController();
   final TextEditingController _concertQueryController = TextEditingController();
+
+  // [백엔드 수정]
+  // 타이핑 자동 검색 디바운스 타이머(250ms).
+  Timer? _artistDebounce;
+  Timer? _concertDebounce;
 
   /// 선호 아티스트/찜 공연 검색을 좌우 스와이프로 넘나드는 페이지 컨트롤러.
   final PageController _categoryPageController = PageController();
@@ -120,11 +137,6 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   bool _artistSearchFailed = false;
   bool _concertSearchFailed = false;
 
-  // 마지막으로 실제 검색을 실행한 검색어. 지금 입력창 텍스트와 다르면(=아직
-  // 검색 안 누름) "결과 없음"이 아니라 검색을 눌러보라는 안내를 보여줍니다.
-  String? _lastArtistQuery;
-  String? _lastConcertQuery;
-
   @override
   void initState() {
     super.initState();
@@ -142,6 +154,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   @override
   void dispose() {
     _favorites.removeListener(_onFavoritesChanged);
+    _artistDebounce?.cancel();
+    _concertDebounce?.cancel();
     _artistQueryController.dispose();
     _concertQueryController.dispose();
     _categoryPageController.dispose();
@@ -153,29 +167,31 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     setState(() {});
   }
 
-  // 네트워크 요청은 없지만, 상태 문구("검색을 눌러주세요" 등)가 입력창과
-  // 어긋나지 않도록 매 입력마다 다시 그립니다.
+  // [백엔드 수정]
+  // 입력마다 디바운스(250ms) 후 자동 검색, 대기 중에도 바로 스피너 표시.
   void _onArtistQueryTextChanged() {
     if (_artistQueryController.text.isEmpty) {
+      _artistDebounce?.cancel();
       setState(() {
         _artistResults = const [];
         _artistSearching = false;
         _artistSearchFailed = false;
       });
     } else {
-      setState(() {});
+      final query = _artistQueryController.text;
+      setState(() => _artistSearching = true);
+      _artistDebounce?.cancel();
+      _artistDebounce = Timer(const Duration(milliseconds: 250), () {
+        if (mounted && _artistQueryController.text == query) {
+          _onArtistSubmitted(query);
+        }
+      });
     }
   }
 
-  // [백엔드 수정]
-  // 타이핑 중 자동 검색(디바운스)이 짧은 pause마다 KOPIS를 호출해 요청이
-  // 급증하던 문제 - 키보드 검색(엔터)을 눌렀을 때만 검색하도록 변경.
   void _onArtistSubmitted(String query) {
     if (query.trim().isEmpty) return;
-    setState(() {
-      _artistSearching = true;
-      _lastArtistQuery = query;
-    });
+    setState(() => _artistSearching = true);
     _runArtistSearch(query);
   }
 
@@ -288,24 +304,31 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     unawaited(_loadRecommendations(highlightNew: true));
   }
 
+  // [백엔드 수정]
+  // 입력마다 디바운스(250ms) 후 자동 검색, 대기 중에도 바로 스피너 표시.
   void _onConcertQueryTextChanged() {
     if (_concertQueryController.text.isEmpty) {
+      _concertDebounce?.cancel();
       setState(() {
         _concertResults = const [];
         _concertSearching = false;
         _concertSearchFailed = false;
       });
     } else {
-      setState(() {});
+      final query = _concertQueryController.text;
+      setState(() => _concertSearching = true);
+      _concertDebounce?.cancel();
+      _concertDebounce = Timer(const Duration(milliseconds: 250), () {
+        if (mounted && _concertQueryController.text == query) {
+          _onConcertSubmitted(query);
+        }
+      });
     }
   }
 
   void _onConcertSubmitted(String query) {
     if (query.trim().isEmpty) return;
-    setState(() {
-      _concertSearching = true;
-      _lastConcertQuery = query;
-    });
+    setState(() => _concertSearching = true);
     _runConcertSearch(query);
   }
 
@@ -328,12 +351,12 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     }
   }
 
-  /// 결과가 비어 있을 때 결과 영역에 보여줄 안내 문구.
+  /// 결과가 비어 있을 때 결과 영역에 보여줄 안내 문구("미입력"/"결과 없음"/"실패").
+  /// 검색 중엔 _artistSearching(_concertSearching)이 true라 이 대신 스피너가 뜸.
   String get _artistStatusText {
     if (_artistSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
     final text = _artistQueryController.text.trim();
     if (text.isEmpty) return '검색어를 입력해보세요.';
-    if (text != _lastArtistQuery) return '키보드에서 검색을 눌러주세요.';
     return '검색 결과가 없습니다.';
   }
 
@@ -341,7 +364,6 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     if (_concertSearchFailed) return '검색에 실패했어요. 잠시 후 다시 시도해주세요.';
     final text = _concertQueryController.text.trim();
     if (text.isEmpty) return '검색어를 입력해보세요.';
-    if (text != _lastConcertQuery) return '키보드에서 검색을 눌러주세요.';
     return '검색 결과가 없습니다.';
   }
 
