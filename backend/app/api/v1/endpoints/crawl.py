@@ -45,6 +45,7 @@ def _normalize_seat_type(seat_type: str) -> str:
 async def receive_crawl_result(
     concert_id: UUID,
     body: CrawlResultRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
@@ -155,8 +156,28 @@ async def receive_crawl_result(
         if lineup_changed:
             updated.append("lineup")
 
+    # MusicBrainz 정규화 큐잉 - pending row만 적립(외부 호출 없음, 응답 시간과 무관). 원래 이
+    # 웹훅은 아티스트명 병합만 하고 큐잉을 안 해서, 크롤링/KOPIS로만 들어온 표기가 정규화 기회를
+    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 2026-09-09 발견).
+    queue_names = set(concert.artist_name or [])
+    if body.lineup:
+        lineup_result = await db.execute(
+            select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert_id)
+        )
+        queue_names |= set(lineup_result.scalars().all())
+    if queue_names:
+        # updated가 비어있어도(이번 호출로 바뀐 건 없지만 concert.artist_name엔 이미 값이 있는
+        # 경우) 큐잉이 유실되지 않도록 독립적으로 커밋(commit=True, 기본값) - 아래 "if updated"
+        # 커밋에 얹혀가면 updated가 empty일 때 add()만 되고 세션이 그냥 닫히며 롤백될 수 있음
+        await queue_for_normalization(db, concert_id, list(queue_names))
+
     if updated:
         await db.commit()
+
+    if queue_names:
+        # 다음날 밤 정기 배치를 기다리지 않고 바로 시도 - 응답 이후 백그라운드로 실행되므로
+        # 웹훅 응답 시간엔 영향 없음(services/artist_normalization.py의 normalize_specific_artists 참고)
+        background_tasks.add_task(normalize_specific_artists, concert_id, list(queue_names))
 
     # 티켓팅 날 알림은 commit 확정 후 처리 (중복 방지 + 유저 조회 포함)
     if "ticketing_date" in updated:
