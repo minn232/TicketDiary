@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_normalization import ArtistAlias, ArtistGroupMembership, CanonicalArtist
+from app.models.concert import Concert
 from app.services.artist_normalization import try_link_canonical_to_musicbrainz
 from app.services.musicbrainz import ArtistCandidate, BandRelation
 from conftest import _get_token, kopis_mock
@@ -83,6 +84,54 @@ async def test_admin_lists_and_searches_concerts():
     assert res.status_code == 200
     data = res.json()
     assert any(item["id"] == concert_id for item in data["items"])
+
+
+# unsent_to_llm_only 필터 - send_posters_for_artist_extraction 대상이 아닌(=포스터 LLM
+# 추출이 영영 안 오는) 공연만 골라내는지, 사유(llm_exclusion_reasons)도 맞게 나오는지 테스트
+@pytest.mark.asyncio
+async def test_admin_unsent_to_llm_only_filters_by_artist_count():
+    eligible_name = f"어드민LLM대상_{uuid.uuid4().hex[:6]}"
+    eligible_id = await _create_concert(f"PF_ADMIN_LLM_OK_{uuid.uuid4().hex[:6]}", eligible_name)
+
+    members = [f"멤버{i}_{uuid.uuid4().hex[:6]}" for i in range(4)]
+    excluded_id = await _create_concert(f"PF_ADMIN_LLM_NG_{uuid.uuid4().hex[:6]}", ",".join(members))
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"unsent_to_llm_only": True, "page_size": 100},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    items = {item["id"]: item for item in res.json()["items"]}
+    assert excluded_id in items
+    assert eligible_id not in items
+    assert "아티스트 4명 이상" in items[excluded_id]["llm_exclusion_reasons"]
+
+
+# 포스터가 없는 공연도 같은 필터에 걸리고 사유가 정확히 구분되는지 테스트
+@pytest.mark.asyncio
+async def test_admin_llm_exclusion_reasons_report_missing_poster():
+    name = f"포스터없음_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_LLM_NOPOSTER_{uuid.uuid4().hex[:6]}", name)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.poster_url = None
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"unsent_to_llm_only": True, "search": name},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    assert items[0]["llm_exclusion_reasons"] == ["포스터 없음"]
 
 
 @pytest.mark.asyncio
