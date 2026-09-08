@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -28,6 +29,11 @@ from app.services.artist_normalization import (
     set_display_name,
     try_link_canonical_to_musicbrainz,
 )
+from app.services.crawler import (
+    _ARTIST_EXTRACTION_RETRY_COOLDOWN,
+    _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+    artist_extraction_target_filter,
+)
 
 router = APIRouter(dependencies=[Depends(verify_admin_key)])
 
@@ -42,14 +48,47 @@ def _search_filter(keyword: str):
     return or_(Concert.name.ilike(like), Concert.kopis_id.ilike(like), joined_artists.ilike(like))
 
 
+# send_posters_for_artist_extraction(crawler.py)이 실제로 대상으로 잡는 조건 그대로 재사용 -
+# 이 조건을 만족 못 하는 공연은 포스터 LLM 추출이 영영 안 오므로, 관리자 페이지에서 "LLM 미전송
+# 공연만 보기" 필터(unsent_to_llm_only)로 우선 확인 대상을 골라내는 데 씀
+def _llm_eligible_filter(now: datetime):
+    return and_(
+        Concert.genre.contains(["대중음악"]),
+        func.cardinality(Concert.artist_name) < 4,
+        Concert.poster_url.isnot(None),
+        artist_extraction_target_filter(now),
+    )
+
+
+# 위 조건 중 실제로 어느 것 때문에 대상에서 빠졌는지 사람이 읽을 수 있는 사유로 - 목록에서
+# "포스터만 없는 건지 이미 4명 이상이라 그런 건지"를 바로 구분해 우선순위를 정할 수 있게 함
+def _llm_exclusion_reasons(concert: Concert, now: datetime) -> list[str]:
+    reasons = []
+    if "대중음악" not in (concert.genre or []):
+        reasons.append("장르가 대중음악 아님")
+    if len(concert.artist_name or []) >= 4:
+        reasons.append("아티스트 4명 이상")
+    if not concert.poster_url:
+        reasons.append("포스터 없음")
+    attempted_at = concert.artist_extraction_attempted_at
+    if attempted_at is not None:
+        if concert.artist_extraction_attempt_count >= _MAX_ARTIST_EXTRACTION_ATTEMPTS:
+            reasons.append("재시도 상한 도달")
+        elif now - attempted_at < _ARTIST_EXTRACTION_RETRY_COOLDOWN:
+            reasons.append("쿨다운 대기 중")
+    return reasons
+
+
 @router.get("/concerts", response_model=AdminConcertListResponse)
 async def list_concerts(
     search: str | None = Query(None),
     flagged_only: bool = Query(False),
+    unsent_to_llm_only: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
+    now = datetime.now(timezone.utc)
     flagged_concert_ids = select(ArtistNormalizationStatus.concert_id).where(
         ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous"])
     )
@@ -59,6 +98,8 @@ async def list_concerts(
         query = query.where(_search_filter(search))
     if flagged_only:
         query = query.where(Concert.id.in_(flagged_concert_ids))
+    if unsent_to_llm_only:
+        query = query.where(not_(_llm_eligible_filter(now)))
 
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
 
@@ -87,6 +128,7 @@ async def list_concerts(
             poster_url=c.poster_url,
             start_date=c.start_date,
             flagged_count=flag_counts.get(c.id, 0),
+            llm_exclusion_reasons=_llm_exclusion_reasons(c, now),
         )
         for c in concerts
     ]

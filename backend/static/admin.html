@@ -68,6 +68,7 @@
   .poster-thumb { width: 44px; height: 60px; object-fit: cover; border-radius: 4px; background: var(--border); display: block; }
   .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
   .badge-flag { display: inline-block; background: var(--danger); color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .badge-llm { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin: 2px 4px 0 0; }
   .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 
   /* 상세 패널 */
@@ -108,6 +109,10 @@
   <div class="field">
     <input type="checkbox" id="flagged-only" checked onchange="load(1)" />
     <label for="flagged-only">확인 필요만 보기</label>
+  </div>
+  <div class="field">
+    <input type="checkbox" id="unsent-to-llm-only" onchange="load(1)" />
+    <label for="unsent-to-llm-only">LLM 미전송 공연만 보기</label>
   </div>
   <button onclick="load(1)">검색</button>
 </header>
@@ -166,7 +171,8 @@ async function load(p) {
   page = p || page;
   const search = document.getElementById('search').value.trim();
   const flaggedOnly = document.getElementById('flagged-only').checked;
-  const qs = new URLSearchParams({ page, page_size: pageSize, flagged_only: flaggedOnly });
+  const unsentToLlmOnly = document.getElementById('unsent-to-llm-only').checked;
+  const qs = new URLSearchParams({ page, page_size: pageSize, flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly });
   if (search) qs.set('search', search);
 
   document.getElementById('status-line').textContent = '불러오는 중...';
@@ -194,10 +200,11 @@ function renderRows(items) {
     const poster = c.poster_url ? `<img class="poster-thumb" src="${esc(c.poster_url)}" />` : '';
     const chips = (c.artist_name || []).map(n => `<span class="chip">${esc(n)}</span>`).join('');
     const flag = c.flagged_count > 0 ? `<span class="badge-flag">확인 필요 ${c.flagged_count}</span>` : '';
+    const llmReasons = (c.llm_exclusion_reasons || []).map(r => `<span class="badge-llm">LLM 미전송: ${esc(r)}</span>`).join('');
     tr.innerHTML = `
       <td>${poster}</td>
       <td>${esc(c.name)}${flag}<div style="color:var(--muted);font-size:11px;">${esc(c.kopis_id || '')}</div></td>
-      <td>${chips}</td>
+      <td>${chips}${llmReasons ? `<div>${llmReasons}</div>` : ''}</td>
       <td>${(c.start_date || '').slice(0, 10)}</td>
     `;
     tbody.appendChild(tr);
