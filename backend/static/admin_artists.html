@@ -102,7 +102,7 @@
     <input type="text" id="search" placeholder="아티스트명 / 표시명 / 별칭 검색" style="width:100%;" />
   </div>
   <button onclick="load(1)">검색</button>
-  <a class="nav-link" href="/admin/">← 공연 목록</a>
+  <a class="nav-link" href="/">← 공연 목록</a>
 </header>
 
 <main>
@@ -225,7 +225,7 @@ function renderDetail(a) {
     : '';
 
   const concertCard = c => `
-    <a class="concert-card" href="/admin/" onclick="event.preventDefault(); toast('공연 목록에서 검색: ${esc(c.name)}')">
+    <a class="concert-card" href="/" onclick="event.preventDefault(); toast('공연 목록에서 검색: ${esc(c.name)}')">
       ${c.poster_url ? `<img src="${esc(c.poster_url)}" />` : ''}
       <div style="flex:1;">
         <div>${esc(c.name)}</div>
