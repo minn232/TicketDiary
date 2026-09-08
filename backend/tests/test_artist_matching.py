@@ -8,6 +8,7 @@ from sqlalchemy import select, update
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_normalization import ArtistNormalizationStatus
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.models.social import ArtistFollow
@@ -619,3 +620,65 @@ async def test_crawl_result_lineup_upgrades_poster_source():
         result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
         row = result.scalar_one()
     assert row.source == "crawl"
+
+
+# /crawl-result 웹훅이 아티스트명을 병합하고도 정규화 큐잉을 안 해서, 크롤링으로만 들어온
+# 표기가 MusicBrainz 정규화 기회를 영영 못 얻던 구조적 갭 회귀 테스트(2026-09-09 발견 - "HANRORO"가
+# canonical "한로로"로 안 바뀌던 실사례로 확인). /artist-result와 동일하게 여기서도 큐잉돼야 함
+@pytest.mark.asyncio
+async def test_crawl_result_queues_artist_names_for_normalization():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_CR_QUEUE_{uuid.uuid4().hex[:6]}", "", token)
+    artist_name = f"크롤아티스트_{uuid.uuid4().hex[:6]}"
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": [artist_name]},
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+    assert "artist_name" in res.json()["updated"]
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistNormalizationStatus).where(
+                ArtistNormalizationStatus.concert_id == uuid.UUID(concert_id),
+                ArtistNormalizationStatus.artist_text == artist_name,
+            )
+        )
+        row = result.scalar_one()
+    assert row.status == "pending"
+
+
+# 이번 호출로 실제로 바뀐 게 하나도 없어도(이미 같은 아티스트명) 큐잉 자체는 독립적으로
+# 커밋돼야 함 - "if updated: commit()"에 얹혀갔다면 updated가 비어있을 때 큐잉이 세션과 함께
+# 롤백돼 유실됐을 상황을 재현한 회귀 테스트
+@pytest.mark.asyncio
+async def test_crawl_result_queues_even_when_nothing_else_changed():
+    token = await _get_token()
+    artist_name = f"이미있는아티스트_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_CR_NOOPQ_{uuid.uuid4().hex[:6]}", artist_name, token)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": [artist_name]},  # 이미 있는 이름 그대로 -> merge 결과 동일 -> updated 안 채워짐
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+    assert res.json()["updated"] == []
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistNormalizationStatus).where(
+                ArtistNormalizationStatus.concert_id == uuid.UUID(concert_id),
+                ArtistNormalizationStatus.artist_text == artist_name,
+            )
+        )
+        row = result.scalar_one()
+    assert row.status == "pending"

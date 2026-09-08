@@ -125,10 +125,7 @@ async def scan_ticket(
     return TicketScanResponse(extracted=extracted, candidates=candidates)
 
 
-# 찜 공연 검색 - DB 기준(KOPIS 실시간 아님, 2026-09-09 결정). 매일 밤 배치로 이미 동기화된
-# 공연 안에서 공연명+아티스트명(별칭/원어 표기 포함)으로 즉시 검색 - 타이핑마다 호출해도 되도록
-# 외부 API를 안 탄다. 대신 KOPIS 대비 최대 하루 지연(신규 공연은 다음날 밤 배치 이후 검색 가능)과,
-# 아티스트 추출/정규화가 아직 안 된 공연은 아티스트명으로는 못 찾을 수 있음을 감수한 트레이드오프.
+# 찜 공연 검색 - DB 기준(KOPIS 실시간 아님, 2026-09-09). 매칭 기준은 concert_search.py 참고.
 # /scan(티켓 사진 스캔) 후보 검색은 이 엔드포인트를 안 쓰고 kopis.py의 KOPIS 실시간 검색을 그대로 씀.
 @router.get("/search", response_model=list[ConcertResponse])
 async def search_concerts(
