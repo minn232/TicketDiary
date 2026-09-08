@@ -141,6 +141,7 @@ async def receive_crawl_result(
         merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
+            concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화
             updated.append("artist_name")
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
 
@@ -229,6 +230,7 @@ async def receive_artist_extraction_result(
         merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
+            concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert, body.event_type)
             await db.commit()
             await db.refresh(concert)

@@ -98,7 +98,9 @@ async def _get_or_create_canonical_by_mbid(
     return canonical, True
 
 
-async def _register_membership_if_new(db: AsyncSession, member_id, group_id) -> None:
+async def _register_membership_if_new(
+    db: AsyncSession, member_id, group_id, source: str = "musicbrainz"
+) -> None:
     existing = await db.execute(
         select(ArtistGroupMembership.id).where(
             ArtistGroupMembership.member_canonical_id == member_id,
@@ -107,7 +109,7 @@ async def _register_membership_if_new(db: AsyncSession, member_id, group_id) -> 
     )
     if existing.scalar_one_or_none() is not None:
         return
-    db.add(ArtistGroupMembership(member_canonical_id=member_id, group_canonical_id=group_id, source="musicbrainz"))
+    db.add(ArtistGroupMembership(member_canonical_id=member_id, group_canonical_id=group_id, source=source))
 
 
 # 새로 매치된 canonical 1건의 "member of band" 관계를 딱 1단계만 조회해서 저장 - 상대방도
@@ -320,7 +322,7 @@ def _display_value(canonical: CanonicalArtist) -> str:
 # (concert_id, artist, performance_date) unique 제약이 있어서, 치환 대상 자리에 display_value가
 # 이미 있으면 원본 row는 지우고(중복 방지), 없으면 이름만 바꾼다.
 async def apply_canonical_replacement(
-    db: AsyncSession, concert_id, raw_text: str, display_value: str
+    db: AsyncSession, concert_id, raw_text: str, display_value: str, *, clear_admin_review: bool = False
 ) -> None:
     if raw_text == display_value:
         return
@@ -333,6 +335,10 @@ async def apply_canonical_replacement(
         concert.artist_name = sorted(
             {display_value if n == raw_text else n for n in concert.artist_name}
         )
+        # clear_admin_review=True는 자동 배치 호출부(정규화/그룹명 정리)에서만 씀 - 관리자가
+        # 직접 이 콘서트를 고친 경우(confirm_artist_name_change 등)는 검수한 것이므로 그대로 둠
+        if clear_admin_review:
+            concert.admin_reviewed_at = None
 
     result = await db.execute(
         select(ConcertLineup).where(
@@ -483,6 +489,83 @@ async def add_artist_name(db: AsyncSession, concert_id, name: str) -> tuple[Conc
     return concert, canonical
 
 
+# 관리자 페이지 전용: "밴드명 + 멤버 여러 명"이 개별 표기로 따로 뽑힌 공연을 밴드명 하나로
+# 접고, 멤버는 ArtistGroupMembership으로 등록(source="admin")한다. 자동 정리
+# (_collapse_members_to_group_names)는 이 관계가 MusicBrainz에 없으면 못 뭉치는데, 여기서
+# 등록한 관계는 전역이라 이후 같은 밴드가 나오는 다른 콘서트에도 자동 적용됨
+async def set_group_membership(
+    db: AsyncSession, concert_id, group_name: str, member_names: list[str]
+) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    group_name = group_name.strip()
+    member_names = sorted({n.strip() for n in member_names if n.strip()})
+    if not group_name or not member_names:
+        raise HTTPException(status_code=400, detail="밴드명과 멤버명을 모두 입력해야 합니다.")
+    if group_name in member_names:
+        raise HTTPException(status_code=400, detail="밴드명이 멤버 목록에도 있습니다.")
+    missing = [n for n in member_names if n not in (concert.artist_name or [])]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"이 공연에 없는 이름입니다: {', '.join(missing)}")
+
+    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
+    canonical_names = {c.canonical_name for c in existing_canonicals}
+
+    # add_artist_name/confirm_artist_name_change와 동일한 퍼지매칭 재사용 후 없으면 새로 생성
+    async def _resolve(name: str) -> CanonicalArtist:
+        resolved = normalize_artist_names([name], canonical_names)[0]
+        canonical = next((c for c in existing_canonicals if c.canonical_name == resolved), None)
+        if canonical is None:
+            canonical = CanonicalArtist(mbid=None, canonical_name=resolved)
+            db.add(canonical)
+            await db.flush()
+            existing_canonicals.append(canonical)
+            canonical_names.add(resolved)
+        await _register_alias_if_new(db, canonical, name, source="admin")
+        return canonical
+
+    group_canonical = await _resolve(group_name)
+    for member_name in member_names:
+        member_canonical = await _resolve(member_name)
+        await _register_membership_if_new(db, member_canonical.id, group_canonical.id, source="admin")
+
+    concert.artist_name = sorted((set(concert.artist_name or []) - set(member_names)) | {group_canonical.canonical_name})
+
+    # remove_artist_name과 동일하게, 접혀 없어진 멤버 표기의 정규화 큐/라인업 row 정리
+    status_result = await db.execute(
+        select(ArtistNormalizationStatus).where(
+            ArtistNormalizationStatus.concert_id == concert_id,
+            ArtistNormalizationStatus.artist_text.in_(member_names),
+        )
+    )
+    for row in status_result.scalars().all():
+        await db.delete(row)
+
+    lineup_result = await db.execute(
+        select(ConcertLineup).where(
+            ConcertLineup.concert_id == concert_id, ConcertLineup.artist.in_(member_names)
+        )
+    )
+    for row in lineup_result.scalars().all():
+        await db.delete(row)
+
+    # 밴드명 표기의 정규화 큐 상태는 확정으로 처리
+    group_status_result = await db.execute(
+        select(ArtistNormalizationStatus).where(
+            ArtistNormalizationStatus.concert_id == concert_id,
+            ArtistNormalizationStatus.artist_text == group_name,
+        )
+    )
+    for row in group_status_result.scalars().all():
+        row.status = "matched"
+
+    await db.commit()
+    await db.refresh(concert)
+    return concert
+
+
 # add_artist_name이 건너뛴 MusicBrainz 조회를 응답 이후 백그라운드에서 한 번 시도 - 매치되면
 # mbid/관계/Wikidata 한글 별칭까지 채워지고(그룹이면 로스터까지 확보), 실패해도 무해하게
 # mbid=None 그대로 남음. canonical_name은 admin이 정한 표기를 그대로 유지(조회 결과로 덮어쓰지 않음)
@@ -545,7 +628,9 @@ async def _reapply_display_name(db: AsyncSession, old_value: str, new_value: str
         await db.execute(select(ConcertLineup.concert_id).distinct().where(ConcertLineup.artist == old_value))
     ).scalars().all()
     for concert_id in concert_ids:
-        await apply_canonical_replacement(db, concert_id, old_value, new_value)
+        # 이 소급 반영은 admin이 그 콘서트 하나하나를 직접 검수한 게 아니라 표시명 변경의
+        # 부수효과로 여러 콘서트에 걸쳐 일괄 적용되는 것 - 검수 상태는 초기화
+        await apply_canonical_replacement(db, concert_id, old_value, new_value, clear_admin_review=True)
 
 
 # admin이 여러 표기 중 하나를 화면 표시명으로 직접 선택 - canonical_name(매칭 키)은 안 건드리고
@@ -566,6 +651,25 @@ async def set_display_name(db: AsyncSession, canonical_id, display_name: str) ->
     await _register_alias_if_new(db, canonical, display_name, source="admin")
     await _reapply_display_name(db, old_value, display_name)
 
+    await db.commit()
+    await db.refresh(canonical)
+    return canonical
+
+
+# 관리자 페이지(아티스트 상세)에서 이 아티스트의 별칭을 직접 추가 - 정규화 배치가 이후 같은
+# 표기를 API 호출 없이 바로 이 canonical로 재사용하게 됨(find_canonical_by_alias 참고)
+async def add_artist_alias(db: AsyncSession, canonical_id, alias_text: str) -> CanonicalArtist:
+    canonical = await db.get(CanonicalArtist, canonical_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+
+    alias_text = alias_text.strip()
+    if not alias_text:
+        raise HTTPException(status_code=400, detail="별칭이 비어있습니다.")
+    if is_blocklisted_artist_name(alias_text):
+        raise HTTPException(status_code=400, detail="별칭으로 쓸 수 없는 값입니다.")
+
+    await _register_alias_if_new(db, canonical, alias_text, source="admin")
     await db.commit()
     await db.refresh(canonical)
     return canonical
@@ -629,6 +733,7 @@ async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None
 
     if changed:
         concert.artist_name = names
+        concert.admin_reviewed_at = None
 
 
 # canonical의 mbid로 Wikidata 항목을 찾아 한글 label을 alias로 등록한다(예: Konomi Suzuki
@@ -698,7 +803,9 @@ async def _process_one(
     if canonical is not None:
         await _register_wikidata_korean_alias(db, canonical, client)
         await _register_artist_image(db, canonical, client)
-        await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
+        await apply_canonical_replacement(
+            db, row.concert_id, row.artist_text, _display_value(canonical), clear_admin_review=True
+        )
         row.status = "matched"
         return "matched"
 
@@ -716,7 +823,9 @@ async def _process_one(
             await _fetch_and_store_group_relations(db, canonical, client)
         await _register_wikidata_korean_alias(db, canonical, client)
         await _register_artist_image(db, canonical, client)
-        await apply_canonical_replacement(db, row.concert_id, row.artist_text, _display_value(canonical))
+        await apply_canonical_replacement(
+            db, row.concert_id, row.artist_text, _display_value(canonical), clear_admin_review=True
+        )
 
     return status
 

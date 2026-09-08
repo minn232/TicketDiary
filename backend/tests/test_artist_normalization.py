@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -342,6 +342,34 @@ async def test_normalize_pending_artists_local_alias_skips_api_call():
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, concert_id)
         assert concert.artist_name == ["Nell"]
+
+
+# 자동 정규화 배치가 표기를 실제로 바꾸면(원문 "넬" -> canonical "Nell"), admin이 검수 완료로
+# 표시해뒀어도 그 상태가 무효화(admin_reviewed_at=None)돼야 함 - 최신 데이터 기준 유지
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_clears_admin_review_on_replacement():
+    await _clear_pending_queue()
+    token = await _get_token()
+    concert_id = uuid.UUID(await _create_concert(f"PF_NP_REVIEWCLEAR_{uuid.uuid4().hex[:6]}", "넬", token))
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-nell-review", canonical_name="Nell")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text="넬", source="musicbrainz"))
+        concert = await db.get(Concert, concert_id)
+        concert.admin_reviewed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+        await queue_for_normalization(db, concert_id, ["넬"])
+
+    with _no_kopis_supplement(), _no_wikidata_lookup(), _no_artist_image_lookup():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == ["Nell"]
+        assert concert.admin_reviewed_at is None
 
 
 @pytest.mark.asyncio

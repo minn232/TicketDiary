@@ -682,3 +682,29 @@ async def test_crawl_result_queues_even_when_nothing_else_changed():
         )
         row = result.scalar_one()
     assert row.status == "pending"
+
+
+# admin이 검수 완료로 표시해둔 공연이라도, 자동 파이프라인(크롤링 웹훅)이 artist_name을 실제로
+# 바꾸면 검수 상태가 무효화(admin_reviewed_at=None)돼야 함 - 최신 데이터 기준을 유지하기 위함
+@pytest.mark.asyncio
+async def test_crawl_result_clears_admin_review_when_artist_name_changes():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_CR_REVIEWCLEAR_{uuid.uuid4().hex[:6]}", "기존아티스트", token)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.admin_reviewed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": ["새로크롤링된아티스트"]},
+                headers=_llm_headers(),
+            )
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+    assert concert.admin_reviewed_at is None

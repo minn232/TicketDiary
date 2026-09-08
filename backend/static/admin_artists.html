@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TicketDiary 아티스트 조회</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e3e1dc;
+    --text: #2a2a28;
+    --muted: #8a8781;
+    --accent: #c0562f;
+    --accent-soft: #f4e3da;
+    --danger: #b0473a;
+    --ok: #4a7c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  header a.nav-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  header a.nav-link:hover { text-decoration: underline; }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  input[type="text"], input[type="password"] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    background: #fff;
+    color: var(--text);
+  }
+  button {
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--danger); border-color: var(--danger); background: #fff; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  #status-line { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: #faf9f7; }
+  tr:last-child td { border-bottom: none; }
+  tr.row:hover { background: #faf6f2; cursor: pointer; }
+  .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .badge-group { display: inline-block; background: #e4efe7; color: var(--ok); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .badge-member { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
+
+  /* 상세 패널 */
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(20,18,15,0.4); align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 10; }
+  #overlay.open { display: flex; }
+  #detail { background: var(--panel); border-radius: 10px; width: 100%; max-width: 720px; padding: 20px; }
+  #detail h2 { margin: 0 0 4px; font-size: 16px; }
+  #detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  #detail h3 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); }
+  .alias-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 13px; }
+  .alias-row .source-tag { font-size: 11px; color: var(--muted); margin-left: 8px; }
+  .add-row { display: flex; gap: 6px; margin-top: 6px; }
+  .add-row input { flex: 1; }
+  .concert-card { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; text-decoration: none; color: var(--text); }
+  .concert-card:hover { border-color: var(--accent); }
+  .concert-card img { width: 32px; height: 44px; object-fit: cover; border-radius: 4px; background: var(--border); }
+  .concert-card .date { color: var(--muted); font-size: 11px; }
+  #detail .close-row { text-align: right; margin-top: 14px; }
+  #msg { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 20; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎤 TicketDiary 아티스트 조회</h1>
+  <div class="field">
+    <label>관리자 키</label>
+    <input type="password" id="admin-key" placeholder="Bearer key" />
+    <button onclick="saveKey()">저장</button>
+  </div>
+  <div class="field" style="flex:1; min-width:200px;">
+    <input type="text" id="search" placeholder="아티스트명 / 표시명 / 별칭 검색" style="width:100%;" />
+  </div>
+  <button onclick="load(1)">검색</button>
+  <a class="nav-link" href="/admin/">← 공연 목록</a>
+</header>
+
+<main>
+  <div id="status-line"></div>
+  <table>
+    <thead>
+      <tr><th>아티스트</th><th>표시명</th><th>별칭</th><th>관계</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="pager">
+    <button onclick="prevPage()">이전</button>
+    <span id="page-label"></span>
+    <button onclick="nextPage()">다음</button>
+  </div>
+</main>
+
+<div id="overlay" onclick="if(event.target===this) closeDetail()">
+  <div id="detail"></div>
+</div>
+<div id="msg"></div>
+
+<script>
+const API = '/api/v1/admin';
+let page = 1, pageSize = 20, totalPages = 1;
+let currentDetail = null;
+
+function adminKey() { return localStorage.getItem('td_admin_key') || ''; }
+function saveKey() {
+  localStorage.setItem('td_admin_key', document.getElementById('admin-key').value.trim());
+  toast('키 저장됨');
+}
+document.getElementById('admin-key').value = adminKey();
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey(), ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function toast(text) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 2500);
+}
+
+async function load(p) {
+  page = p || page;
+  const search = document.getElementById('search').value.trim();
+  const qs = new URLSearchParams({ page, page_size: pageSize });
+  if (search) qs.set('search', search);
+
+  document.getElementById('status-line').textContent = '불러오는 중...';
+  try {
+    const data = await api('/artists?' + qs.toString());
+    renderRows(data.items);
+    totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+    document.getElementById('page-label').textContent = `${data.page} / ${totalPages} (총 ${data.total}건)`;
+    document.getElementById('status-line').textContent = '';
+  } catch (e) {
+    document.getElementById('status-line').textContent = '오류: ' + e.message;
+  }
+}
+
+function prevPage() { if (page > 1) load(page - 1); }
+function nextPage() { if (page < totalPages) load(page + 1); }
+
+function renderRows(items) {
+  const tbody = document.getElementById('rows');
+  tbody.innerHTML = '';
+  for (const a of items) {
+    const tr = document.createElement('tr');
+    tr.className = 'row';
+    tr.onclick = () => openDetail(a.id);
+    const relations = [
+      a.is_group ? `<span class="badge-group">그룹</span>` : '',
+      a.member_of_count > 0 ? `<span class="badge-member">멤버 (${a.member_of_count})</span>` : '',
+    ].join('');
+    tr.innerHTML = `
+      <td>${esc(a.canonical_name)}<div style="color:var(--muted);font-size:11px;">${esc(a.mbid || '')}</div></td>
+      <td>${esc(a.display_name || '')}</td>
+      <td>${a.alias_count}개</td>
+      <td>${relations || '<span style="color:var(--muted)">-</span>'}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function openDetail(id) {
+  try {
+    const a = await api(`/artists/${id}`);
+    currentDetail = a;
+    renderDetail(a);
+    document.getElementById('overlay').classList.add('open');
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+function closeDetail() { document.getElementById('overlay').classList.remove('open'); }
+
+function renderDetail(a) {
+  const aliasRows = (a.aliases || []).map(al => `
+    <div class="alias-row">
+      <span>${esc(al.text)}<span class="source-tag">${esc(al.source)}</span></span>
+    </div>`).join('') || '<div style="color:var(--muted); font-size:13px;">별칭 없음</div>';
+
+  const groupMembers = (a.group_members || []).length
+    ? (a.group_members || []).map(n => `<span class="chip">${esc(n)}</span>`).join('')
+    : '<div style="color:var(--muted); font-size:13px;">없음</div>';
+
+  const memberOf = (a.member_of || []).length
+    ? (a.member_of || []).map(n => `<span class="chip">${esc(n)}</span>`).join('')
+    : '';
+
+  const concertCard = c => `
+    <a class="concert-card" href="/admin/" onclick="event.preventDefault(); toast('공연 목록에서 검색: ${esc(c.name)}')">
+      ${c.poster_url ? `<img src="${esc(c.poster_url)}" />` : ''}
+      <div style="flex:1;">
+        <div>${esc(c.name)}</div>
+        <div class="date">${(c.start_date || '').slice(0, 10)}</div>
+      </div>
+    </a>`;
+
+  const concerts = (a.concerts || []).map(concertCard).join('') || '<div style="color:var(--muted); font-size:13px;">없음</div>';
+  const groupConcerts = (a.group_concerts || []).map(concertCard).join('');
+
+  document.getElementById('detail').innerHTML = `
+    <h2>${esc(a.display_name || a.canonical_name)}</h2>
+    <div class="sub">canonical: ${esc(a.canonical_name)}${a.mbid ? ` · mbid: ${esc(a.mbid)}` : ' · MusicBrainz 미연결'}</div>
+
+    <h3>표시명</h3>
+    <div class="alias-row">
+      <span>${esc(a.display_name || a.canonical_name)}</span>
+      <button onclick="startDisplayName()">변경</button>
+    </div>
+    <div id="display-name-area"></div>
+
+    <h3>별칭</h3>
+    ${aliasRows}
+    <div class="add-row">
+      <input type="text" id="add-alias-input" placeholder="새 별칭 입력" />
+      <button onclick="submitAddAlias()">추가</button>
+    </div>
+
+    ${(a.member_of || []).length ? `<h3>소속 그룹</h3>${memberOf}` : ''}
+    <h3>그룹 멤버${(a.group_members || []).length ? '' : ' (없음)'}</h3>
+    ${groupMembers}
+
+    <h3>이 아티스트명으로 나온 공연</h3>
+    ${concerts}
+    ${(a.group_concerts || []).length ? `<h3>소속 그룹명으로 나온 공연</h3>${groupConcerts}` : ''}
+
+    <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
+  `;
+  const addInput = document.getElementById('add-alias-input');
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAddAlias();
+  });
+}
+
+async function submitAddAlias() {
+  const value = document.getElementById('add-alias-input').value.trim();
+  if (!value) return;
+  const id = currentDetail.id;
+  try {
+    await api(`/artists/${id}/alias`, {
+      method: 'POST',
+      body: JSON.stringify({ alias_text: value }),
+    });
+    toast('별칭 추가됨');
+    openDetail(id);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 공연 상세 화면(admin.html)의 표시명 변경 플로우와 동일한 엔드포인트 재사용 -
+// 여기선 canonical_id를 이미 알고 있어서 이름으로 다시 찾을 필요 없이 옵션만 조회
+async function startDisplayName() {
+  const a = currentDetail;
+  let data;
+  try {
+    data = await api(`/canonical-artist?name=${encodeURIComponent(a.canonical_name)}`);
+  } catch (e) {
+    toast('오류: ' + e.message);
+    return;
+  }
+  const opts = data.options.map(o =>
+    `<option value="${esc(o.text)}" ${o.text === data.current ? 'selected' : ''}>${esc(o.text)} (${esc(o.source)})</option>`
+  ).join('');
+  document.getElementById('display-name-area').innerHTML = `
+    <div class="alias-row">
+      <select id="display-select" style="flex:1; margin-right:8px;">${opts}</select>
+      <span>
+        <button onclick="submitDisplayName('${data.canonical_id}')">저장</button>
+        <button onclick="document.getElementById('display-name-area').innerHTML=''">취소</button>
+      </span>
+    </div>`;
+}
+
+async function submitDisplayName(canonicalId) {
+  const value = document.getElementById('display-select').value;
+  try {
+    await api(`/canonical-artist/${canonicalId}/display-name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ display_name: value }),
+    });
+    toast('표시명 변경됨');
+    const id = currentDetail.id;
+    openDetail(id);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+}
+
+load(1);
+</script>
+</body>
+</html>
