@@ -96,7 +96,8 @@ class AdminDisplayNameRequest(BaseModel):
 class AdminArtistListItem(BaseModel):
     model_config = {"from_attributes": True}
 
-    # 아티스트 목록 한 줄 - is_group/member_of_count로 그룹/멤버 관계 유무를 한눈에 구분
+    # 아티스트 목록 한 줄 - is_group/member_of_count로 그룹/멤버 관계 유무를 한눈에 구분.
+    # is_unused=True면 이 아티스트명(+별칭)이 어느 공연에도 안 나옴 - 삭제 후보 표시용
     id: UUID
     canonical_name: str
     display_name: str | None
@@ -104,6 +105,7 @@ class AdminArtistListItem(BaseModel):
     alias_count: int
     is_group: bool
     member_of_count: int
+    is_unused: bool
 
 
 class AdminArtistListResponse(BaseModel):

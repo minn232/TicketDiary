@@ -68,6 +68,7 @@
   .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
   .badge-group { display: inline-block; background: #e4efe7; color: var(--ok); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .badge-member { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .badge-unused { display: inline-block; background: #fbeadf; color: var(--danger); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 
   /* 상세 패널 */
@@ -100,6 +101,10 @@
   </div>
   <div class="field" style="flex:1; min-width:200px;">
     <input type="text" id="search" placeholder="아티스트명 / 표시명 / 별칭 검색" style="width:100%;" />
+  </div>
+  <div class="field">
+    <input type="checkbox" id="unused-only" onchange="load(1)" />
+    <label for="unused-only">미출연(등장 공연 없음)만 보기</label>
   </div>
   <button onclick="load(1)">검색</button>
   <a class="nav-link" href="/">← 공연 목록</a>
@@ -159,7 +164,8 @@ function toast(text) {
 async function load(p) {
   page = p || page;
   const search = document.getElementById('search').value.trim();
-  const qs = new URLSearchParams({ page, page_size: pageSize });
+  const unusedOnly = document.getElementById('unused-only').checked;
+  const qs = new URLSearchParams({ page, page_size: pageSize, unused_only: unusedOnly });
   if (search) qs.set('search', search);
 
   document.getElementById('status-line').textContent = '불러오는 중...';
@@ -187,6 +193,7 @@ function renderRows(items) {
     const relations = [
       a.is_group ? `<span class="badge-group">그룹</span>` : '',
       a.member_of_count > 0 ? `<span class="badge-member">멤버 (${a.member_of_count})</span>` : '',
+      a.is_unused ? `<span class="badge-unused">미출연</span>` : '',
     ].join('');
     tr.innerHTML = `
       <td>${esc(a.canonical_name)}<div style="color:var(--muted);font-size:11px;">${esc(a.mbid || '')}</div></td>
@@ -236,6 +243,11 @@ function renderDetail(a) {
   const concerts = (a.concerts || []).map(concertCard).join('') || '<div style="color:var(--muted); font-size:13px;">없음</div>';
   const groupConcerts = (a.group_concerts || []).map(concertCard).join('');
 
+  const canDelete = (a.concerts || []).length === 0;
+  const deleteSection = canDelete
+    ? `<button class="danger" onclick="startDeleteConfirm()">이 아티스트 DB에서 완전 삭제</button>`
+    : `<span style="color:var(--muted); font-size:12px;">공연에 등장 중이라 삭제 불가 - 먼저 위 공연들에서 이름을 지워주세요</span>`;
+
   document.getElementById('detail').innerHTML = `
     <h2>${esc(a.display_name || a.canonical_name)}</h2>
     <div class="sub">canonical: ${esc(a.canonical_name)}${a.mbid ? ` · mbid: ${esc(a.mbid)}` : ' · MusicBrainz 미연결'}</div>
@@ -262,6 +274,9 @@ function renderDetail(a) {
     ${concerts}
     ${(a.group_concerts || []).length ? `<h3>소속 그룹명으로 나온 공연</h3>${groupConcerts}` : ''}
 
+    <h3>DB에서 삭제</h3>
+    <div id="delete-artist-area">${deleteSection}</div>
+
     <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
   `;
   const addInput = document.getElementById('add-alias-input');
@@ -281,6 +296,26 @@ async function submitAddAlias() {
     });
     toast('별칭 추가됨');
     openDetail(id);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 삭제 전 한 번 더 확인 - 네이티브 confirm() 대신 인라인 UI(admin.html의 기존 패턴과 동일)
+function startDeleteConfirm() {
+  document.getElementById('delete-artist-area').innerHTML = `
+    <span style="font-size:12px; color:var(--danger); margin-right:6px;">정말 완전히 삭제할까요? (되돌릴 수 없음)</span>
+    <button class="danger" onclick="submitDeleteArtist()">삭제</button>
+    <button onclick="openDetail(currentDetail.id)">취소</button>`;
+}
+
+async function submitDeleteArtist() {
+  const id = currentDetail.id;
+  try {
+    await api(`/artists/${id}`, { method: 'DELETE' });
+    toast('삭제됨');
+    closeDetail();
     load(page);
   } catch (e) {
     toast('오류: ' + e.message);

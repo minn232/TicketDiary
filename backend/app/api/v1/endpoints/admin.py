@@ -36,6 +36,7 @@ from app.services.artist_normalization import (
     add_artist_alias,
     add_artist_name,
     confirm_artist_name_change,
+    delete_canonical_artist,
     get_canonical_name_options,
     remove_artist_name,
     set_display_name,
@@ -335,13 +336,32 @@ async def _concerts_matching_names(
     ]
 
 
+# concerts.artist_name에 canonical_name이나 별칭 어느 쪽으로든 등장하는 canonical_id 전체 집합 -
+# "아무 공연에도 안 나온(미출연) 아티스트" 배지/필터에 공용으로 씀. 페이지네이션과 무관하게 한 번만 계산
+async def _used_canonical_ids(db: AsyncSession) -> set[UUID]:
+    name_unnested = (
+        select(func.unnest(Concert.artist_name).label("nm")).where(Concert.artist_name != []).subquery()
+    )
+    via_canonical = select(CanonicalArtist.id).join(
+        name_unnested, CanonicalArtist.canonical_name == name_unnested.c.nm
+    )
+    via_alias = select(ArtistAlias.canonical_artist_id).join(
+        name_unnested, ArtistAlias.alias_text == name_unnested.c.nm
+    )
+    rows = await db.execute(via_canonical.union(via_alias))
+    return set(rows.scalars().all())
+
+
 @router.get("/artists", response_model=AdminArtistListResponse)
 async def list_artists(
     search: str | None = Query(None),
+    unused_only: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
+    used_ids = await _used_canonical_ids(db)
+
     query = select(CanonicalArtist)
     if search:
         like = f"%{search}%"
@@ -353,6 +373,8 @@ async def list_artists(
                 CanonicalArtist.id.in_(alias_match_ids),
             )
         )
+    if unused_only:
+        query = query.where(CanonicalArtist.id.not_in(used_ids)) if used_ids else query
 
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
     query = query.order_by(CanonicalArtist.canonical_name).offset((page - 1) * page_size).limit(page_size)
@@ -397,6 +419,7 @@ async def list_artists(
             alias_count=alias_counts.get(a.id, 0),
             is_group=a.id in group_ids_present,
             member_of_count=member_of_counts.get(a.id, 0),
+            is_unused=a.id not in used_ids,
         )
         for a in artists
     ]
@@ -465,6 +488,14 @@ async def add_artist_alias_route(
 ):
     await add_artist_alias(db, canonical_id, body.alias_text)
     return await get_artist_detail(canonical_id, db)
+
+
+# canonical을 DB에서 완전히 삭제(공연에서 이름만 지우는 /concerts/{id}/artist-name DELETE와는
+# 다름) - 아직 공연에 등장하면 delete_canonical_artist가 거절
+@router.delete("/artists/{canonical_id}")
+async def delete_artist_route(canonical_id: UUID, db: AsyncSession = Depends(get_db)):
+    await delete_canonical_artist(db, canonical_id)
+    return {"deleted": True}
 
 
 _PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin.html"

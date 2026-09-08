@@ -627,3 +627,114 @@ async def test_admin_add_artist_alias():
             )
     assert res.status_code == 200
     assert new_alias in {a["text"] for a in res.json()["aliases"]}
+
+
+# 미출연(어느 공연에도 안 나오는) 아티스트 표시 + 필터 + DB 완전 삭제 테스트
+
+@pytest.mark.asyncio
+async def test_admin_artist_unused_flag_and_filter():
+    unused_name = f"미출연아티스트_{uuid.uuid4().hex[:6]}"
+    used_name = f"등장하는아티스트_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        unused_artist = CanonicalArtist(canonical_name=unused_name)
+        used = CanonicalArtist(canonical_name=used_name)
+        db.add_all([unused_artist, used])
+        await db.commit()
+        unused_id, used_id = str(unused_artist.id), str(used.id)
+
+    await _create_concert(f"PF_ARTIST_USED_{uuid.uuid4().hex[:6]}", used_name)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res_all = await ac.get(
+                "/api/v1/admin/artists", params={"search": "아티스트_"}, headers=_admin_headers()
+            )
+            res_unused = await ac.get(
+                "/api/v1/admin/artists",
+                params={"search": "아티스트_", "unused_only": True},
+                headers=_admin_headers(),
+            )
+
+    items_all = {item["id"]: item for item in res_all.json()["items"]}
+    assert items_all[unused_id]["is_unused"] is True
+    assert items_all[used_id]["is_unused"] is False
+
+    unused_ids = {item["id"] for item in res_unused.json()["items"]}
+    assert unused_id in unused_ids
+    assert used_id not in unused_ids
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_unused_artist():
+    name = f"삭제대상_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=f"삭제별칭_{uuid.uuid4().hex[:6]}", source="admin"))
+        await db.commit()
+        canonical_id = str(canonical.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete(f"/api/v1/admin/artists/{canonical_id}", headers=_admin_headers())
+    assert res.status_code == 200
+    assert res.json()["deleted"] is True
+
+    async with AsyncSessionLocal() as db:
+        assert await db.get(CanonicalArtist, uuid.UUID(canonical_id)) is None
+        alias_rows = (
+            await db.execute(select(ArtistAlias).where(ArtistAlias.canonical_artist_id == uuid.UUID(canonical_id)))
+        ).scalars().all()
+        assert alias_rows == []  # cascade로 같이 삭제됨
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_artist_rejected_when_still_in_use():
+    name = f"사용중_{uuid.uuid4().hex[:6]}"
+    await _create_concert(f"PF_ARTIST_INUSE_{uuid.uuid4().hex[:6]}", name)
+
+    # KOPIS로만 채워진 콘서트는 자동으로 canonical이 안 생기므로(정규화 배치가 지나가야 함)
+    # 테스트에서 직접 생성 - 콘서트 쪽 표기(name)와 겹치는 canonical이 있는 상황을 재현
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=name)
+        db.add(canonical)
+        await db.commit()
+        canonical_id = str(canonical.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete(f"/api/v1/admin/artists/{canonical_id}", headers=_admin_headers())
+    assert res.status_code == 400
+
+    async with AsyncSessionLocal() as db:
+        assert await db.get(CanonicalArtist, uuid.UUID(canonical_id)) is not None
+
+
+# 삭제 대상이 그룹-멤버 관계에 얽혀 있어도(자신이 그룹이거나 멤버여도) 관계까지 같이 정리되고
+# 에러 없이 삭제되는지 테스트
+@pytest.mark.asyncio
+async def test_admin_delete_artist_cleans_up_group_membership():
+    group_name = f"삭제될그룹_{uuid.uuid4().hex[:6]}"
+    member_name = f"삭제될그룹멤버_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        group = CanonicalArtist(canonical_name=group_name)
+        member = CanonicalArtist(canonical_name=member_name)
+        db.add_all([group, member])
+        await db.flush()
+        db.add(ArtistGroupMembership(member_canonical_id=member.id, group_canonical_id=group.id))
+        await db.commit()
+        member_id = str(member.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete(f"/api/v1/admin/artists/{member_id}", headers=_admin_headers())
+    assert res.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        remaining = (
+            await db.execute(
+                select(ArtistGroupMembership).where(ArtistGroupMembership.member_canonical_id == uuid.UUID(member_id))
+            )
+        ).scalars().all()
+        assert remaining == []

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
@@ -673,6 +673,50 @@ async def add_artist_alias(db: AsyncSession, canonical_id, alias_text: str) -> C
     await db.commit()
     await db.refresh(canonical)
     return canonical
+
+
+# concerts.artist_name 중 하나라도 names와 겹치는 공연이 있는지 - "이 아티스트가 아직 어딘가
+# 등장하는지" 확인용(unused 판정/삭제 안전장치 공용)
+async def _artist_still_referenced(db: AsyncSession, names: set[str]) -> bool:
+    if not names:
+        return False
+    result = await db.execute(select(Concert.id).where(Concert.artist_name.overlap(list(names))).limit(1))
+    return result.first() is not None
+
+
+# 관리자 페이지(아티스트 상세)에서 잘못 만들어진 canonical을 DB에서 완전히 삭제 - concert에서
+# 이름만 지우는 remove_artist_name과 달리 canonical_artists/artist_aliases(cascade)/
+# artist_group_memberships(양방향)까지 지운다. 아직 어느 공연에 등장하면 원칙적으로 거절
+# (먼저 그 공연들에서 이름을 지우고 오게 함) - 그래야 콘서트 표기와 canonical/별칭 링크가
+# 어긋나는 상태가 안 생김
+async def delete_canonical_artist(db: AsyncSession, canonical_id) -> None:
+    canonical = await db.get(CanonicalArtist, canonical_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+
+    alias_texts = (
+        await db.execute(select(ArtistAlias.alias_text).where(ArtistAlias.canonical_artist_id == canonical_id))
+    ).scalars().all()
+    own_names = {canonical.canonical_name} | set(alias_texts)
+
+    if await _artist_still_referenced(db, own_names):
+        raise HTTPException(
+            status_code=400, detail="아직 공연에 등장하는 아티스트입니다. 먼저 해당 공연에서 이름을 지워주세요."
+        )
+
+    membership_result = await db.execute(
+        select(ArtistGroupMembership).where(
+            or_(
+                ArtistGroupMembership.member_canonical_id == canonical_id,
+                ArtistGroupMembership.group_canonical_id == canonical_id,
+            )
+        )
+    )
+    for row in membership_result.scalars().all():
+        await db.delete(row)
+
+    await db.delete(canonical)  # ArtistAlias는 cascade="all, delete-orphan"으로 같이 삭제됨
+    await db.commit()
 
 
 # 매치된 멤버들의 그룹 로스터와 대조해 사실상 그룹 전체 공연이면 멤버 표기 대신 그룹명으로
