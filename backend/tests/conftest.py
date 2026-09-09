@@ -16,12 +16,9 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
-# 세션 시작 시 1회, 로컬 dev DB를 깨끗하게 비운다. 이 DB가 실제 dev용으로도 같이 쓰이고
-# 테스트 실행마다 데이터가 누적돼서([[flaky_test_fuzzy_artist_match]]의 근본 배경이었음
-# - 6000+ concerts 누적으로 아티스트명 퍼지매칭 오탐 확률이 올라감), 매 세션 시작 전에
-# 싹 비워서 테스트가 항상 빈 DB에서 시작하게 함.
-# host가 localhost/127.0.0.1이 아니면 절대 실행하지 않음 - 실수로 원격/프로덕션 DB를
-# 가리키는 상태로 테스트를 돌렸을 때 TRUNCATE가 나가는 참사를 막기 위한 안전장치.
+# 세션 시작 시 1회 로컬 dev DB를 비운다 - 이 DB가 dev용으로도 쓰여 테스트마다 데이터가
+# 누적되면 아티스트명 퍼지매칭 오탐 확률이 올라감. host가 localhost/127.0.0.1이 아니면
+# 실행하지 않음(원격/프로덕션에 TRUNCATE가 나가는 참사 방지).
 @pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def _clean_db_before_session():
     from app.core.config import settings

@@ -65,7 +65,9 @@
   th { font-size: 12px; color: var(--muted); font-weight: 600; background: #faf9f7; }
   tr:last-child td { border-bottom: none; }
   tr.row:hover { background: #faf6f2; cursor: pointer; }
-  .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 4px 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .chip-remove { border: none; background: none; color: inherit; padding: 0 4px; font-size: 13px; line-height: 1; cursor: pointer; border-radius: 999px; }
+  .chip-remove:hover { background: var(--accent); color: #fff; }
   .badge-group { display: inline-block; background: #e4efe7; color: var(--ok); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .badge-member { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .badge-unused { display: inline-block; background: #fbeadf; color: var(--danger); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
@@ -223,13 +225,16 @@ function renderDetail(a) {
       <span>${esc(al.text)}<span class="source-tag">${esc(al.source)}</span></span>
     </div>`).join('') || '<div style="color:var(--muted); font-size:13px;">별칭 없음</div>';
 
+  const relationChip = ref =>
+    `<span class="chip">${esc(ref.name)}<button class="chip-remove" onclick="submitRemoveRelation('${ref.id}')" title="관계 삭제">×</button></span>`;
+
   const groupMembers = (a.group_members || []).length
-    ? (a.group_members || []).map(n => `<span class="chip">${esc(n)}</span>`).join('')
+    ? a.group_members.map(relationChip).join('')
     : '<div style="color:var(--muted); font-size:13px;">없음</div>';
 
   const memberOf = (a.member_of || []).length
-    ? (a.member_of || []).map(n => `<span class="chip">${esc(n)}</span>`).join('')
-    : '';
+    ? a.member_of.map(relationChip).join('')
+    : '<div style="color:var(--muted); font-size:13px;">없음</div>';
 
   const concertCard = c => `
     <a class="concert-card" href="/" onclick="event.preventDefault(); toast('공연 목록에서 검색: ${esc(c.name)}')">
@@ -266,9 +271,19 @@ function renderDetail(a) {
       <button onclick="submitAddAlias()">추가</button>
     </div>
 
-    ${(a.member_of || []).length ? `<h3>소속 그룹</h3>${memberOf}` : ''}
-    <h3>그룹 멤버${(a.group_members || []).length ? '' : ' (없음)'}</h3>
+    <h3>소속 그룹</h3>
+    ${memberOf}
+    <div class="add-row">
+      <input type="text" id="add-group-input" placeholder="이 아티스트가 속한 그룹명 입력" />
+      <button onclick="submitAddRelation('group')">추가</button>
+    </div>
+
+    <h3>그룹 멤버</h3>
     ${groupMembers}
+    <div class="add-row">
+      <input type="text" id="add-member-input" placeholder="새 멤버명 입력" />
+      <button onclick="submitAddRelation('member')">추가</button>
+    </div>
 
     <h3>이 아티스트명으로 나온 공연</h3>
     ${concerts}
@@ -283,6 +298,12 @@ function renderDetail(a) {
   addInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitAddAlias();
   });
+  document.getElementById('add-group-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAddRelation('group');
+  });
+  document.getElementById('add-member-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAddRelation('member');
+  });
 }
 
 async function submitAddAlias() {
@@ -295,6 +316,40 @@ async function submitAddAlias() {
       body: JSON.stringify({ alias_text: value }),
     });
     toast('별칭 추가됨');
+    openDetail(id);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// role="member": 입력한 이름을 이 아티스트(그룹)의 멤버로, role="group": 이 아티스트가
+// 속한 그룹으로 등록. 콘서트 맥락이 필요한 admin.html의 "밴드 멤버 정리"와 달리 아직 어느
+// 공연에도 안 나온 멤버도 바로 추가할 수 있음(add_group_relation 참고)
+async function submitAddRelation(role) {
+  const inputId = role === 'member' ? 'add-member-input' : 'add-group-input';
+  const input = document.getElementById(inputId);
+  const value = input.value.trim();
+  if (!value) return;
+  const id = currentDetail.id;
+  try {
+    await api(`/artists/${id}/group-relation`, {
+      method: 'POST',
+      body: JSON.stringify({ other_name: value, role }),
+    });
+    toast('관계 추가됨');
+    openDetail(id);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+async function submitRemoveRelation(otherId) {
+  const id = currentDetail.id;
+  try {
+    await api(`/artists/${id}/group-relation/${otherId}`, { method: 'DELETE' });
+    toast('관계 삭제됨');
     openDetail(id);
     load(page);
   } catch (e) {

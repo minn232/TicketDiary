@@ -623,8 +623,8 @@ async def test_crawl_result_lineup_upgrades_poster_source():
 
 
 # /crawl-result 웹훅이 아티스트명을 병합하고도 정규화 큐잉을 안 해서, 크롤링으로만 들어온
-# 표기가 MusicBrainz 정규화 기회를 영영 못 얻던 구조적 갭 회귀 테스트(2026-09-09 발견 - "HANRORO"가
-# canonical "한로로"로 안 바뀌던 실사례로 확인). /artist-result와 동일하게 여기서도 큐잉돼야 함
+# 표기가 MusicBrainz 정규화 기회를 영영 못 얻던 구조적 갭 회귀 테스트("HANRORO"가 canonical
+# "한로로"로 안 바뀌던 실사례로 발견). /artist-result와 동일하게 여기서도 큐잉돼야 함
 @pytest.mark.asyncio
 async def test_crawl_result_queues_artist_names_for_normalization():
     token = await _get_token()

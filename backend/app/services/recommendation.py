@@ -80,11 +80,9 @@ async def get_artist_recommendations(db: AsyncSession, user_id: UUID, limit: int
     return ranked
 
 
-# [백엔드 수정]
-# 추천 목록에 사진을 채워줌(원래 이름/score만 반환해서 그리드에 늘 플레이스홀더만
-# 뜨던 버그) - artist_search.py와 같은 소스(CanonicalArtist)를 canonical_name/
-# alias 양쪽으로 대조. 추천 이름은 정규화 전 원본 문자열일 수 있어 검색과
-# 동일하게 별칭까지 맞춰봐야 매치율이 높음.
+# 추천 목록에 사진을 채워줌(원래 이름/score만 반환해서 그리드에 늘 플레이스홀더만 뜨던 버그) -
+# artist_search.py와 같은 소스(CanonicalArtist)를 canonical_name/alias 양쪽으로 대조.
+# 추천 이름은 정규화 전 원본 문자열일 수 있어 별칭까지 맞춰봐야 매치율이 높음.
 async def _attach_profile_images(db: AsyncSession, entries: list[dict]) -> None:
     if not entries:
         return

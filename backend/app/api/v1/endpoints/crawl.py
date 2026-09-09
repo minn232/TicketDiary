@@ -159,7 +159,7 @@ async def receive_crawl_result(
 
     # MusicBrainz 정규화 큐잉 - pending row만 적립(외부 호출 없음, 응답 시간과 무관). 원래 이
     # 웹훅은 아티스트명 병합만 하고 큐잉을 안 해서, 크롤링/KOPIS로만 들어온 표기가 정규화 기회를
-    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 2026-09-09 발견).
+    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견).
     queue_names = set(concert.artist_name or [])
     if body.lineup:
         lineup_result = await db.execute(
@@ -221,12 +221,10 @@ async def receive_artist_extraction_result(
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        # 항상 합집합 병합 - 예전엔 소규모(4명 미만) 공연에서 KOPIS가 본명/멤버명을 주는 문제
-        # (존박→박성규 등) 때문에 replace=True로 KOPIS 쪽을 통째로 버렸지만, LLM이 포스터에서
-        # 일부 멤버를 놓치면 그만큼 라인업이 사라지는 부작용이 있었음. 이제 MusicBrainz alias
-        # 매칭(services/artist_normalization.py)이 본명↔활동명을 배치로 자동 정리해주므로 그냥
-        # 합집합으로 두고 정리는 정규화 배치에 맡김. merge_artist_names의 replace=True 자체는
-        # 다른 상황에 필요할 수 있어 남겨둠(artist_matching.py)
+        # 항상 합집합 병합 - 예전엔 소규모 공연에서 KOPIS가 본명/멤버명을 주는 문제(존박→박성규
+        # 등) 때문에 replace=True로 KOPIS 쪽을 통째로 버렸지만, LLM이 포스터에서 일부 멤버를
+        # 놓치면 라인업이 사라지는 부작용이 있었음. 이제 MusicBrainz alias 매칭이 본명↔활동명을
+        # 배치로 자동 정리해주므로 합집합으로 두고 정리는 정규화 배치에 맡김.
         merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged

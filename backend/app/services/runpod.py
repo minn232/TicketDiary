@@ -53,11 +53,9 @@ async def stop_pod() -> bool:
         return False
 
 
-# pod을 깨운 직후엔 vLLM 로딩 시간이 있어 llm_server 헬스체크가 응답할 때까지 폴링함
-# (LLM_CRAWL_URL에서 base만 뽑아 "/health" 붙임, 별도 설정 불필요). 타임아웃 안에 준비
-# 안 되면 False - 호출부는 이번 배치를 건너뛰고 다음날 재시도되는 기존 설계와 맞물림.
-# 기본값 600초(2026-08-27 상향, 원래 300초): start_vllm.sh 자체가 vLLM 준비만 최대 10분까지
-# 기다리도록 돼있어(120회×5초) 기존 300초로는 실측 콜드스타트에 못 미쳐 타임아웃 나는 걸 확인함.
+# pod을 깨운 직후엔 vLLM 로딩 시간이 있어 llm_server 헬스체크(base+"/health")가 응답할
+# 때까지 폴링함. 타임아웃 안에 준비 안 되면 False - 호출부는 이번 배치를 건너뛰고 다음날
+# 재시도. 기본값 600초는 start_vllm.sh의 vLLM 준비 최대 10분(120회×5초)에 맞춘 것.
 async def wait_until_llm_server_ready(timeout_seconds: float = 600.0, interval_seconds: float = 10.0) -> bool:
     if not settings.LLM_CRAWL_URL:
         return False
@@ -81,10 +79,9 @@ async def wait_until_llm_server_ready(timeout_seconds: float = 600.0, interval_s
 
 
 # RunPod의 SSH 포트(공인 IP는 고정이어도 22번의 외부 매핑 포트)가 pod을 stop/start(resume)
-# 할 때마다 바뀌는 걸 실제로 확인함(2026-08-27, 같은 세션에서 40154→40077→40110로 세 번
-# 바뀜) - .env에 고정값을 박아두면 재시작마다 수동으로 고쳐야 해서, 접속 직전에 RunPod API로
-# 그때그때 현재 값을 조회하도록 함. 캐싱 안 함 - 매 호출마다 최신값 보장이 중요하고 이 함수는
-# 자주 불리는 게 아니라(pod 시작 시퀀스 안에서만) 비용도 무시할 만함.
+# 할 때마다 바뀌는 걸 실제로 확인함(같은 세션에서 세 번 바뀜) - .env에 고정값을 박아두면
+# 재시작마다 수동으로 고쳐야 해서, 접속 직전에 RunPod API로 그때그때 조회함. 캐싱 안 함 -
+# 매 호출 최신값 보장이 중요하고 이 함수는 pod 시작 시퀀스 안에서만 불려 비용도 무시할 만함.
 async def _fetch_ssh_endpoint() -> tuple[str, int]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.get(
@@ -138,17 +135,11 @@ async def _wait_for_ssh_ready(timeout_seconds: float = 180.0, interval_seconds: 
     return False
 
 
-# pod에 SSH로 접속해 start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 원격 실행 - 스크립트가
-# vLLM 준비까지 폴링하느라 오래 걸려서 SSH 세션은 바로 반환함. 실제 준비 확인은
-# wait_until_llm_server_ready()가 별도로 함.
-# 경로 2026-08-27 확인: LLM팀이 /workspace/server/start_all.sh에서 /workspace/start_vllm.sh로
-# 옮겨서 갱신함(server/ 밑은 이제 llm_server 앱 코드 전용 - main.py 등)
-# tmux 세션(2026-08-27, 기존 nohup+&에서 교체): nohup은 세션 자체가 사라져서 실행 중에
-# 진행 상황을 보거나 개입할 방법이 없었음 - tmux로 띄우면 사람이 나중에 SSH로 들어와서
-# `tmux attach -t llm_start`로 같은 화면을 실시간으로 보고 타이핑도 할 수 있음(pod에 tmux
-# 없으면 최초 1회 설치 필요, `apt-get install -y tmux`). 재실행 시 이전 세션이 남아있으면
-# 새로 붙이려던 세션이 충돌하므로 먼저 kill-session으로 정리(스크립트 자체의 [0/3] pkill
-# 정리 로직과 같은 이유) - 이미 없으면 에러 없이 조용히 넘어감(`; true`).
+# pod에 SSH로 접속해 /workspace/start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 tmux
+# 세션으로 원격 실행 - nohup은 세션 자체가 사라져 실행 중 개입할 방법이 없었어서, tmux면
+# 나중에 `tmux attach -t llm_start`로 들어와 같은 화면을 보고 타이핑도 할 수 있음(pod에
+# 없으면 최초 설치 필요). 재실행 시 이전 세션과 충돌 방지로 먼저 kill-session 정리, SSH
+# 자체는 바로 반환하고 실제 준비 확인은 wait_until_llm_server_ready()가 별도로 함.
 _TMUX_SESSION = "llm_start"
 # start_vllm.sh는 vLLM 프로세스 자체를 `> vllm.log 2>&1 &`로 백그라운드+로그파일로 떼어놓기
 # 때문에(스크립트가 그 사이 curl로 준비상태를 폴링해야 해서), llm_start 세션에 붙어도 래퍼

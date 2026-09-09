@@ -77,8 +77,8 @@ _UNAVAILABLE_PAGE_KEYWORDS = [
     "페이지를 찾을 수 없습니다",
     "오픈 예정",
     # "오픈예정"(공백 없음)은 넣지 않음 - 인터파크 상단 내비게이션의 카테고리 링크로 모든
-    # 페이지에 항상 존재해서(실측 확인, 2026-07-29), 실제 공연 정보가 정상적으로 있는
-    # 페이지도 전부 "오픈 전"으로 오판시키는 false positive였음
+    # 페이지에 항상 존재해서(실측 확인), 실제 공연 정보가 정상적으로 있는 페이지도
+    # 전부 "오픈 전"으로 오판시키는 false positive였음
     "준비중입니다",
     "준비 중입니다",
     "등록된 공연이 없습니다",
@@ -191,10 +191,9 @@ _ATTR_CLOSE_SELECTORS = (
 # 단어가 섞인 문장을 잘못 클릭하는 걸 방지
 _CLOSE_TEXT_CANDIDATES = ("×", "✕", "X", "닫기", "확인")
 
-# "예매 안내" 팝업 - 인터파크/YES24/멜론/티켓링크 등 대부분의 예매 사이트 상세 페이지에서
-# 방문할 때마다(당일 재방문 제외) 뜨는 가장 흔한 팝업(실측 확인, 2026-08-06). 이 문구로 먼저
-# 정확히 컨테이너를 특정한 뒤 닫기를 시도하고, 문구 자체가 없는 사이트(YES24 등)는 아래
-# _POPUP_CONTAINER_SELECTORS 범용 탐색이 대신 커버함
+# "예매 안내" 팝업 - 인터파크/YES24/멜론/티켓링크 상세 페이지 방문 시(당일 재방문 제외)
+# 가장 흔히 뜨는 팝업(실측 확인). 이 문구로 먼저 컨테이너를 특정해 닫기를 시도하고,
+# 문구가 없는 사이트(YES24 등)는 아래 _POPUP_CONTAINER_SELECTORS 범용 탐색이 대신 커버함
 _BOOKING_NOTICE_SIGNAL_TEXTS = ("예매 안내", "예매안내")
 
 
@@ -278,10 +277,9 @@ async def _dismiss_popups(page) -> None:
     except Exception:
         pass
 
-    # 가장 흔한 "예매 안내" 팝업을 텍스트로 먼저 정확히 특정해서 시도.
-    # exact=True로 찾는다 - 부분 일치(exact=False)로 찾으면 "[휠체어석 예매 안내]" 같은 전혀
-    # 다른 버튼이 먼저 걸려서 엉뚱한 걸 컨테이너로 잡는 경우가 실측으로 확인됨(멜론, 2026-08-06).
-    # 실제 팝업 제목은 앞뒤에 다른 글자 없이 정확히 "예매 안내"/"예매안내"만 있음
+    # 가장 흔한 "예매 안내" 팝업을 텍스트로 정확히 특정해 시도. exact=True로 찾음 -
+    # 부분 일치(exact=False)면 "[휠체어석 예매 안내]" 같은 다른 버튼이 먼저 걸려 엉뚱한
+    # 걸 컨테이너로 잡는 경우가 실측 확인됨(멜론). 실제 제목은 정확히 "예매 안내"/"예매안내"뿐
     for signal_text in _BOOKING_NOTICE_SIGNAL_TEXTS:
         try:
             signals = page.get_by_text(signal_text, exact=True)
@@ -661,10 +659,9 @@ _CRAWLERS: dict[str, callable] = {
     "멜론": crawl_melon,
 }
 
-# 크롤링 지원 사이트 우선순위. 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
-# AWS 서버 IP 차단으로 한 달 내내 100% 실패 확정된 상태라([[crawler_block_detection_and_fallback_fix]])
-# 매 재시도 사이클마다 헛되이 먼저 시도하고 실패하는 낭비를 없애기 위해 임시로 INTERPARK만 남김.
-# 프록시 등으로 YES24/MELON 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
+# 크롤링 지원 사이트 우선순위 - 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
+# AWS IP 차단으로 100% 실패 확정이라 임시로 INTERPARK만 남김(헛된 재시도 낭비 방지).
+# 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
 _PREFERRED_SITES = ["INTERPARK"]
 
 # 크롤링 미지원 사이트
@@ -874,12 +871,10 @@ def artist_extraction_target_filter(now: datetime):
     )
 
 
-# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 보낸 적
-# 있어도 쿨다운이 지났고 시도 횟수가 상한 미만이면 다시 대상(artist_extraction_target_filter).
-# KOPIS가 이미 채운 공연도 대상에 포함 - prfcast가 예명 대신 본명/그룹명 대신 멤버명인 경우가
-# 많아서(merge는 합집합이라 기존 값은 안 지워짐). 다만 이미 4명 이상이면(ticket.py의
-# _MULTI_ARTIST_FESTIVAL_THRESHOLD=5 코앞이라 1명만 추가돼도 SOLO->FESTIVAL 오승격 위험) 제외.
-# limit: scripts/send_artist_extraction_now.py 같은 수동 트리거용, 자정 배치는 안 넘김.
+# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 쿨다운
+# 지났고 시도 횟수가 상한 미만이면 재대상. KOPIS가 이미 채운 공연도 포함 - prfcast가 예명/
+# 그룹명 대신 본명/멤버명인 경우가 많아서(merge는 합집합이라 기존 값은 안 지워짐). 4명 이상이면
+# SOLO->FESTIVAL 오승격 위험(THRESHOLD=5 코앞)이라 제외. limit은 수동 트리거용, 자정 배치는 안 넘김.
 async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     if not settings.LLM_ARTIST_URL:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
@@ -940,7 +935,7 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
 
 # 재시도 배치에서 동시에 띄우는 브라우저 프로세스 수 상한 (무제한 병렬은 메모리/CPU 부담이 큼).
 # 서버 RAM이 1.9GB/스왑 0이라 4는 이미 위태로운 수준 - 밤배치 도중 OOM killer가 headless_shell을
-# 반복해서 죽이는 문제(2026-09-04, 09-05) 확인 후 2로 완화함
+# 반복해서 죽이는 문제 확인 후 2로 완화함
 _RETRY_CRAWL_CONCURRENCY = 2
 
 

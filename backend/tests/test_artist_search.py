@@ -105,7 +105,7 @@ async def test_search_artists_blank_query_returns_empty():
         assert await search_artists(db, "   ") == []
 
 
-# 멤버-그룹 관계 처리 (2026-09-07 합의)
+# 멤버-그룹 관계 처리
 
 async def _seed_group_and_member(db, group_name: str, member_name: str) -> None:
     group = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=group_name)

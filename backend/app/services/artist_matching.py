@@ -108,11 +108,9 @@ async def get_known_artist_names(db: AsyncSession) -> set[str]:
     return names
 
 
-# 새 아티스트명들을 기존 DB의 유사 표기와 매칭해 정규화(공백/오탈자/대소문자 흔들림만 흡수) -
-# 한글/영문처럼 스크립트가 완전히 다른 별칭("방탄소년단" vs "BTS")은 문자열 유사도로 못 잡는
-# 알려진 한계라 자동화 대상 아님. 확정된 브랜드/공연장명 오탐(artist_blocklist.py)은 known_names
-# 오염 방지를 위해 매칭 전에 먼저 버림. known_names를 넘기면 재조회 없이 재사용(배치 호출용),
-# 없으면 빈 집합에서 시작.
+# 새 아티스트명들을 기존 DB의 유사 표기와 매칭해 정규화(공백/오탈자/대소문자만 흡수) - 한글/
+# 영문처럼 스크립트가 완전히 다른 별칭은 문자열 유사도로 못 잡는 알려진 한계라 자동화 대상
+# 아님. 확정된 브랜드/공연장명 오탐은 매칭 전에 먼저 버림. known_names는 넘기면 재사용(배치용).
 def normalize_artist_names(names: list[str], known_names: set[str] | None = None) -> list[str]:
     if known_names is None:
         known_names = set()
@@ -141,14 +139,10 @@ def normalize_artist_names(names: list[str], known_names: set[str] | None = None
     return normalized
 
 
-# 기존 아티스트명에 새로 확인된 이름들을 합집합으로 병합 (덮어쓰지 않음). 크롤링/포스터 추출 두
-# 경로가 서로 다른 시점에 아티스트를 채울 수 있고, 페스티벌은 1차/2차/3차로 시간차를 두고
-# 라인업이 늘어나므로 먼저 채워진 이름을 지우지 않고 새 이름만 더하는 방식이 맞음
-#
-# replace=True면 합집합 대신 incoming으로 통째로 교체 - KOPIS 원본(prfcast)이 활동명 대신
-# 본명/멤버명을 주는 경우가 많아서(예: 존박→박성규), 소규모(단독 추정) 공연에 한해 더 신뢰할
-# 수 있는 포스터 쪽 결과가 오면 KOPIS 표기를 밀어내기 위한 것 - 호출부가 "소규모+KOPIS
-# 원본"인지 판단해서 넘겨줌 (라인업이 많은 페스티벌엔 적용 안 해야 데이터 유실이 없음)
+# 기존 아티스트명에 새로 확인된 이름들을 합집합으로 병합(덮어쓰지 않음) - 크롤링/포스터 추출
+# 두 경로가 다른 시점에 채울 수 있고 페스티벌은 1~3차로 라인업이 늘어나므로 먼저 채워진
+# 이름을 안 지우고 새 이름만 더함. replace=True면 KOPIS 원본이 활동명 대신 본명을 주는
+# 경우(존박→박성규)에 대비해 통째로 교체 - "소규모+KOPIS 원본"일 때만(페스티벌엔 적용 금지).
 def merge_artist_names(
     existing: list[str] | None,
     incoming: list[str],

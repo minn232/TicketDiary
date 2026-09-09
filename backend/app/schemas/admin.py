@@ -90,6 +90,7 @@ class AdminCanonicalNameOptions(BaseModel):
 
 
 class AdminDisplayNameRequest(BaseModel):
+    # 표시명 수동 지정 요청 페이로드
     display_name: str
 
 
@@ -109,6 +110,7 @@ class AdminArtistListItem(BaseModel):
 
 
 class AdminArtistListResponse(BaseModel):
+    # 아티스트 목록 페이지 응답
     items: list[AdminArtistListItem]
     total: int
     page: int
@@ -123,6 +125,13 @@ class AdminArtistConcertItem(BaseModel):
     start_date: datetime
 
 
+class AdminArtistRef(BaseModel):
+    # group_members/member_of 한 줄 - id를 같이 내려줘야 프론트가 이름 재검색 없이 바로
+    # 삭제(add_group_relation/remove_group_relation) API를 호출할 수 있음
+    id: UUID
+    name: str
+
+
 class AdminArtistDetail(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -134,8 +143,8 @@ class AdminArtistDetail(BaseModel):
     mbid: str | None
     profile_image_url: str | None
     aliases: list[AdminNameOption]
-    group_members: list[str]
-    member_of: list[str]
+    group_members: list[AdminArtistRef]
+    member_of: list[AdminArtistRef]
     concerts: list[AdminArtistConcertItem]
     group_concerts: list[AdminArtistConcertItem]
 
@@ -143,3 +152,10 @@ class AdminArtistDetail(BaseModel):
 class AdminAddAliasRequest(BaseModel):
     # add_artist_alias에 그대로 넘기는 페이로드
     alias_text: str
+
+
+class AdminGroupRelationAddRequest(BaseModel):
+    # add_group_relation에 그대로 넘기는 페이로드. role="member": other_name을 이 아티스트의
+    # 멤버로 등록. role="group": other_name을 이 아티스트가 속한 그룹으로 등록
+    other_name: str
+    role: str

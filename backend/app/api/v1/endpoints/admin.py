@@ -15,7 +15,7 @@ from app.models.artist_normalization import (
     ArtistNormalizationStatus,
     CanonicalArtist,
 )
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.schemas.admin import (
     AdminAddAliasRequest,
     AdminArtistAddRequest,
@@ -30,24 +30,23 @@ from app.schemas.admin import (
     AdminConcertListResponse,
     AdminDisplayNameRequest,
     AdminGroupMembershipRequest,
+    AdminGroupRelationAddRequest,
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_normalization import (
     add_artist_alias,
     add_artist_name,
+    add_group_relation,
     confirm_artist_name_change,
     delete_canonical_artist,
     get_canonical_name_options,
     remove_artist_name,
+    remove_group_relation,
     set_display_name,
     set_group_membership,
     try_link_canonical_to_musicbrainz,
 )
-from app.services.crawler import (
-    _ARTIST_EXTRACTION_RETRY_COOLDOWN,
-    _MAX_ARTIST_EXTRACTION_ATTEMPTS,
-    artist_extraction_target_filter,
-)
+from app.services.crawler import _ARTIST_EXTRACTION_RETRY_COOLDOWN, _MAX_ARTIST_EXTRACTION_ATTEMPTS
 
 router = APIRouter(dependencies=[Depends(verify_admin_key)])
 
@@ -62,21 +61,36 @@ def _search_filter(keyword: str):
     return or_(Concert.name.ilike(like), Concert.kopis_id.ilike(like), joined_artists.ilike(like))
 
 
-# send_posters_for_artist_extraction(crawler.py)이 실제로 대상으로 잡는 조건 그대로 재사용 -
-# 이 조건을 만족 못 하는 공연은 포스터 LLM 추출이 영영 안 오므로, 관리자 페이지에서 "LLM 미전송
-# 공연만 보기" 필터(unsent_to_llm_only)로 우선 확인 대상을 골라내는 데 씀
-def _llm_eligible_filter(now: datetime):
-    return and_(
-        Concert.genre.contains(["대중음악"]),
-        func.cardinality(Concert.artist_name) < 4,
-        Concert.poster_url.isnot(None),
-        artist_extraction_target_filter(now),
+# "크롤링 스크린샷을 LLM_CRAWL_URL로 보내는" 경로(send_screenshots_to_llm)의 대상 여부.
+# crawl_screenshot_url만 있으면 매일 밤 전부 보내고 응답의 artist_name은 병합됨(/crawl-result
+# 웹훅). crawl_screenshot_url은 찜/티켓등록 시점이나 재시도 배치로 채워지고, FESTIVAL이면
+# 크롤링 전이어도 라인업 재확인 배치가 채움 - "4명 이상이면 이미 페스티벌"이라는 가정은
+# 틀려서(승격 기준은 THRESHOLD=5) event_type을 직접 봐야 사각지대가 없다.
+def _auto_covered_by_crawl_filter():
+    return or_(
+        Concert.crawl_screenshot_url.isnot(None),
+        Concert.event_type == EventType.FESTIVAL.value,
     )
 
 
-# 위 조건 중 실제로 어느 것 때문에 대상에서 빠졌는지 사람이 읽을 수 있는 사유로 - 목록에서
-# "포스터만 없는 건지 이미 4명 이상이라 그런 건지"를 바로 구분해 우선순위를 정할 수 있게 함
+# 관리자 페이지 "자동 채움 안 되는 공연만 보기" 필터(unsent_to_llm_only)가 이 조건으로 골라냄.
+# 포스터 파이프라인의 자체 대상 조건(장르/4명 미만/포스터 있음/쿨다운)은 일부러 안 봄 - 같이
+# 걸면 사실상 "4명에서 멈춘 공연"만 남아 의미가 흐려짐(장르는 대중음악 전용이라 항상 통과,
+# 포스터 없음/재시도 소진은 드묾). 크롤링 경로에 걸리는지만으로 판단해 "크롤링 쪽으로도 안
+# 넘어간다"는 사실만 명확히 보여줌.
+def _needs_manual_artist_fill_filter():
+    return not_(_auto_covered_by_crawl_filter())
+
+
+# 크롤링 경로 대상이면(_auto_covered_by_crawl_filter) 아래 포스터 쪽 사유는 참고용으로도
+# 무의미하므로 빈 리스트 반환. 필터 자체는 더 이상 이 사유들을 안 보지만, 배지로는 여전히
+# "포스터 파이프라인이 왜 이 공연을 더 안 건드리는지" 참고 정보로 보여줌
 def _llm_exclusion_reasons(concert: Concert, now: datetime) -> list[str]:
+    if concert.crawl_screenshot_url is not None:
+        return []
+    if concert.event_type == EventType.FESTIVAL.value:
+        return []
+
     reasons = []
     if "대중음악" not in (concert.genre or []):
         reasons.append("장르가 대중음악 아님")
@@ -114,7 +128,7 @@ async def list_concerts(
     if flagged_only:
         query = query.where(Concert.id.in_(flagged_concert_ids))
     if unsent_to_llm_only:
-        query = query.where(not_(_llm_eligible_filter(now)))
+        query = query.where(_needs_manual_artist_fill_filter())
     if unreviewed_only:
         query = query.where(Concert.admin_reviewed_at.is_(None))
 
@@ -438,35 +452,40 @@ async def get_artist_detail(canonical_id: UUID, db: AsyncSession = Depends(get_d
         )
     ).scalars().all()
 
-    # 이 아티스트가 그룹이면 현재 멤버명, 멤버면 소속 그룹명 - 양방향 다 보여줌
+    # 이 아티스트가 그룹이면 현재 멤버, 멤버면 소속 그룹 - 양방향 다 보여줌. id를 같이 내려줘야
+    # 프론트가 이름 재검색 없이 바로 삭제 API(remove_group_relation)를 호출할 수 있음
     group_members = sorted(
         (
             await db.execute(
-                select(CanonicalArtist.canonical_name)
+                select(CanonicalArtist.id, CanonicalArtist.canonical_name)
                 .join(ArtistGroupMembership, ArtistGroupMembership.member_canonical_id == CanonicalArtist.id)
                 .where(
                     ArtistGroupMembership.group_canonical_id == canonical_id,
                     ArtistGroupMembership.is_current.is_(True),
                 )
             )
-        ).scalars().all()
+        ).all(),
+        key=lambda row: row.canonical_name,
     )
     member_of = sorted(
         (
             await db.execute(
-                select(CanonicalArtist.canonical_name)
+                select(CanonicalArtist.id, CanonicalArtist.canonical_name)
                 .join(ArtistGroupMembership, ArtistGroupMembership.group_canonical_id == CanonicalArtist.id)
                 .where(
                     ArtistGroupMembership.member_canonical_id == canonical_id,
                     ArtistGroupMembership.is_current.is_(True),
                 )
             )
-        ).scalars().all()
+        ).all(),
+        key=lambda row: row.canonical_name,
     )
 
     own_names = {canonical.canonical_name} | {r.alias_text for r in alias_rows}
     concerts = await _concerts_matching_names(db, own_names)
-    group_concerts = await _concerts_matching_names(db, set(member_of)) if member_of else []
+    group_concerts = (
+        await _concerts_matching_names(db, {row.canonical_name for row in member_of}) if member_of else []
+    )
 
     return AdminArtistDetail(
         id=canonical.id,
@@ -475,8 +494,8 @@ async def get_artist_detail(canonical_id: UUID, db: AsyncSession = Depends(get_d
         mbid=canonical.mbid,
         profile_image_url=canonical.profile_image_url,
         aliases=[{"text": r.alias_text, "source": r.source} for r in alias_rows],
-        group_members=group_members,
-        member_of=member_of,
+        group_members=[{"id": row.id, "name": row.canonical_name} for row in group_members],
+        member_of=[{"id": row.id, "name": row.canonical_name} for row in member_of],
         concerts=concerts,
         group_concerts=group_concerts,
     )
@@ -487,6 +506,24 @@ async def add_artist_alias_route(
     canonical_id: UUID, body: AdminAddAliasRequest, db: AsyncSession = Depends(get_db)
 ):
     await add_artist_alias(db, canonical_id, body.alias_text)
+    return await get_artist_detail(canonical_id, db)
+
+
+@router.post("/artists/{canonical_id}/group-relation", response_model=AdminArtistDetail)
+async def add_group_relation_route(
+    canonical_id: UUID, body: AdminGroupRelationAddRequest, db: AsyncSession = Depends(get_db)
+):
+    if body.role not in ("member", "group"):
+        raise HTTPException(status_code=400, detail="role은 member 또는 group이어야 합니다.")
+    await add_group_relation(db, canonical_id, body.other_name, body.role)
+    return await get_artist_detail(canonical_id, db)
+
+
+@router.delete("/artists/{canonical_id}/group-relation/{other_id}", response_model=AdminArtistDetail)
+async def remove_group_relation_route(
+    canonical_id: UUID, other_id: UUID, db: AsyncSession = Depends(get_db)
+):
+    await remove_group_relation(db, canonical_id, other_id)
     return await get_artist_detail(canonical_id, db)
 
 

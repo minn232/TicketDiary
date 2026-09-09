@@ -103,7 +103,7 @@ async def _clear_pending_queue() -> None:
 
 
 # decide_match - 순수 함수, DB/네트워크 불필요. country:KR 여부가 아니라 "후보 유일성"이
-# 확정 기준(2026-08-31), 2026-09-01엔 부분 문자열 오탐 방지 검증도 추가됨(아래)
+# 확정 기준, 부분 문자열 오탐 방지 검증도 추가됨(아래)
 
 def test_decide_match_single_high_score_country_kr_matches():
     status, winner = decide_match([_kr_candidate("Nell", score=100)], "Nell")
@@ -149,7 +149,7 @@ def test_decide_match_no_candidates_unconfirmed():
     assert winner is None
 
 
-# 실측 발견(2026-09-01): 후보 이름이 쿼리한 이름의 부분 문자열일 때 점수/후보수만으로는
+# 실측 발견: 후보 이름이 쿼리한 이름의 부분 문자열일 때 점수/후보수만으로는
 # 못 걸러지던 오탐 - 확정 직전에 이름 유사도를 한 번 더 검증
 
 def test_decide_match_rejects_truncated_surname_match():

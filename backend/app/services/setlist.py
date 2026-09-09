@@ -168,9 +168,8 @@ async def fetch_and_save_real_setlist(
 
 # 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음) - concert.artist_name을
 # 순회해서 페스티벌/단독 공연 다 동작. retry_real_setlist_generation()의 매일 백필 잡용,
-# 기존 수동 검색/선택 흐름과는 완전히 별도 경로.
-# search_setlists(artist, date)로 가장 근접한 후보를 자동으로 고르는 방식이라 동명이인/
-# 같은 날 다른 도시 공연이 섞이면 틀릴 수 있음(정확도 낮음) - 그래서 수동 흐름도 남겨둠.
+# 기존 수동 검색/선택 흐름과는 별도 경로. 가장 근접한 후보를 자동으로 고르는 방식이라
+# 동명이인/같은 날 다른 도시 공연이 섞이면 틀릴 수 있어(정확도 낮음) 수동 흐름도 남겨둠.
 async def generate_real_setlist_auto(
     db: AsyncSession,
     concert_id: UUID,

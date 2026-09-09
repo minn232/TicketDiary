@@ -194,7 +194,7 @@ async def test_crawl_interpark_direct_url_unavailable_returns_none(mock_concert)
 
 # 인터파크 상단 내비게이션에 항상 있는 "오픈예정"(공백 없음) 카테고리 링크 때문에, 정상적으로
 # 공연 정보가 있는 페이지까지 "오픈 전"으로 오판되던 회귀 방지 테스트 (실제 크롤링으로 발견,
-# 2026-07-29 - scripts/test_lineup_diff.py로 https://tickets.interpark.com/goods/26009383 확인)
+# scripts/test_lineup_diff.py로 https://tickets.interpark.com/goods/26009383 확인)
 @pytest.mark.asyncio
 async def test_crawl_interpark_direct_url_nav_menu_open_pending_link_not_false_positive(mock_concert):
     expected = b"interpark-direct-png"
@@ -312,7 +312,7 @@ async def test_expand_collapsed_sections_swallows_errors_and_continues():
 
 
 # ticketing_links의 INTERPARK 키에 nol.yanolja.com URL이 들어온 경우("NOL 티켓" -> "NOL(야놀자)"
-# 이관, 2026-09-08부로 구 서비스 종료) "상품 상세 더보기" 버튼을 클릭한 뒤 스크린샷을 찍는지 테스트
+# 로 이관되며 구 서비스 종료) "상품 상세 더보기" 버튼을 클릭한 뒤 스크린샷을 찍는지 테스트
 @pytest.mark.asyncio
 async def test_crawl_interpark_direct_url_expands_nol_yanolja_show_more(mock_concert):
     expected = b"nol-yanolja-expanded-png"
@@ -1255,7 +1255,7 @@ def test_hash_lineup_text_ignores_digit_noise():
 
 
 # 인터파크 "캐스팅" 섹션의 "{아티스트명} 더 알아보기" 한 줄이 방문마다 로테이션되는 실측 노이즈를
-# 무시하는지 테스트 (실제 라인업 목록 자체는 동일한데 이 줄만 달랐던 실측 사례, 2026-07-29)
+# 무시하는지 테스트 (실제 라인업 목록 자체는 동일한데 이 줄만 달랐던 실측 사례)
 def test_hash_lineup_text_ignores_rotating_learn_more_line():
     from app.services.crawler import _hash_lineup_text
 
@@ -1265,7 +1265,7 @@ def test_hash_lineup_text_ignores_rotating_learn_more_line():
 
 
 # container_selector 스코핑 테스트 - 인터파크 상단 회전 광고 배너가 body 전체 캡처에 섞여
-# 들어가 라인업이 안 바뀌어도 "변경"으로 오탐시켰던 걸 실데이터로 확인함(2026-09-02).
+# 들어가 라인업이 안 바뀌어도 "변경"으로 오탐시켰던 걸 실데이터로 확인함.
 # .productMain 안쪽만 캡처하면 배너가 원천적으로 제외됨.
 
 @pytest.mark.asyncio

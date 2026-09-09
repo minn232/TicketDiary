@@ -111,7 +111,7 @@ async def search_artists(db: AsyncSession, query: str, limit: int = 30) -> list[
 
     # 멤버가 자기 이름 공연이 없으면(밴드 라인업에만 존재) 팔로우해도 소식이 절대 안 떠서
     # (_create_news_feeds_for_concert가 정확한 문자열 일치만 봄) 멤버는 빼고 그룹만 노출,
-    # 있으면 멤버+그룹 둘 다. 그룹→멤버 전원 노출은 결과가 난잡해져서 안 함(2026-09-07 합의).
+    # 있으면 멤버+그룹 둘 다. 그룹→멤버 전원 노출은 결과가 난잡해져서 안 함.
     final_ids: set = set()
     for cid in canonicals:
         group_ids = groups_by_member.get(cid)

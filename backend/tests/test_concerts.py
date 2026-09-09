@@ -46,7 +46,7 @@ def _make_kopis_xml(
 _EMPTY_XML = b'<?xml version="1.0" encoding="UTF-8"?><dbs></dbs>'
 
 
-# 공연 검색 테스트 (/concerts/search - DB 기준, KOPIS 실시간 아님, 2026-09-09부터)
+# 공연 검색 테스트 (/concerts/search - DB 기준, KOPIS 실시간 아님)
 
 # 콘서트 하나를 DB에 직접 생성 (search_concerts_db는 이미 동기화된 DB만 보므로 KOPIS mock 불필요)
 async def _make_concert(
@@ -107,7 +107,7 @@ async def test_search_concerts_empty_result():
     assert data == []
 
 
-# 종료된 공연은 찜할 의미가 없어 검색 결과에서 제외 (2026-09-09 결정)
+# 종료된 공연은 찜할 의미가 없어 검색 결과에서 제외
 @pytest.mark.asyncio
 async def test_search_concerts_excludes_ended_concerts():
     now = datetime.now(timezone.utc)
@@ -140,7 +140,7 @@ async def test_search_concerts_matches_alias_and_korean_transliteration():
     assert any(c["id"] == str(concert.id) for c in data)
 
 
-# 밴드 멤버 이름으로 검색해도 그 멤버가 속한 그룹의 공연은 나오면 안 됨 (2026-09-09 결정).
+# 밴드 멤버 이름으로 검색해도 그 멤버가 속한 그룹의 공연은 나오면 안 됨.
 # artist_search.py의 search_artists()(아티스트 팔로우 검색)와 달리 멤버->그룹 확장을 안 하는 게 핵심 차이
 @pytest.mark.asyncio
 async def test_search_concerts_member_name_does_not_surface_group_concert():

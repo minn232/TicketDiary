@@ -7,8 +7,13 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
-from app.models.artist_normalization import ArtistAlias, ArtistGroupMembership, CanonicalArtist
-from app.models.concert import Concert
+from app.models.artist_normalization import (
+    ArtistAlias,
+    ArtistGroupMembership,
+    ArtistNormalizationStatus,
+    CanonicalArtist,
+)
+from app.models.concert import Concert, EventType
 from app.services.artist_normalization import _collapse_members_to_group_names, try_link_canonical_to_musicbrainz
 from app.services.musicbrainz import ArtistCandidate, BandRelation
 from conftest import _get_token, kopis_mock
@@ -86,15 +91,17 @@ async def test_admin_lists_and_searches_concerts():
     assert any(item["id"] == concert_id for item in data["items"])
 
 
-# unsent_to_llm_only 필터 - send_posters_for_artist_extraction 대상이 아닌(=포스터 LLM
-# 추출이 영영 안 오는) 공연만 골라내는지, 사유(llm_exclusion_reasons)도 맞게 나오는지 테스트
+# unsent_to_llm_only 필터 - 크롤링 파이프라인(_auto_covered_by_crawl_filter) 대상 여부만으로
+# 판단하며, 포스터 파이프라인 자체 대상 조건(장르/아티스트 수/포스터/쿨다운)은 안 봄(그 조건을
+# 같이 걸면 실질적으로 "아티스트 4명에서 멈춘 공연"만 남아 필터 의미가 흐려짐). 그래서 아티스트
+# 수와 무관하게, 크롤링 스크린샷도 없고 festival도 아닌 공연은 둘 다 포함돼야 함을 검증
 @pytest.mark.asyncio
-async def test_admin_unsent_to_llm_only_filters_by_artist_count():
-    eligible_name = f"어드민LLM대상_{uuid.uuid4().hex[:6]}"
-    eligible_id = await _create_concert(f"PF_ADMIN_LLM_OK_{uuid.uuid4().hex[:6]}", eligible_name)
+async def test_admin_unsent_to_llm_only_ignores_poster_pipeline_eligibility():
+    few_artists_name = f"어드민LLM소수_{uuid.uuid4().hex[:6]}"
+    few_artists_id = await _create_concert(f"PF_ADMIN_LLM_FEW_{uuid.uuid4().hex[:6]}", few_artists_name)
 
     members = [f"멤버{i}_{uuid.uuid4().hex[:6]}" for i in range(4)]
-    excluded_id = await _create_concert(f"PF_ADMIN_LLM_NG_{uuid.uuid4().hex[:6]}", ",".join(members))
+    many_artists_id = await _create_concert(f"PF_ADMIN_LLM_MANY_{uuid.uuid4().hex[:6]}", ",".join(members))
 
     with _admin_settings():
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -105,9 +112,10 @@ async def test_admin_unsent_to_llm_only_filters_by_artist_count():
             )
     assert res.status_code == 200
     items = {item["id"]: item for item in res.json()["items"]}
-    assert excluded_id in items
-    assert eligible_id not in items
-    assert "아티스트 4명 이상" in items[excluded_id]["llm_exclusion_reasons"]
+    assert few_artists_id in items
+    assert many_artists_id in items
+    assert "아티스트 4명 이상" in items[many_artists_id]["llm_exclusion_reasons"]
+    assert items[few_artists_id]["llm_exclusion_reasons"] == []
 
 
 # 포스터가 없는 공연도 같은 필터에 걸리고 사유가 정확히 구분되는지 테스트
@@ -131,7 +139,62 @@ async def test_admin_llm_exclusion_reasons_report_missing_poster():
     assert res.status_code == 200
     items = res.json()["items"]
     assert len(items) == 1
-    assert items[0]["llm_exclusion_reasons"] == ["포스터 없음"]
+
+
+# 크롤링 스크린샷 경로(send_screenshots_to_llm)가 이미 커버하는 공연은 포스터 경로 사유가
+# 있어도(아티스트 4명 이상 등) "자동 채움 안 되는 공연" 목록에서 빠져야 함 - crawl_screenshot_url은
+# 이벤트 타입과 무관하게(찜/티켓등록 크롤링) 채워질 수 있으므로 event_type과 별개로 확인
+@pytest.mark.asyncio
+async def test_admin_unsent_to_llm_only_excludes_crawl_covered_concerts():
+    members = [f"멤버{i}_{uuid.uuid4().hex[:6]}" for i in range(4)]
+    concert_id = await _create_concert(f"PF_ADMIN_LLM_CRAWLED_{uuid.uuid4().hex[:6]}", ",".join(members))
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.crawl_screenshot_url = "https://example.com/screenshot.png"
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            filtered_res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"unsent_to_llm_only": True, "page_size": 100},
+                headers=_admin_headers(),
+            )
+            unfiltered_res = await ac.get(
+                "/api/v1/admin/concerts", params={"page_size": 100}, headers=_admin_headers()
+            )
+    assert filtered_res.status_code == 200 and unfiltered_res.status_code == 200
+    assert concert_id not in {item["id"] for item in filtered_res.json()["items"]}
+
+    unfiltered_items = {item["id"]: item for item in unfiltered_res.json()["items"]}
+    assert unfiltered_items[concert_id]["llm_exclusion_reasons"] == []
+
+
+# 아직 크롤링 전이라도(crawl_screenshot_url 없음) event_type=FESTIVAL이면 24시간마다 자동
+# 재확인 대상이므로 마찬가지로 "자동 채움 안 되는 공연" 목록에서 빠져야 함. "아티스트 4명 이상 =
+# 이미 페스티벌"이라는 가정이 틀렸다는 걸 보여주려고 일부러 아티스트 수는 적게(1명) 둔다
+@pytest.mark.asyncio
+async def test_admin_unsent_to_llm_only_excludes_festival_concerts():
+    name = f"어드민페스티벌_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_LLM_FESTIVAL_{uuid.uuid4().hex[:6]}", name)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.event_type = EventType.FESTIVAL.value
+        concert.poster_url = None  # 포스터 경로 사유를 일부러 만들어도 결과에 영향 없어야 함
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"unsent_to_llm_only": True, "search": name},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 0
 
 
 # "밴드명 + 멤버 여러 명"이 개별 표기로 뽑힌 공연을 밴드명으로 접고 멤버 관계를 등록하는 기능 테스트
@@ -235,6 +298,44 @@ async def test_admin_renames_artist():
             )
     assert res.status_code == 200
     assert res.json()["artist_name"] == ["수정후이름"]
+
+
+@pytest.mark.asyncio
+async def test_admin_confirms_artist_without_renaming():
+    # MusicBrainz에 없는 아티스트(표기 자체는 맞음)라 ambiguous/unconfirmed에 영영 갇히는 케이스 -
+    # original_name과 confirmed_name을 동일하게 보내는 "확정" 버튼이 매칭 안 걸린 채로도 status를
+    # matched로 바꾸고 mbid=NULL canonical을 등록해야 한다
+    name = f"확정대상_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_CONFIRM_{uuid.uuid4().hex[:6]}", name)
+
+    async with AsyncSessionLocal() as db:
+        # _create_concert는 웹훅(crawl.py)을 안 거치므로 정규화 큐에 자동으로 안 쌓임(별개 이슈) -
+        # 이 테스트는 그 큐잉 자체가 아니라 "이미 ambiguous로 남은 row를 확정 버튼이 matched로
+        # 바꾸는지"만 검증하는 것이므로 직접 만들어둔다
+        db.add(
+            ArtistNormalizationStatus(
+                concert_id=uuid.UUID(concert_id), artist_text=name, status="ambiguous"
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.patch(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name",
+                json={"original_name": name, "confirmed_name": name},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["artist_name"] == [name]
+    assert [s for s in data["statuses"] if s["artist_text"] == name][0]["status"] == "matched"
+
+    async with AsyncSessionLocal() as db:
+        canonical = (
+            await db.execute(select(CanonicalArtist).where(CanonicalArtist.canonical_name == name))
+        ).scalar_one()
+        assert canonical.mbid is None
 
 
 @pytest.mark.asyncio
@@ -603,9 +704,107 @@ async def test_admin_artist_detail_shows_group_membership_and_group_concerts():
             member_res = await ac.get(f"/api/v1/admin/artists/{member_id}", headers=_admin_headers())
             group_res = await ac.get(f"/api/v1/admin/artists/{group_id}", headers=_admin_headers())
 
-    assert member_res.json()["member_of"] == [group_name]
+    assert [r["name"] for r in member_res.json()["member_of"]] == [group_name]
+    assert member_res.json()["member_of"][0]["id"] == group_id
     assert any(c["id"] == group_concert_id for c in member_res.json()["group_concerts"])
-    assert group_res.json()["group_members"] == [member_name]
+    assert [r["name"] for r in group_res.json()["group_members"]] == [member_name]
+    assert group_res.json()["group_members"][0]["id"] == member_id
+
+
+@pytest.mark.asyncio
+async def test_admin_adds_group_member_without_concert():
+    # set_group_membership(admin.html의 "밴드 멤버 정리")과 달리 콘서트 맥락이 전혀 없어도
+    # 그룹 상세 페이지에서 바로 멤버를 추가할 수 있어야 함(아직 어느 공연에도 안 나온 멤버 포함)
+    group_name = f"그룹추가_{uuid.uuid4().hex[:6]}"
+    member_name = f"신규멤버_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        group = CanonicalArtist(canonical_name=group_name)
+        db.add(group)
+        await db.commit()
+        group_id = str(group.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/artists/{group_id}/group-relation",
+                json={"other_name": member_name, "role": "member"},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert [r["name"] for r in data["group_members"]] == [member_name]
+
+    async with AsyncSessionLocal() as db:
+        member = (
+            await db.execute(select(CanonicalArtist).where(CanonicalArtist.canonical_name == member_name))
+        ).scalar_one()
+        assert member.mbid is None
+
+
+@pytest.mark.asyncio
+async def test_admin_adds_own_group_via_role_group():
+    member_name = f"멤버추가_{uuid.uuid4().hex[:6]}"
+    group_name = f"신규그룹_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        member = CanonicalArtist(canonical_name=member_name)
+        db.add(member)
+        await db.commit()
+        member_id = str(member.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/artists/{member_id}/group-relation",
+                json={"other_name": group_name, "role": "group"},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    assert [r["name"] for r in res.json()["member_of"]] == [group_name]
+
+
+@pytest.mark.asyncio
+async def test_admin_rejects_self_group_relation():
+    name = f"자기자신_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=name)
+        db.add(canonical)
+        await db.commit()
+        canonical_id = str(canonical.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/artists/{canonical_id}/group-relation",
+                json={"other_name": name, "role": "member"},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_admin_removes_group_relation():
+    group_name = f"삭제그룹_{uuid.uuid4().hex[:6]}"
+    member_name = f"삭제멤버_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        group = CanonicalArtist(canonical_name=group_name)
+        member = CanonicalArtist(canonical_name=member_name)
+        db.add_all([group, member])
+        await db.flush()
+        db.add(ArtistGroupMembership(member_canonical_id=member.id, group_canonical_id=group.id))
+        await db.commit()
+        group_id = str(group.id)
+        member_id = str(member.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete(
+                f"/api/v1/admin/artists/{group_id}/group-relation/{member_id}", headers=_admin_headers()
+            )
+            assert res.status_code == 200
+            assert res.json()["group_members"] == []
+
+            member_res = await ac.get(f"/api/v1/admin/artists/{member_id}", headers=_admin_headers())
+    assert member_res.json()["member_of"] == []
 
 
 @pytest.mark.asyncio

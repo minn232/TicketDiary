@@ -12,7 +12,7 @@ _RESULT_LIMIT = 30
 
 # 찜 공연 검색(DB 기준, KOPIS 실시간 호출 없음 - 타이핑마다 즉시 응답 위해). 종료된 공연은 제외,
 # 최대 하루 지연(KOPIS 동기화 주기)은 감수. 공연명+아티스트명 원문+별칭/원어 표기 3가지로 매치하되,
-# search_artists()와 달리 멤버->그룹 확장은 안 함(멤버 이름 검색으로 그룹 공연이 나오면 안 됨, 2026-09-09).
+# search_artists()와 달리 멤버->그룹 확장은 안 함(멤버 이름 검색으로 그룹 공연이 나오면 안 됨).
 async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_LIMIT) -> list[Concert]:
     q = query.strip()
     if not q or not min_len_ok(q):

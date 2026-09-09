@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
@@ -675,6 +675,78 @@ async def add_artist_alias(db: AsyncSession, canonical_id, alias_text: str) -> C
     return canonical
 
 
+# 관리자 페이지(아티스트 상세)에서 콘서트 맥락 없이 그룹<->멤버 관계를 직접 추가 - set_group_membership과
+# 달리 콘서트의 artist_name에 있어야 한다는 제약이 없음(멤버가 아직 등장한 공연이 하나도 없어도 등록
+# 가능). role="member"면 other_name이 canonical_id(그룹)의 멤버로, role="group"이면 other_name이
+# canonical_id(멤버)가 속한 그룹으로 등록된다
+async def add_group_relation(db: AsyncSession, canonical_id, other_name: str, role: str) -> CanonicalArtist:
+    canonical = await db.get(CanonicalArtist, canonical_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+
+    other_name = other_name.strip()
+    if not other_name:
+        raise HTTPException(status_code=400, detail="아티스트명이 비어있습니다.")
+    if is_blocklisted_artist_name(other_name):
+        raise HTTPException(status_code=400, detail="아티스트명으로 쓸 수 없는 값입니다.")
+
+    # add_artist_name/set_group_membership과 동일한 퍼지매칭 재사용 후 없으면 새로 생성
+    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
+    canonical_names = {c.canonical_name for c in existing_canonicals}
+    resolved_name = normalize_artist_names([other_name], canonical_names)[0]
+
+    other = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+    if other is None:
+        other = CanonicalArtist(mbid=None, canonical_name=resolved_name)
+        db.add(other)
+        await db.flush()
+    await _register_alias_if_new(db, other, other_name, source="admin")
+
+    if other.id == canonical.id:
+        raise HTTPException(status_code=400, detail="자기 자신을 멤버/그룹으로 등록할 수 없습니다.")
+
+    if role == "member":
+        await _register_membership_if_new(db, other.id, canonical.id, source="admin")
+    else:
+        await _register_membership_if_new(db, canonical.id, other.id, source="admin")
+
+    await db.commit()
+    await db.refresh(canonical)
+    return canonical
+
+
+# 위 추가의 반대 - canonical_id와 other_id 사이의 관계를 방향 상관없이 완전히 지운다. 탈퇴 멤버
+# 표시(is_current=False)와는 다른 케이스라 그쪽 필드는 안 쓰고 row 자체를 삭제함(잘못 등록된
+# 관계를 바로잡는 용도라 "예전엔 맞았다"는 이력을 남길 이유가 없음)
+async def remove_group_relation(db: AsyncSession, canonical_id, other_id) -> CanonicalArtist:
+    canonical = await db.get(CanonicalArtist, canonical_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+
+    rows = (
+        await db.execute(
+            select(ArtistGroupMembership).where(
+                or_(
+                    and_(
+                        ArtistGroupMembership.member_canonical_id == canonical_id,
+                        ArtistGroupMembership.group_canonical_id == other_id,
+                    ),
+                    and_(
+                        ArtistGroupMembership.member_canonical_id == other_id,
+                        ArtistGroupMembership.group_canonical_id == canonical_id,
+                    ),
+                )
+            )
+        )
+    ).scalars().all()
+    for row in rows:
+        await db.delete(row)
+
+    await db.commit()
+    await db.refresh(canonical)
+    return canonical
+
+
 # concerts.artist_name 중 하나라도 names와 겹치는 공연이 있는지 - "이 아티스트가 아직 어딘가
 # 등장하는지" 확인용(unused 판정/삭제 안전장치 공용)
 async def _artist_still_referenced(db: AsyncSession, names: set[str]) -> bool:
@@ -686,9 +758,8 @@ async def _artist_still_referenced(db: AsyncSession, names: set[str]) -> bool:
 
 # 관리자 페이지(아티스트 상세)에서 잘못 만들어진 canonical을 DB에서 완전히 삭제 - concert에서
 # 이름만 지우는 remove_artist_name과 달리 canonical_artists/artist_aliases(cascade)/
-# artist_group_memberships(양방향)까지 지운다. 아직 어느 공연에 등장하면 원칙적으로 거절
-# (먼저 그 공연들에서 이름을 지우고 오게 함) - 그래야 콘서트 표기와 canonical/별칭 링크가
-# 어긋나는 상태가 안 생김
+# artist_group_memberships(양방향)까지 지운다. 어느 공연에든 아직 등장하면 거절(먼저 그
+# 공연들에서 이름을 지우고 오게 함) - 콘서트 표기와 canonical/별칭 링크가 안 어긋나게 함.
 async def delete_canonical_artist(db: AsyncSession, canonical_id) -> None:
     canonical = await db.get(CanonicalArtist, canonical_id)
     if canonical is None:
@@ -780,13 +851,10 @@ async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None
         concert.admin_reviewed_at = None
 
 
-# canonical의 mbid로 Wikidata 항목을 찾아 한글 label을 alias로 등록한다(예: Konomi Suzuki
-# mbid -> Wikidata ko label "스즈키 코노미"). KOPIS 원본 라인업이 그 한글 표기 그대로 별도
-# row로 큐잉돼 있었다면(_supplement_from_kopis_originals) 이후 처리 시 MusicBrainz 재검색 없이
-# 이 alias로 바로 matched됨 - "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어 영구 unconfirmed로
-# 남던 케이스(스즈키 코노미 실측)를 구제하는 게 목적. 이미 wikidata 출처 alias가 있으면
-# mbid당 재조회 안 함(문서가 바뀌는 일은 드묾). 조회 실패/미존재는 전부 조용히 건너뜀 - 관계
-# 조회(_fetch_and_store_group_relations)와 같은 성격의 보강 데이터라 본 매치엔 영향 없음
+# canonical의 mbid로 Wikidata 항목을 찾아 한글 label을 alias로 등록(예: Konomi Suzuki →
+# "스즈키 코노미"). KOPIS 원본이 같은 한글 표기로 큐잉돼 있으면 재검색 없이 이 alias로
+# 바로 matched됨 - "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어 영구 unconfirmed로 남던
+# 케이스 구제용. 이미 alias 있으면 재조회 안 함, 조회 실패는 조용히 건너뜀(보강 데이터라 무해).
 async def _register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid:
         return
@@ -874,13 +942,10 @@ async def _process_one(
     return status
 
 
-# row 목록을 순서대로 정규화 처리하며 결과를 집계 (normalize_pending_artists/normalize_specific_artists
-# 공통 루프). 실패(네트워크 오류 등)는 status를 안 바꾸고 pending으로 남겨둬서 다음 실행이 자동으로
-# 재시도하게 함 - 확정 응답을 받은 것만 상태를 바꿈.
-# commit_each_row=True(기본)면 매 행마다 바로 커밋함 - limit이 큰 실행을 통째로 한
-# 트랜잭션에 담으면 몇 시간씩 락을 쥐다가 끊겼을 때 "idle in transaction" 좀비 커넥션이
-# 무관한 쿼리까지 막아버림(2026-09-07 실서버 장애). dry_run 호출은 False로 넘겨 기존
-# 전체 롤백 동작을 유지함.
+# row 목록을 순서대로 정규화 처리하며 결과를 집계(공통 루프). 실패(네트워크 오류 등)는
+# status를 안 바꾸고 pending으로 남겨 다음 실행이 자동 재시도하게 함. commit_each_row=True
+# (기본)면 매 행마다 바로 커밋 - 큰 실행을 한 트랜잭션에 담으면 "idle in transaction" 좀비
+# 커넥션이 무관한 쿼리까지 막는 실장애가 있었음(dry_run은 False로 넘겨 전체 롤백 유지).
 async def _process_rows(
     db: AsyncSession,
     client: httpx.AsyncClient,

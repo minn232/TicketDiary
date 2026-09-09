@@ -446,7 +446,6 @@ async def test_recommendations_basic_ranking_and_exclusions():
     assert names.index(high) < names.index(low)  # 점수 높은 순 정렬
 
 
-# [백엔드 수정]
 # 추천 결과에 사진이 채워지는지 테스트 - CanonicalArtist에 정규화된 이름(canonical_name
 # 또는 alias) 중 하나로 매칭되면 profile_image_url이 채워지고, 매칭 안 되면 null
 @pytest.mark.asyncio
