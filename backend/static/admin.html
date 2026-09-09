@@ -269,6 +269,7 @@ function renderDetail(c) {
           ${confirmBtn}
           <button onclick="startRename(this)">수정</button>
           <button onclick="startDisplayName(this)">표시명</button>
+          <button onclick="startAddAlias(this)">별칭 추가</button>
           <button class="danger" onclick="startDeleteConfirm(this)">삭제</button>
         </span>
       </div>`;
@@ -278,10 +279,15 @@ function renderDetail(c) {
     ? `<span class="badge-reviewed">검수완료 (${esc(c.admin_reviewed_at.slice(0, 16).replace('T', ' '))})</span>`
     : `<button onclick="submitMarkReviewed()">검수 완료로 표시</button>`;
 
+  // event_type이 이미 FESTIVAL이면 자동으로 라인업 재확인 대상이라 버튼 자체가 불필요
+  const festivalButton = c.event_type !== 'FESTIVAL'
+    ? `<button onclick="submitMarkFestival()" style="margin-left:8px;" title="event_type을 FESTIVAL로 바꿔 라인업 재확인 배치(24시간마다) 대상에 편입시킴 - LLM 전송은 자정 배치가 알아서 하므로 여기선 안 건드림, 검수완료로도 안 바뀜">페스티벌로 지정</button>`
+    : '';
+
   document.getElementById('detail').innerHTML = `
     <h2>${esc(c.name)}</h2>
     <div class="sub">${esc(c.kopis_id || '')} · ${esc(c.venue || '')} · ${(c.start_date || '').slice(0, 10)}</div>
-    <div style="margin-bottom:10px;">${reviewStatus}</div>
+    <div style="margin-bottom:10px;">${reviewStatus}${festivalButton}</div>
     ${links ? `<div class="ticket-links">${links}</div>` : ''}
     <div class="body">
       ${poster}
@@ -327,6 +333,21 @@ async function submitMarkReviewed() {
   try {
     await api(`/concerts/${concertId}/review`, { method: 'POST' });
     toast('검수 완료로 표시됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 실제로는 페스티벌인데 event_type이 아니라서 크롤링/포스터 파이프라인 어느 쪽 자동 대상도
+// 아니었던 공연용 - event_type만 바꾸고 LLM 전송은 자정 배치 타이밍 그대로 둠(즉시 전송 안 함).
+// 아티스트가 아직 안 채워진 상태이므로 검수 완료로도 표시하지 않음(review 엔드포인트 호출 안 함)
+async function submitMarkFestival() {
+  const concertId = currentDetail.id;
+  try {
+    await api(`/concerts/${concertId}/mark-festival`, { method: 'POST' });
+    toast('페스티벌로 지정됨');
     openDetail(concertId);
     load(page);
   } catch (e) {
@@ -478,6 +499,51 @@ async function submitDisplayName(el, canonicalId) {
     toast('표시명 변경됨(관련 공연 전체에 반영)');
     openDetail(concertId);
     load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 이 자리에서 바로 별칭을 추가 - 원래는 /artists 페이지로 가서 따로 해야 했던 걸 concert
+// 상세 화면 안에서 끝낼 수 있게 함. canonical_id 조회는 startDisplayName과 동일(아직 매칭
+// 안 된 아티스트면 404)
+async function startAddAlias(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  let data;
+  try {
+    data = await api(`/canonical-artist?name=${encodeURIComponent(name)}`);
+  } catch (e) {
+    toast('오류: ' + e.message);  // 아직 매칭 안 된 아티스트면 404
+    return;
+  }
+  row.innerHTML = `
+    <input type="text" class="alias-input" placeholder="추가할 별칭" style="flex:1; margin-right:8px;" />
+    <span class="actions">
+      <button onclick="submitAddAlias(this, '${data.canonical_id}')">저장</button>
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+  const input = row.querySelector('.alias-input');
+  input.focus();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAddAlias(input, data.canonical_id);
+    if (e.key === 'Escape') openDetail(concertId);
+  });
+}
+
+async function submitAddAlias(el, canonicalId) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const aliasText = row.querySelector('.alias-input').value.trim();
+  if (!aliasText) { openDetail(concertId); return; }
+  try {
+    await api(`/artists/${canonicalId}/alias`, {
+      method: 'POST',
+      body: JSON.stringify({ alias_text: aliasText }),
+    });
+    toast('별칭 추가됨');
+    openDetail(concertId);
   } catch (e) {
     toast('오류: ' + e.message);
   }

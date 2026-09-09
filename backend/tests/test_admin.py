@@ -197,6 +197,34 @@ async def test_admin_unsent_to_llm_only_excludes_festival_concerts():
     assert len(items) == 0
 
 
+# admin이 "실제로는 페스티벌인데 event_type이 아니라 자동 대상에서 빠진" 공연에 쓰는 버튼 -
+# event_type만 FESTIVAL로 바꾸고 LLM 전송은 자정 배치 타이밍 그대로 둔다(여기서 즉시 보내지
+# 않음). 아티스트가 아직 안 채워진 상태이므로 검수 완료로도 표시되면 안 됨
+@pytest.mark.asyncio
+async def test_admin_mark_festival_updates_type_without_sending_or_marking_reviewed():
+    name = f"어드민페스티벌수동_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_MANUALTYPE_{uuid.uuid4().hex[:6]}", name)
+
+    with (
+        _admin_settings(),
+        patch("app.services.crawler.send_posters_for_artist_extraction") as mock_send,
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/mark-festival", headers=_admin_headers()
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["event_type"] == EventType.FESTIVAL.value
+    assert data["admin_reviewed_at"] is None
+    mock_send.assert_not_called()
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        assert concert.event_type == EventType.FESTIVAL.value
+        assert concert.artist_extraction_attempted_at is None
+
+
 # "밴드명 + 멤버 여러 명"이 개별 표기로 뽑힌 공연을 밴드명으로 접고 멤버 관계를 등록하는 기능 테스트
 @pytest.mark.asyncio
 async def test_admin_group_membership_collapses_names_and_registers_relation():
@@ -826,6 +854,51 @@ async def test_admin_add_artist_alias():
             )
     assert res.status_code == 200
     assert new_alias in {a["text"] for a in res.json()["aliases"]}
+
+
+# 잘못 등록된 별칭을 admin이 직접 제거
+@pytest.mark.asyncio
+async def test_admin_remove_artist_alias():
+    name = f"별칭제거대상_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=name)
+        db.add(canonical)
+        await db.flush()
+        alias = ArtistAlias(canonical_artist_id=canonical.id, alias_text="잘못된별칭", source="admin")
+        db.add(alias)
+        await db.commit()
+        canonical_id = str(canonical.id)
+        alias_id = str(alias.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete(
+                f"/api/v1/admin/artists/{canonical_id}/alias/{alias_id}", headers=_admin_headers()
+            )
+    assert res.status_code == 200
+    assert "잘못된별칭" not in {a["text"] for a in res.json()["aliases"]}
+
+
+# 지금 표시명으로 쓰이는 별칭은 삭제하면 그 표기를 다시 매칭할 방법이 없어지므로 거절
+@pytest.mark.asyncio
+async def test_admin_remove_artist_alias_rejects_current_display_name():
+    name = f"표시명별칭_{uuid.uuid4().hex[:6]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(canonical_name=name, display_name=name)
+        db.add(canonical)
+        await db.flush()
+        alias = ArtistAlias(canonical_artist_id=canonical.id, alias_text=name, source="admin")
+        db.add(alias)
+        await db.commit()
+        canonical_id = str(canonical.id)
+        alias_id = str(alias.id)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete(
+                f"/api/v1/admin/artists/{canonical_id}/alias/{alias_id}", headers=_admin_headers()
+            )
+    assert res.status_code == 400
 
 
 # 미출연(어느 공연에도 안 나오는) 아티스트 표시 + 필터 + DB 완전 삭제 테스트

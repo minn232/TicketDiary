@@ -675,6 +675,25 @@ async def add_artist_alias(db: AsyncSession, canonical_id, alias_text: str) -> C
     return canonical
 
 
+# 관리자 페이지(아티스트 상세)에서 잘못 등록된 별칭(오타, 동명이인 등)을 직접 제거 - 지금
+# 표시명으로 쓰이는 텍스트면 거절(그 표기를 다시 매칭할 방법이 없어짐, 표시명부터 바꾸게 함)
+async def remove_artist_alias(db: AsyncSession, canonical_id, alias_id) -> CanonicalArtist:
+    canonical = await db.get(CanonicalArtist, canonical_id)
+    if canonical is None:
+        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+
+    alias = await db.get(ArtistAlias, alias_id)
+    if alias is None or alias.canonical_artist_id != canonical.id:
+        raise HTTPException(status_code=404, detail="별칭을 찾을 수 없습니다.")
+    if alias.alias_text.lower() == _display_value(canonical).lower():
+        raise HTTPException(status_code=400, detail="현재 표시명으로 쓰이는 별칭은 삭제할 수 없습니다. 표시명을 먼저 바꿔주세요.")
+
+    await db.delete(alias)
+    await db.commit()
+    await db.refresh(canonical)
+    return canonical
+
+
 # 관리자 페이지(아티스트 상세)에서 콘서트 맥락 없이 그룹<->멤버 관계를 직접 추가 - set_group_membership과
 # 달리 콘서트의 artist_name에 있어야 한다는 제약이 없음(멤버가 아직 등장한 공연이 하나도 없어도 등록
 # 가능). role="member"면 other_name이 canonical_id(그룹)의 멤버로, role="group"이면 other_name이

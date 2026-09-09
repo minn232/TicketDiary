@@ -49,6 +49,7 @@ class AdminConcertDetail(BaseModel):
     poster_url: str | None
     venue: str | None
     start_date: datetime
+    event_type: str
     ticketing_links: dict[str, str] | None
     statuses: list[AdminArtistStatus]
     group_memberships: dict[str, list[str]]
@@ -75,6 +76,14 @@ class AdminGroupMembershipRequest(BaseModel):
 
 class AdminNameOption(BaseModel):
     # 표시명 후보 하나 - source: canonical(MusicBrainz 원문) / musicbrainz / wikidata / user_input / admin
+    text: str
+    source: str
+
+
+class AdminArtistAlias(BaseModel):
+    # 아티스트 상세 화면의 별칭 한 줄 - id를 같이 내려줘야 프론트가 텍스트 재검색 없이 바로
+    # 삭제(remove_artist_alias) API를 호출할 수 있음
+    id: UUID
     text: str
     source: str
 
@@ -142,7 +151,7 @@ class AdminArtistDetail(BaseModel):
     display_name: str | None
     mbid: str | None
     profile_image_url: str | None
-    aliases: list[AdminNameOption]
+    aliases: list[AdminArtistAlias]
     group_members: list[AdminArtistRef]
     member_of: list[AdminArtistRef]
     concerts: list[AdminArtistConcertItem]

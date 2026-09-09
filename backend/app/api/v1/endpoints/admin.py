@@ -40,6 +40,7 @@ from app.services.artist_normalization import (
     confirm_artist_name_change,
     delete_canonical_artist,
     get_canonical_name_options,
+    remove_artist_alias,
     remove_artist_name,
     remove_group_relation,
     set_display_name,
@@ -187,6 +188,7 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         poster_url=concert.poster_url,
         venue=concert.venue,
         start_date=concert.start_date,
+        event_type=concert.event_type,
         ticketing_links=concert.ticketing_links,
         statuses=[
             {"artist_text": r.artist_text, "status": r.status, "attempt_count": r.attempt_count}
@@ -289,6 +291,25 @@ async def delete_artist(
 @router.post("/concerts/{concert_id}/review", response_model=AdminConcertDetail)
 async def mark_concert_reviewed(concert_id: UUID, db: AsyncSession = Depends(get_db)):
     await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+# "실제로는 페스티벌인데 event_type이 아니라서 크롤링/포스터 파이프라인 어느 쪽 자동 대상도
+# 아닌" 공연을 admin이 발견했을 때 쓰는 버튼용 - event_type만 바꿔서 이후 라인업 재확인
+# 배치(24시간마다) 대상에 편입시킨다. LLM 전송 타이밍은 자정 배치로 고정해두고 싶다는 요청이라
+# 여기서 즉시 보내지 않음. 아티스트가 아직 안 채워진 상태이므로 검수 완료로도 취급하면 안 됨
+# (_mark_reviewed 호출 안 함)
+async def _mark_festival(db: AsyncSession, concert_id: UUID) -> None:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+    concert.event_type = EventType.FESTIVAL.value
+    await db.commit()
+
+
+@router.post("/concerts/{concert_id}/mark-festival", response_model=AdminConcertDetail)
+async def mark_festival_route(concert_id: UUID, db: AsyncSession = Depends(get_db)):
+    await _mark_festival(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
 
@@ -493,7 +514,7 @@ async def get_artist_detail(canonical_id: UUID, db: AsyncSession = Depends(get_d
         display_name=canonical.display_name,
         mbid=canonical.mbid,
         profile_image_url=canonical.profile_image_url,
-        aliases=[{"text": r.alias_text, "source": r.source} for r in alias_rows],
+        aliases=[{"id": r.id, "text": r.alias_text, "source": r.source} for r in alias_rows],
         group_members=[{"id": row.id, "name": row.canonical_name} for row in group_members],
         member_of=[{"id": row.id, "name": row.canonical_name} for row in member_of],
         concerts=concerts,
@@ -506,6 +527,14 @@ async def add_artist_alias_route(
     canonical_id: UUID, body: AdminAddAliasRequest, db: AsyncSession = Depends(get_db)
 ):
     await add_artist_alias(db, canonical_id, body.alias_text)
+    return await get_artist_detail(canonical_id, db)
+
+
+@router.delete("/artists/{canonical_id}/alias/{alias_id}", response_model=AdminArtistDetail)
+async def remove_artist_alias_route(
+    canonical_id: UUID, alias_id: UUID, db: AsyncSession = Depends(get_db)
+):
+    await remove_artist_alias(db, canonical_id, alias_id)
     return await get_artist_detail(canonical_id, db)
 
 

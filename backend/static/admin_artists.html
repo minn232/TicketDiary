@@ -223,6 +223,7 @@ function renderDetail(a) {
   const aliasRows = (a.aliases || []).map(al => `
     <div class="alias-row">
       <span>${esc(al.text)}<span class="source-tag">${esc(al.source)}</span></span>
+      <button class="danger" onclick="submitRemoveAlias('${al.id}')" title="잘못 등록된 별칭 제거">삭제</button>
     </div>`).join('') || '<div style="color:var(--muted); font-size:13px;">별칭 없음</div>';
 
   const relationChip = ref =>
@@ -316,6 +317,20 @@ async function submitAddAlias() {
       body: JSON.stringify({ alias_text: value }),
     });
     toast('별칭 추가됨');
+    openDetail(id);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 잘못 등록된 별칭(오타, 동명이인 등) 제거 - 지금 표시명으로 쓰이는 텍스트면 백엔드가
+// 400으로 거절함(그 표기를 다시 매칭할 방법이 없어지므로, 표시명부터 바꾸라고 안내)
+async function submitRemoveAlias(aliasId) {
+  const id = currentDetail.id;
+  try {
+    await api(`/artists/${id}/alias/${aliasId}`, { method: 'DELETE' });
+    toast('별칭 삭제됨');
     openDetail(id);
     load(page);
   } catch (e) {
