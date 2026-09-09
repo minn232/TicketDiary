@@ -121,6 +121,10 @@
     <input type="checkbox" id="unreviewed-only" onchange="load(1)" />
     <label for="unreviewed-only">검수 안 된 것만 보기</label>
   </div>
+  <div class="field">
+    <input type="checkbox" id="upcoming-only" onchange="load(1)" />
+    <label for="upcoming-only" title="이미 끝난 공연(end_date 지남)은 제외">아직 진행 예정인 공연만 보기</label>
+  </div>
   <button onclick="load(1)">검색</button>
   <a class="nav-link" href="/artists">아티스트 조회 →</a>
 </header>
@@ -182,9 +186,11 @@ async function load(p) {
   const flaggedOnly = document.getElementById('flagged-only').checked;
   const unsentToLlmOnly = document.getElementById('unsent-to-llm-only').checked;
   const unreviewedOnly = document.getElementById('unreviewed-only').checked;
+  const upcomingOnly = document.getElementById('upcoming-only').checked;
   const qs = new URLSearchParams({
     page, page_size: pageSize,
     flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly, unreviewed_only: unreviewedOnly,
+    upcoming_only: upcomingOnly,
   });
   if (search) qs.set('search', search);
 

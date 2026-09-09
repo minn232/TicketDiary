@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -195,6 +196,33 @@ async def test_admin_unsent_to_llm_only_excludes_festival_concerts():
     assert res.status_code == 200
     items = res.json()["items"]
     assert len(items) == 0
+
+
+# 이미 끝난 공연은 우선순위가 낮으므로 admin이 제외하고 볼 수 있는 필터 - 다른 곳(concert_search.py
+# 등)과 동일 기준(end_date > now)
+@pytest.mark.asyncio
+async def test_admin_upcoming_only_excludes_ended_concerts():
+    name = f"어드민종료공연_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_UPCOMING_{uuid.uuid4().hex[:6]}", name)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.end_date = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            filtered_res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"upcoming_only": True, "search": name},
+                headers=_admin_headers(),
+            )
+            unfiltered_res = await ac.get(
+                "/api/v1/admin/concerts", params={"search": name}, headers=_admin_headers()
+            )
+    assert filtered_res.status_code == 200 and unfiltered_res.status_code == 200
+    assert len(filtered_res.json()["items"]) == 0
+    assert concert_id in {item["id"] for item in unfiltered_res.json()["items"]}
 
 
 # admin이 "실제로는 페스티벌인데 event_type이 아니라 자동 대상에서 빠진" 공연에 쓰는 버튼 -

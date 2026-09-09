@@ -114,6 +114,7 @@ async def list_concerts(
     flagged_only: bool = Query(False),
     unsent_to_llm_only: bool = Query(False),
     unreviewed_only: bool = Query(False),
+    upcoming_only: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -132,6 +133,10 @@ async def list_concerts(
         query = query.where(_needs_manual_artist_fill_filter())
     if unreviewed_only:
         query = query.where(Concert.admin_reviewed_at.is_(None))
+    if upcoming_only:
+        # 다른 곳(concert_search.py 등)과 동일 기준(end_date > now) - 이미 끝난 공연은
+        # 우선순위가 낮으므로 admin이 검수 대상에서 제외해서 볼 수 있게
+        query = query.where(Concert.end_date > now)
 
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
 
