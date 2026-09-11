@@ -513,6 +513,30 @@ async def test_send_posters_skips_within_cooldown():
     assert concert.artist_extraction_attempt_count == 1  # 안 바뀜 - 재전송 안 됐다는 뜻
 
 
+# 검수완료(admin_reviewed_at) 공연은 재전송 대상에서 제외돼야 함 - LLM이 다른 결과를 내면
+# artist_name이 바뀌어 검수 상태가 다시 풀리는 노이즈를 막기 위함
+@pytest.mark.asyncio
+async def test_send_posters_skips_reviewed_concert():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_REVIEWED_{uuid.uuid4().hex[:6]}", "", token)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(admin_reviewed_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+
 # 콜백이 유실된 것으로 보이는 경우(쿨다운 지남 + 시도 횟수 상한 미만) 재전송되고,
 # attempt_count가 증가하는지 테스트 - 이게 이번에 고친 핵심 동작
 @pytest.mark.asyncio

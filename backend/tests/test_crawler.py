@@ -1233,6 +1233,55 @@ async def test_send_screenshots_posts_to_llm():
     assert payload[0]["concert_name"] == "테스트"
 
 
+# 검수완료(admin_reviewed_at) 공연은 제외돼야 함 - 이 파이프라인의 콜백도 artist_name을
+# 바꿀 수 있어 검수 상태가 다시 풀리는 노이즈를 막기 위함. mock_db 대신 실제 DB로 쿼리
+# 자체를 검증(위 mock 스타일 테스트들은 execute() 반환값을 그대로 통과시키기만 해서
+# WHERE 절 자체는 검증하지 못함).
+@pytest.mark.asyncio
+async def test_send_screenshots_skips_reviewed_concert():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+
+    now = datetime.now(timezone.utc)
+    reviewed = Concert(
+        name=f"검수완료_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/reviewed.png",
+        admin_reviewed_at=now,
+    )
+    unreviewed = Concert(
+        name=f"미검수_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/unreviewed.png",
+    )
+    async with AsyncSessionLocal() as db:
+        db.add_all([reviewed, unreviewed])
+        await db.commit()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.post = AsyncMock(return_value=mock_response)
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.settings") as mock_settings,
+        patch("app.services.crawler.httpx.AsyncClient", return_value=mock_http),
+    ):
+        mock_settings.LLM_CRAWL_URL = "https://llm.example.com/crawl"
+        mock_settings.LLM_EXTRACT_API_KEY = "test-key"
+        await send_screenshots_to_llm()
+
+    sent_names = {item["concert_name"] for item in mock_http.post.call_args[1]["json"]}
+    assert unreviewed.name in sent_names
+    assert reviewed.name not in sent_names
+
+
 # 라인업 변경 감지 정규화 테스트
 
 def test_normalize_lineup_img_srcs_filters_ads_and_ignores_query_strings():
