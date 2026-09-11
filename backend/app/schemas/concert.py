@@ -62,6 +62,9 @@ class ConcertSummary(BaseModel):
     event_type: str
     ticketing_date: datetime | None
     delivery_date: datetime | None
+    # 티켓 목록(가로모드 "다가오는 공연" 패널 등)에서도 예매처 바로가기를
+    # 쓸 수 있도록 추가 (원래 상세 조회 전용 ConcertResponse에만 있었음).
+    ticketing_links: dict[str, str] | None = None
 
 
 class TicketScanExtracted(BaseModel):
