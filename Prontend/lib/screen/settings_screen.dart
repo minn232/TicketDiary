@@ -200,14 +200,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-                  child: Text(
-                    '설정',
-                    style: TextStyle(
-                      fontSize: context.sp(18),
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black87,
+                // [백엔드 수정]
+                // Builder로 감싸 DiaryPageFrame 자손 context에서 sp()를 계산하도록
+                // 수정 — 이전엔 State 레벨 context를 써서 DiaryFrameScale을 못 찾고
+                // MediaQuery 폭(가로모드 2페이지 스프레드에선 페이지 한 장이 아니라
+                // 전체 화면 폭)으로 fallback해, 가로모드에서 이 글자만 과하게 커지던
+                // 버그가 있었음([[diary_frame_scale_context_scoping_bug]] 패턴).
+                Builder(
+                  builder: (innerContext) => Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+                    child: Text(
+                      '설정',
+                      style: TextStyle(
+                        fontSize: innerContext.sp(18),
+                        fontWeight: FontWeight.w900,
+                        color: Colors.black87,
+                      ),
                     ),
                   ),
                 ),
@@ -241,12 +249,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           initiallyExpanded: pushExpanded,
                           onExpansionChanged: (v) =>
                               setState(() => pushExpanded = v),
-                          title: Text(
-                            '푸쉬 알림',
-                            style: TextStyle(
-                              fontSize: context.sp(15),
-                              fontWeight: FontWeight.w800,
-                              color: Colors.black87,
+                          // [백엔드 수정] "설정" 타이틀과 같은 이유로 Builder 추가.
+                          title: Builder(
+                            builder: (innerContext) => Text(
+                              '푸쉬 알림',
+                              style: TextStyle(
+                                fontSize: innerContext.sp(15),
+                                fontWeight: FontWeight.w800,
+                                color: Colors.black87,
+                              ),
                             ),
                           ),
                           trailing: Icon(
