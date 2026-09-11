@@ -4,7 +4,7 @@ from rapidfuzz import fuzz, process, utils
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.services.artist_blocklist import is_blocklisted_artist_name
 
 # 이 이상 유사하면 같은 아티스트로 보고 기존 표기를 재사용 (0~100 스케일)
@@ -154,3 +154,45 @@ def merge_artist_names(
     if replace:
         return sorted(set(normalized_incoming))
     return sorted(set(existing or []) | set(normalized_incoming))
+
+
+# KOPIS/크롤링/포스터 추출 어느 경로로 들어왔든, 기존 인원이 1명 이하(=KOPIS 원본 하나만 있는
+# 솔로 공연으로 추정)면 union 대신 새로 들어온 이름으로 완전히 교체 - KOPIS raw 출연진에 섞이는
+# 노이즈(본명/예명 중복, MC 등)를 없애려는 목적. 크롤링(/crawl-result)과 포스터 추출
+# (/artist-result) 두 웹훅이 서로 다른 밤 배치 시각/조건으로 도착해서 어느 쪽이 이 공연을 먼저
+# 건드릴지 보장할 수 없으므로(실측: midnight_crawl_send가 artist_extraction_send보다 매일 밤
+# 먼저 돔) 두 경로 모두 이 함수를 공유해서 도착 순서와 무관하게 동일하게 동작하게 함. 다인원
+# (2명+)/페스티벌은 그대로 union 유지 - 예전에 무조건 교체(replace=True)로 라인업이 사라지던
+# 사고가 있어서 범위를 좁힘.
+def merge_or_replace_solo_seed(
+    concert: Concert, incoming: list[str], known_names: set[str] | None = None
+) -> list[str]:
+    normalized_incoming = normalize_artist_names(incoming, known_names)
+    is_solo_seed = concert.event_type != EventType.FESTIVAL.value and len(concert.artist_name or []) <= 1
+    if is_solo_seed and normalized_incoming:
+        return sorted(set(normalized_incoming))
+    return sorted(set(concert.artist_name or []) | set(normalized_incoming))
+
+
+# /crawl-result 전용 - 솔로(1명 이하)는 merge_or_replace_solo_seed와 동일하게 매번 교체. 다인원/
+# 페스티벌은 크롤링(스크린샷) 결과를 이 공연 기준 처음 받는 거면 KOPIS 원본을 통째로 교체(크롤링이
+# KOPIS보다 정보가 많고 재시도도 여러 번이라 더 신뢰할 만하다는 판단, 사용자 요청) - 단 이번
+# 결과가 기존보다 인원이 적으면(부분적으로만 읽힌 경우) 안전하게 union으로 대체해 라인업을 줄이지
+# 않는다. concert.crawl_lineup_seeded_at이 이미 있으면(두 번째 크롤 결과부터) 페스티벌 라인업이
+# 여러 차례로 나눠 공개되는 걸 고려해 항상 union. 반환값의 두 번째 값은 이번 호출로
+# crawl_lineup_seeded_at을 처음 채워야 하는지(호출부가 실제 컬럼 값을 갱신)
+def merge_crawl_artist_names(
+    concert: Concert, incoming: list[str], known_names: set[str] | None = None
+) -> tuple[list[str], bool]:
+    normalized_incoming = normalize_artist_names(incoming, known_names)
+    is_solo_seed = concert.event_type != EventType.FESTIVAL.value and len(concert.artist_name or []) <= 1
+    if is_solo_seed:
+        merged = sorted(set(normalized_incoming)) if normalized_incoming else (concert.artist_name or [])
+        return merged, False
+
+    if concert.crawl_lineup_seeded_at is not None or not normalized_incoming:
+        return sorted(set(concert.artist_name or []) | set(normalized_incoming)), False
+
+    if len(normalized_incoming) >= len(concert.artist_name or []):
+        return sorted(set(normalized_incoming)), True
+    return sorted(set(concert.artist_name or []) | set(normalized_incoming)), True

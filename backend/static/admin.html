@@ -89,6 +89,8 @@
   .status-unconfirmed { background: #efe9e0; color: var(--muted); }
   .status-ambiguous { background: #fbeadf; color: var(--accent); }
   .status-pending { background: #eee; color: var(--muted); }
+  .status-suggested { background: #fdf3d8; color: #a67c00; }
+  .suggestion-box { border: 1px dashed var(--border); border-radius: 6px; padding: 8px 10px; margin-top: 4px; font-size: 12px; }
   .artist-row .actions button { padding: 3px 8px; font-size: 12px; margin-left: 4px; }
   #detail .close-row { text-align: right; margin-top: 14px; }
   .ticket-links { margin: 10px 0 14px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -243,18 +245,14 @@ async function openDetail(id) {
 }
 function closeDetail() { document.getElementById('overlay').classList.remove('open'); }
 
-function statusOf(c, name) {
-  const found = (c.statuses || []).find(s => s.artist_text === name);
-  return found ? found.status : null;
-}
-
 function renderDetail(c) {
   const poster = c.poster_url ? `<img class="poster" src="${esc(c.poster_url)}" />` : '';
   const links = Object.entries(c.ticketing_links || {})
     .map(([site, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(site)} 예매 ↗</a>`)
     .join('');
   const rows = (c.artist_name || []).map(name => {
-    const st = statusOf(c, name);
+    const statusRow = (c.statuses || []).find(s => s.artist_text === name);
+    const st = statusRow ? statusRow.status : null;
     const tag = st ? `<span class="status-tag status-${st}">${st}</span>` : '';
     const members = (c.group_memberships || {})[name];
     const memberLine = members && members.length
@@ -265,11 +263,20 @@ function renderDetail(c) {
     const confirmBtn = (st === 'ambiguous' || st === 'unconfirmed')
       ? `<button onclick="submitConfirm(this)" title="MusicBrainz에 없는 아티스트라도 표기가 맞으면 그대로 확정 처리">확정</button>`
       : '';
+    // 동명이인 오병합 방지 - mbid 없는 수동 별칭과 문자열만 일치한 경우라 자동 병합 대신 여기서
+    // 직접 확인받음(같은 사람이면 병합 적용, 아니면 별개 인물로 남김)
+    const suggestionBox = st === 'suggested'
+      ? `<div class="suggestion-box">"${esc(statusRow.suggested_name)}"와 같은 사람인가요?
+          <button onclick="submitSuggestion(this, true)">맞음, 병합</button>
+          <button onclick="submitSuggestion(this, false)">다른 사람</button>
+        </div>`
+      : '';
     return `
       <div class="artist-row" data-concert-id="${c.id}" data-name="${esc(name)}">
         <div style="flex:1;">
           <span class="name">${esc(name)}${tag}</span>
           ${memberLine}
+          ${suggestionBox}
         </div>
         <span class="actions">
           ${confirmBtn}
@@ -463,6 +470,25 @@ async function submitConfirm(button) {
       body: JSON.stringify({ original_name: name, confirmed_name: name }),
     });
     toast('확정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 동명이인 방지 확인 응답 - accept=true면 제안된 canonical로 병합, false면 별개 인물로 거부
+// (같은 표기가 다른 공연에서 또 나오면 그때 다시 물어봄, 여기서 영구 차단하지 않음)
+async function submitSuggestion(button, accept) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  try {
+    await api(`/concerts/${concertId}/artist-suggestion`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_text: name, accept }),
+    });
+    toast(accept ? '병합됨' : '별개 인물로 표시됨');
     openDetail(concertId);
     load(page);
   } catch (e) {

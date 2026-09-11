@@ -24,6 +24,7 @@ from app.schemas.admin import (
     AdminArtistListItem,
     AdminArtistListResponse,
     AdminArtistRenameRequest,
+    AdminArtistSuggestionRequest,
     AdminCanonicalNameOptions,
     AdminConcertDetail,
     AdminConcertListItem,
@@ -34,6 +35,7 @@ from app.schemas.admin import (
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_normalization import (
+    _display_value,
     add_artist_alias,
     add_artist_name,
     add_group_relation,
@@ -43,6 +45,7 @@ from app.services.artist_normalization import (
     remove_artist_alias,
     remove_artist_name,
     remove_group_relation,
+    resolve_artist_suggestion,
     set_display_name,
     set_group_membership,
     try_link_canonical_to_musicbrainz,
@@ -121,7 +124,7 @@ async def list_concerts(
 ):
     now = datetime.now(timezone.utc)
     flagged_concert_ids = select(ArtistNormalizationStatus.concert_id).where(
-        ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous"])
+        ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous", "suggested"])
     )
 
     query = select(Concert)
@@ -150,7 +153,7 @@ async def list_concerts(
             select(ArtistNormalizationStatus.concert_id, func.count())
             .where(
                 ArtistNormalizationStatus.concert_id.in_(concert_ids),
-                ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous"]),
+                ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous", "suggested"]),
             )
             .group_by(ArtistNormalizationStatus.concert_id)
         )
@@ -185,6 +188,14 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         )
     ).scalars().all()
 
+    # suggested 상태 행이 있으면 제안 중인 canonical의 표시명도 같이 내려줘서 프론트가 "OOO와
+    # 같은 사람?"을 바로 보여줄 수 있게 함(추가 조회 왕복 없이)
+    suggested_ids = {r.suggested_canonical_id for r in status_rows if r.suggested_canonical_id}
+    suggested_names: dict = {}
+    if suggested_ids:
+        suggested_result = await db.execute(select(CanonicalArtist).where(CanonicalArtist.id.in_(suggested_ids)))
+        suggested_names = {c.id: _display_value(c) for c in suggested_result.scalars().all()}
+
     return AdminConcertDetail(
         id=concert.id,
         kopis_id=concert.kopis_id,
@@ -196,7 +207,12 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         event_type=concert.event_type,
         ticketing_links=concert.ticketing_links,
         statuses=[
-            {"artist_text": r.artist_text, "status": r.status, "attempt_count": r.attempt_count}
+            {
+                "artist_text": r.artist_text,
+                "status": r.status,
+                "attempt_count": r.attempt_count,
+                "suggested_name": suggested_names.get(r.suggested_canonical_id),
+            }
             for r in status_rows
         ],
         group_memberships=await _group_memberships_for(db, concert.artist_name),
@@ -273,6 +289,15 @@ async def set_group_membership_route(
 @router.patch("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)
 async def rename_artist(concert_id: UUID, body: AdminArtistRenameRequest, db: AsyncSession = Depends(get_db)):
     await confirm_artist_name_change(db, concert_id, body.original_name, body.confirmed_name)
+    await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+@router.post("/concerts/{concert_id}/artist-suggestion", response_model=AdminConcertDetail)
+async def resolve_artist_suggestion_route(
+    concert_id: UUID, body: AdminArtistSuggestionRequest, db: AsyncSession = Depends(get_db)
+):
+    await resolve_artist_suggestion(db, concert_id, body.artist_text, body.accept)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 

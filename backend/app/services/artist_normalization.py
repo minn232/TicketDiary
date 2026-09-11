@@ -420,6 +420,40 @@ async def confirm_artist_name_change(
     return concert
 
 
+# status="suggested" 행을 admin이 승인/거부 - 승인이면 그제서야 실제로 병합 적용(alias는 이미
+# 등록돼 있으므로 새로 안 만듦), 거부면 이 공연에선 별개 인물로 보고 unconfirmed로 되돌림(같은
+# 문자열이 다른 공연에서 다시 나오면 그때 또 물어봄 - 전역으로 차단하지 않음)
+async def resolve_artist_suggestion(db: AsyncSession, concert_id, artist_text: str, accept: bool) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    artist_text = artist_text.strip()
+    status_result = await db.execute(
+        select(ArtistNormalizationStatus).where(
+            ArtistNormalizationStatus.concert_id == concert_id,
+            ArtistNormalizationStatus.artist_text == artist_text,
+        )
+    )
+    row = status_result.scalar_one_or_none()
+    if row is None or row.status != "suggested" or row.suggested_canonical_id is None:
+        raise HTTPException(status_code=400, detail="대기 중인 병합 제안이 없습니다.")
+
+    if accept:
+        canonical = await db.get(CanonicalArtist, row.suggested_canonical_id)
+        await apply_canonical_replacement(
+            db, concert_id, artist_text, _display_value(canonical), clear_admin_review=True
+        )
+        row.status = "matched"
+    else:
+        row.status = "unconfirmed"
+    row.suggested_canonical_id = None
+
+    await db.commit()
+    await db.refresh(concert)
+    return concert
+
+
 # 아티스트가 아닌데 잘못 들어간 표기를 통째로 제거(수정이 아니라 삭제) - 관리자 페이지 전용.
 # concert.artist_name에서 빼고, 정규화 큐/라인업에 같은 표기가 남아있으면 같이 정리해서
 # 다음 배치가 다시 큐잉하지 않게 한다
@@ -932,6 +966,13 @@ async def _process_one(
 ) -> str:
     canonical = await find_canonical_by_alias(db, row.artist_text)
     if canonical is not None:
+        if canonical.mbid is None:
+            # mbid 없는 canonical은 admin이 수동 병합(예: 본명↔예명)으로 만든 것 - MusicBrainz
+            # 검증이 없어 문자열만 같은 동명이인이면 오병합 위험(흔한 한국 이름 실측 우려로
+            # 발견). 자동 적용 대신 admin 확인 대기 상태로만 표시
+            row.status = "suggested"
+            row.suggested_canonical_id = canonical.id
+            return "suggested"
         await _register_wikidata_korean_alias(db, canonical, client)
         await _register_artist_image(db, canonical, client)
         await apply_canonical_replacement(

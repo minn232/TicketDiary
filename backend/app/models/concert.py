@@ -69,6 +69,11 @@ class Concert(Base):
     # admin이 이 공연의 아티스트를 확인/수정한 시각 - NULL이면 미검수. KOPIS/크롤링/LLM 등 자동
     # 파이프라인이 artist_name을 바꾸면 다시 NULL로 되돌아가 항상 최신 데이터 기준을 유지한다
     admin_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    # 다인원/페스티벌 공연에서 크롤링(/crawl-result) 결과로 KOPIS 원본을 1회 교체했는지 -
+    # NULL이면 아직 교체 전(크롤링이 KOPIS보다 정보가 많고 재시도도 많아 더 신뢰할 만하다고
+    # 보고 처음 한 번은 통째로 교체), 값이 있으면 그 이후부터는 합집합만(페스티벌 라인업이
+    # 여러 차례로 나눠 공개되는 걸 고려, merge_crawl_artist_names 참고)
+    crawl_lineup_seeded_at = Column(DateTime(timezone=True), nullable=True)
 
     tickets = relationship("Ticket", back_populates="concert")
     timetable = relationship("TimeTable", back_populates="concert", uselist=False)

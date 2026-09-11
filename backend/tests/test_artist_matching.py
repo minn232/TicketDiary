@@ -166,14 +166,15 @@ async def test_artist_result_normalizes_and_saves():
     assert res.json()["artist_name"] == [existing, "신규아티스트"]
 
 
-# KOPIS 원본(실명/멤버명일 수 있음)이 채운 소규모 공연에 포스터 결과가 와도 교체가 아니라
-# 합집합으로 남는지 테스트 - LLM이 멤버 일부를 놓쳐도 KOPIS 쪽 이름이 사라지지 않아야 함
-# (본명↔활동명 중복은 MusicBrainz 정규화 배치가 나중에 정리, artist_normalization.py 참고)
+# KOPIS 원본(실명/멤버명일 수 있음) 1명뿐인 솔로 공연에 포스터 결과가 오면 합집합이 아니라
+# 교체돼야 함 - 본명/예명이 같이 남는 중복 노이즈를 막기 위함(사용자 피드백: KOPIS+LLM 병합이
+# 본명/예명 중복을 만들어 수동 검수가 불편했음). 다인원/페스티벌은 여전히 합집합
+# (test_artist_result_keeps_union_when_already_multi_artist 참고 - 라인업 유실 방지)
 @pytest.mark.asyncio
-async def test_artist_result_unions_small_kopis_sourced_artist():
+async def test_artist_result_replaces_solo_kopis_sourced_artist():
     token = await _get_token()
     kopis_name = f"KOPIS실명_{uuid.uuid4().hex[:6]}"
-    concert_id = await _create_concert(f"PF_AR_UNION2_{uuid.uuid4().hex[:6]}", kopis_name, token)
+    concert_id = await _create_concert(f"PF_AR_REPLACE_{uuid.uuid4().hex[:6]}", kopis_name, token)
 
     poster_name = f"포스터활동명_{uuid.uuid4().hex[:6]}"
     body = {"artist_name": [poster_name]}
@@ -188,7 +189,30 @@ async def test_artist_result_unions_small_kopis_sourced_artist():
             )
 
     assert res.status_code == 200
-    assert set(res.json()["artist_name"]) == {kopis_name, poster_name}
+    assert res.json()["artist_name"] == [poster_name]
+
+
+# LLM이 블록리스트에 걸리는 이름만 줘서 정규화 후 빈 리스트가 되면 - 교체하지 않고 KOPIS 원본을
+# 그대로 둬야 함(재즈/오케스트라처럼 LLM이 포스터에서 아예 못 뽑는 장르의 유일한 안전망)
+@pytest.mark.asyncio
+async def test_artist_result_keeps_kopis_when_llm_result_fully_blocklisted():
+    token = await _get_token()
+    kopis_name = f"KOPIS실명_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_AR_BLOCKLISTED_{uuid.uuid4().hex[:6]}", kopis_name, token)
+
+    with patch("app.core.deps.settings") as mock_settings, patch(
+        "app.services.artist_matching.is_blocklisted_artist_name", return_value=True
+    ):
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": ["사회자"]},
+                headers=_llm_headers(),
+            )
+
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [kopis_name]
 
 
 # 4명 이상(페스티벌 추정)도 당연히 합집합 유지 (라인업 유실 방지)
@@ -644,6 +668,112 @@ async def test_crawl_result_lineup_upgrades_poster_source():
         result = await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
         row = result.scalar_one()
     assert row.source == "crawl"
+
+
+# /crawl-result(크롤링 스크린샷)도 /artist-result(포스터 추출)와 같은 solo-replace 로직을
+# 공유해야 함 - 두 웹훅 중 어느 쪽이 이 공연을 먼저 건드릴지 스케줄 순서로 보장할 수 없어서
+# (실측: 매일 밤 크롤링 쪽이 포스터 추출보다 먼저 돔) 어느 쪽으로 들어와도 동일하게 KOPIS
+# 원본을 교체해야 본명/예명 중복이 안 남음(merge_or_replace_solo_seed 참고)
+@pytest.mark.asyncio
+async def test_crawl_result_also_replaces_solo_kopis_sourced_artist():
+    token = await _get_token()
+    kopis_name = f"KOPIS실명_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_CR_REPLACE_{uuid.uuid4().hex[:6]}", kopis_name, token)
+
+    crawl_name = f"크롤확인활동명_{uuid.uuid4().hex[:6]}"
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": [crawl_name]},
+                headers=_llm_headers(),
+            )
+
+    assert res.status_code == 200
+    assert "artist_name" in res.json()["updated"]  # crawl-result 응답엔 필드명만 옴(artist_name 값 자체는 없음)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        concert = result.scalar_one()
+    assert concert.artist_name == [crawl_name]
+
+
+# 다인원(2명+)/페스티벌 공연은 크롤링 결과를 처음 받으면 1회 교체(크롤링이 KOPIS보다 정보가
+# 많고 재시도도 여러 번이라 더 신뢰할 만하다는 사용자 판단) - 그 다음부터는 합집합만
+# (merge_crawl_artist_names 참고)
+@pytest.mark.asyncio
+async def test_crawl_result_replaces_multi_artist_seed_on_first_crawl_only():
+    token = await _get_token()
+    kopis_names = [f"KOPIS멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(2)]
+    concert_id = await _create_concert(
+        f"PF_CR_MULTI_SEED_{uuid.uuid4().hex[:6]}", ",".join(kopis_names), token
+    )
+
+    # 첫 크롤링 - 기존과 동수 이상이면 통째로 교체
+    crawl_names_1 = [f"크롤확인{i}_{uuid.uuid4().hex[:4]}" for i in range(2)]
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res1 = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": crawl_names_1},
+                headers=_llm_headers(),
+            )
+    assert res1.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        concert = (
+            await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        ).scalar_one()
+    assert set(concert.artist_name) == set(crawl_names_1)  # KOPIS 원본은 안 남음
+    assert concert.crawl_lineup_seeded_at is not None
+
+    # 두 번째 크롤링부터는 합집합 - 이번엔 KOPIS 이름이 다시 와도 안 지워지고 그냥 더해짐
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res2 = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": [kopis_names[0]]},
+                headers=_llm_headers(),
+            )
+    assert res2.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        concert = (
+            await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        ).scalar_one()
+    assert set(concert.artist_name) == set(crawl_names_1) | {kopis_names[0]}
+
+
+# 첫 크롤링 결과가 기존(KOPIS)보다 인원이 적으면(부분적으로만 읽힌 경우) 안전하게 합집합으로
+# 대체해 라인업을 줄이지 않아야 함 - 단 이번 호출로 "1회 교체" 기회는 소진됨(계속 재시도하지 않음)
+@pytest.mark.asyncio
+async def test_crawl_result_first_crawl_smaller_than_existing_unions_instead():
+    token = await _get_token()
+    kopis_names = [f"KOPIS멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(3)]
+    concert_id = await _create_concert(
+        f"PF_CR_PARTIAL_{uuid.uuid4().hex[:6]}", ",".join(kopis_names), token
+    )
+
+    partial_name = f"크롤일부{uuid.uuid4().hex[:4]}"
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"artist_name": [partial_name]},
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        concert = (
+            await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        ).scalar_one()
+    assert set(concert.artist_name) == set(kopis_names) | {partial_name}  # 안 줄어듦
+    assert concert.crawl_lineup_seeded_at is not None  # 그래도 1회 기회는 소진됨
 
 
 # /crawl-result 웹훅이 아티스트명을 병합하고도 정규화 큐잉을 안 해서, 크롤링으로만 들어온

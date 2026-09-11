@@ -61,8 +61,13 @@ class ArtistNormalizationStatus(Base):
     # 키로 삼아 Concert.artist_name/ConcertLineup.artist에서 찾아 canonical로 치환한다.
     artist_text = Column(String, nullable=False)
     # "pending"(조회 전/재시도 대기) | "matched"(canonical 확정) | "unconfirmed"(MusicBrainz에
-    # 없음, 원본 유지) | "ambiguous"(후보 다수, 확정 못 함)
+    # 없음, 원본 유지) | "ambiguous"(후보 다수, 확정 못 함) | "suggested"(admin이 수동으로 만든
+    # 별칭과 문자열은 일치하지만 mbid 검증이 없어 동명이인 위험이 있음 - 자동 병합 안 하고
+    # suggested_canonical_id만 채워서 admin 확인 대기)
     status = Column(String, nullable=False, default="pending", index=True)
+    # status="suggested"일 때만 채워짐 - admin이 병합을 승인하면 이 canonical로 apply, 거부하면
+    # NULL로 되돌리고 status="unconfirmed"
+    suggested_canonical_id = Column(UUID(as_uuid=True), ForeignKey("canonical_artists.id"), nullable=True)
     attempt_count = Column(Integer, nullable=False, default=0)
     last_attempted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

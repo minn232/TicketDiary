@@ -31,10 +31,18 @@ class AdminConcertListResponse(BaseModel):
 
 
 class AdminArtistStatus(BaseModel):
-    # 아티스트 표기 하나의 정규화 상태 (concert 상세 화면에서 뱃지로 보여주기 위함)
+    # 아티스트 표기 하나의 정규화 상태 (concert 상세 화면에서 뱃지로 보여주기 위함).
+    # suggested_name은 status="suggested"일 때만 채워짐(제안 중인 canonical의 표시명)
     artist_text: str
     status: str
     attempt_count: int
+    suggested_name: str | None = None
+
+
+class AdminArtistSuggestionRequest(BaseModel):
+    # resolve_artist_suggestion에 그대로 넘기는 페이로드 - accept=True면 병합, False면 별개 인물로 거부
+    artist_text: str
+    accept: bool
 
 
 class AdminConcertDetail(BaseModel):

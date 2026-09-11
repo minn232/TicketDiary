@@ -394,6 +394,79 @@ async def test_admin_confirms_artist_without_renaming():
         assert canonical.mbid is None
 
 
+# mbid 없는(admin 수동 생성) 별칭과 문자열만 일치한 "suggested" 상태를 admin이 병합 승인하면
+# concert.artist_name에서 두 표기가 하나로 합쳐져야 함
+@pytest.mark.asyncio
+async def test_admin_accepts_artist_suggestion():
+    original, canonical_name = f"존박_{uuid.uuid4().hex[:6]}", f"박성규_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(
+        f"PF_ADMIN_SUGGEST_ACCEPT_{uuid.uuid4().hex[:6]}", f"{original},{canonical_name}"
+    )
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=None, canonical_name=canonical_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(
+            ArtistNormalizationStatus(
+                concert_id=uuid.UUID(concert_id),
+                artist_text=original,
+                status="suggested",
+                suggested_canonical_id=canonical.id,
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-suggestion",
+                json={"artist_text": original, "accept": True},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["artist_name"] == [canonical_name]  # 중복 해소돼 하나로 합쳐짐
+    assert [s for s in data["statuses"] if s["artist_text"] == original][0]["status"] == "matched"
+    assert data["admin_reviewed_at"] is not None
+
+
+# 동명이인이라 병합이 틀렸을 때 - 두 표기 다 그대로 남아있어야 함(거부해도 검수는 한 것이므로
+# admin_reviewed_at은 채워짐)
+@pytest.mark.asyncio
+async def test_admin_rejects_artist_suggestion():
+    original, canonical_name = f"존박_{uuid.uuid4().hex[:6]}", f"박성규_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(
+        f"PF_ADMIN_SUGGEST_REJECT_{uuid.uuid4().hex[:6]}", f"{original},{canonical_name}"
+    )
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=None, canonical_name=canonical_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(
+            ArtistNormalizationStatus(
+                concert_id=uuid.UUID(concert_id),
+                artist_text=original,
+                status="suggested",
+                suggested_canonical_id=canonical.id,
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-suggestion",
+                json={"artist_text": original, "accept": False},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert set(data["artist_name"]) == {original, canonical_name}
+    assert [s for s in data["statuses"] if s["artist_text"] == original][0]["status"] == "unconfirmed"
+
+
 @pytest.mark.asyncio
 async def test_admin_deletes_artist():
     m1, m2 = f"멤버A_{uuid.uuid4().hex[:6]}", f"멤버B_{uuid.uuid4().hex[:6]}"
