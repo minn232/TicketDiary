@@ -10,7 +10,8 @@ class AdminConcertListItem(BaseModel):
     # 관리자 목록 한 줄 - flagged_count는 unconfirmed/ambiguous 상태인 아티스트 수(0이면 정상).
     # llm_exclusion_reasons가 비어있지 않으면 send_posters_for_artist_extraction 대상이 아니라는
     # 뜻(포스터 LLM 추출이 영영 안 옴) - 크롤링 등 다른 경로로만 채워질 수 있으니 우선 확인 대상.
-    # admin_reviewed_at은 NULL이면 미검수
+    # admin_reviewed_at은 NULL이면 미검수. ai_reviewed_at은 Claude가 대신 검수한 경우만 채워짐
+    # (사람 검수와 구분해서 admin.html에 별도 표시)
     id: UUID
     kopis_id: str | None
     name: str
@@ -20,6 +21,7 @@ class AdminConcertListItem(BaseModel):
     flagged_count: int
     llm_exclusion_reasons: list[str]
     admin_reviewed_at: datetime | None
+    ai_reviewed_at: datetime | None
 
 
 class AdminConcertListResponse(BaseModel):
@@ -69,6 +71,7 @@ class AdminConcertDetail(BaseModel):
     statuses: list[AdminArtistStatus]
     group_memberships: dict[str, list[str]]
     admin_reviewed_at: datetime | None
+    ai_reviewed_at: datetime | None
 
 
 class AdminArtistRenameRequest(BaseModel):

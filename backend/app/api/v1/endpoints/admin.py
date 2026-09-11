@@ -119,6 +119,7 @@ async def list_concerts(
     flagged_only: bool = Query(False),
     unsent_to_llm_only: bool = Query(False),
     unreviewed_only: bool = Query(False),
+    ai_reviewed_only: bool = Query(False),
     upcoming_only: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
@@ -137,7 +138,10 @@ async def list_concerts(
     if unsent_to_llm_only:
         query = query.where(_needs_manual_artist_fill_filter())
     if unreviewed_only:
-        query = query.where(Concert.admin_reviewed_at.is_(None))
+        # 사람 검수도 Claude 검수도 안 된 것만 - AI 검수완료는 이 탭에서 빠지고 ai_reviewed_only로 따로 봄
+        query = query.where(Concert.admin_reviewed_at.is_(None), Concert.ai_reviewed_at.is_(None))
+    if ai_reviewed_only:
+        query = query.where(Concert.ai_reviewed_at.isnot(None))
     if upcoming_only:
         # 다른 곳(concert_search.py 등)과 동일 기준(end_date > now) - 이미 끝난 공연은
         # 우선순위가 낮으므로 admin이 검수 대상에서 제외해서 볼 수 있게
@@ -172,6 +176,7 @@ async def list_concerts(
             flagged_count=flag_counts.get(c.id, 0),
             llm_exclusion_reasons=_llm_exclusion_reasons(c, now),
             admin_reviewed_at=c.admin_reviewed_at,
+            ai_reviewed_at=c.ai_reviewed_at,
         )
         for c in concerts
     ]
@@ -219,6 +224,7 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         ],
         group_memberships=await _group_memberships_for(db, concert.artist_name),
         admin_reviewed_at=concert.admin_reviewed_at,
+        ai_reviewed_at=concert.ai_reviewed_at,
     )
 
 

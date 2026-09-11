@@ -822,8 +822,10 @@ async def send_screenshots_to_llm() -> None:
                 Concert.crawl_screenshot_url.isnot(None),
                 Concert.end_date > now,
                 # 검수완료 공연 제외(artist_extraction_target_filter와 같은 이유 -
-                # 이 파이프라인의 콜백도 artist_name을 바꿔 admin_reviewed_at을 리셋시킴)
+                # 이 파이프라인의 콜백도 artist_name을 바꿔 admin_reviewed_at을 리셋시킴).
+                # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
                 Concert.admin_reviewed_at.is_(None),
+                Concert.ai_reviewed_at.is_(None),
             )
         )
         concerts = list(result.scalars().all())
@@ -867,8 +869,10 @@ def artist_extraction_target_filter(now: datetime):
     cutoff = now - _ARTIST_EXTRACTION_RETRY_COOLDOWN
     return and_(
         # admin이 이미 검수 완료로 표시한 공연은 재전송하지 않음 - LLM이 다른 결과를
-        # 내면 artist_name이 바뀌어 admin_reviewed_at이 다시 NULL로 리셋되는 노이즈 방지
+        # 내면 artist_name이 바뀌어 admin_reviewed_at이 다시 NULL로 리셋되는 노이즈 방지.
+        # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
         Concert.admin_reviewed_at.is_(None),
+        Concert.ai_reviewed_at.is_(None),
         or_(
             Concert.artist_extraction_attempted_at.is_(None),
             and_(

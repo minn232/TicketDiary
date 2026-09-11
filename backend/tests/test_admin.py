@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
@@ -853,6 +853,75 @@ async def test_admin_unreviewed_only_filter():
     ids = {item["id"] for item in res.json()["items"]}
     assert unreviewed_id in ids
     assert reviewed_id not in ids
+
+
+# ai_reviewed_at(Claude 검수) - 사람 검수(admin_reviewed_at)와 구분되는 별도 필드/필터/뱃지
+# 테스트(2026-09-11, 지난 공연 대량 검수 작업 계기로 추가)
+@pytest.mark.asyncio
+async def test_admin_ai_reviewed_only_filter():
+    ai_name = f"AI검수됨_{uuid.uuid4().hex[:6]}"
+    plain_name = f"미검수_{uuid.uuid4().hex[:6]}"
+    ai_id = await _create_concert(f"PF_ADMIN_AIREV_A_{uuid.uuid4().hex[:6]}", ai_name)
+    plain_id = await _create_concert(f"PF_ADMIN_AIREV_B_{uuid.uuid4().hex[:6]}", plain_name)
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(ai_id)).values(ai_reviewed_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"ai_reviewed_only": True, "search": "검수"},
+                headers=_admin_headers(),
+            )
+    ids = {item["id"] for item in res.json()["items"]}
+    assert ai_id in ids
+    assert plain_id not in ids
+
+
+# AI 검수완료(ai_reviewed_at만 있음)는 "검수 안 된 것만 보기"에서 빠져야 함(사람 검수와
+# 마찬가지로 이미 검수된 것으로 취급) - admin_reviewed_at만 보던 예전 필터는 이걸 놓쳤음
+@pytest.mark.asyncio
+async def test_admin_unreviewed_only_filter_excludes_ai_reviewed():
+    ai_name = f"AI검수제외_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_AIREV_EXCL_{uuid.uuid4().hex[:6]}", ai_name)
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(concert_id)).values(ai_reviewed_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"unreviewed_only": True, "search": ai_name},
+                headers=_admin_headers(),
+            )
+    ids = {item["id"] for item in res.json()["items"]}
+    assert concert_id not in ids
+
+
+# 상세/목록 응답에 ai_reviewed_at 필드가 그대로 내려오는지 테스트
+@pytest.mark.asyncio
+async def test_admin_concert_detail_includes_ai_reviewed_at():
+    concert_id = await _create_concert(f"PF_ADMIN_AIREV_DETAIL_{uuid.uuid4().hex[:6]}", "아티스트")
+    now = datetime.now(timezone.utc)
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Concert).where(Concert.id == uuid.UUID(concert_id)).values(ai_reviewed_at=now))
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(f"/api/v1/admin/concerts/{concert_id}", headers=_admin_headers())
+    assert res.status_code == 200
+    assert res.json()["ai_reviewed_at"] is not None
+    assert res.json()["admin_reviewed_at"] is None
 
 
 # 아티스트 조회 페이지(GET /admin/artists) - 목록 검색 + 별칭/관계 요약 테스트

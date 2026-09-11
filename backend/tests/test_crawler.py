@@ -1282,6 +1282,52 @@ async def test_send_screenshots_skips_reviewed_concert():
     assert reviewed.name not in sent_names
 
 
+# ai_reviewed_at(Claude 검수)도 admin_reviewed_at과 동일하게 제외돼야 함
+@pytest.mark.asyncio
+async def test_send_screenshots_skips_ai_reviewed_concert():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+
+    now = datetime.now(timezone.utc)
+    ai_reviewed = Concert(
+        name=f"AI검수완료_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/ai-reviewed.png",
+        ai_reviewed_at=now,
+    )
+    unreviewed = Concert(
+        name=f"미검수_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/unreviewed2.png",
+    )
+    async with AsyncSessionLocal() as db:
+        db.add_all([ai_reviewed, unreviewed])
+        await db.commit()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.post = AsyncMock(return_value=mock_response)
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.settings") as mock_settings,
+        patch("app.services.crawler.httpx.AsyncClient", return_value=mock_http),
+    ):
+        mock_settings.LLM_CRAWL_URL = "https://llm.example.com/crawl"
+        mock_settings.LLM_EXTRACT_API_KEY = "test-key"
+        await send_screenshots_to_llm()
+
+    sent_names = {item["concert_name"] for item in mock_http.post.call_args[1]["json"]}
+    assert unreviewed.name in sent_names
+    assert ai_reviewed.name not in sent_names
+
+
 # 라인업 변경 감지 정규화 테스트
 
 def test_normalize_lineup_img_srcs_filters_ads_and_ignores_query_strings():

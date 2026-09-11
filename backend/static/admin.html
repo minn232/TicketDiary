@@ -72,6 +72,7 @@
   .badge-flag { display: inline-block; background: var(--danger); color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .badge-llm { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin: 2px 4px 0 0; }
   .badge-reviewed { display: inline-block; background: #e4efe7; color: var(--ok); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .badge-ai-reviewed { display: inline-block; background: #e8e4fb; color: #6c4fd4; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 
   /* 상세 패널 */
@@ -122,6 +123,10 @@
   <div class="field">
     <input type="checkbox" id="unreviewed-only" onchange="load(1)" />
     <label for="unreviewed-only">검수 안 된 것만 보기</label>
+  </div>
+  <div class="field">
+    <input type="checkbox" id="ai-reviewed-only" onchange="load(1)" />
+    <label for="ai-reviewed-only" title="사람이 아니라 Claude가 대신 검수한 공연만">AI 검수완료만 보기</label>
   </div>
   <div class="field">
     <input type="checkbox" id="upcoming-only" onchange="load(1)" />
@@ -188,10 +193,12 @@ async function load(p) {
   const flaggedOnly = document.getElementById('flagged-only').checked;
   const unsentToLlmOnly = document.getElementById('unsent-to-llm-only').checked;
   const unreviewedOnly = document.getElementById('unreviewed-only').checked;
+  const aiReviewedOnly = document.getElementById('ai-reviewed-only').checked;
   const upcomingOnly = document.getElementById('upcoming-only').checked;
   const qs = new URLSearchParams({
     page, page_size: pageSize,
     flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly, unreviewed_only: unreviewedOnly,
+    ai_reviewed_only: aiReviewedOnly,
     upcoming_only: upcomingOnly,
   });
   if (search) qs.set('search', search);
@@ -221,7 +228,12 @@ function renderRows(items) {
     const poster = c.poster_url ? `<img class="poster-thumb" src="${esc(c.poster_url)}" />` : '';
     const chips = (c.artist_name || []).map(n => `<span class="chip">${esc(n)}</span>`).join('');
     const flag = c.flagged_count > 0 ? `<span class="badge-flag">확인 필요 ${c.flagged_count}</span>` : '';
-    const reviewed = c.admin_reviewed_at ? `<span class="badge-reviewed">검수완료</span>` : '';
+    // admin_reviewed_at(사람)이 있으면 그걸 우선 표시, 없고 ai_reviewed_at(Claude)만 있으면 구분 표시
+    const reviewed = c.admin_reviewed_at
+      ? `<span class="badge-reviewed">검수완료</span>`
+      : c.ai_reviewed_at
+        ? `<span class="badge-ai-reviewed">AI 검수완료</span>`
+        : '';
     const llmReasons = (c.llm_exclusion_reasons || []).map(r => `<span class="badge-llm">수동 확인 필요: ${esc(r)}</span>`).join('');
     tr.innerHTML = `
       <td>${poster}</td>
@@ -289,9 +301,11 @@ function renderDetail(c) {
       </div>`;
   }).join('');
 
+  // admin_reviewed_at(사람)이 있으면 그것만 보여줌. ai_reviewed_at(Claude)만 있으면 그 사실을
+  // 같이 보여주되, 사람이 직접 재검수할 수 있게 버튼은 그대로 둠
   const reviewStatus = c.admin_reviewed_at
     ? `<span class="badge-reviewed">검수완료 (${esc(c.admin_reviewed_at.slice(0, 16).replace('T', ' '))})</span>`
-    : `<button onclick="submitMarkReviewed()">검수 완료로 표시</button>`;
+    : `${c.ai_reviewed_at ? `<span class="badge-ai-reviewed">AI 검수완료 (${esc(c.ai_reviewed_at.slice(0, 16).replace('T', ' '))})</span> ` : ''}<button onclick="submitMarkReviewed()">${c.ai_reviewed_at ? '사람 검수로 표시' : '검수 완료로 표시'}</button>`;
 
   // event_type이 이미 FESTIVAL이면 자동으로 라인업 재확인 대상이라 버튼 자체가 불필요
   const festivalButton = c.event_type !== 'FESTIVAL'

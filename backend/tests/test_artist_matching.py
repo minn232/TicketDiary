@@ -561,6 +561,29 @@ async def test_send_posters_skips_reviewed_concert():
     assert concert_id not in _sent_concert_ids(mock_client)
 
 
+# ai_reviewed_at(Claude 검수)도 admin_reviewed_at과 동일하게 재전송 대상에서 제외돼야 함
+@pytest.mark.asyncio
+async def test_send_posters_skips_ai_reviewed_concert():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_AIREVIEWED_{uuid.uuid4().hex[:6]}", "", token)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(ai_reviewed_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+
 # 콜백이 유실된 것으로 보이는 경우(쿨다운 지남 + 시도 횟수 상한 미만) 재전송되고,
 # attempt_count가 증가하는지 테스트 - 이게 이번에 고친 핵심 동작
 @pytest.mark.asyncio
