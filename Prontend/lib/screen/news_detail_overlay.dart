@@ -87,11 +87,6 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
 
   bool _isClosing = false;
 
-  // 두 손가락 오므리기(핀치 인)로 오버레이를 닫는 기능.
-  final Map<int, Offset> _pinchPointers = {};
-  double? _pinchStartDistance;
-  bool _pinchTriggered = false;
-
   // ── 포스터 확대(전체 화면) 상태 ──
   // 포스터를 크게 볼 땐 검은 패널이 카드 rect가 아니라 폰 화면 전체를
   // 덮어야 하므로, 이 레이어를 카드 안이 아니라 최상위 Stack에서 그립니다.
@@ -100,45 +95,6 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
       TransformationController();
   TapDownDetails? _posterDoubleTapDetails;
   static const double _posterDoubleTapZoomScale = 2.5;
-
-  double _pinchCurrentDistance() {
-    final points = _pinchPointers.values.toList();
-    return (points[0] - points[1]).distance;
-  }
-
-  void _onPinchPointerDown(PointerDownEvent event) {
-    _pinchPointers[event.pointer] = event.position;
-    if (_pinchPointers.length == 2) {
-      _pinchStartDistance = _pinchCurrentDistance();
-      _pinchTriggered = false;
-    } else {
-      _pinchStartDistance = null;
-    }
-  }
-
-  void _onPinchPointerMove(PointerMoveEvent event) {
-    if (!_pinchPointers.containsKey(event.pointer)) return;
-    _pinchPointers[event.pointer] = event.position;
-    final start = _pinchStartDistance;
-    if (_pinchPointers.length != 2 ||
-        start == null ||
-        _pinchTriggered ||
-        _posterExpanded) {
-      return;
-    }
-    if (_controller.value < 0.95) return;
-    if (_pinchCurrentDistance() / start < 0.7) {
-      _pinchTriggered = true;
-      _close();
-    }
-  }
-
-  void _onPinchPointerEnd(PointerEvent event) {
-    _pinchPointers.remove(event.pointer);
-    if (_pinchPointers.length < 2) {
-      _pinchStartDistance = null;
-    }
-  }
 
   @override
   void initState() {
@@ -300,72 +256,66 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
     // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
     // context.sp()가 그리드에서 보이던 것과 같은 배율 사용.
-    return Listener(
-      onPointerDown: _onPinchPointerDown,
-      onPointerMove: _onPinchPointerMove,
-      onPointerUp: _onPinchPointerEnd,
-      onPointerCancel: _onPinchPointerEnd,
-      child: DiaryFrameScale(
-        scale: widget.frameScale,
-        marginEachSide: 0,
-        child: PopScope(
-          canPop: false,
-          onPopInvokedWithResult: (didPop, result) {
-            if (didPop) return;
-            if (_posterExpanded) {
-              _collapsePoster();
-              return;
-            }
-            _close();
-          },
-          child: Material(
-            type: MaterialType.transparency,
-            child: Stack(
-              children: [
-                AnimatedBuilder(
-                  animation: _controller,
-                  child: Stack(children: [collapsedLayer, expandedLayer]),
-                  builder: (context, child) {
-                    final t = _t.value;
-                    final rect = _getRectForT(end, t);
-                    final radius = _getRadiusForT(t);
-                    final dimOpacity = lerpDouble(0.0, 0.40, t)!;
+    return DiaryFrameScale(
+      scale: widget.frameScale,
+      marginEachSide: 0,
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          if (_posterExpanded) {
+            _collapsePoster();
+            return;
+          }
+          _close();
+        },
+        child: Material(
+          type: MaterialType.transparency,
+          child: Stack(
+            children: [
+              AnimatedBuilder(
+                animation: _controller,
+                child: Stack(children: [collapsedLayer, expandedLayer]),
+                builder: (context, child) {
+                  final t = _t.value;
+                  final rect = _getRectForT(end, t);
+                  final radius = _getRadiusForT(t);
+                  final dimOpacity = lerpDouble(0.0, 0.40, t)!;
 
-                    return Stack(
-                      children: [
-                        Positioned.fill(
-                          child: IgnorePointer(
-                            child: Container(
-                              color: Colors.black.withValues(alpha: dimOpacity),
-                            ),
+                  return Stack(
+                    children: [
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Container(
+                            color: Colors.black.withValues(alpha: dimOpacity),
                           ),
                         ),
-                        Positioned.fill(
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.translucent,
-                            onTapDown: _onBackgroundTap,
-                            child: const SizedBox.expand(),
-                          ),
+                      ),
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTapDown: _onBackgroundTap,
+                          child: const SizedBox.expand(),
                         ),
-                        Positioned.fromRect(
-                          rect: rect,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(radius),
-                            clipBehavior: Clip.antiAlias,
-                            child: child,
-                          ),
+                      ),
+                      Positioned.fromRect(
+                        rect: rect,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(radius),
+                          clipBehavior: Clip.antiAlias,
+                          child: child,
                         ),
-                      ],
-                    );
-                  },
-                ),
-                // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
-                // rect가 아니라 최상위라 상태바 영역까지 꽉 참). 애니메이션
-                // 컨트롤러와 무관하게 항상 최상단에 있어야 하므로
-                // AnimatedBuilder 바깥(형제)에 둡니다.
-                if (_posterExpanded) _buildFullscreenPoster(),
-              ],
-            ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              // 포스터 확대 레이어 — 폰 화면 전체를 검게 덮습니다(카드
+              // rect가 아니라 최상위라 상태바 영역까지 꽉 참). 애니메이션
+              // 컨트롤러와 무관하게 항상 최상단에 있어야 하므로
+              // AnimatedBuilder 바깥(형제)에 둡니다.
+              if (_posterExpanded) _buildFullscreenPoster(),
+            ],
           ),
         ),
       ),
@@ -512,7 +462,12 @@ class _ExpandedNewsDetail extends StatelessWidget {
                       return FadeTransition(
                         opacity: contentOpacity,
                         child: SingleChildScrollView(
-                          padding: EdgeInsets.fromLTRB(18 * k, 18 * k, 18 * k, 18 * k),
+                          padding: EdgeInsets.fromLTRB(
+                            18 * k,
+                            18 * k,
+                            18 * k,
+                            18 * k,
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -601,47 +556,55 @@ class _ExpandedNewsDetail extends StatelessWidget {
               value: news.periodText ?? '미정',
               onTap: news.concertDate != null
                   ? () => _showCalendar(
-                        context,
-                        title: '공연 기간',
-                        start: news.concertDate!,
-                        end: news.concertEndDate ?? news.concertDate!,
-                        color: const Color(0xFF3DBE6B),
-                      )
+                      context,
+                      title: '공연 기간',
+                      start: news.concertDate!,
+                      end: news.concertEndDate ?? news.concertDate!,
+                      color: const Color(0xFF3DBE6B),
+                    )
                   : null,
             ),
           ),
-        SizedBox(width: 10 * k),
-        Expanded(
-          child: _InfoTile(
-            scale: k,
-            icon: Icon(Icons.location_on,
-                size: 26 * k, color: const Color(0xFF5C4033)),
-            label: '공연장',
-            value: (news.venue == null || news.venue!.isEmpty) ? '미정' : news.venue!,
-            onTap: (news.venue != null && news.venue!.isNotEmpty)
-                ? () => showVenueMapPicker(context, news.venue!)
-                : null,
+          SizedBox(width: 10 * k),
+          Expanded(
+            child: _InfoTile(
+              scale: k,
+              icon: Icon(
+                Icons.location_on,
+                size: 26 * k,
+                color: const Color(0xFF5C4033),
+              ),
+              label: '공연장',
+              value: (news.venue == null || news.venue!.isEmpty)
+                  ? '미정'
+                  : news.venue!,
+              onTap: (news.venue != null && news.venue!.isNotEmpty)
+                  ? () => showVenueMapPicker(context, news.venue!)
+                  : null,
+            ),
           ),
-        ),
-        SizedBox(width: 10 * k),
-        Expanded(
-          child: _InfoTile(
-            scale: k,
-            icon: Icon(Icons.confirmation_num_outlined,
-                size: 26 * k, color: const Color(0xFF5C4033)),
-            label: '티켓팅 날짜',
-            value: news.ticketingText ?? '미정',
-            onTap: news.ticketingDate != null
-                ? () => _showCalendar(
+          SizedBox(width: 10 * k),
+          Expanded(
+            child: _InfoTile(
+              scale: k,
+              icon: Icon(
+                Icons.confirmation_num_outlined,
+                size: 26 * k,
+                color: const Color(0xFF5C4033),
+              ),
+              label: '티켓팅 날짜',
+              value: news.ticketingText ?? '미정',
+              onTap: news.ticketingDate != null
+                  ? () => _showCalendar(
                       context,
                       title: '티켓팅 날짜',
                       start: news.ticketingDate!,
                       end: news.ticketingDate!,
                       color: const Color(0xFF3DBE6B),
                     )
-                : null,
+                  : null,
+            ),
           ),
-        ),
         ],
       ),
     );
@@ -729,8 +692,11 @@ class _CalendarDialog extends StatelessWidget {
                   GestureDetector(
                     onTap: () => Navigator.of(context).pop(),
                     behavior: HitTestBehavior.opaque,
-                    child: Icon(Icons.close_rounded,
-                        size: context.sp(20), color: Colors.black45),
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: context.sp(20),
+                      color: Colors.black45,
+                    ),
                   ),
                 ],
               ),
@@ -805,9 +771,7 @@ class _CalendarDialog extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       color: i == 0
                           ? const Color(0xFFE8455E)
-                          : (i == 6
-                              ? const Color(0xFF3D7BE8)
-                              : Colors.black45),
+                          : (i == 6 ? const Color(0xFF3D7BE8) : Colors.black45),
                     ),
                   ),
                 ),
@@ -851,7 +815,9 @@ class _CalendarDialog extends StatelessWidget {
     return Container(
       height: 36,
       alignment: Alignment.center,
-      decoration: on ? BoxDecoration(color: highlight, borderRadius: radius) : null,
+      decoration: on
+          ? BoxDecoration(color: highlight, borderRadius: radius)
+          : null,
       child: Text(
         '$day',
         style: TextStyle(
@@ -886,7 +852,9 @@ class _InfoTile extends StatelessWidget {
     final k = scale;
     return GestureDetector(
       onTap: onTap,
-      behavior: onTap != null ? HitTestBehavior.opaque : HitTestBehavior.deferToChild,
+      behavior: onTap != null
+          ? HitTestBehavior.opaque
+          : HitTestBehavior.deferToChild,
       child: Container(
         padding: EdgeInsets.symmetric(vertical: 12 * k, horizontal: 4 * k),
         decoration: BoxDecoration(
@@ -904,7 +872,10 @@ class _InfoTile extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(height: 28 * k, child: Center(child: icon)),
+            SizedBox(
+              height: 28 * k,
+              child: Center(child: icon),
+            ),
             SizedBox(height: 7 * k),
             Text(
               label,
@@ -948,8 +919,11 @@ class _CalendarDayIcon extends StatelessWidget {
     return Stack(
       alignment: Alignment.center,
       children: [
-        Icon(Icons.calendar_today_rounded,
-            size: 26 * k, color: const Color(0xFF5C4033)),
+        Icon(
+          Icons.calendar_today_rounded,
+          size: 26 * k,
+          color: const Color(0xFF5C4033),
+        ),
         if (day != null)
           Padding(
             padding: EdgeInsets.only(top: 4 * k),
@@ -1013,4 +987,3 @@ class _VendorButtons extends StatelessWidget {
     );
   }
 }
-
