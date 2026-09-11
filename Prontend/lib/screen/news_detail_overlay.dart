@@ -1,15 +1,14 @@
-import 'dart:io' show Platform;
 import 'dart:ui';
 
-import 'package:android_intent_plus/android_intent.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/news_model.dart';
+import '../widgets/diary_page_frame.dart';
 import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
 import '../widgets/app_network_image.dart';
+import '../widgets/venue_map_picker.dart';
+import '../widgets/vendor_ticketing_buttons.dart';
 
 /// 소식 폴라로이드 카드를 누르면, 다이어리 탭의 "공연 전"/"공연 후" 티켓
 /// 오버레이([ConcertBeforeOverlay]/[ConcertAfterOverlay])와 완전히 같은
@@ -184,11 +183,20 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
       safePadding.left + safeWidth / 2,
       safePadding.top + safeHeight / 2,
     );
-    return Rect.fromCenter(
-      center: safeCenter,
-      width: safeWidth * 0.90,
-      height: safeHeight * 0.90,
-    );
+
+    var width = safeWidth * 0.90;
+    final height = safeHeight * 0.90;
+    // [백엔드 수정]
+    // 가로모드 태블릿에서 90%x90%가 극단적으로 넓어지는 것 방지 —
+    // 티켓 오버레이와 같은 diaryAspectRatio를 폭 상한으로 둠.
+    // `width > height` 조건 필수(없으면 아이패드 세로모드처럼 화면비만
+    // 넓은 세로 화면까지 잘못 발동함).
+    const maxAspectRatio = DiaryPageFrame.diaryAspectRatio;
+    if (width > height && width / height > maxAspectRatio) {
+      width = height * maxAspectRatio;
+    }
+
+    return Rect.fromCenter(center: safeCenter, width: width, height: height);
   }
 
   Rect _getRectForT(Rect end, double t) => Rect.lerp(widget.startRect, end, t)!;
@@ -611,7 +619,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
             label: '공연장',
             value: (news.venue == null || news.venue!.isEmpty) ? '미정' : news.venue!,
             onTap: (news.venue != null && news.venue!.isNotEmpty)
-                ? () => _showMapPicker(context, news.venue!)
+                ? () => showVenueMapPicker(context, news.venue!)
                 : null,
           ),
         ),
@@ -960,58 +968,14 @@ class _CalendarDayIcon extends StatelessWidget {
 }
 
 // [백엔드 수정]
-// KOPIS가 실제로 준 예매처만(ticketingLinks) 버튼으로 보여주고, 눌렀을 때 진짜
-// 예매 링크로 이동. Android는 android_intent_plus로 package 지정해 앱 우선
-// 실행 시도(launch() 전에 canResolveActivity()로 먼저 확인), 실패하면 브라우저로
-// 폴백. ticketingLinks가 비어있으면 섹션 자체를 숨김.
+// KOPIS가 준 예매처만(ticketingLinks) 버튼으로 보여줌. 버튼 UI/앱 우선
+// 실행/폴백 로직은 vendor_ticketing_buttons.dart로 공용화(가로모드 패널과
+// 공유). 비어있으면 섹션 숨김.
 class _VendorButtons extends StatelessWidget {
   const _VendorButtons({required this.ticketingLinks, required this.scale});
 
   final Map<String, String>? ticketingLinks;
   final double scale;
-
-  /// 예매처별 표시 이름 + 상징 색 + 앱 아이콘(플레이스토어/공식 가이드에서 받은 원본).
-  static const Map<String, ({String label, Color color, String icon})> _vendors = {
-    'MELON': (label: '멜론티켓', color: Color(0xFF00C639), icon: 'assets/images/vendors/melon.webp'),
-    'INTERPARK': (label: '인터파크', color: Color(0xFF3549FF), icon: 'assets/images/vendors/interpark.webp'),
-    'YES24': (label: '예스24', color: Color(0xFF000000), icon: 'assets/images/vendors/yes24.webp'),
-    'TICKETLINK': (label: '티켓링크', color: Color(0xFFE4002B), icon: 'assets/images/vendors/ticketlink.webp'),
-  };
-
-  /// 각 예매처 앱의 실제 Android 패키지명(여러 개면 순서대로 시도).
-  /// AndroidManifest.xml `<queries>`에도 같은 목록 필요. 인터파크는 야놀자 앱
-  /// 우선 + 구버전 NOL 티켓 폴백.
-  static const Map<String, List<String>> _androidPackages = {
-    'INTERPARK': ['com.cultsotry.yanolja.nativeapp', 'com.interpark.app.ticket'],
-    'YES24': ['com.yes24.ticket'],
-    'TICKETLINK': ['kr.co.ticketlink.cne'],
-    'MELON': ['com.iloen.melonticket'],
-  };
-
-  Future<void> _openVendor(String vendorKey, String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-
-    // http로 오는 링크가 많아서 https로 보정.
-    final httpsUri = uri.scheme == 'http' ? uri.replace(scheme: 'https') : uri;
-    final urlString = httpsUri.toString();
-
-    if (!kIsWeb && Platform.isAndroid) {
-      for (final package in _androidPackages[vendorKey] ?? const <String>[]) {
-        final intent = AndroidIntent(
-          action: 'action_view',
-          data: urlString,
-          package: package,
-        );
-        if (await intent.canResolveActivity() == true) {
-          await intent.launch();
-          return;
-        }
-      }
-    }
-
-    await launchUrl(httpsUri, mode: LaunchMode.externalApplication);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1038,11 +1002,10 @@ class _VendorButtons extends StatelessWidget {
         SizedBox(height: 10 * k),
         // 예매처가 여러 곳이면 바로 아래에 세로로 쌓습니다.
         for (final entry in links.entries) ...[
-          _VendorButton(
+          VendorTicketingButton(
             vendor: entry.key,
-            info: _vendors[entry.key],
             scale: k,
-            onTap: () => _openVendor(entry.key, entry.value),
+            onTap: () => openVendorTicketing(entry.key, entry.value),
           ),
           SizedBox(height: 9 * k),
         ],
@@ -1051,126 +1014,3 @@ class _VendorButtons extends StatelessWidget {
   }
 }
 
-/// 예매처 버튼 하나(가로 꽉 참, 예매처 상징색). 왼쪽에 예매처 앱 아이콘.
-class _VendorButton extends StatelessWidget {
-  final String vendor;
-  final ({String label, Color color, String icon})? info;
-  final double scale;
-  final VoidCallback onTap;
-
-  const _VendorButton({
-    required this.vendor,
-    required this.info,
-    required this.scale,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final k = scale;
-    final label = info?.label ?? vendor;
-    final color = info?.color ?? const Color(0xFF5C4033);
-    return Material(
-      color: color,
-      borderRadius: BorderRadius.circular(14 * k),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14 * k),
-        onTap: onTap,
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16 * k, vertical: 14 * k),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ClipOval(
-                child: info != null
-                    ? Image.asset(
-                        info!.icon,
-                        width: 24 * k,
-                        height: 24 * k,
-                        fit: BoxFit.cover,
-                      )
-                    : Container(
-                        width: 24 * k,
-                        height: 24 * k,
-                        alignment: Alignment.center,
-                        color: Colors.white,
-                        child: Text(
-                          vendor.isNotEmpty ? vendor.substring(0, 1) : '?',
-                          style: TextStyle(
-                            fontSize: context.sp(12),
-                            fontWeight: FontWeight.w900,
-                            color: color,
-                          ),
-                        ),
-                      ),
-              ),
-              SizedBox(width: 9 * k),
-              Text(
-                '$label에서 예매하기',
-                style: TextStyle(
-                  fontSize: context.sp(14),
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-enum _MapProvider { kakao, naver }
-
-/// "카카오맵/네이버지도 중 선택" 바텀시트를 띄우고, 고른 지도 앱의 검색
-/// 링크를 엽니다.
-Future<void> _showMapPicker(BuildContext context, String venue) async {
-  final choice = await showModalBottomSheet<_MapProvider>(
-    context: context,
-    backgroundColor: Colors.white,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
-    builder: (context) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '지도 앱 선택',
-                style: TextStyle(
-                  fontSize: context.sp(15),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.map_outlined),
-            title: const Text('카카오맵으로 보기'),
-            onTap: () => Navigator.of(context).pop(_MapProvider.kakao),
-          ),
-          ListTile(
-            leading: const Icon(Icons.map_outlined),
-            title: const Text('네이버지도로 보기'),
-            onTap: () => Navigator.of(context).pop(_MapProvider.naver),
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    ),
-  );
-
-  if (choice == null) return;
-
-  final query = Uri.encodeComponent(venue);
-  final uri = switch (choice) {
-    _MapProvider.kakao => Uri.parse('https://map.kakao.com/link/search/$query'),
-    _MapProvider.naver => Uri.parse('https://map.naver.com/v5/search/$query'),
-  };
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
-}

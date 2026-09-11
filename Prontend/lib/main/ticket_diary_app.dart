@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'package:ticketdiary/main/orientation_policy.dart';
 import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/screen/news_screen.dart';
 import 'package:ticketdiary/screen/settings_screen.dart';
@@ -83,76 +84,78 @@ class TicketDiaryApp extends StatelessWidget {
       routeBuilder: _tabRoute,
     );
 
-    return MaterialApp(
-      navigatorKey: _navigatorKey,
-      debugShowCheckedModeBanner: false,
-      title: 'Ticket Diary',
-      theme: ThemeData(fontFamily: 'Roboto'),
-      // 날짜 선택기(showDatePicker) 등 Material 위젯의 기본 문구("OK"/"CANCEL"
-      // 등)와 달력 요일/월 이름이 앱의 나머지 UI(전부 한국어)와 다르게 영어로
-      // 뜨던 것을 고쳐, 항상 한국어로 표시되도록 고정합니다.
-      locale: const Locale('ko', 'KR'),
-      supportedLocales: const [Locale('ko', 'KR')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      initialRoute: DiaryRoutes.splash,
-      // Navigator가 그리는 화면(child) 위에, 화면 전환과 무관하게 항상
-      // 같은 자리에 있는 보이지 않는 탭 히트 캐처를 겹쳐 그립니다
-      // ([TabHitCatcherOverlay] 문서 참고) — 인덱스 탭을 빠르게 연속으로
-      // 눌러도 전환 애니메이션 도중 눌림이 사라지지 않도록 하기 위함입니다.
-      builder: (context, child) {
-        return Stack(
-          children: [
-            ?child,
-            Positioned.fill(child: TabHitCatcherOverlay(coordinator: tabNav)),
-          ],
-        );
-      },
-      // 웹에서는 브라우저의 실제 URL(예: 루트 "/")도 Navigator가 별도
-      // 라우트로 해석해 [initialRoute]와 함께 스택에 쌓아버리는 경우가
-      // 있습니다(예: "/"가 DiaryRoutes.diary와 매치되어 DiaryScreen이 하나
-      // 더 push됨). 그 결과 SplashScreen이 나중에 pushReplacement로
-      // DiaryScreen을 넣어도 이미 쌓여있던 DiaryScreen 위에 하나가 더
-      // 겹쳐 두 인스턴스가 동시에 존재하게 됩니다(예: 방금 추가한 티켓이
-      // 화면엔 안 보이는데 실제로는 가려진 인스턴스에만 반영되는 문제).
-      // 시작 라우트는 오직 [initialRoute] 하나여야 하므로, 브라우저 URL과
-      // 무관하게 스플래시 라우트 하나만 스택에 넣도록 명시적으로 고정합니다.
-      onGenerateInitialRoutes: (initialRoute) {
-        return [
-          _buildSplashRoute(const RouteSettings(name: DiaryRoutes.splash)),
-        ];
-      },
-      onGenerateRoute: (settings) {
-        switch (settings.name) {
-          case DiaryRoutes.splash:
-            return _buildSplashRoute(settings);
-          case DiaryRoutes.diary:
-            return MaterialPageRoute(
-              settings: settings,
-              builder: (context) => _screenForTab(DiaryTab.diary),
-            );
-          case DiaryRoutes.news:
-            return MaterialPageRoute(
-              settings: settings,
-              builder: (context) => _screenForTab(DiaryTab.news),
-            );
-          case DiaryRoutes.summary:
-            return MaterialPageRoute(
-              settings: settings,
-              builder: (context) => _screenForTab(DiaryTab.summary),
-            );
-          case DiaryRoutes.settings:
-            return MaterialPageRoute(
-              settings: settings,
-              builder: (context) => _screenForTab(DiaryTab.settings),
-            );
-          default:
-            return null;
-        }
-      },
+    return OrientationPolicy(
+      child: MaterialApp(
+        navigatorKey: _navigatorKey,
+        debugShowCheckedModeBanner: false,
+        title: 'Ticket Diary',
+        theme: ThemeData(fontFamily: 'Roboto'),
+        // 날짜 선택기(showDatePicker) 등 Material 위젯의 기본 문구("OK"/"CANCEL"
+        // 등)와 달력 요일/월 이름이 앱의 나머지 UI(전부 한국어)와 다르게 영어로
+        // 뜨던 것을 고쳐, 항상 한국어로 표시되도록 고정합니다.
+        locale: const Locale('ko', 'KR'),
+        supportedLocales: const [Locale('ko', 'KR')],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        initialRoute: DiaryRoutes.splash,
+        // Navigator가 그리는 화면(child) 위에, 화면 전환과 무관하게 항상
+        // 같은 자리에 있는 보이지 않는 탭 히트 캐처를 겹쳐 그립니다
+        // ([TabHitCatcherOverlay] 문서 참고) — 인덱스 탭을 빠르게 연속으로
+        // 눌러도 전환 애니메이션 도중 눌림이 사라지지 않도록 하기 위함입니다.
+        builder: (context, child) {
+          return Stack(
+            children: [
+              ?child,
+              Positioned.fill(child: TabHitCatcherOverlay(coordinator: tabNav)),
+            ],
+          );
+        },
+        // 웹에서는 브라우저의 실제 URL(예: 루트 "/")도 Navigator가 별도
+        // 라우트로 해석해 [initialRoute]와 함께 스택에 쌓아버리는 경우가
+        // 있습니다(예: "/"가 DiaryRoutes.diary와 매치되어 DiaryScreen이 하나
+        // 더 push됨). 그 결과 SplashScreen이 나중에 pushReplacement로
+        // DiaryScreen을 넣어도 이미 쌓여있던 DiaryScreen 위에 하나가 더
+        // 겹쳐 두 인스턴스가 동시에 존재하게 됩니다(예: 방금 추가한 티켓이
+        // 화면엔 안 보이는데 실제로는 가려진 인스턴스에만 반영되는 문제).
+        // 시작 라우트는 오직 [initialRoute] 하나여야 하므로, 브라우저 URL과
+        // 무관하게 스플래시 라우트 하나만 스택에 넣도록 명시적으로 고정합니다.
+        onGenerateInitialRoutes: (initialRoute) {
+          return [
+            _buildSplashRoute(const RouteSettings(name: DiaryRoutes.splash)),
+          ];
+        },
+        onGenerateRoute: (settings) {
+          switch (settings.name) {
+            case DiaryRoutes.splash:
+              return _buildSplashRoute(settings);
+            case DiaryRoutes.diary:
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (context) => _screenForTab(DiaryTab.diary),
+              );
+            case DiaryRoutes.news:
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (context) => _screenForTab(DiaryTab.news),
+              );
+            case DiaryRoutes.summary:
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (context) => _screenForTab(DiaryTab.summary),
+              );
+            case DiaryRoutes.settings:
+              return MaterialPageRoute(
+                settings: settings,
+                builder: (context) => _screenForTab(DiaryTab.settings),
+              );
+            default:
+              return null;
+          }
+        },
+      ),
     );
   }
 }

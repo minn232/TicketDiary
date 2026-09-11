@@ -176,6 +176,12 @@ class DiaryPageFrame extends StatelessWidget {
   final double? scaleOverride;
   final double? marginEachSideOverride;
 
+  // [백엔드 수정]
+  // 가로모드 2페이지 스프레드용 왼쪽 동반 패널 추가. 페이지 두 장이
+  // 나란히 들어갈 폭일 때만 그려지고, null(기본값)이면 기존 단일 페이지
+  // 레터박스 그대로.
+  final Widget? landscapeCompanionPanel;
+
   const DiaryPageFrame({
     super.key,
     required this.child,
@@ -208,7 +214,121 @@ class DiaryPageFrame extends StatelessWidget {
     this.frameBehindPage,
     this.scaleOverride,
     this.marginEachSideOverride,
+    this.landscapeCompanionPanel,
   });
+
+  /// 페이지 한 장을 [pageHeight] 높이에 맞춰 그렸을 때의 폭.
+  static double _pageWidthForHeight(double pageHeight, double aspectRatio) =>
+      pageHeight * aspectRatio;
+
+  // [백엔드 수정]
+  // 2페이지 모드 레이아웃(오른쪽 페이지 크기/위치) 계산 추가. [build]와
+  // DiaryTabFlipTransition이 반드시 이 함수 하나만 공유해서 써야
+  // 회전축이 안 어긋남.
+  static ({
+    double pageWidth,
+    double rightPageLeft,
+    double spreadWidth,
+    double spineCenterX,
+    ({
+      double barWidth,
+      double barHeight,
+      double circleShiftX,
+      double binderLeft,
+      double pivotX,
+      double pageWidth,
+    })
+    metrics,
+  })
+  resolveTwoPageLayout({
+    required double pageHeight,
+    double aspectRatio = diaryAspectRatio,
+    double pageTop = defaultPageTop,
+    double pageBottom = defaultPageBottom,
+    double pageLeft = defaultPageLeft,
+    double pageRight = defaultPageRight,
+  }) {
+    final pageWidth = _pageWidthForHeight(pageHeight, aspectRatio);
+    final metrics = computeRingMetrics(
+      frameWidth: pageWidth,
+      frameHeight: pageHeight,
+      pageTop: pageTop,
+      pageBottom: pageBottom,
+      pageLeft: pageLeft,
+      pageRight: pageRight,
+    );
+    // widthFactor 확대로 페이지/동반 패널 둘 다 크림 영역이 자기 박스
+    // 경계보다 pivotX만큼 안쪽이라, 박스를 그냥 붙이면 그 사이에 갈색
+    // 틈이 생김 — 거의 pivotX*2만큼 겹치되 [_spineVisibleGap]만 남김.
+    final spineOverlap = math.max(0.0, metrics.pivotX * 2 - _spineVisibleGap);
+    final rightPageLeft = pageWidth - spineOverlap;
+    return (
+      pageWidth: pageWidth,
+      rightPageLeft: rightPageLeft,
+      spreadWidth: rightPageLeft + pageWidth,
+      // 두 페이지가 맞닿는 지점(스프레드 왼쪽 끝=0 기준). 공유 바인더
+      // 링과 탭 전환 애니메이션의 회전축이 이 값을 공유함.
+      spineCenterX: pageWidth - metrics.pivotX + _spineVisibleGap / 2,
+      metrics: metrics,
+    );
+  }
+
+  /// 2페이지 모드에서 스파인(이음새)에 일부러 남겨두는 아주 작은 갈색 틈.
+  /// 0이면 두 페이지가 완전히 하나로 뭉개져 보여서, 실제 책 스파인의
+  /// 얇은 그림자 골 정도만 남깁니다.
+  static const double _spineVisibleGap = 10.0;
+
+  /// 2페이지 모드에서 이음새에 덧그리는 공유 바인더 링의 두께/원 크기가,
+  /// 페이지 한 장짜리 링([computeRingMetrics] 기본 크기)보다 얼마나 더
+  /// 큰지. 두 페이지에 걸쳐 있는 느낌을 내려고 키운 값이라 눈대중으로
+  /// 조절 가능합니다.
+  static const double _landscapeRingScale = 1.15;
+
+  /// 공유 바인더 링의 막대 "길이"(가로 폭)만 추가로 더 키우는 배율 —
+  /// [_landscapeRingScale]과 곱해져서, 두께/원은 그대로 두고 길이만 더
+  /// 늘리고 싶을 때 이 값만 조절하면 됩니다.
+  static const double _landscapeRingLengthScale = 1.3;
+
+  // [백엔드 수정]
+  // 2페이지 모드 이음새([visualSeamX])에 확대 바인더 링 추가. 크기는
+  // 페이지 링(computeRingMetrics)에 [_landscapeRingScale]/
+  // [_landscapeRingLengthScale]만 곱함. [showCircle] 기본 false(막대만).
+  Widget _buildLandscapeSpineRing({
+    required double visualSeamX,
+    required double barWidth,
+    required double barHeight,
+    bool showCircle = false,
+  }) {
+    final scaledBarWidth =
+        barWidth * _landscapeRingScale * _landscapeRingLengthScale;
+    final scaledBarHeight = barHeight * _landscapeRingScale;
+    final circleDiameter = scaledBarHeight * binderCircleToBarHeightRatio;
+    // BinderRingColumn은 원(그로밋) 칸을 폭 circleDiameter로 예약해두고
+    // Transform.translate(circleShiftX)로 그 안에서 오른쪽으로 밀어
+    // 그립니다 — 즉 위젯 박스의 왼쪽 절반(폭 circleShiftX)은 실제로는
+    // 빈 공간입니다. showCircle이 true면 눈에 보이는 그림(원+막대)이
+    // [circleShiftX, circleDiameter+scaledBarWidth] 구간에, false면(원 없이
+    // 막대만) [circleDiameter, circleDiameter+scaledBarWidth] 구간에
+    // 있습니다. 이 "보이는 그림"의 가로 중심이 [visualSeamX]에 오도록
+    // Positioned.left를 역산합니다(박스의 왼쪽 끝 기준으로 맞추면 그림
+    // 전체가 한쪽으로 치우쳐 보입니다).
+    final circleShiftX = circleDiameter / 2;
+    final visibleStart = showCircle ? circleShiftX : circleDiameter;
+    final visibleCenterOffset =
+        (visibleStart + circleDiameter + scaledBarWidth) / 2;
+    return Positioned(
+      left: visualSeamX - visibleCenterOffset,
+      top: binderTop,
+      bottom: binderBottom,
+      child: BinderRingColumn(
+        count: binderRingCount,
+        circleShiftX: circleShiftX,
+        barWidth: scaledBarWidth,
+        barHeight: scaledBarHeight,
+        showCircle: showCircle,
+      ),
+    );
+  }
 
   Widget _buildOverlayMainPage() {
     if (overlayMainPageVisibleNotifier == null) return overlayMainPage!;
@@ -430,10 +550,16 @@ class DiaryPageFrame extends StatelessWidget {
     final sizedFrame = LayoutBuilder(
       builder: (context, outerConstraints) {
         final availableWidth = outerConstraints.maxWidth;
-        return Center(
-          child: AspectRatio(
+        final availableHeight = outerConstraints.maxHeight;
+
+        // [백엔드 수정]
+        // 2페이지 모드 지원을 위해 기존 인라인 코드를 함수로 추출.
+        // allottedWidth: 단일 페이지 모드=availableWidth 전체, 2페이지
+        // 모드=페이지 한 장 폭.
+        Widget buildPageContent(double allottedWidth) {
+          return AspectRatio(
             aspectRatio: aspectRatio,
-            // 안쪽 LayoutBuilder: 프레임의 실제 렌더링 폭(availableWidth와
+            // 안쪽 LayoutBuilder: 프레임의 실제 렌더링 폭(allottedWidth와
             // 달리, AspectRatio가 실제로 정한 크기). 이 폭을 기준으로 글자
             // 확대 배율을 계산해 하위 트리 전체(페이지 내용·탭·바인더 링
             // 등)에 전달합니다. 아이폰과 아이패드는 프레임 폭 차이가 커서
@@ -453,13 +579,13 @@ class DiaryPageFrame extends StatelessWidget {
                       kMinTextScale,
                       kMaxTextScale,
                     );
-                // Center가 좌우로 똑같이 나눠 배치하므로, 한쪽 여백은
-                // 전체 차이의 절반입니다. 화면 비율이 diaryAspectRatio보다
-                // 좁은 기기(대부분의 폰)에서는 차이가 0(또는 음수 반올림
-                // 오차)이라 0으로 묶습니다.
+                // 한쪽 여백은 allottedWidth와 실제 프레임 폭의 차이의
+                // 절반입니다. 화면 비율이 diaryAspectRatio보다 좁은 기기
+                // (대부분의 폰)에서는 차이가 0(또는 음수 반올림 오차)이라
+                // 0으로 묶습니다.
                 final marginEachSide =
                     marginEachSideOverride ??
-                    math.max(0.0, (availableWidth - frameWidth) / 2);
+                    math.max(0.0, (allottedWidth - frameWidth) / 2);
                 return DiaryFrameScale(
                   scale: scale,
                   marginEachSide: marginEachSide,
@@ -467,8 +593,96 @@ class DiaryPageFrame extends StatelessWidget {
                 );
               },
             ),
-          ),
-        );
+          );
+        }
+
+        // [백엔드 수정]
+        // 가로모드 2페이지 스프레드 추가 — 페이지 두 장이 나란히 들어갈
+        // 폭일 때만 동반 패널을 함께 그리고, 안 맞으면(세로/좁은 가로)
+        // 기존 단일 페이지 레터박스로 폴백.
+        final companionPanel = landscapeCompanionPanel;
+        if (companionPanel != null && availableHeight.isFinite) {
+          final pageHeight = availableHeight;
+          final layout = resolveTwoPageLayout(
+            pageHeight: pageHeight,
+            aspectRatio: aspectRatio,
+            pageTop: pageTop,
+            pageBottom: pageBottom,
+            pageLeft: pageLeft,
+            pageRight: pageRight,
+          );
+          final pageWidth = layout.pageWidth;
+          final metrics = layout.metrics;
+          final rightPageLeft = layout.rightPageLeft;
+          final spreadWidth = layout.spreadWidth;
+          if (spreadWidth <= availableWidth) {
+            final companionScale =
+                scaleOverride ??
+                (pageWidth / kReferenceFrameWidth).clamp(
+                  kMinTextScale,
+                  kMaxTextScale,
+                );
+            return Center(
+              child: SizedBox(
+                width: spreadWidth,
+                height: pageHeight,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      width: pageWidth,
+                      height: pageHeight,
+                      child: DiaryFrameScale(
+                        scale: companionScale,
+                        marginEachSide: 0,
+                        // 실제 페이지와 같은 크기로 보이도록 페이지의
+                        // 상하좌우 여백 + widthFactor 확대를 좌우만
+                        // 뒤집어 적용(스파인이 페이지는 왼쪽, 여긴 오른쪽).
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Positioned(
+                              top: pageTop,
+                              bottom: pageBottom,
+                              left: pageRight,
+                              right: pageLeft,
+                              child: FractionallySizedBox(
+                                widthFactor: defaultPageWidthFactor,
+                                child: companionPanel,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // 페이지 박스를 spineOverlap만큼 동반 패널 쪽으로 겹쳐
+                    // 배치 — 크림 영역끼리 딱 맞닿게.
+                    Positioned(
+                      left: rightPageLeft,
+                      top: 0,
+                      width: pageWidth,
+                      height: pageHeight,
+                      child: buildPageContent(pageWidth),
+                    ),
+                    // 이음새에 걸치는 확대 공유 바인더 링 — 양쪽 페이지 위에
+                    // 그려서 두 페이지를 함께 꿰뚫은 것처럼 보이게 함.
+                    // 페이지 자체의 작은 링(_buildRingAndOverlay)과 별개로
+                    // 항상 보이는 순수 장식.
+                    _buildLandscapeSpineRing(
+                      visualSeamX: layout.spineCenterX,
+                      barWidth: metrics.barWidth,
+                      barHeight: metrics.barHeight,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+        }
+
+        return Center(child: buildPageContent(availableWidth));
       },
     );
 

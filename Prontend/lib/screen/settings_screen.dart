@@ -9,6 +9,8 @@ import '../services/kakao_login_controller.dart';
 import '../services/local_ticket_store.dart';
 import '../services/notification_settings_service.dart';
 import '../services/ticket_service.dart';
+import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
+import '../widgets/diary_landscape_cover_panel.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/pressable_scale.dart';
@@ -179,6 +181,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return DiaryPageFrame(
       isTabRoot: true,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
+      landscapeCompanionPanel: DiaryLandscapeCoverPanel(
+        child: buildUpcomingTicketLandscapePanel(),
+      ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
         child: Container(

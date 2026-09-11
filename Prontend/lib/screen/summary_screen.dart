@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
 import '../services/summary_service.dart';
+import '../widgets/diary_landscape_cover_panel.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/responsive_text.dart';
@@ -103,6 +105,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
     return DiaryPageFrame(
       isTabRoot: true,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.summary),
+      landscapeCompanionPanel: DiaryLandscapeCoverPanel(
+        child: buildUpcomingTicketLandscapePanel(),
+      ),
       child: ValueListenableBuilder(
         valueListenable: _transition,
         builder: (context, t, child) {

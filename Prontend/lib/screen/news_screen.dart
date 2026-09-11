@@ -6,7 +6,10 @@ import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/services/news_cache_store.dart';
 import 'package:ticketdiary/services/social_service.dart';
+import 'package:ticketdiary/screen/diary_screen.dart'
+    show buildUpcomingTicketLandscapePanel;
 import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
+import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
@@ -417,6 +420,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       isTabRoot: true,
       pageTop: _pageTop,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.news),
+      landscapeCompanionPanel: DiaryLandscapeCoverPanel(
+        child: buildUpcomingTicketLandscapePanel(),
+      ),
       // 페이지 상단 경계에 "페이지 뒤에서" 끼워 올린 풀탭 손잡이(빨간 하트 +
       // 방향 화살표). 우측 인덱스 탭과 같은 원리로, 경계선 위로 삐져나온
       // 부분만 보입니다.

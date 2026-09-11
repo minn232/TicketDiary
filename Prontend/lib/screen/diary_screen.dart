@@ -16,7 +16,10 @@ import 'package:ticketdiary/services/ticket_refresh_bus.dart';
 import 'package:ticketdiary/services/ticket_scan_service.dart';
 import 'package:ticketdiary/services/ticket_service.dart';
 import 'package:ticketdiary/services/torn_ticket_store.dart';
+import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
+import 'package:ticketdiary/widgets/landscape_upcoming_ticket_panel.dart';
+import 'package:ticketdiary/widgets/poster_fallback_gradient.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/add_ticket_option.dart';
 import 'package:ticketdiary/widgets/entry_ticket_tear_piece.dart';
@@ -121,6 +124,7 @@ class TicketData {
         ticketId: ticket.id,
         review: ticket.review,
         concertPhotoUrls: ticket.concertPhotoUrls,
+        ticketingLinks: concert?.ticketingLinks,
       ),
       id: ticket.id,
       // 서버(또는 게스트는 LocalTicketStore)에 저장된 torn_at이 있으면
@@ -133,6 +137,41 @@ class TicketData {
           ticket.tornAt != null || TornTicketStore.instance.isTorn(ticket.id),
     );
   }
+}
+
+// [백엔드 수정]
+// 가로모드 왼쪽 동반 패널용 "다가오는 공연" 조회 함수 추가. 다이어리
+// 화면이 이미 불러와둔 티켓 캐시([_DiaryScreenState._tickets])를 그대로
+// 읽어, 소식/결산/설정 탭도 따로 다시 불러오지 않고 공유. 없으면 null.
+TicketData? nearestUpcomingTicketGlobally() {
+  final now = DateTime.now();
+  TicketData? nearest;
+  for (final ticket in _DiaryScreenState._tickets) {
+    if (ticket.status != TicketStatus.beforeConcert) continue;
+    final date = ticket.info?.date;
+    if (date == null || !date.isAfter(now)) continue;
+    if (nearest == null || date.isBefore(nearest.info!.date!)) {
+      nearest = ticket;
+    }
+  }
+  return nearest;
+}
+
+// [백엔드 수정]
+// nearestUpcomingTicketGlobally 결과를 LandscapeUpcomingTicketPanel로
+// 바꿔주는 함수 추가(없으면 빈 위젯) — 네 탭이 전부 이 함수 하나로
+// 가로모드 왼쪽 동반 패널 내용을 만듦.
+Widget buildUpcomingTicketLandscapePanel() {
+  final nearest = nearestUpcomingTicketGlobally();
+  if (nearest == null) return const SizedBox.shrink();
+  return LandscapeUpcomingTicketPanel(
+    title: nearest.title,
+    date: nearest.info?.date,
+    posterImageUrl: nearest.info?.posterImageUrl,
+    venue: nearest.info?.venueName,
+    seat: nearest.info?.seat,
+    ticketingLinks: nearest.info?.ticketingLinks,
+  );
 }
 
 enum TicketStatus { beforeDelivery, beforeConcert, afterConcert, error }
@@ -1339,6 +1378,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
       marginEachSideOverride: widget.frameMarginOverride,
       sideTabs: fixedTabs,
       animateMainPage: true,
+      // [백엔드 수정] 가로모드 왼쪽 동반 패널 추가(폭 충분할 때만).
+      landscapeCompanionPanel: DiaryLandscapeCoverPanel(
+        child: buildUpcomingTicketLandscapePanel(),
+      ),
       // 잎에 다이어리 탭까지 포함하려면 오버레이가 페이지 박스보다 넓은
       // 프레임 전체를 차지해야 합니다. 회전축(pivotX)은 페이지 종이의
       // 왼쪽 모서리(= 30 - 가로 10% 확대로 늘어난 절반) 위치입니다.
@@ -1790,19 +1833,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   /// 등록된 티켓들 중 앞으로 시작할 공연이 가장 빠른 "공연 전" 티켓.
   /// 없으면(등록된 공연이 없거나 전부 지난 공연이면) null.
-  TicketData? _nearestUpcomingTicket() {
-    final now = DateTime.now();
-    TicketData? nearest;
-    for (final ticket in _tickets) {
-      if (ticket.status != TicketStatus.beforeConcert) continue;
-      final date = ticket.info?.date;
-      if (date == null || !date.isAfter(now)) continue;
-      if (nearest == null || date.isBefore(nearest.info!.date!)) {
-        nearest = ticket;
-      }
-    }
-    return nearest;
-  }
+  TicketData? _nearestUpcomingTicket() => nearestUpcomingTicketGlobally();
 
   /// 첫 페이지 상단 여백에 표시하는, 가장 빠르게 시작하는 공연의 D-day+제목.
   /// 다가오는 공연이 없으면 빈 공간을 그대로 둡니다.
@@ -1838,6 +1869,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       ),
     );
   }
+
 
   Widget _buildTicketBeforeDelivery({required String title, TicketInfo? info}) {
     final dDayLabel = _deliveryDDayLabel(info?.deliveryDate);
@@ -2362,25 +2394,6 @@ class _DashedLinePainter extends CustomPainter {
 // 켜고 끕니다. false로 두면 아래 위젯들은 전혀 쓰이지 않고 기존 디자인 유지.)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// 포스터가 없을 때 공연마다 서로 다른 무드의 배경을 주기 위한 그라데이션
-/// 팔레트. 제목 문자열에서 결정적으로(앱을 껐다 켜도 동일하게) 골라, 같은
-/// 공연은 항상 같은 색을 갖습니다.
-const List<List<Color>> _posterFallbackPalettes = [
-  [Color(0xFF241734), Color(0xFF7B4B94)], // 자주빛 밤
-  [Color(0xFF0F2A43), Color(0xFF3E7CB1)], // 네이비
-  [Color(0xFF3B2416), Color(0xFFB07D3D)], // 앰버 브라운
-  [Color(0xFF12403C), Color(0xFF4C9A82)], // 딥 그린
-  [Color(0xFF461426), Color(0xFFA34672)], // 버건디
-];
-
-List<Color> _posterFallbackGradient(String seedText) {
-  var h = 0;
-  for (final c in seedText.codeUnits) {
-    h = (h * 31 + c) & 0x7fffffff;
-  }
-  return _posterFallbackPalettes[h % _posterFallbackPalettes.length];
-}
-
 /// 티켓 왼쪽(본표) 영역: 공연 포스터를 꽉 채운 배경으로 깔고, 가독성을 위한
 /// 어두운 스크림 위에 공연명/날짜·공연장/좌석·가격을 올립니다.
 /// 포스터가 없거나 로드에 실패하면 공연별 그라데이션으로 폴백합니다.
@@ -2430,7 +2443,7 @@ class _PosterTicketFace extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: _posterFallbackGradient(title),
+                colors: posterFallbackGradient(title),
               ),
             ),
           ),

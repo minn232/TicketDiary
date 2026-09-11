@@ -57,6 +57,12 @@ class TicketInfo {
   /// 새 URL을 이어붙인 전체 목록을 다시 보내야 합니다.
   final List<String>? concertPhotoUrls;
 
+  // [백엔드 수정]
+  // 공연 예매처 바로가기 링크 필드 추가(`ConcertResponse.ticketingLinks`와
+  // 대응, 키: YES24/INTERPARK/TICKETLINK/MELON). 이미 산 티켓의 실제
+  // 구매처(vendorName)와는 별개.
+  final Map<String, String>? ticketingLinks;
+
   const TicketInfo({
     this.concertName = '',
     this.venueName = '',
@@ -73,6 +79,7 @@ class TicketInfo {
     this.ticketId,
     this.review,
     this.concertPhotoUrls,
+    this.ticketingLinks,
   });
 
   TicketInfo copyWith({
@@ -91,6 +98,7 @@ class TicketInfo {
     String? ticketId,
     String? review,
     List<String>? concertPhotoUrls,
+    Map<String, String>? ticketingLinks,
   }) {
     return TicketInfo(
       concertName: concertName ?? this.concertName,
@@ -107,6 +115,7 @@ class TicketInfo {
       concertId: concertId ?? this.concertId,
       ticketId: ticketId ?? this.ticketId,
       review: review ?? this.review,
+      ticketingLinks: ticketingLinks ?? this.ticketingLinks,
       concertPhotoUrls: concertPhotoUrls ?? this.concertPhotoUrls,
     );
   }

@@ -380,8 +380,31 @@ class _SplashScreenState extends State<SplashScreen>
           // 전체 화면(constraints)의 정중앙에 놓고 있어서, 실제 화면과
           // 위아래(또는 좌우) 위치가 살짝 어긋나 보였습니다. 그 차이만큼
           // 미리 상쇄해둡니다.
+          // [백엔드 수정]
+          // 가로모드 2페이지 스프레드 지원 추가 — 실제 DiaryPageFrame이
+          // 화면 정중앙이 아니라 오른쪽 페이지 자리에 놓이므로,
+          // resolveTwoPageLayout으로 같은 위치를 계산해 스플래시 종료
+          // 시 위치가 안 튀게 함.
+          final twoPageLayout = DiaryPageFrame.resolveTwoPageLayout(
+            pageHeight: screenH,
+          );
+          final usesTwoPage = twoPageLayout.spreadWidth <= screenW;
+          final spreadOffsetX = usesTwoPage
+              ? () {
+                  final spreadLeft = math.max(
+                    0.0,
+                    (screenW - twoPageLayout.spreadWidth) / 2,
+                  );
+                  final pageCenterX =
+                      spreadLeft +
+                      twoPageLayout.rightPageLeft +
+                      twoPageLayout.pageWidth / 2;
+                  return pageCenterX - screenW / 2;
+                }()
+              : 0.0;
+
           final centeringOffset = Offset(
-            (safePadding.left - safePadding.right) / 2,
+            (safePadding.left - safePadding.right) / 2 + spreadOffsetX,
             (safePadding.top - safePadding.bottom) / 2,
           );
 
@@ -420,10 +443,11 @@ class _SplashScreenState extends State<SplashScreen>
             kMinTextScale,
             kMaxTextScale,
           );
-          final previewMarginEachSide = math.max(
-            0.0,
-            (screenW - frameWidthReal) / 2,
-          );
+          // 2페이지 모드는 marginEachSide=0(위 spreadOffsetX로 위치는 이미
+          // 옮김) — 화면 전체 기준 여백을 또 더하면 탭이 이중으로 밀림.
+          final previewMarginEachSide = usesTwoPage
+              ? 0.0
+              : math.max(0.0, (screenW - frameWidthReal) / 2);
 
           return AnimatedBuilder(
             animation: _controller,

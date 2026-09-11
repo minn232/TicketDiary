@@ -1,6 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'package:ticketdiary/main/ticket_diary_app.dart';
 
@@ -19,13 +18,5 @@ void main() async {
     debugPrint('[Firebase] 초기화 실패(무시): $e');
   }
 
-  // 다이어리 UI가 세로 비율 전제로 만들어져 있어(DiaryPageFrame 등),
-  // 가로로 돌아가면 레이아웃이 깨집니다. 세로(정방향/뒤집힘)만 허용합니다.
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-
   runApp(TicketDiaryApp());
 }
-
