@@ -24,11 +24,20 @@ _REQUEST_INTERVAL = 0.3
 _LASTFM_RETRY_COOLDOWN = timedelta(days=7)
 _MAX_LASTFM_ATTEMPTS = 5
 
+# 1회 배치 실행당 처리 상한 - 백필 등으로 한꺼번에 몰아서 돌리면 그 시점에 한꺼번에 기록된
+# last_attempted_at 때문에 정확히 쿨다운(1주) 뒤에 또 전부 몰려서 재시도되는 게 반복됨. 상한을
+# 두고 "오래 기다린 것부터" 처리하면 첫 드레인 때 처리 시각이 여러 날에 걸쳐 자연스럽게
+# 분산되고, 이후 재시도 물결도 그 분산을 그대로 이어받아 몰림이 스스로 해소된다
+_MAX_LASTFM_SYNC_PER_RUN = 300
 
-# names 중 아직 Last.fm 재시도가 허용되는 것만 골라 반환(순서 유지) - 실패 기록이 없거나,
-# 쿨다운이 지났고 상한 미만이면 허용. sync_type별로 따로 추적(같은 아티스트라도 유사아티스트/
-# 장르 중 한쪽만 실패할 수 있음)
-async def _filter_lastfm_retry_eligible(names: list[str], sync_type: str) -> list[str]:
+
+# names 중 아직 Last.fm 재시도가 허용되는 것만 골라 우선순위대로 정렬해 반환 - 실패 기록이
+# 없는(한 번도 안 시도한) 이름을 먼저, 그 다음 재시도 가능한(쿨다운 지났고 상한 미만) 이름을
+# 오래 기다린 순으로. limit을 넘기면 그만큼만 잘라 반환(_MAX_LASTFM_SYNC_PER_RUN 참고 - 하루치
+# 부담을 분산시키는 핵심 장치)
+async def _filter_lastfm_retry_eligible(
+    names: list[str], sync_type: str, *, limit: int | None = None
+) -> list[str]:
     if not names:
         return []
 
@@ -42,12 +51,18 @@ async def _filter_lastfm_retry_eligible(names: list[str], sync_type: str) -> lis
         )
         status_by_name = {row.artist_name: row for row in result.scalars().all()}
 
-    return [
-        name
-        for name in names
-        if (status := status_by_name.get(name)) is None
-        or (status.attempt_count < _MAX_LASTFM_ATTEMPTS and status.last_attempted_at < cutoff)
-    ]
+    never_attempted: list[str] = []
+    retry_eligible: list[tuple[datetime, str]] = []
+    for name in names:
+        status = status_by_name.get(name)
+        if status is None:
+            never_attempted.append(name)
+        elif status.attempt_count < _MAX_LASTFM_ATTEMPTS and status.last_attempted_at < cutoff:
+            retry_eligible.append((status.last_attempted_at, name))
+
+    retry_eligible.sort(key=lambda pair: pair[0])
+    ordered = never_attempted + [name for _, name in retry_eligible]
+    return ordered[:limit] if limit is not None else ordered
 
 
 # 실패(빈 결과) 기록 - 있으면 attempt_count/시각 갱신, 없으면 새로 생성
@@ -227,7 +242,7 @@ async def sync_artist_genres() -> None:
         cached_names = set(cached_result.scalars().all())
 
     pending = sorted(all_names - cached_names)
-    pending = await _filter_lastfm_retry_eligible(pending, "genre")
+    pending = await _filter_lastfm_retry_eligible(pending, "genre", limit=_MAX_LASTFM_SYNC_PER_RUN)
     if not pending:
         logger.info("Last.fm 신규 장르 캐싱 대상 아티스트 없음")
         return
@@ -246,7 +261,8 @@ async def sync_artist_genres() -> None:
 
 # 티켓 등록 등 이벤트 발생 시 그 자리에서(배치를 기다리지 않고) 바로 캐싱.
 # Last.fm ToS(초당 5회, 5분 평균) 대비 사람이 티켓을 등록하는 빈도는 무시할 만한 수준이라 문제
-# 없음. 인자로 받은 아티스트 중 이미 캐싱된 건 건너뛰므로 매 호출이 가볍다(대개 0~1명).
+# 없음. 인자로 받은 아티스트 중 이미 캐싱된 건 건너뛰므로 매 호출이 가볍다(대개 0~1명) -
+# 입력 자체가 이미 작아서 _MAX_LASTFM_SYNC_PER_RUN 상한은 여기선 안 걸음(배치 전용)
 async def ensure_artist_genres_cached(artist_names: list[str]) -> None:
     names = {name.strip() for name in artist_names if name and name.strip()}
     if not names:
@@ -287,7 +303,7 @@ async def sync_artist_similarities() -> None:
         cached_names = set(cached_result.scalars().all())
 
     pending = sorted(all_names - cached_names)
-    pending = await _filter_lastfm_retry_eligible(pending, "similarity")
+    pending = await _filter_lastfm_retry_eligible(pending, "similarity", limit=_MAX_LASTFM_SYNC_PER_RUN)
     if not pending:
         logger.info("Last.fm 신규 캐싱 대상 아티스트 없음")
         return

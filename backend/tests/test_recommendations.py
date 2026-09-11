@@ -318,6 +318,41 @@ async def test_sync_artist_similarities_clears_failure_record_on_success():
         assert result.scalar_one_or_none() is None
 
 
+# 한꺼번에 몰아서 돌리면(백필 등) 전부 같은 날 last_attempted_at이 찍혀서 정확히 쿨다운(1주) 뒤에
+# 또 한꺼번에 재시도가 몰리는 문제 방지용 - 한 번도 시도 안 한 이름을 먼저, 그 다음 오래 기다린
+# 순으로 처리해야 첫 드레인부터 처리 시각이 자연스럽게 분산됨
+@pytest.mark.asyncio
+async def test_filter_lastfm_retry_eligible_prioritizes_never_attempted_then_oldest():
+    from app.services.lastfm import _filter_lastfm_retry_eligible
+
+    never_attempted = f"신규_{uuid.uuid4().hex}"
+    older_retry = f"오래대기_{uuid.uuid4().hex}"
+    newer_retry = f"최근대기_{uuid.uuid4().hex}"
+
+    now = datetime.now(timezone.utc)
+    await _set_lastfm_status(older_retry, "similarity", now - timedelta(days=20), 1)
+    await _set_lastfm_status(newer_retry, "similarity", now - timedelta(days=8), 1)
+
+    result = await _filter_lastfm_retry_eligible(
+        [newer_retry, older_retry, never_attempted], "similarity"
+    )
+
+    assert result == [never_attempted, older_retry, newer_retry]
+
+
+# limit을 넘기면 우선순위대로 정렬한 뒤 그만큼만 잘라 반환하는지 테스트
+# (_MAX_LASTFM_SYNC_PER_RUN - 하루 처리량을 제한해 부담을 분산시키는 핵심 장치)
+@pytest.mark.asyncio
+async def test_filter_lastfm_retry_eligible_respects_limit():
+    from app.services.lastfm import _filter_lastfm_retry_eligible
+
+    names = [f"제한테스트{i}_{uuid.uuid4().hex[:6]}" for i in range(5)]
+
+    result = await _filter_lastfm_retry_eligible(names, "similarity", limit=2)
+
+    assert result == names[:2]
+
+
 # resolve_genres 화이트리스트 매칭 테스트
 
 # count 내림차순으로 이미 정렬된 태그 목록에서 화이트리스트에 걸리는 태그를 순위 순서대로 전부 채택 테스트
