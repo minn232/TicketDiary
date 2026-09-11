@@ -145,6 +145,9 @@ class _SplashScreenState extends State<SplashScreen>
 
   /// [백엔드 수정]
   /// 크로스페이드 완전히 제거(지속 시간 0) - 겹쳐 보이는 프레임 자체를 없앰.
+  /// 150ms로 되살렸다가 "RenderOpacity was mutated in
+  /// _RenderLayoutBuilder.performLayout" assertion 에러가 실기기에서 재현돼
+  /// 원복함(DiaryPageFrame 내부 LayoutBuilder들과 충돌).
   static const Duration _fadeToMainDuration = Duration.zero;
 
   late final AnimationController _controller;
@@ -320,7 +323,12 @@ class _SplashScreenState extends State<SplashScreen>
     if (_navigated || !mounted) return;
     if (!_dataReady || _controller.value < _navigateAt) return;
     _navigated = true;
-    Navigator.of(context).pushReplacement(
+    // [백엔드 수정]
+    // pushReplacement -> pushAndRemoveUntil(false). pushReplacement는 새 라우트
+    // 진입 중 스플래시 라우트를 한 프레임 남겨둬서, 둘이 동시에 그려져 바인더
+    // 링이 두 겹으로 보이는 버그가 있었음(실기기 녹화로 확인). 이전 라우트를
+    // 전환 애니메이션 없이 즉시 제거해 그 프레임 자체를 없앰.
+    Navigator.of(context).pushAndRemoveUntil(
       PageRouteBuilder(
         settings: const RouteSettings(name: DiaryRoutes.diary),
         transitionDuration: _fadeToMainDuration,
@@ -335,6 +343,7 @@ class _SplashScreenState extends State<SplashScreen>
           ),
         ),
       ),
+      (route) => false,
     );
   }
 
@@ -733,9 +742,17 @@ class _SplashScreenState extends State<SplashScreen>
                   width: w * bookGrowth,
                   height: h * bookGrowth,
                   child: MediaQuery(
+                    // [백엔드 수정]
+                    // padding만 0으로 덮으면 DiaryPageFrame의
+                    // SafeArea(maintainBottomViewPadding: true)가 padding 대신
+                    // viewPadding.bottom을 그대로 써서, 그 인셋 크기만큼 미리보기
+                    // 높이가 진짜 화면보다 작게 계산되던 버그(실기기 녹화+로그로
+                    // 확인). viewPadding/viewInsets도 같이 0으로 덮어야 함.
                     data: MediaQuery.of(context).copyWith(
                       size: Size(w * bookGrowth, h * bookGrowth),
                       padding: EdgeInsets.zero,
+                      viewPadding: EdgeInsets.zero,
+                      viewInsets: EdgeInsets.zero,
                     ),
                     child: IgnorePointer(
                       child: DiaryScreen(

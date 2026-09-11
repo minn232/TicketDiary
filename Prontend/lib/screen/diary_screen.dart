@@ -1331,7 +1331,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   color: _paperColor,
                   borderRadius: DiaryPageFrame.defaultPageBorderRadius,
                 ),
-                child: _buildPageContent(pageIndex, constraints),
+                child: _buildPageContent(context, pageIndex, constraints),
               ),
             ),
           ),
@@ -1486,7 +1486,16 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
-  Widget _buildPageContent(int pageIndex, BoxConstraints constraints) {
+  // [백엔드 수정]
+  // context를 매개변수로 받도록 변경 - 기존엔 암묵적으로 State의 context를
+  // 써서 DiaryFrameScale을 못 찾고 항상 MediaQuery 폭으로 폴백했음(D-day
+  // 배너 글자 크기가 화면마다 다르게 나오는 걸로 발견). 호출부(LayoutBuilder)의
+  // 이미 스코핑된 context를 그대로 전달받음.
+  Widget _buildPageContent(
+    BuildContext context,
+    int pageIndex,
+    BoxConstraints constraints,
+  ) {
     final bool isFirstPage = pageIndex == 0;
     final pageTickets = _ticketsForPage(pageIndex);
 
@@ -1869,7 +1878,6 @@ class _DiaryScreenState extends State<DiaryScreen> {
       ),
     );
   }
-
 
   Widget _buildTicketBeforeDelivery({required String title, TicketInfo? info}) {
     final dDayLabel = _deliveryDDayLabel(info?.deliveryDate);
