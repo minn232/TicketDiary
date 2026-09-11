@@ -283,6 +283,7 @@ function renderDetail(c) {
           <button onclick="startRename(this)">수정</button>
           <button onclick="startDisplayName(this)">표시명</button>
           <button onclick="startAddAlias(this)">별칭 추가</button>
+          <button onclick="startReassign(this)" title="동명이인 오매칭(텍스트는 같은데 실존 인물이 다름) 강제 수정 - 검색해서 올바른 아티스트로 재지정">재지정</button>
           <button class="danger" onclick="startDeleteConfirm(this)">삭제</button>
         </span>
       </div>`;
@@ -576,6 +577,74 @@ async function submitAddAlias(el, canonicalId) {
     });
     toast('별칭 추가됨');
     openDetail(concertId);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 동명이인 오매칭(텍스트는 같은데 실존 인물이 다름, 예: LiSA→블랙핑크 Lisa) 강제 수정용 -
+// 이름을 다시 입력해도 fuzzy/alias 매칭이 또 같은 틀린 canonical로 가버려서, 검색해서
+// canonical_id를 직접 골라 재지정한다(admin.py reassign_artist_to_canonical 참고)
+function startReassign(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  row.innerHTML = `
+    <div style="flex:1;">
+      <div style="display:flex; margin-bottom:6px;">
+        <input type="text" class="reassign-search" placeholder="올바른 아티스트 이름 검색" style="flex:1; margin-right:8px;" value="${esc(name)}" />
+        <button onclick="searchReassignCandidates(this)">검색</button>
+      </div>
+      <div class="reassign-results" style="font-size:12px;"></div>
+    </div>
+    <span class="actions">
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+  const input = row.querySelector('.reassign-search');
+  input.focus();
+  input.select();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') searchReassignCandidates(input);
+    if (e.key === 'Escape') openDetail(concertId);
+  });
+}
+
+async function searchReassignCandidates(el) {
+  const row = el.closest('.artist-row');
+  const resultsBox = row.querySelector('.reassign-results');
+  const q = row.querySelector('.reassign-search').value.trim();
+  if (!q) return;
+  resultsBox.textContent = '검색 중...';
+  let data;
+  try {
+    data = await api(`/artists?search=${encodeURIComponent(q)}&page_size=8`);
+  } catch (e) {
+    resultsBox.textContent = '오류: ' + e.message;
+    return;
+  }
+  if (!data.items.length) {
+    resultsBox.textContent = '검색 결과 없음';
+    return;
+  }
+  resultsBox.innerHTML = data.items.map(a => `
+    <div style="display:flex; justify-content:space-between; align-items:center; border:1px solid var(--border); border-radius:6px; padding:4px 8px; margin-bottom:4px;">
+      <span>${esc(a.display_name || a.canonical_name)}${a.display_name ? ` <span style="color:var(--muted);">(${esc(a.canonical_name)})</span>` : ''}${a.mbid ? '' : ' <span style="color:var(--muted);">[MusicBrainz 미연동]</span>'}</span>
+      <button onclick="submitReassign(this, '${a.id}')">이걸로 재지정</button>
+    </div>`).join('');
+}
+
+async function submitReassign(button, canonicalId) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const artistText = row.dataset.name;
+  try {
+    await api(`/concerts/${concertId}/artist-name/reassign`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_text: artistText, canonical_id: canonicalId }),
+    });
+    toast('재지정됨');
+    openDetail(concertId);
+    load(page);
   } catch (e) {
     toast('오류: ' + e.message);
   }

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
@@ -448,6 +448,53 @@ async def resolve_artist_suggestion(db: AsyncSession, concert_id, artist_text: s
     else:
         row.status = "unconfirmed"
     row.suggested_canonical_id = None
+
+    await db.commit()
+    await db.refresh(concert)
+    return concert
+
+
+# "텍스트는 정확히 같은데 실존 인물이 다른" 동명이인 오매칭(예: 일본 가수 LiSA 콘서트가
+# 블랙핑크 Lisa로 매칭된 실사례) 강제 수정용 - 이름 재입력으로는 fuzzy/alias 매칭이 또 같은
+# 틀린 canonical로 가버려서 못 고침. admin이 검색으로 직접 고른 canonical_id로 통째로
+# 재지정한다. 이 표기가 다른(틀린) canonical의 별칭으로 이미 등록돼 있으면 그것부터 지워야
+# 다음에 같은 표기가 다른 공연에 들어와도 정규화 배치가 또 틀린 쪽으로 안 감
+async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text: str, canonical_id) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    artist_text = artist_text.strip()
+    if not artist_text or artist_text not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+
+    target = await db.get(CanonicalArtist, canonical_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="대상 아티스트를 찾을 수 없습니다.")
+
+    normalized = _normalize_alias_text(artist_text)
+    await db.execute(
+        delete(ArtistAlias).where(
+            func.lower(ArtistAlias.alias_text) == normalized,
+            ArtistAlias.canonical_artist_id != target.id,
+        )
+    )
+    await _register_alias_if_new(db, target, artist_text, source="admin_reassign")
+
+    await apply_canonical_replacement(
+        db, concert_id, artist_text, _display_value(target), clear_admin_review=True
+    )
+
+    status_result = await db.execute(
+        select(ArtistNormalizationStatus).where(
+            ArtistNormalizationStatus.concert_id == concert_id,
+            ArtistNormalizationStatus.artist_text == artist_text,
+        )
+    )
+    status_row = status_result.scalar_one_or_none()
+    if status_row is not None:
+        status_row.status = "matched"
+        status_row.suggested_canonical_id = None
 
     await db.commit()
     await db.refresh(concert)

@@ -32,6 +32,7 @@ from app.schemas.admin import (
     AdminDisplayNameRequest,
     AdminGroupMembershipRequest,
     AdminGroupRelationAddRequest,
+    AdminReassignArtistRequest,
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_normalization import (
@@ -42,6 +43,7 @@ from app.services.artist_normalization import (
     confirm_artist_name_change,
     delete_canonical_artist,
     get_canonical_name_options,
+    reassign_artist_to_canonical,
     remove_artist_alias,
     remove_artist_name,
     remove_group_relation,
@@ -298,6 +300,18 @@ async def resolve_artist_suggestion_route(
     concert_id: UUID, body: AdminArtistSuggestionRequest, db: AsyncSession = Depends(get_db)
 ):
     await resolve_artist_suggestion(db, concert_id, body.artist_text, body.accept)
+    await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+# 동명이인 오매칭(텍스트는 같은데 실존 인물이 다름, 예: LiSA→블랙핑크 Lisa) 강제 수정용 -
+# 이름 재입력으로는 fuzzy/alias 매칭이 또 같은 틀린 canonical로 가버려서 admin이 검색으로
+# 직접 고른 canonical_id로 통째로 재지정한다(reassign_artist_to_canonical 참고)
+@router.post("/concerts/{concert_id}/artist-name/reassign", response_model=AdminConcertDetail)
+async def reassign_artist_route(
+    concert_id: UUID, body: AdminReassignArtistRequest, db: AsyncSession = Depends(get_db)
+):
+    await reassign_artist_to_canonical(db, concert_id, body.artist_text, body.canonical_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 

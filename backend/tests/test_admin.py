@@ -467,6 +467,99 @@ async def test_admin_rejects_artist_suggestion():
     assert [s for s in data["statuses"] if s["artist_text"] == original][0]["status"] == "unconfirmed"
 
 
+# 동명이인 오매칭(텍스트는 같은데 실존 인물이 다름, LiSA→블랙핑크 Lisa 실사례) 강제 재지정 테스트 -
+# 잘못된 canonical의 별칭도 정리돼서 다음에 같은 표기가 다른 공연에 들어와도 안 틀리게 가야 함
+@pytest.mark.asyncio
+async def test_admin_reassigns_artist_to_correct_canonical():
+    from app.services.artist_normalization import find_canonical_by_alias
+
+    artist_text = f"LiSA_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REASSIGN_{uuid.uuid4().hex[:6]}", artist_text)
+
+    async with AsyncSessionLocal() as db:
+        # 잘못 매칭된 canonical(블랙핑크 Lisa 역할) - 이 표기가 이미 이쪽 별칭으로 등록돼 있는 상황을 재현
+        wrong = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=f"블랙핑크Lisa_{uuid.uuid4().hex[:6]}")
+        db.add(wrong)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=wrong.id, alias_text=artist_text, source="musicbrainz"))
+
+        # 올바른 canonical(실제 일본 가수 LiSA 역할)
+        correct = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=f"일본LiSA_{uuid.uuid4().hex[:6]}")
+        db.add(correct)
+        await db.flush()
+        correct_id = correct.id
+
+        db.add(ArtistNormalizationStatus(concert_id=uuid.UUID(concert_id), artist_text=artist_text, status="matched"))
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/reassign",
+                json={"artist_text": artist_text, "canonical_id": str(correct_id)},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["artist_name"] == [correct.canonical_name]
+    assert data["admin_reviewed_at"] is not None
+
+    async with AsyncSessionLocal() as db:
+        concert = (await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))).scalar_one()
+        correct_row = await db.get(CanonicalArtist, correct_id)
+        assert concert.artist_name == [correct_row.canonical_name]
+
+        # 틀린 canonical에 남아있던 별칭은 지워지고, 올바른 canonical의 별칭으로 다시 등록돼야 함
+        resolved = await find_canonical_by_alias(db, artist_text)
+        assert resolved is not None
+        assert resolved.id == correct_id
+
+        status_row = (
+            await db.execute(
+                select(ArtistNormalizationStatus).where(
+                    ArtistNormalizationStatus.concert_id == uuid.UUID(concert_id),
+                    ArtistNormalizationStatus.artist_text == artist_text,
+                )
+            )
+        ).scalar_one()
+        assert status_row.status == "matched"
+
+
+@pytest.mark.asyncio
+async def test_admin_reassign_rejects_unknown_canonical():
+    artist_text = f"미지대상_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REASSIGN_404_{uuid.uuid4().hex[:6]}", artist_text)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/reassign",
+                json={"artist_text": artist_text, "canonical_id": str(uuid.uuid4())},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_reassign_rejects_artist_not_on_concert():
+    concert_id = await _create_concert(f"PF_ADMIN_REASSIGN_400_{uuid.uuid4().hex[:6]}", "기존아티스트")
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=f"엉뚱대상_{uuid.uuid4().hex[:6]}")
+        db.add(canonical)
+        await db.commit()
+        canonical_id = canonical.id
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/reassign",
+                json={"artist_text": "이공연에없는이름", "canonical_id": str(canonical_id)},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 400
+
+
 @pytest.mark.asyncio
 async def test_admin_deletes_artist():
     m1, m2 = f"멤버A_{uuid.uuid4().hex[:6]}", f"멤버B_{uuid.uuid4().hex[:6]}"

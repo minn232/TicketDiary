@@ -45,6 +45,13 @@ class AdminArtistSuggestionRequest(BaseModel):
     accept: bool
 
 
+class AdminReassignArtistRequest(BaseModel):
+    # reassign_artist_to_canonical에 그대로 넘기는 페이로드 - 동명이인 오매칭(텍스트는 같은데
+    # 실존 인물이 다름) 강제 수정용, canonical_id는 admin이 검색해서 직접 고른 값
+    artist_text: str
+    canonical_id: UUID
+
+
 class AdminConcertDetail(BaseModel):
     model_config = {"from_attributes": True}
 
