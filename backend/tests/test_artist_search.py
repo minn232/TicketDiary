@@ -105,6 +105,23 @@ async def test_search_artists_blank_query_returns_empty():
         assert await search_artists(db, "   ") == []
 
 
+# 그룹/멤버 관계가 전혀 없는 단독 canonical이라도 실제 공연이 0개면 숨겨야 함(관계 확장 경로가
+# 아니어도, 예: MusicBrainz 오매칭 정리 중 안 쓰이게 된 canonical이 남아있는 경우 등)
+@pytest.mark.asyncio
+async def test_search_artists_hides_standalone_canonical_with_no_concert():
+    name = f"공연없는단독_{uuid.uuid4().hex[:8]}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=name, source="musicbrainz"))
+        await db.commit()
+
+        results = await search_artists(db, name)
+
+    assert results == []
+
+
 # 멤버-그룹 관계 처리
 
 async def _seed_group_and_member(db, group_name: str, member_name: str) -> None:
@@ -122,33 +139,35 @@ async def _seed_group_and_member(db, group_name: str, member_name: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_artists_finds_relation_only_group_with_no_concert():
-    # 그룹 자체가 어떤 공연에도 원문으로 등장한 적 없어도(멤버 관계로만 존재, JYJ류) canonical_name
-    # 검색으로는 찾을 수 있어야 함
+async def test_search_artists_hides_relation_only_group_with_no_concert():
+    # 그룹 자체가 어떤 공연에도 원문으로 등장한 적 없으면(멤버 관계로만 존재, 팔로우 매칭용으로만
+    # 미리 채워진 경우) 검색 결과에서 빠져야 함(2026-09-11: 이런 관계전용 아티스트가 3천여 개나
+    # 쌓여 검색이 지저분해지는 문제로 정책 변경 - 예전엔 이런 것도 노출했었음)
     group_name = f"관계전용그룹_{uuid.uuid4().hex[:8]}"
     member_name = f"멤버_{uuid.uuid4().hex[:8]}"
     async with AsyncSessionLocal() as db:
         await _seed_group_and_member(db, group_name, member_name)
         results = await search_artists(db, group_name)
 
-    assert [r["name"] for r in results] == [group_name]
+    assert results == []
 
 
 @pytest.mark.asyncio
-async def test_search_artists_hides_member_without_own_concert_shows_group_instead():
-    # 멤버 자기 이름으로 등록된 공연이 하나도 없으면(밴드 공연에만 라인업으로 존재) 멤버는
-    # 숨기고 그룹만 노출
+async def test_search_artists_hides_member_and_group_when_neither_has_concert():
+    # 멤버도 그룹도 실제 공연이 하나도 없으면(관계로만 존재) 둘 다 검색 결과에서 빠져야 함
     group_name = f"솔로없는그룹_{uuid.uuid4().hex[:8]}"
     member_name = f"솔로없는멤버_{uuid.uuid4().hex[:8]}"
     async with AsyncSessionLocal() as db:
         await _seed_group_and_member(db, group_name, member_name)
         results = await search_artists(db, member_name)
 
-    assert [r["name"] for r in results] == [group_name]
+    assert results == []
 
 
 @pytest.mark.asyncio
-async def test_search_artists_shows_both_member_and_group_when_member_has_own_concert():
+async def test_search_artists_shows_member_when_own_concert_but_hides_group_without_one():
+    # 멤버는 자기 공연이 있어서 노출되지만, 그룹 자체는 공연이 0개라 여전히 숨겨져야 함
+    # (그룹 유무 판단도 has_own_concert를 동일하게 적용)
     token = await _get_token()
     group_name = f"솔로있는그룹_{uuid.uuid4().hex[:8]}"
     member_name = f"솔로있는멤버_{uuid.uuid4().hex[:8]}"
@@ -158,14 +177,18 @@ async def test_search_artists_shows_both_member_and_group_when_member_has_own_co
         await _seed_group_and_member(db, group_name, member_name)
         results = await search_artists(db, member_name)
 
-    assert {r["name"] for r in results} == {member_name, group_name}
+    assert {r["name"] for r in results} == {member_name}
 
 
 @pytest.mark.asyncio
 async def test_search_artists_group_query_does_not_expand_to_members():
-    # 그룹으로 검색했을 땐 멤버 전원이 딸려 나오면 안 됨(요청에 따라 그룹->멤버 확장은 안 함)
+    # 그룹으로 검색했을 땐 멤버 전원이 딸려 나오면 안 됨(요청에 따라 그룹->멤버 확장은 안 함).
+    # 그룹 자신은 공연이 있어야 노출되므로(has_own_concert 정책) 그룹 이름으로 실제 콘서트를 만듦
+    token = await _get_token()
     group_name = f"멤버비노출그룹_{uuid.uuid4().hex[:8]}"
     member_name = f"안보일멤버_{uuid.uuid4().hex[:8]}"
+    await _create_concert(f"PF_AS_GRPQ_{uuid.uuid4().hex[:6]}", group_name, token)
+
     async with AsyncSessionLocal() as db:
         await _seed_group_and_member(db, group_name, member_name)
         results = await search_artists(db, group_name)
