@@ -110,12 +110,10 @@ async def search_artists(db: AsyncSession, query: str, limit: int = 30) -> list[
         cid: any(n.lower() in has_concert_names for n in names) for cid, names in names_by_canonical.items()
     }
 
-    # 멤버가 자기 이름 공연이 없으면(밴드 라인업에만 존재) 팔로우해도 소식이 절대 안 떠서
-    # (_create_news_feeds_for_concert가 정확한 문자열 일치만 봄) 멤버는 빼고 그룹만 노출,
-    # 있으면 멤버+그룹 둘 다. 그룹→멤버 전원 노출은 결과가 난잡해져서 안 함.
-    # + 그룹/멤버관계 없는 단독 아티스트든 그룹이든, 실제 공연이 하나도 없으면(has_own_concert
-    # False) 검색 결과에서 아예 뺌 - 밴드-멤버 관계 전개로 팔로우 매칭용으로만 미리 채워둔
-    # 아티스트가 3천여 개나 있어(2026-09-11 실측) 전부 검색에 걸리면 결과가 지저분해짐
+    # 멤버가 자기 이름 공연이 없으면(밴드 라인업에만 존재) 팔로우해도 소식이 안 떠서 멤버는 빼고
+    # 그룹만 노출, 있으면 멤버+그룹 둘 다. 그룹→멤버 전원 노출은 결과가 난잡해져서 안 함.
+    # + 실제 공연이 하나도 없는 아티스트/그룹은 검색 결과에서 아예 뺌 - 팔로우 매칭용으로만
+    # 미리 채워둔 아티스트가 3천여 개나 있어(실측) 전부 걸리면 결과가 지저분해짐
     final_ids: set = set()
     for cid in canonicals:
         group_ids = groups_by_member.get(cid)

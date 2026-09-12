@@ -511,19 +511,10 @@ async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text
     return await _finalize_artist_reassignment(db, concert_id, artist_text, target)
 
 
-# reassign은 검색으로 "이미 존재하는" 다른 canonical을 고르는 용도라, 검색해도 안 나오는(=
-# MusicBrainz/canonical_artists에 아예 없는 인디 등) 아티스트는 재지정할 대상이 없어 막혀있었음.
-# admin이 이 표기를 신규 canonical(mbid=None)로 직접 등록 - new_name을 안 주면 현재 표기 그대로
-# 등록(단순 신규), 주면 오타 정정까지 겸함(add_artist_name과 동일하게 기존 canonical과 퍼지매칭해
-# 근접 중복이 있으면 그걸 재사용, 진짜 없을 때만 새로 만듦). mbid가 없는 채로 만들어지므로
-# add_artist 라우트와 동일하게 호출부에서 MusicBrainz 재조회를 백그라운드로 걸 수 있게 canonical도
-# 같이 반환.
-# force_new=True면 이 퍼지/정확매칭 재사용 단계를 통째로 건너뛰고 무조건 새 canonical을
-# 만든다 - 실사례(JAEHA)로 확인: 표기가 이미 있는 다른 실존 아티스트와 정확히 똑같은데 실제로는
-# 다른 사람인 동명이인 경우, 기존 재사용 로직 자체가 걔로 흡수시켜버려서 admin이 "그래도 새로
-# 만들어라"라고 강제할 방법이 없었음. canonical_name이 같은 canonical 두 개가 공존하는 건
-# 스키마상 허용됨(unique 제약은 mbid에만 있음) - 동명이인은 문자열만으로 원리적으로 구분 불가한
-# 이 시스템의 알려진 한계라, 이후 다른 콘서트에서 같은 표기가 나오면 또 admin이 판단해야 함
+# reassign은 이미 있는 canonical만 고르는 용도라 MusicBrainz에 없는 아티스트는 등록할 방법이
+# 없었음 - 신규 canonical을 직접 만든다(new_name 없으면 표기 그대로, 있으면 오타 정정도 겸함).
+# force_new=True면 동명이인(실사례: JAEHA)이라도 기존 것 재사용 없이 무조건 새로 만듦 -
+# canonical_name 중복은 허용됨(unique 제약은 mbid뿐, 문자열만으론 동명이인을 못 구분하는 한계)
 async def register_new_canonical_artist(
     db: AsyncSession, concert_id, artist_text: str, new_name: str | None = None, *, force_new: bool = False
 ) -> tuple[Concert, CanonicalArtist]:
@@ -759,12 +750,10 @@ async def get_canonical_name_options(db: AsyncSession, name: str) -> tuple[Canon
     return canonical, await _name_options_for_canonical(db, canonical)
 
 
-# display_name이 바뀔 때 이미 그 표기로 확정돼있는 콘서트들도 같이 갱신 - 안 하면 admin이
-# 표시명을 바꿔도 새로 매치되는 콘서트에만 적용되고 기존 콘서트는 예전 표기로 남아 혼란스러움.
-# concerts.artist_name을 직접 훑어야 함(실사례로 확인된 버그: ConcertLineup에서만 찾으면
-# 날짜별 출연 배정이 없는 콘서트 - 단독공연 등, 상당수 - 는 여기 안 걸려서 admin 화면에
-# 옛 표기가 계속 남음) - ConcertLineup도 별도로 계속 훑는 이유는 artist_name에서는 이미
-# 지워졌는데 라인업 row만 남아있는 드문 경우까지 놓치지 않기 위함
+# display_name이 바뀔 때 이미 그 표기로 확정돼있는 콘서트들도 같이 갱신 - 안 하면 기존 콘서트는
+# 예전 표기로 남아 혼란스러움. concerts.artist_name을 직접 훑어야 함(실사례 버그: ConcertLineup
+# 에서만 찾으면 날짜별 출연 배정이 없는 단독공연 등은 안 걸림) - ConcertLineup도 같이 훑는 건
+# artist_name에서는 지워졌는데 라인업 row만 남은 드문 경우까지 놓치지 않기 위함
 async def _reapply_display_name(db: AsyncSession, old_value: str, new_value: str) -> None:
     if old_value == new_value:
         return

@@ -1005,8 +1005,7 @@ async def test_admin_unreviewed_only_filter():
     assert reviewed_id not in ids
 
 
-# ai_reviewed_at(Claude 검수) - 사람 검수(admin_reviewed_at)와 구분되는 별도 필드/필터/뱃지
-# 테스트(2026-09-11, 지난 공연 대량 검수 작업 계기로 추가)
+# ai_reviewed_at(Claude 검수) - 사람 검수(admin_reviewed_at)와 구분되는 별도 필드/필터/뱃지 테스트
 @pytest.mark.asyncio
 async def test_admin_ai_reviewed_only_filter():
     ai_name = f"AI검수됨_{uuid.uuid4().hex[:6]}"

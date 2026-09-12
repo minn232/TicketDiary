@@ -362,18 +362,11 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
     return sorted(normalized)
 
 
-# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 회전 광고 배너(방문마다
-# 문구가 바뀌어 숫자/"더 알아보기" 필터로도 못 걸러지는 노이즈)를 캡처 범위 밖에 둔다.
-# interpark는 실제 오탐 사례로 확인, 나머지는 DOM 구조+재방문 diff로 검증한 예방적 추가
-# (셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
-#
-# interpark → NOL(야놀자) 서비스 이관(2026년 초 사이)으로 DOM이 완전히 바뀌면서 ".productMain"
-# 셀렉터가 새 페이지에 아예 없어져 매번 조용히 body 전체로 폴백되고 있었음(에러 없이 넘어가는
-# 안전장치라 그동안 못 알아챔) - "라인업 변경"이 며칠 간격으로 같은 콘서트에 계속 잡히던 실사례
-# (ASIA METAL FESTIVAL, NOL FESTIVAL 등) 원인을 실제 페이지에서 확인: body 전체를 보니 실시간으로
-# 바뀌는 "찜 N명"(위시리스트 수, 인기 페스티벌은 2,047명처럼 수천 단위라 하루 안에도 바뀜) 위젯이
-# 포함돼있었음. "#important-info"(공지사항/상품상세 - LINE UP 텍스트가 실제로 들어있는 영역)로
-# 교체 - 브라우저로 직접 열어 찜 카운트/헤더의 "최근 본 상품" 모두 이 범위 밖인 것 확인함.
+# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 노이즈(회전 광고 배너 등)를
+# 캡처 범위 밖에 둔다(셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+# interpark는 야놀자(NOL) 이관으로 DOM이 바뀌어 ".productMain"이 없어져 매번 조용히 body
+# 전체로 폴백되고 있었음 - 실시간으로 바뀌는 "찜 N명" 위시리스트 수 때문에 라인업이 안 바뀌어도
+# "변경"으로 계속 오탐되던 원인이었음. LINE UP 텍스트가 실제로 들어있는 "#important-info"로 교체
 _LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
     "interpark": "#important-info",
     "yes24": ".renew-content",
@@ -820,10 +813,9 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
 
 # 자동 크롤링(_PREFERRED_SITES=INTERPARK만)으로는 절대 못 뽑는 공연 - YES24/MELON 링크만
 # 있고 인터파크는 없는 경우. 배송일/티켓팅일은 실제 예매 사이트 페이지에만 있어서 KOPIS 폴백
-# 스크린샷으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(집 등 데이터센터 아닌 네트워크)에서
-# 직접 돌리기로 함(YES24/MELON이 AWS 서버 IP에서는 차단 확정 - crawler_block_detection 참고).
-# 이 함수는 그 대상 목록만 뽑아준다 - 실제 크롤링은 scripts/yes24_melon_local_crawl.py가 이
-# 목록을 받아서 로컬에서 수행하고, save_manual_crawl_screenshot으로 결과를 되돌려줌
+# 으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(데이터센터 아닌 네트워크)에서 직접 돌리기로
+# 함(YES24/MELON은 AWS 서버 IP에서 차단 확정). 이 함수는 대상 목록만 뽑고, 실제 크롤링은
+# scripts/yes24_melon_local_crawl.py가 로컬에서 수행 후 save_manual_crawl_screenshot으로 반영
 async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
     now = datetime.now(timezone.utc)
     result = await db.execute(
@@ -850,14 +842,10 @@ async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
 
 
 # get_yes24_melon_crawl_targets가 뽑은 공연을 로컬에서 직접 크롤링한 결과를 받아 저장 -
-# crawl_and_save가 성공했을 때와 동일한 최종 상태로 맞춘다(crawl_screenshot_url 갱신
-# + crawl_attempted_at/attempt_count 갱신 - 안 하면 오늘 밤 자동 재시도 배치가 바로 이걸
-# KOPIS 스크린샷으로 덮어써버림, 24시간 쿨다운으로 그 사고를 막음). ticketing_date 자체는
-# 여기서 안 채움 - 이 스크린샷을 실제로 읽어 배송일/티켓팅일을 뽑는 건 LLM 분석 단계의 몫.
-# S3 키는 _check_festival_lineup과 동일하게 매번 시각을 붙여 버전별로 쌓는다(고정 키로
-# 덮어쓰면 안 됨) - 이 대상 공연들 중 일부는 이미 KOPIS 폴백으로 여러 차례 라인업 변경이
-# 감지돼 스크린샷이 여러 장 쌓여있는 경우가 있어서, 그 기존 이력을 지우지 않고 최신 캡처만
-# crawl_screenshot_url이 가리키도록 추가하는 것 - 이력이 하나뿐이던 공연도 자연히 동일하게 처리됨
+# crawl_and_save가 성공했을 때와 동일한 상태로 맞춘다(crawl_screenshot_url 갱신 +
+# crawl_attempted_at/attempt_count 갱신 - 안 하면 그날 밤 자동배치가 바로 KOPIS 스크린샷으로
+# 덮어씀). ticketing_date는 여기서 안 채움 - LLM 분석 단계의 몫. S3 키는 _check_festival_lineup과
+# 동일하게 매번 시각을 붙여서(고정 키 아님) 이미 쌓여있는 과거 이력을 지우지 않고 추가만 함
 async def save_manual_crawl_screenshot(
     db: AsyncSession, concert_id, site: str, image_bytes: bytes
 ) -> Concert:

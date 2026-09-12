@@ -141,8 +141,8 @@ async def _seed_group_and_member(db, group_name: str, member_name: str) -> None:
 @pytest.mark.asyncio
 async def test_search_artists_hides_relation_only_group_with_no_concert():
     # 그룹 자체가 어떤 공연에도 원문으로 등장한 적 없으면(멤버 관계로만 존재, 팔로우 매칭용으로만
-    # 미리 채워진 경우) 검색 결과에서 빠져야 함(2026-09-11: 이런 관계전용 아티스트가 3천여 개나
-    # 쌓여 검색이 지저분해지는 문제로 정책 변경 - 예전엔 이런 것도 노출했었음)
+    # 미리 채워진 경우) 검색 결과에서 빠져야 함 - 이런 관계전용 아티스트가 3천여 개나 쌓여
+    # 검색이 지저분해지는 문제로 정책 변경(예전엔 이런 것도 노출했었음)
     group_name = f"관계전용그룹_{uuid.uuid4().hex[:8]}"
     member_name = f"멤버_{uuid.uuid4().hex[:8]}"
     async with AsyncSessionLocal() as db:
