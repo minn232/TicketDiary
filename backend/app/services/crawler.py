@@ -845,7 +845,11 @@ async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
 # crawl_and_save가 성공했을 때와 동일한 최종 상태로 맞춘다(crawl_screenshot_url 갱신
 # + crawl_attempted_at/attempt_count 갱신 - 안 하면 오늘 밤 자동 재시도 배치가 바로 이걸
 # KOPIS 스크린샷으로 덮어써버림, 24시간 쿨다운으로 그 사고를 막음). ticketing_date 자체는
-# 여기서 안 채움 - 이 스크린샷을 실제로 읽어 배송일/티켓팅일을 뽑는 건 LLM 분석 단계의 몫
+# 여기서 안 채움 - 이 스크린샷을 실제로 읽어 배송일/티켓팅일을 뽑는 건 LLM 분석 단계의 몫.
+# S3 키는 _check_festival_lineup과 동일하게 매번 시각을 붙여 버전별로 쌓는다(고정 키로
+# 덮어쓰면 안 됨) - 이 대상 공연들 중 일부는 이미 KOPIS 폴백으로 여러 차례 라인업 변경이
+# 감지돼 스크린샷이 여러 장 쌓여있는 경우가 있어서, 그 기존 이력을 지우지 않고 최신 캡처만
+# crawl_screenshot_url이 가리키도록 추가하는 것 - 이력이 하나뿐이던 공연도 자연히 동일하게 처리됨
 async def save_manual_crawl_screenshot(
     db: AsyncSession, concert_id, site: str, image_bytes: bytes
 ) -> Concert:
@@ -853,7 +857,8 @@ async def save_manual_crawl_screenshot(
     if concert is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
 
-    url = await _upload_screenshot(image_bytes, concert_id, site.lower())
+    upload_key = f"{site.lower()}_{int(datetime.now(timezone.utc).timestamp())}"
+    url = await _upload_screenshot(image_bytes, concert_id, upload_key)
     if url is None:
         raise HTTPException(status_code=502, detail="스크린샷 업로드에 실패했습니다.")
 

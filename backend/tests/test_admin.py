@@ -1500,9 +1500,10 @@ async def test_admin_crawl_targets_excludes_concert_with_ticketing_date_already_
 @pytest.mark.asyncio
 async def test_admin_uploads_manual_crawl_screenshot():
     concert_id = await _create_concert(f"PF_CRAWLUP_{uuid.uuid4().hex[:6]}", "테스트가수")
-    fake_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/x/yes24.png"
+    fake_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/x/yes24_1700000000.png"
 
-    with _admin_settings(), patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)):
+    mock_upload = AsyncMock(return_value=fake_url)
+    with _admin_settings(), patch("app.services.crawler._upload_screenshot", new=mock_upload):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res = await ac.post(
                 f"/api/v1/admin/crawl-targets/{concert_id}/screenshot",
@@ -1512,6 +1513,14 @@ async def test_admin_uploads_manual_crawl_screenshot():
             )
     assert res.status_code == 200
     assert res.json()["crawl_screenshot_url"] == fake_url
+
+    # 기존 페스티벌 라인업 재확인(_check_festival_lineup)과 동일하게 매번 시각을 붙인 키로
+    # 올려야 함 - 고정 키("yes24")로 올리면 이 공연에 이미 쌓여있던 과거 스크린샷 이력을
+    # 덮어써버릴 위험이 있음(실사용자 지적으로 확인)
+    uploaded_key_arg = mock_upload.await_args.args[2]
+    assert uploaded_key_arg != "yes24"
+    assert uploaded_key_arg.startswith("yes24_")
+    assert uploaded_key_arg.removeprefix("yes24_").isdigit()
 
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, uuid.UUID(concert_id))
