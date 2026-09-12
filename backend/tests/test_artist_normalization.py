@@ -1178,6 +1178,30 @@ async def test_collapse_to_group_name_when_all_members_present_without_group_tex
 
 
 @pytest.mark.asyncio
+async def test_collapse_skipped_when_group_roster_has_only_one_member():
+    # MusicBrainz의 member-of 관계는 실제 밴드가 아니라 무관한 관계/솔로 활동까지
+    # 담을 수 있어서, 로스터가 1명뿐이면 "전원 참석"이 항상 참이 되어 무의미함(실측으로
+    # 무관한 아티스트가 그룹명으로 뒤바뀌는 사고 확인함) - 로스터 1명은 통합 안 함
+    await _clear_pending_queue()
+    token = await _get_token()
+    group_name = f"그룹V_{uuid.uuid4().hex[:6]}"
+    m1 = f"멤버_{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_COLL_ONE_{uuid.uuid4().hex[:6]}", m1, token))
+
+    async with AsyncSessionLocal() as db:
+        await _seed_group_with_members(db, group_name, [m1])
+        await db.commit()
+        await queue_for_normalization(db, concert_id, [m1])
+
+    with _no_kopis_supplement(), _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [m1]  # 로스터 1명이라 통합 안 되고 원래 표기 유지
+
+
+@pytest.mark.asyncio
 async def test_collapse_skipped_when_member_missing_and_title_silent():
     await _clear_pending_queue()
     token = await _get_token()

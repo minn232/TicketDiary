@@ -935,7 +935,10 @@ async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None
             continue
 
         group_name_present = group.canonical_name in names
-        all_members_present = bool(roster_ids) and present_member_ids == roster_ids
+        # 로스터가 1명뿐이면 "전원 참석"이 항상 참이 되어 무의미함(멤버가 1명뿐인 "그룹"은
+        # MusicBrainz가 실제 밴드가 아니라 무관한 관계/솔로 활동을 member-of로 모델링한
+        # 경우가 흔함) - 실측으로 무관한 아티스트가 이렇게 뒤바뀐 사례("LEMON") 확인함
+        all_members_present = len(roster_ids) >= 2 and present_member_ids == roster_ids
         title_mentions_group = group.canonical_name in (concert.name or "")
         if not (group_name_present or all_members_present or title_mentions_group):
             continue
