@@ -54,6 +54,14 @@ class AdminReassignArtistRequest(BaseModel):
     canonical_id: UUID
 
 
+class AdminRegisterNewArtistRequest(BaseModel):
+    # register_new_canonical_artist에 그대로 넘기는 페이로드 - 재지정 검색에도 안 나오는(즉
+    # MusicBrainz/canonical_artists에 없는) 아티스트를 신규로 등록. new_name은 선택(안 주면
+    # 현재 표기 그대로 등록)
+    artist_text: str
+    new_name: str | None = None
+
+
 class AdminConcertDetail(BaseModel):
     model_config = {"from_attributes": True}
 

@@ -560,6 +560,118 @@ async def test_admin_reassign_rejects_artist_not_on_concert():
     assert res.status_code == 400
 
 
+# 재지정은 "이미 존재하는" 다른 canonical을 검색해서 고르는 용도라, 검색해도 안 나오는(
+# MusicBrainz/canonical_artists에 없는 인디 등) 아티스트는 재지정할 대상이 없어 막혀있었음 -
+# 신규 등록(register-new) 테스트
+@pytest.mark.asyncio
+async def test_admin_registers_new_artist_when_not_in_musicbrainz():
+    artist_text = f"인디아티스트_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REGNEW_{uuid.uuid4().hex[:6]}", artist_text)
+
+    async with AsyncSessionLocal() as db:
+        db.add(ArtistNormalizationStatus(concert_id=uuid.UUID(concert_id), artist_text=artist_text, status="unconfirmed"))
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/register-new",
+                json={"artist_text": artist_text},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["artist_name"] == [artist_text]  # new_name 안 줬으니 표기 그대로
+    assert [s for s in data["statuses"] if s["artist_text"] == artist_text][0]["status"] == "matched"
+
+    async with AsyncSessionLocal() as db:
+        canonical = (
+            await db.execute(select(CanonicalArtist).where(CanonicalArtist.canonical_name == artist_text))
+        ).scalar_one()
+        assert canonical.mbid is None
+
+
+@pytest.mark.asyncio
+async def test_admin_registers_new_artist_with_corrected_name():
+    artist_text = f"오탈자표기_{uuid.uuid4().hex[:6]}"
+    corrected = f"정정된이름_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REGNEW_FIX_{uuid.uuid4().hex[:6]}", artist_text)
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/register-new",
+                json={"artist_text": artist_text, "new_name": corrected},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [corrected]
+
+
+# 표기가 이미 "matched" 상태로 틀린 canonical의 별칭으로 등록돼 있어도(자동매칭 오탐), 신규
+# 등록하면 틀린 쪽 별칭은 정리되고 새 canonical로 옮겨가야 함(reassign과 동일한 안전장치)
+@pytest.mark.asyncio
+async def test_admin_register_new_cleans_up_wrong_alias():
+    from app.services.artist_normalization import find_canonical_by_alias
+
+    artist_text = f"오매칭표기_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REGNEW_WRONG_{uuid.uuid4().hex[:6]}", artist_text)
+
+    async with AsyncSessionLocal() as db:
+        wrong = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=f"무관한대상_{uuid.uuid4().hex[:6]}")
+        db.add(wrong)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=wrong.id, alias_text=artist_text, source="musicbrainz"))
+        db.add(ArtistNormalizationStatus(concert_id=uuid.UUID(concert_id), artist_text=artist_text, status="matched"))
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/register-new",
+                json={"artist_text": artist_text},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [artist_text]
+
+    async with AsyncSessionLocal() as db:
+        resolved = await find_canonical_by_alias(db, artist_text)
+        assert resolved is not None
+        assert resolved.id != wrong.id  # 틀린 canonical이 아니라 새로 만든 canonical로 옮겨감
+
+
+@pytest.mark.asyncio
+async def test_admin_register_new_rejects_artist_not_on_concert():
+    concert_id = await _create_concert(f"PF_ADMIN_REGNEW_400_{uuid.uuid4().hex[:6]}", "기존아티스트")
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/register-new",
+                json={"artist_text": "이공연에없는이름"},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_admin_register_new_schedules_musicbrainz_link():
+    artist_text = f"인디링크대상_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REGNEW_LINK_{uuid.uuid4().hex[:6]}", artist_text)
+
+    mock_link = AsyncMock()
+    with _admin_settings(), patch("app.api.v1.endpoints.admin.try_link_canonical_to_musicbrainz", new=mock_link):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/register-new",
+                json={"artist_text": artist_text},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    mock_link.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_admin_deletes_artist():
     m1, m2 = f"멤버A_{uuid.uuid4().hex[:6]}", f"멤버B_{uuid.uuid4().hex[:6]}"

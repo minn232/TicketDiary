@@ -610,6 +610,11 @@ function startReassign(button) {
         <button onclick="searchReassignCandidates(this)">검색</button>
       </div>
       <div class="reassign-results" style="font-size:12px;"></div>
+      <div style="display:flex; align-items:center; margin-top:6px; font-size:12px;">
+        <span style="color:var(--muted); margin-right:6px;">위 검색 결과 중에 없으면(MusicBrainz에 없는 아티스트) - 결과가 있어도 전부 아니면 사용:</span>
+        <input type="text" class="register-new-name" placeholder="새 아티스트명(비우면 위 표기 그대로)" style="flex:1; margin-right:6px;" />
+        <button onclick="submitRegisterNew(this)" title="이 표기를 신규 아티스트로 등록">신규 등록</button>
+      </div>
     </div>
     <span class="actions">
       <button onclick="openDetail('${concertId}')">취소</button>
@@ -657,6 +662,25 @@ async function submitReassign(button, canonicalId) {
       body: JSON.stringify({ artist_text: artistText, canonical_id: canonicalId }),
     });
     toast('재지정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 재지정 검색에도 안 나오는(MusicBrainz/canonical_artists에 없는) 아티스트를 신규로 등록
+async function submitRegisterNew(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const artistText = row.dataset.name;
+  const newName = row.querySelector('.register-new-name').value.trim();
+  try {
+    await api(`/concerts/${concertId}/artist-name/register-new`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_text: artistText, new_name: newName || null }),
+    });
+    toast('신규 등록됨');
     openDetail(concertId);
     load(page);
   } catch (e) {

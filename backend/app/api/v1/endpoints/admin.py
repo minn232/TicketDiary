@@ -33,6 +33,7 @@ from app.schemas.admin import (
     AdminGroupMembershipRequest,
     AdminGroupRelationAddRequest,
     AdminReassignArtistRequest,
+    AdminRegisterNewArtistRequest,
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_normalization import (
@@ -44,6 +45,7 @@ from app.services.artist_normalization import (
     delete_canonical_artist,
     get_canonical_name_options,
     reassign_artist_to_canonical,
+    register_new_canonical_artist,
     remove_artist_alias,
     remove_artist_name,
     remove_group_relation,
@@ -318,6 +320,24 @@ async def reassign_artist_route(
     concert_id: UUID, body: AdminReassignArtistRequest, db: AsyncSession = Depends(get_db)
 ):
     await reassign_artist_to_canonical(db, concert_id, body.artist_text, body.canonical_id)
+    await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+# 위 재지정은 "이미 존재하는" 다른 canonical을 검색해서 고르는 용도라, 검색해도 안 나오는
+# (MusicBrainz/canonical_artists에 아예 없는 인디 등) 아티스트는 재지정할 대상이 없어 막혀있었음
+# - 이 표기를 신규 canonical로 직접 등록한다(register_new_canonical_artist 참고)
+@router.post("/concerts/{concert_id}/artist-name/register-new", response_model=AdminConcertDetail)
+async def register_new_artist_route(
+    concert_id: UUID,
+    body: AdminRegisterNewArtistRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    _, canonical = await register_new_canonical_artist(db, concert_id, body.artist_text, body.new_name)
+    if canonical.mbid is None:
+        # add_artist 라우트와 동일 - 응답 이후 백그라운드로 재조회(스로틀 때문에 여기서 기다리면 느려짐)
+        background_tasks.add_task(try_link_canonical_to_musicbrainz, canonical.id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 

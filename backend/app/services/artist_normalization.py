@@ -454,24 +454,14 @@ async def resolve_artist_suggestion(db: AsyncSession, concert_id, artist_text: s
     return concert
 
 
-# "텍스트는 정확히 같은데 실존 인물이 다른" 동명이인 오매칭(예: 일본 가수 LiSA 콘서트가
-# 블랙핑크 Lisa로 매칭된 실사례) 강제 수정용 - 이름 재입력으로는 fuzzy/alias 매칭이 또 같은
-# 틀린 canonical로 가버려서 못 고침. admin이 검색으로 직접 고른 canonical_id로 통째로
-# 재지정한다. 이 표기가 다른(틀린) canonical의 별칭으로 이미 등록돼 있으면 그것부터 지워야
-# 다음에 같은 표기가 다른 공연에 들어와도 정규화 배치가 또 틀린 쪽으로 안 감
-async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text: str, canonical_id) -> Concert:
-    concert = await db.get(Concert, concert_id)
-    if concert is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
-
-    artist_text = artist_text.strip()
-    if not artist_text or artist_text not in (concert.artist_name or []):
-        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
-
-    target = await db.get(CanonicalArtist, canonical_id)
-    if target is None:
-        raise HTTPException(status_code=404, detail="대상 아티스트를 찾을 수 없습니다.")
-
+# reassign_artist_to_canonical/register_new_canonical_artist가 공유하는 마무리 로직 - target이
+# 기존 canonical이든 방금 새로 만든 canonical이든 이 표기를 target으로 확정 반영하는 절차는
+# 동일함(별칭 정리+concert.artist_name/라인업 교체+정규화 상태 확정). 이 표기가 다른(틀린)
+# canonical의 별칭으로 이미 등록돼 있으면 그것부터 지워야 다음에 같은 표기가 다른 공연에
+# 들어와도 정규화 배치가 또 그쪽으로 안 감
+async def _finalize_artist_reassignment(
+    db: AsyncSession, concert_id, artist_text: str, target: CanonicalArtist
+) -> Concert:
     normalized = _normalize_alias_text(artist_text)
     await db.execute(
         delete(ArtistAlias).where(
@@ -496,9 +486,67 @@ async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text
         status_row.status = "matched"
         status_row.suggested_canonical_id = None
 
+    concert = await db.get(Concert, concert_id)
     await db.commit()
     await db.refresh(concert)
     return concert
+
+
+# "텍스트는 정확히 같은데 실존 인물이 다른" 동명이인 오매칭(예: 일본 가수 LiSA 콘서트가
+# 블랙핑크 Lisa로 매칭된 실사례) 강제 수정용 - 이름 재입력으로는 fuzzy/alias 매칭이 또 같은
+# 틀린 canonical로 가버려서 못 고침. admin이 검색으로 직접 고른 canonical_id로 통째로 재지정한다.
+async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text: str, canonical_id) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    artist_text = artist_text.strip()
+    if not artist_text or artist_text not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+
+    target = await db.get(CanonicalArtist, canonical_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="대상 아티스트를 찾을 수 없습니다.")
+
+    return await _finalize_artist_reassignment(db, concert_id, artist_text, target)
+
+
+# reassign은 검색으로 "이미 존재하는" 다른 canonical을 고르는 용도라, 검색해도 안 나오는(=
+# MusicBrainz/canonical_artists에 아예 없는 인디 등) 아티스트는 재지정할 대상이 없어 막혀있었음.
+# admin이 이 표기를 신규 canonical(mbid=None)로 직접 등록 - new_name을 안 주면 현재 표기 그대로
+# 등록(단순 신규), 주면 오타 정정까지 겸함(add_artist_name과 동일하게 기존 canonical과 퍼지매칭해
+# 근접 중복이 있으면 그걸 재사용, 진짜 없을 때만 새로 만듦). mbid가 없는 채로 만들어지므로
+# add_artist 라우트와 동일하게 호출부에서 MusicBrainz 재조회를 백그라운드로 걸 수 있게 canonical도
+# 같이 반환
+async def register_new_canonical_artist(
+    db: AsyncSession, concert_id, artist_text: str, new_name: str | None = None
+) -> tuple[Concert, CanonicalArtist]:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    artist_text = artist_text.strip()
+    if not artist_text or artist_text not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+
+    name = (new_name or artist_text).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="아티스트명이 비어있습니다.")
+    if is_blocklisted_artist_name(name):
+        raise HTTPException(status_code=400, detail="아티스트명으로 쓸 수 없는 값입니다.")
+
+    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
+    canonical_names = {c.canonical_name for c in existing_canonicals}
+    resolved_name = normalize_artist_names([name], canonical_names)[0]
+
+    target = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+    if target is None:
+        target = CanonicalArtist(mbid=None, canonical_name=resolved_name)
+        db.add(target)
+        await db.flush()
+
+    concert = await _finalize_artist_reassignment(db, concert_id, artist_text, target)
+    return concert, target
 
 
 # 아티스트가 아닌데 잘못 들어간 표기를 통째로 제거(수정이 아니라 삭제) - 관리자 페이지 전용.
