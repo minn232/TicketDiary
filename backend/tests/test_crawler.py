@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.crawler import (
+    _LINEUP_CAPTURE_CONTAINER,
     _pick_crawl_target,
     crawl_and_save,
     crawl_interpark,
@@ -1382,6 +1383,14 @@ async def test_capture_lineup_snapshot_scopes_to_container_when_present():
     mock_page.eval_on_selector_all.assert_awaited_once_with(".productMain img", "els => els.map(e => e.src)")
     assert text == "컨테이너 안쪽 텍스트"
     assert img_srcs == ["https://img.example.com/a.jpg"]
+
+
+# interpark → NOL(야놀자) 서비스 이관으로 ".productMain"이 새 DOM에 없어져 매번 body 전체로
+# 조용히 폴백되던 실사례(같은 콘서트가 며칠 간격으로 "라인업 변경"에 계속 걸림 - 실서버 로그로
+# 확인) - 실제 페이지(nol.yanolja.com)를 열어 "#important-info"가 LINE UP 텍스트는 포함하고
+# 실시간으로 바뀌는 "찜 N명" 위시리스트 카운트는 제외하는 걸 확인하고 교체함
+def test_lineup_capture_container_interpark_matches_current_nol_dom():
+    assert _LINEUP_CAPTURE_CONTAINER["interpark"] == "#important-info"
 
 
 @pytest.mark.asyncio

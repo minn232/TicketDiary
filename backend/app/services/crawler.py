@@ -364,8 +364,16 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
 # 문구가 바뀌어 숫자/"더 알아보기" 필터로도 못 걸러지는 노이즈)를 캡처 범위 밖에 둔다.
 # interpark는 실제 오탐 사례로 확인, 나머지는 DOM 구조+재방문 diff로 검증한 예방적 추가
 # (셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+#
+# interpark → NOL(야놀자) 서비스 이관(2026년 초 사이)으로 DOM이 완전히 바뀌면서 ".productMain"
+# 셀렉터가 새 페이지에 아예 없어져 매번 조용히 body 전체로 폴백되고 있었음(에러 없이 넘어가는
+# 안전장치라 그동안 못 알아챔) - "라인업 변경"이 며칠 간격으로 같은 콘서트에 계속 잡히던 실사례
+# (ASIA METAL FESTIVAL, NOL FESTIVAL 등) 원인을 실제 페이지에서 확인: body 전체를 보니 실시간으로
+# 바뀌는 "찜 N명"(위시리스트 수, 인기 페스티벌은 2,047명처럼 수천 단위라 하루 안에도 바뀜) 위젯이
+# 포함돼있었음. "#important-info"(공지사항/상품상세 - LINE UP 텍스트가 실제로 들어있는 영역)로
+# 교체 - 브라우저로 직접 열어 찜 카운트/헤더의 "최근 본 상품" 모두 이 범위 밖인 것 확인함.
 _LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
-    "interpark": ".productMain",
+    "interpark": "#important-info",
     "yes24": ".renew-content",
     "melon": ".section_detailview_product",
     "kopis": "#su_con",
