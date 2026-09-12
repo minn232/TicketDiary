@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,10 @@ from app.schemas.admin import (
     AdminConcertDetail,
     AdminConcertListItem,
     AdminConcertListResponse,
+    AdminCrawlScreenshotUploadResponse,
+    AdminCrawlTargetCandidate,
+    AdminCrawlTargetItem,
+    AdminCrawlTargetsResponse,
     AdminDisplayNameRequest,
     AdminGroupMembershipRequest,
     AdminGroupRelationAddRequest,
@@ -54,7 +58,12 @@ from app.services.artist_normalization import (
     set_group_membership,
     try_link_canonical_to_musicbrainz,
 )
-from app.services.crawler import _ARTIST_EXTRACTION_RETRY_COOLDOWN, _MAX_ARTIST_EXTRACTION_ATTEMPTS
+from app.services.crawler import (
+    _ARTIST_EXTRACTION_RETRY_COOLDOWN,
+    _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+    get_yes24_melon_crawl_targets,
+    save_manual_crawl_screenshot,
+)
 
 router = APIRouter(dependencies=[Depends(verify_admin_key)])
 
@@ -634,6 +643,56 @@ async def remove_group_relation_route(
 async def delete_artist_route(canonical_id: UUID, db: AsyncSession = Depends(get_db)):
     await delete_canonical_artist(db, canonical_id)
     return {"deleted": True}
+
+
+# 인터파크 링크가 없어서 자동 크롤링으로는 못 뽑는 공연(YES24/MELON만 있음) 목록 - 로컬
+# 스크립트(scripts/yes24_melon_local_crawl.py)가 이 목록을 받아 각자 네트워크로 직접
+# 크롤링하고, 결과는 아래 업로드 엔드포인트로 되돌려줌(get_yes24_melon_crawl_targets 참고)
+@router.get("/crawl-targets/yes24-melon", response_model=AdminCrawlTargetsResponse)
+async def list_yes24_melon_crawl_targets(db: AsyncSession = Depends(get_db)):
+    concerts = await get_yes24_melon_crawl_targets(db)
+    items = []
+    for concert in concerts:
+        links = concert.ticketing_links or {}
+        candidates = [
+            AdminCrawlTargetCandidate(site=site, url=links[site])
+            for site in ("YES24", "MELON", "MELONTICKET")
+            if site in links
+        ]
+        if not candidates:
+            continue
+        items.append(
+            AdminCrawlTargetItem(
+                concert_id=concert.id, kopis_id=concert.kopis_id, name=concert.name, candidates=candidates
+            )
+        )
+    return AdminCrawlTargetsResponse(items=items)
+
+
+# 로컬 스크립트가 직접 크롤링한 스크린샷을 업로드 - crawl_and_save가 성공했을 때와 동일한
+# 상태(crawl_screenshot_url 갱신)로 맞춰준다. 전체 페이지 PNG라 일반 이미지 업로드
+# (upload.py)보다 큰 상한을 둠
+_MAX_CRAWL_SCREENSHOT_SIZE = 20 * 1024 * 1024  # 20MB
+
+
+@router.post("/crawl-targets/{concert_id}/screenshot", response_model=AdminCrawlScreenshotUploadResponse)
+async def upload_manual_crawl_screenshot(
+    concert_id: UUID,
+    request: Request,
+    site: str = Query(..., description="YES24 또는 MELON - 로컬에서 실제로 성공한 사이트"),
+    image: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_CRAWL_SCREENSHOT_SIZE:
+        raise HTTPException(status_code=413, detail="스크린샷 크기는 20MB를 초과할 수 없습니다.")
+
+    image_bytes = await image.read(_MAX_CRAWL_SCREENSHOT_SIZE + 1)
+    if len(image_bytes) > _MAX_CRAWL_SCREENSHOT_SIZE:
+        raise HTTPException(status_code=413, detail="스크린샷 크기는 20MB를 초과할 수 없습니다.")
+
+    concert = await save_manual_crawl_screenshot(db, concert_id, site, image_bytes)
+    return AdminCrawlScreenshotUploadResponse(concert_id=concert.id, crawl_screenshot_url=concert.crawl_screenshot_url)
 
 
 _PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin.html"

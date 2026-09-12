@@ -1423,3 +1423,111 @@ async def test_admin_delete_artist_cleans_up_group_membership():
             )
         ).scalars().all()
         assert remaining == []
+
+
+# 인터파크 링크가 없는 공연(YES24/MELON만)을 로컬에서 직접 크롤링하기 위한 대상 목록 -
+# get_yes24_melon_crawl_targets가 실제로 필터링을 제대로 하는지(인터파크 있으면 제외,
+# ticketing_date 이미 있으면 제외) 확인
+
+@pytest.mark.asyncio
+async def test_admin_lists_yes24_melon_crawl_targets():
+    concert_id = await _create_concert(f"PF_CRAWLTGT_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(ticketing_links={"YES24": "https://ticket.yes24.com/perf/123"})
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/api/v1/admin/crawl-targets/yes24-melon", headers=_admin_headers())
+    assert res.status_code == 200
+    items = res.json()["items"]
+    match = next((i for i in items if i["concert_id"] == concert_id), None)
+    assert match is not None
+    assert match["candidates"] == [{"site": "YES24", "url": "https://ticket.yes24.com/perf/123"}]
+
+
+@pytest.mark.asyncio
+async def test_admin_crawl_targets_excludes_concert_with_interpark_link():
+    concert_id = await _create_concert(f"PF_CRAWLTGT_IP_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(
+                ticketing_links={
+                    "YES24": "https://ticket.yes24.com/perf/123",
+                    "INTERPARK": "https://tickets.interpark.com/goods/456",
+                }
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/api/v1/admin/crawl-targets/yes24-melon", headers=_admin_headers())
+    assert res.status_code == 200
+    assert all(i["concert_id"] != concert_id for i in res.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_admin_crawl_targets_excludes_concert_with_ticketing_date_already_set():
+    concert_id = await _create_concert(f"PF_CRAWLTGT_TD_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(
+                ticketing_links={"MELON": "https://ticket.melon.com/perf/789"},
+                ticketing_date=datetime(2030, 1, 1, tzinfo=timezone.utc),
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/api/v1/admin/crawl-targets/yes24-melon", headers=_admin_headers())
+    assert res.status_code == 200
+    assert all(i["concert_id"] != concert_id for i in res.json()["items"])
+
+
+# 로컬에서 직접 크롤링한 스크린샷 업로드 - crawl_and_save가 성공했을 때와 동일한 상태로
+# 맞춰지는지(crawl_screenshot_url/crawl_attempted_at/crawl_attempt_count) 확인
+
+@pytest.mark.asyncio
+async def test_admin_uploads_manual_crawl_screenshot():
+    concert_id = await _create_concert(f"PF_CRAWLUP_{uuid.uuid4().hex[:6]}", "테스트가수")
+    fake_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/x/yes24.png"
+
+    with _admin_settings(), patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/crawl-targets/{concert_id}/screenshot",
+                params={"site": "YES24"},
+                files={"image": ("screenshot.png", b"fake-png-bytes", "image/png")},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    assert res.json()["crawl_screenshot_url"] == fake_url
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        assert concert.crawl_screenshot_url == fake_url
+        assert concert.crawl_attempted_at is not None
+        assert concert.crawl_attempt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_upload_manual_crawl_screenshot_404_for_unknown_concert():
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/crawl-targets/{uuid.uuid4()}/screenshot",
+                params={"site": "MELON"},
+                files={"image": ("screenshot.png", b"fake-png-bytes", "image/png")},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 404

@@ -7,9 +7,11 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from fastapi import HTTPException
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -814,6 +816,54 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
             concert.crawl_screenshot_url = url
             await db.commit()
             logger.info(f"크롤링 완료: {concert.name} → {url}")
+
+
+# 자동 크롤링(_PREFERRED_SITES=INTERPARK만)으로는 절대 못 뽑는 공연 - YES24/MELON 링크만
+# 있고 인터파크는 없는 경우. 배송일/티켓팅일은 실제 예매 사이트 페이지에만 있어서 KOPIS 폴백
+# 스크린샷으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(집 등 데이터센터 아닌 네트워크)에서
+# 직접 돌리기로 함(YES24/MELON이 AWS 서버 IP에서는 차단 확정 - crawler_block_detection 참고).
+# 이 함수는 그 대상 목록만 뽑아준다 - 실제 크롤링은 scripts/yes24_melon_local_crawl.py가 이
+# 목록을 받아서 로컬에서 수행하고, save_manual_crawl_screenshot으로 결과를 되돌려줌
+async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Concert).where(
+            Concert.end_date > now,
+            Concert.ticketing_date.is_(None),
+            ~Concert.ticketing_links.has_key("INTERPARK"),
+            or_(
+                Concert.ticketing_links.has_key("YES24"),
+                Concert.ticketing_links.has_key("MELON"),
+                Concert.ticketing_links.has_key("MELONTICKET"),
+            ),
+        )
+    )
+    return list(result.scalars().all())
+
+
+# get_yes24_melon_crawl_targets가 뽑은 공연을 로컬에서 직접 크롤링한 결과를 받아 저장 -
+# crawl_and_save가 성공했을 때와 동일한 최종 상태로 맞춘다(crawl_screenshot_url 갱신
+# + crawl_attempted_at/attempt_count 갱신 - 안 하면 오늘 밤 자동 재시도 배치가 바로 이걸
+# KOPIS 스크린샷으로 덮어써버림, 24시간 쿨다운으로 그 사고를 막음). ticketing_date 자체는
+# 여기서 안 채움 - 이 스크린샷을 실제로 읽어 배송일/티켓팅일을 뽑는 건 LLM 분석 단계의 몫
+async def save_manual_crawl_screenshot(
+    db: AsyncSession, concert_id, site: str, image_bytes: bytes
+) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    url = await _upload_screenshot(image_bytes, concert_id, site.lower())
+    if url is None:
+        raise HTTPException(status_code=502, detail="스크린샷 업로드에 실패했습니다.")
+
+    concert.crawl_screenshot_url = url
+    concert.crawl_attempted_at = datetime.now(timezone.utc)
+    concert.crawl_attempt_count += 1
+    await db.commit()
+    await db.refresh(concert)
+    logger.info(f"로컬 크롤링 결과 저장: {concert.name} ({site}) → {url}")
+    return concert
 
 
 # 자정 배치: 예정된 공연 스크린샷 LLM팀 웹훅으로 전송

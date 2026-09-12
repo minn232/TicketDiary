@@ -196,3 +196,30 @@ class AdminGroupRelationAddRequest(BaseModel):
     # 멤버로 등록. role="group": other_name을 이 아티스트가 속한 그룹으로 등록
     other_name: str
     role: str
+
+
+class AdminCrawlTargetCandidate(BaseModel):
+    # 이 공연에 걸린 YES24/MELON 링크 중 하나 - 로컬 스크립트가 순서대로 시도(먼저 성공하는 것만 사용)
+    site: str
+    url: str
+
+
+class AdminCrawlTargetItem(BaseModel):
+    # get_yes24_melon_crawl_targets가 반환하는 대상 1건 - 인터파크가 없어서 자동 크롤링(서버)이
+    # 못 뽑는 공연. 로컬 스크립트가 이 목록을 받아서 각자 자기 네트워크로 직접 크롤링함
+    concert_id: UUID
+    kopis_id: str | None
+    name: str
+    candidates: list[AdminCrawlTargetCandidate]
+
+
+class AdminCrawlTargetsResponse(BaseModel):
+    items: list[AdminCrawlTargetItem]
+
+
+class AdminCrawlScreenshotUploadResponse(BaseModel):
+    # save_manual_crawl_screenshot에 그대로 대응하는 응답 - crawl_and_save가 성공했을 때와
+    # 동일한 최종 상태(crawl_screenshot_url 갱신)가 됐다는 것만 알려줌. 이 스크린샷의 실제
+    # 내용(배송일/티켓팅일)을 뽑는 건 별도 LLM 분석 단계의 몫이라 여기선 안 건드림
+    concert_id: UUID
+    crawl_screenshot_url: str
