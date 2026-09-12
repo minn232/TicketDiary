@@ -97,10 +97,24 @@ def test_normalize_matches_romanization_reverse_direction():
 
 
 def test_normalize_romanization_does_not_false_positive_different_person():
+    # 둘 다 한글이면 로마자 경유 비교 자체를 안 함(아래 실사례 테스트) - 이 케이스는 글자 수/
+    # 음절이 아예 달라 원문 fuzz.ratio에서도 걸릴 일이 없다는 걸 같이 확인
     known = {"김현정"}
     result = normalize_artist_names(["박보검"], known)
     assert result == ["박보검"]
     assert "박보검" in known
+
+
+def test_normalize_romanization_skips_when_both_sides_are_hangul():
+    # 실사례(admin 신규등록 버그): "김중연"을 신규 등록하려는데 전혀 다른 사람인 "김정균"과
+    # 병합돼버림 - 원문 fuzz.ratio는 66.7%(안 걸림)인데, 로마자 변환하면 "중"/"정"처럼 다른
+    # 음절이 근사 로마자표에서 우연히 겹쳐 95% 이상으로 잘못 매치됐던 게 원인. 둘 다 한글이면
+    # 로마자 경유 비교를 아예 안 태우도록 고쳐서, 서로 다른 사람이 같은 canonical로 조용히
+    # 흡수되지 않아야 함
+    known = {"김정균"}
+    result = normalize_artist_names(["김중연"], known)
+    assert result == ["김중연"]
+    assert "김중연" in known
 
 
 def test_normalize_romanization_still_misses_semantic_alias():

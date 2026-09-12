@@ -57,9 +57,11 @@ class AdminReassignArtistRequest(BaseModel):
 class AdminRegisterNewArtistRequest(BaseModel):
     # register_new_canonical_artist에 그대로 넘기는 페이로드 - 재지정 검색에도 안 나오는(즉
     # MusicBrainz/canonical_artists에 없는) 아티스트를 신규로 등록. new_name은 선택(안 주면
-    # 현재 표기 그대로 등록)
+    # 현재 표기 그대로 등록). force_new=True면 이름이 기존 아티스트와 똑같아도(동명이인) 무조건
+    # 새로 만듦 - 실사례(JAEHA): 표기가 똑같은 다른 실존 인물이라 자동 재사용을 피해야 했음
     artist_text: str
     new_name: str | None = None
+    force_new: bool = False
 
 
 class AdminConcertDetail(BaseModel):

@@ -517,9 +517,15 @@ async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text
 # 등록(단순 신규), 주면 오타 정정까지 겸함(add_artist_name과 동일하게 기존 canonical과 퍼지매칭해
 # 근접 중복이 있으면 그걸 재사용, 진짜 없을 때만 새로 만듦). mbid가 없는 채로 만들어지므로
 # add_artist 라우트와 동일하게 호출부에서 MusicBrainz 재조회를 백그라운드로 걸 수 있게 canonical도
-# 같이 반환
+# 같이 반환.
+# force_new=True면 이 퍼지/정확매칭 재사용 단계를 통째로 건너뛰고 무조건 새 canonical을
+# 만든다 - 실사례(JAEHA)로 확인: 표기가 이미 있는 다른 실존 아티스트와 정확히 똑같은데 실제로는
+# 다른 사람인 동명이인 경우, 기존 재사용 로직 자체가 걔로 흡수시켜버려서 admin이 "그래도 새로
+# 만들어라"라고 강제할 방법이 없었음. canonical_name이 같은 canonical 두 개가 공존하는 건
+# 스키마상 허용됨(unique 제약은 mbid에만 있음) - 동명이인은 문자열만으로 원리적으로 구분 불가한
+# 이 시스템의 알려진 한계라, 이후 다른 콘서트에서 같은 표기가 나오면 또 admin이 판단해야 함
 async def register_new_canonical_artist(
-    db: AsyncSession, concert_id, artist_text: str, new_name: str | None = None
+    db: AsyncSession, concert_id, artist_text: str, new_name: str | None = None, *, force_new: bool = False
 ) -> tuple[Concert, CanonicalArtist]:
     concert = await db.get(Concert, concert_id)
     if concert is None:
@@ -535,15 +541,20 @@ async def register_new_canonical_artist(
     if is_blocklisted_artist_name(name):
         raise HTTPException(status_code=400, detail="아티스트명으로 쓸 수 없는 값입니다.")
 
-    existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
-    canonical_names = {c.canonical_name for c in existing_canonicals}
-    resolved_name = normalize_artist_names([name], canonical_names)[0]
-
-    target = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
-    if target is None:
-        target = CanonicalArtist(mbid=None, canonical_name=resolved_name)
+    if force_new:
+        target = CanonicalArtist(mbid=None, canonical_name=name)
         db.add(target)
         await db.flush()
+    else:
+        existing_canonicals = (await db.execute(select(CanonicalArtist))).scalars().all()
+        canonical_names = {c.canonical_name for c in existing_canonicals}
+        resolved_name = normalize_artist_names([name], canonical_names)[0]
+
+        target = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+        if target is None:
+            target = CanonicalArtist(mbid=None, canonical_name=resolved_name)
+            db.add(target)
+            await db.flush()
 
     concert = await _finalize_artist_reassignment(db, concert_id, artist_text, target)
     return concert, target
@@ -749,14 +760,21 @@ async def get_canonical_name_options(db: AsyncSession, name: str) -> tuple[Canon
 
 
 # display_name이 바뀔 때 이미 그 표기로 확정돼있는 콘서트들도 같이 갱신 - 안 하면 admin이
-# 표시명을 바꿔도 새로 매치되는 콘서트에만 적용되고 기존 콘서트는 예전 표기로 남아 혼란스러움
+# 표시명을 바꿔도 새로 매치되는 콘서트에만 적용되고 기존 콘서트는 예전 표기로 남아 혼란스러움.
+# concerts.artist_name을 직접 훑어야 함(실사례로 확인된 버그: ConcertLineup에서만 찾으면
+# 날짜별 출연 배정이 없는 콘서트 - 단독공연 등, 상당수 - 는 여기 안 걸려서 admin 화면에
+# 옛 표기가 계속 남음) - ConcertLineup도 별도로 계속 훑는 이유는 artist_name에서는 이미
+# 지워졌는데 라인업 row만 남아있는 드문 경우까지 놓치지 않기 위함
 async def _reapply_display_name(db: AsyncSession, old_value: str, new_value: str) -> None:
     if old_value == new_value:
         return
-    concert_ids = (
+    from_artist_name = (
+        await db.execute(select(Concert.id).where(Concert.artist_name.contains([old_value])))
+    ).scalars().all()
+    from_lineup = (
         await db.execute(select(ConcertLineup.concert_id).distinct().where(ConcertLineup.artist == old_value))
     ).scalars().all()
-    for concert_id in concert_ids:
+    for concert_id in set(from_artist_name) | set(from_lineup):
         # 이 소급 반영은 admin이 그 콘서트 하나하나를 직접 검수한 게 아니라 표시명 변경의
         # 부수효과로 여러 콘서트에 걸쳐 일괄 적용되는 것 - 검수 상태는 초기화
         await apply_canonical_replacement(db, concert_id, old_value, new_value, clear_admin_review=True)

@@ -672,6 +672,44 @@ async def test_admin_register_new_schedules_musicbrainz_link():
     mock_link.assert_awaited_once()
 
 
+# 실사례(JAEHA): 이름이 이미 존재하는 다른 실존 아티스트와 정확히 똑같은데 실제로는 다른
+# 사람인 동명이인 - force_new=True면 그 기존 canonical로 자동 재사용하지 않고 무조건 새로
+# 만들어야 함(기존 canonical의 별칭/mbid는 그대로 보존)
+@pytest.mark.asyncio
+async def test_admin_register_new_force_creates_separate_canonical_for_namesake():
+    shared_name = f"동명이인_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_ADMIN_REGNEW_FORCE_{uuid.uuid4().hex[:6]}", shared_name)
+
+    async with AsyncSessionLocal() as db:
+        existing = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=shared_name, display_name="원래사람")
+        db.add(existing)
+        await db.commit()
+        existing_id = existing.id
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/admin/concerts/{concert_id}/artist-name/register-new",
+                json={"artist_text": shared_name, "force_new": True},
+                headers=_admin_headers(),
+            )
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [shared_name]
+
+    async with AsyncSessionLocal() as db:
+        canonicals = (
+            await db.execute(select(CanonicalArtist).where(CanonicalArtist.canonical_name == shared_name))
+        ).scalars().all()
+        assert len(canonicals) == 2  # 기존 것 + 강제로 새로 만든 것
+
+        new_one = next(c for c in canonicals if c.id != existing_id)
+        assert new_one.mbid is None
+
+        existing_still = await db.get(CanonicalArtist, existing_id)
+        assert existing_still.mbid is not None  # 기존(진짜) 아티스트는 안 건드림
+        assert existing_still.display_name == "원래사람"
+
+
 @pytest.mark.asyncio
 async def test_admin_deletes_artist():
     m1, m2 = f"멤버A_{uuid.uuid4().hex[:6]}", f"멤버B_{uuid.uuid4().hex[:6]}"

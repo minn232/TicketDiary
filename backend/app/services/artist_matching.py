@@ -76,7 +76,11 @@ def _compact(text: str) -> str:
 
 # 한글 이름의 로마자 변환 후보를 known_names(로마자 변환 필요하면 마찬가지로 변환)와 비교해
 # 원문 매칭(normalize_artist_names의 1차 패스)에서 놓친 한글/로마자 표기 쌍을 찾는다.
-# 예: "김현정" ↔ "Kim Hyunjung" - 방탄소년단↔BTS처럼 의미가 다른 별칭은 여전히 못 잡음
+# 예: "김현정" ↔ "Kim Hyunjung" - 방탄소년단↔BTS처럼 의미가 다른 별칭은 여전히 못 잡음.
+# 실측 확인된 사고: "김중연"(신규 등록하려던 이름)이 전혀 다른 사람인 "김정균"과 로마자
+# 변환하면 우연히 비슷해져(중/정처럼 서로 다른 한글 음절이 근사 로마자표에서 겹침) 92%
+# 미달(66.7%)임에도 잘못 병합됨 - 둘 다 한글이면 이 함수를 아예 태우지 않는다(원문 그대로
+# fuzz.ratio 비교가 이미 담당하고, 로마자 변환은 정보손실이라 오히려 위험함)
 def _romanization_match(name: str, known_names: set[str]) -> str | None:
     name_has_hangul = _contains_hangul(name)
     name_variants = _romanized_variants(name) if name_has_hangul else [name]
@@ -84,8 +88,8 @@ def _romanization_match(name: str, known_names: set[str]) -> str | None:
     best_score, best_match = 0, None
     for known in known_names:
         known_has_hangul = _contains_hangul(known)
-        if not name_has_hangul and not known_has_hangul:
-            continue  # 둘 다 한글이 아니면 이 함수가 할 일이 없음(원문 매칭에서 이미 처리됨)
+        if name_has_hangul == known_has_hangul:
+            continue  # 둘 다 한글이거나 둘 다 아니면 이 함수가 할 일이 없음(한→한은 원문 매칭이 이미 담당, 로마자 경유는 스크립트가 실제로 다를 때만 필요)
         known_variants = _romanized_variants(known) if known_has_hangul else [known]
         for a in name_variants:
             for b in known_variants:

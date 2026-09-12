@@ -334,7 +334,9 @@ async def register_new_artist_route(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    _, canonical = await register_new_canonical_artist(db, concert_id, body.artist_text, body.new_name)
+    _, canonical = await register_new_canonical_artist(
+        db, concert_id, body.artist_text, body.new_name, force_new=body.force_new
+    )
     if canonical.mbid is None:
         # add_artist 라우트와 동일 - 응답 이후 백그라운드로 재조회(스로틀 때문에 여기서 기다리면 느려짐)
         background_tasks.add_task(try_link_canonical_to_musicbrainz, canonical.id)

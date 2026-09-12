@@ -1089,6 +1089,29 @@ async def test_set_display_name_updates_existing_concerts_and_registers_alias():
         assert [r.artist for r in lineup_rows] == [hangul_name]
 
 
+# 실사례 버그: ConcertLineup(날짜별 출연 배정) row가 없는 콘서트는 표시명 변경이 소급 반영
+# 안 되고 admin 화면에 옛 표기가 계속 남았음 - 단독공연 등 날짜별 배정 자체가 없는 콘서트가
+# 상당수라 흔하게 발생. concerts.artist_name을 직접 훑도록 고침
+@pytest.mark.asyncio
+async def test_set_display_name_updates_concert_without_lineup_rows():
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_DISP_NOLINEUP_{uuid.uuid4().hex[:6]}", latin_name, token))
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.commit()
+        canonical_id = canonical.id
+
+    async with AsyncSessionLocal() as db:
+        await set_display_name(db, canonical_id, hangul_name)
+
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [hangul_name]
+
+
 @pytest.mark.asyncio
 async def test_set_display_name_rejects_blank_and_blocklisted():
     async with AsyncSessionLocal() as db:
