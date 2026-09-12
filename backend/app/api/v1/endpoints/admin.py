@@ -671,8 +671,9 @@ async def list_yes24_melon_crawl_targets(db: AsyncSession = Depends(get_db)):
 
 # 로컬 스크립트가 직접 크롤링한 스크린샷을 업로드 - crawl_and_save가 성공했을 때와 동일한
 # 상태(crawl_screenshot_url 갱신)로 맞춰준다. 전체 페이지 PNG라 일반 이미지 업로드
-# (upload.py)보다 큰 상한을 둠
-_MAX_CRAWL_SCREENSHOT_SIZE = 20 * 1024 * 1024  # 20MB
+# (upload.py)보다 큰 상한을 둠 - 실측으로 20MB 넘는 페이지(이미지/공지사항 많은 상세페이지)가
+# 나와서 60MB로 완화함
+_MAX_CRAWL_SCREENSHOT_SIZE = 60 * 1024 * 1024  # 60MB
 
 
 @router.post("/crawl-targets/{concert_id}/screenshot", response_model=AdminCrawlScreenshotUploadResponse)
@@ -685,11 +686,11 @@ async def upload_manual_crawl_screenshot(
 ):
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > _MAX_CRAWL_SCREENSHOT_SIZE:
-        raise HTTPException(status_code=413, detail="스크린샷 크기는 20MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
 
     image_bytes = await image.read(_MAX_CRAWL_SCREENSHOT_SIZE + 1)
     if len(image_bytes) > _MAX_CRAWL_SCREENSHOT_SIZE:
-        raise HTTPException(status_code=413, detail="스크린샷 크기는 20MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
 
     concert = await save_manual_crawl_screenshot(db, concert_id, site, image_bytes)
     return AdminCrawlScreenshotUploadResponse(concert_id=concert.id, crawl_screenshot_url=concert.crawl_screenshot_url)

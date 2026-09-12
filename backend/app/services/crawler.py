@@ -836,6 +836,14 @@ async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
                 Concert.ticketing_links.has_key("MELON"),
                 Concert.ticketing_links.has_key("MELONTICKET"),
             ),
+            # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
+            # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
+            # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
+            # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
+            or_(
+                Concert.crawl_attempted_at.is_(None),
+                Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
+            ),
         )
     )
     return list(result.scalars().all())

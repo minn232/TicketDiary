@@ -1494,6 +1494,51 @@ async def test_admin_crawl_targets_excludes_concert_with_ticketing_date_already_
     assert all(i["concert_id"] != concert_id for i in res.json()["items"])
 
 
+# 실사용 중 발견된 버그: 로컬 스크립트로 방금 성공한(crawl_attempted_at이 막 찍힌) 콘서트가
+# 스크립트를 다시 돌리자마자 또 대상으로 잡혀서 중복 재크롤링되던 문제 - crawl_and_save와
+# 동일한 24시간 쿨다운을 적용해 막 시도한 건 잠깐 빠지는지 확인
+@pytest.mark.asyncio
+async def test_admin_crawl_targets_excludes_recently_attempted_concert():
+    concert_id = await _create_concert(f"PF_CRAWLTGT_COOLDOWN_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(
+                ticketing_links={"YES24": "https://ticket.yes24.com/perf/123"},
+                crawl_attempted_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/api/v1/admin/crawl-targets/yes24-melon", headers=_admin_headers())
+    assert res.status_code == 200
+    assert all(i["concert_id"] != concert_id for i in res.json()["items"])
+
+
+@pytest.mark.asyncio
+async def test_admin_crawl_targets_includes_concert_attempted_long_ago():
+    concert_id = await _create_concert(f"PF_CRAWLTGT_OLDATTEMPT_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(
+                ticketing_links={"YES24": "https://ticket.yes24.com/perf/123"},
+                crawl_attempted_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            )
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/api/v1/admin/crawl-targets/yes24-melon", headers=_admin_headers())
+    assert res.status_code == 200
+    assert any(i["concert_id"] == concert_id for i in res.json()["items"])
+
+
 # 로컬에서 직접 크롤링한 스크린샷 업로드 - crawl_and_save가 성공했을 때와 동일한 상태로
 # 맞춰지는지(crawl_screenshot_url/crawl_attempted_at/crawl_attempt_count) 확인
 
