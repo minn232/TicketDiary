@@ -3,7 +3,6 @@ import logging
 import time
 
 import httpx
-from rapidfuzz import fuzz
 
 from app.core.config import settings
 
@@ -77,11 +76,22 @@ async def resolve_spotify_track(artist: str | None, song: str) -> str | None:
 
 # ---- YouTube ----
 
-# Content ID로 정식 유통 등록된 음원에 유튜브가 자동으로 붙이는 표준 문구 - 유명세와 무관하게
-# 저가 유통사(디스트로킷 등)를 쓴 인디 아티스트도 대부분 해당됨. 채널명이 "-Topic"으로
-# 끝나는지를 볼까 했지만, 공식 음원이 아티스트 브랜드 채널에도 올라가는 경우가 있어(실측
-# 확인) 신뢰도가 낮아 안 씀.
+# Content ID가 정식 유통 음원에 자동으로 붙이는 표준 문구 - 유명세와 무관하게 저가
+# 유통사를 쓴 인디 아티스트도 대부분 해당됨. 채널명 "-Topic" 패턴은 공식 음원이 아티스트
+# 브랜드 채널에도 올라가는 경우가 있어(실측 확인) 신뢰도가 낮아 안 씀.
 _OFFICIAL_AUDIO_MARKER = "provided to youtube by"
+
+# 레이블이 직접 편집해 올리는 "공식 뮤직비디오"는 위 문구가 없어서(실측: BTS 'Dynamite'
+# Official MV) 놓치는 문제가 있었음 - 제목에 "official"+"mv/music video" 조합이 있으면
+# 추가로 인정.
+_OFFICIAL_MV_TITLE_MARKERS = ("mv", "m/v", "music video")
+
+
+def _looks_like_official_video(title: str, description: str) -> bool:
+    if _OFFICIAL_AUDIO_MARKER in description:
+        return True
+    title_lower = title.lower()
+    return "official" in title_lower and any(marker in title_lower for marker in _OFFICIAL_MV_TITLE_MARKERS)
 
 
 # 유튜브/유튜브뮤직은 카탈로그(영상 ID)가 같아서 검색 로직은 공유하고, 링크 도메인만 다르게
@@ -115,10 +125,12 @@ async def _find_official_youtube_video_id(artist: str | None, song: str) -> str 
             )
         detail_resp.raise_for_status()
         for item in detail_resp.json().get("items", []):
-            description = (item.get("snippet", {}).get("description") or "").lower()
-            if _OFFICIAL_AUDIO_MARKER in description:
+            snippet = item.get("snippet", {})
+            description = (snippet.get("description") or "").lower()
+            title = snippet.get("title") or ""
+            if _looks_like_official_video(title, description):
                 return item["id"]
-        return None  # 검색 결과는 있지만 공식 음원 표시가 없음(커버/직캠 등) -> 검색화면 폴백
+        return None  # 검색 결과는 있지만 공식 음원/뮤비 표시가 없음(커버/직캠 등) -> 검색화면 폴백
     except Exception as e:
         logger.warning(f"YouTube 검색 실패 (artist={artist}, song={song}): {e}")
         return None
@@ -136,33 +148,66 @@ async def resolve_youtube_music_video(artist: str | None, song: str) -> str | No
 
 # ---- Apple Music (iTunes Search API, 인증 불필요) ----
 
-# 스포티파이와 달리 artist:/track: 필드 검색이 없어서 결과를 문자열 유사도로 걸러야 함 -
-# 로마자/번역 표기 케이스를 놓칠 수 있는 만큼 임계치를 낮게 잡아 안전 쪽(폴백)으로 치우침.
-_APPLE_MUSIC_MATCH_THRESHOLD = 45
-
-
+# country="kr"은 실측 결과 BTS/아이유 등 유명 아티스트도 resultCount=0이라(iTunes 한국
+# 스토어프론트가 이 API로는 거의 안 됨) "us"로 변경.
+#
+# 문자열 유사도(rapidfuzz) 대신 artistId 대조를 쓰는 이유: 로마자/번역 표기 정상매칭은
+# 유사도가 0에 가깝게 나와 거절되고(예: "아이유 좋은날" ↔ "IU Good Day"), 반대로 곡 제목만
+# 같은 무관한 아티스트는 유사도가 높게 나와 오탐(실측: 잔나비 비공식 커버곡 검색 시 무관한
+# 클래식 기타리스트 동명곡이 90점대로 통과) - 임계치 조정으로는 둘 다 못 잡음. 그래서 iTunes
+# 아티스트 전용 검색으로 artistId를 먼저 확정하고, 곡 검색 결과 중 그 ID와 일치하는 것만
+# 인정하는 방식으로 교체(숫자 ID라 스크립트 차이 무관).
 async def resolve_apple_music_track(
-    artist: str | None, song: str, country: str = "kr"
+    artist: str | None, song: str, country: str = "us"
 ) -> str | None:
-    query = f"{artist} {song}".strip() if artist else song
+    # 아티스트 정보가 없으면 artistId 대조 자체가 불가능해서, 곡명만으로 억지로 추정하는 대신
+    # 그냥 폴백(검색화면).
+    if not artist:
+        return None
+
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            resp = await client.get(
+            artist_resp = await client.get(
+                "https://itunes.apple.com/search",
+                params={"term": artist, "entity": "musicArtist", "country": country, "limit": 1},
+            )
+            artist_resp.raise_for_status()
+            artist_results = artist_resp.json().get("results", [])
+            if not artist_results:
+                return None
+            artist_id = artist_results[0].get("artistId")
+
+            song_resp = await client.get(
                 "https://itunes.apple.com/search",
                 params={
-                    "term": query,
+                    "term": f"{artist} {song}",
                     "media": "music",
                     "entity": "song",
                     "country": country,
-                    "limit": 5,
+                    "limit": 10,
                 },
             )
-        resp.raise_for_status()
-        for item in resp.json().get("results", []):
-            candidate = f"{item.get('artistName', '')} {item.get('trackName', '')}"
-            if fuzz.partial_ratio(query.lower(), candidate.lower()) >= _APPLE_MUSIC_MATCH_THRESHOLD:
-                return item.get("trackViewUrl")
-        return None
+        song_resp.raise_for_status()
+
+        matches = [
+            item for item in song_resp.json().get("results", []) if item.get("artistId") == artist_id
+        ]
+        if not matches:
+            return None  # 검색은 됐지만 그 아티스트 명의로는 없음(커버/미발매곡 등) -> 폴백
+
+        # 같은 곡의 라이브/인스트루멘탈/리믹스 버전이 스튜디오 버전보다 먼저 나오는 경우가
+        # 있어서(실측: "BTS Dynamite" 1등이 "Dynamite (Live)"), 그런 표시가 없는 버전을
+        # 우선 채택하고 없으면 그냥 1등 그대로 씀.
+        studio = next((m for m in matches if not _looks_like_alt_version(m.get("trackName", ""))), None)
+        return (studio or matches[0]).get("trackViewUrl")
     except Exception as e:
         logger.warning(f"Apple Music 검색 실패 (artist={artist}, song={song}): {e}")
         return None
+
+
+_ALT_VERSION_MARKERS = ("live", "instrumental", "remix", "acoustic", "karaoke")
+
+
+def _looks_like_alt_version(track_name: str) -> bool:
+    lower = track_name.lower()
+    return any(marker in lower for marker in _ALT_VERSION_MARKERS)
