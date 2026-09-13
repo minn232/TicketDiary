@@ -347,11 +347,12 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         if (!_artistNames.contains(name)) name,
     ];
 
-    // 아티스트가 1명 이하(단독 공연, 또는 아티스트 태그 정보 자체가 없는 옛날
-    // 데이터)면 기존처럼 번호 목록.
-    if (allArtists.length <= 1 && untaggedSongs.isEmpty) {
-      final only = allArtists.isEmpty ? songs : songsByArtist[allArtists.first]!;
-      if (only.isEmpty) return _buildEmptyState();
+    // 아티스트가 1명 이하(단독 공연)면 기존처럼 번호 목록 - song.artist 태그 유무와
+    // 무관하게 songs를 그대로 씀. 예전엔 untaggedSongs가 비어있어야만 이 분기를
+    // 탔는데, 특정 setlist.fm ID로 저장된 단독 공연(태그 자체를 안 붙임)은 아티스트가
+    // 1명뿐이어도 전부 "아티스트 미상" 그룹으로 빠지는 문제가 있었음.
+    if (allArtists.length <= 1) {
+      if (songs.isEmpty) return _buildEmptyState();
       // 단독 공연은 song.artist가 비어있는 옛날 데이터가 많아서, 콘서트에
       // 등록된 아티스트(정확히 1명)를 검색용 폴백으로 씀.
       final fallbackArtist = allArtists.length == 1 ? allArtists.first : null;
@@ -360,7 +361,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: _buildRealSongRows(
             context,
-            only,
+            songs,
             widget.ink,
             selection: widget.selection,
             fallbackArtist: fallbackArtist,

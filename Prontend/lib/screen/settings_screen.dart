@@ -81,7 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await _appSettings.setPreferredMusicService(v);
     } catch (e) {
-      _showSaveError(e, label: '셋리스트 곡 연결 앱');
+      _showSaveError(e, label: '연결할 음악 스트리밍 앱');
     }
   }
 
@@ -459,7 +459,7 @@ class _MusicServiceRow extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                '셋리스트 곡 연결 앱',
+                '연결할 음악 스트리밍 앱',
                 style: TextStyle(
                   fontSize: context.sp(15),
                   fontWeight: FontWeight.w800,
