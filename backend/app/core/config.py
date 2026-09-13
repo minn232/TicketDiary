@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # mbid로 확정된 아티스트의 한글 통용명 보강용(wikidata.py). User-Agent는 MUSICBRAINZ_USER_AGENT 재사용
     WIKIDATA_BASE_URL: str = "https://www.wikidata.org"
     GOOGLE_VISION_API_KEY: str = ""
+    # 셋리스트 곡 원탭 연결(music_resolve.py) - 셋 다 없으면 해당 서비스는 검색화면으로만 폴백
+    SPOTIFY_CLIENT_ID: str = ""
+    SPOTIFY_CLIENT_SECRET: str = ""
+    YOUTUBE_API_KEY: str = ""
     # LLM_EXTRACT_URL: str = ""  # OCR 파싱이 로컬 regex로 전환되어 현재 미사용
     LLM_EXTRACT_API_KEY: str = ""
     # 아티스트 정규화 관리자 페이지 인증 키 (Nginx Basic Auth와 별개로 앱 레벨에서도 검증)
