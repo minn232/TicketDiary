@@ -134,6 +134,37 @@ async def test_resolve_youtube_official_audio_success():
     assert response.json() == {"url": "https://www.youtube.com/watch?v=vid2"}
 
 
+# 유튜브 - "Provided to YouTube by" 문구가 없어도 제목이 "Official ... MV"면 인정
+# (실측: BTS 'Dynamite' Official MV처럼 레이블이 직접 올리는 공식 뮤직비디오는 이 문구가
+# 없어서 놓쳤던 버그, backend/tests가 아니라 서버 실배포 후 실제 API 호출로 발견함)
+@pytest.mark.asyncio
+async def test_resolve_youtube_official_mv_title_success():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid1"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "BTS (방탄소년단) 'Dynamite' Official MV",
+                        "description": "Credits:\nDirector: ...",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "Dynamite", "artist": "BTS"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=vid1"}
+
+
 # 유튜브뮤직 - 유튜브와 검색 로직은 같고 링크 도메인만 music.youtube.com으로 다르게
 @pytest.mark.asyncio
 async def test_resolve_youtube_music_uses_music_domain():
@@ -172,47 +203,55 @@ async def test_resolve_youtube_no_official_audio_returns_null():
     assert response.json() == {"url": None}
 
 
-# 애플뮤직 - 유사도 임계치 넘는 결과만 반환
+# 애플뮤직 - artistId가 일치하는 결과만 반환(문자열 유사도 대신 ID 대조로 교체됨 - 아래 3개
+# 테스트 참고). 아티스트 검색으로 먼저 artistId를 확정하고, 곡 검색 결과 중 그 ID와 일치하는
+# 것만 인정.
 @pytest.mark.asyncio
 async def test_resolve_apple_music_success():
     token = await _get_token()
-    search_resp = _mock_response(
+    artist_resp = _mock_response({"results": [{"artistId": 111}]})
+    song_resp = _mock_response(
         {
             "results": [
                 {
+                    "artistId": 111,
                     "artistName": "테스트가수",
                     "trackName": "테스트곡",
-                    "trackViewUrl": "https://music.apple.com/kr/song/123",
+                    "trackViewUrl": "https://music.apple.com/us/song/123",
                 }
             ]
         }
     )
-    with _music_resolve_client_mock(get=search_resp):
+    with _music_resolve_client_mock(get=[artist_resp, song_resp]):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 "/api/v1/music-links/resolve",
                 params={"service": "apple_music", "song": "테스트곡", "artist": "테스트가수"},
                 headers={"Authorization": f"Bearer {token}"},
             )
-    assert response.json() == {"url": "https://music.apple.com/kr/song/123"}
+    assert response.json() == {"url": "https://music.apple.com/us/song/123"}
 
 
-# 애플뮤직 - 결과는 있지만 유사도가 낮으면(완전히 다른 곡) null 폴백
+# 애플뮤직 - 곡 제목만 우연히 같은 무관한 아티스트 결과는 artistId가 달라서 걸러짐
+# (실측 사례: 잔나비의 비공식 커버곡 "The Moon Represents My Heart" 검색 시 무관한 클래식
+# 기타리스트의 동명 편곡 트랙이 잡혔던 실제 버그 - 문자열 유사도로는 90점 넘게 나와 오탐이었음)
 @pytest.mark.asyncio
-async def test_resolve_apple_music_low_similarity_returns_null():
+async def test_resolve_apple_music_different_artist_id_returns_null():
     token = await _get_token()
-    search_resp = _mock_response(
+    artist_resp = _mock_response({"results": [{"artistId": 111}]})
+    song_resp = _mock_response(
         {
             "results": [
                 {
+                    "artistId": 999,
                     "artistName": "전혀 다른 아티스트",
-                    "trackName": "전혀 다른 곡",
-                    "trackViewUrl": "https://music.apple.com/kr/song/999",
+                    "trackName": "테스트곡",  # 제목은 우연히 같아도
+                    "trackViewUrl": "https://music.apple.com/us/song/999",
                 }
             ]
         }
     )
-    with _music_resolve_client_mock(get=search_resp):
+    with _music_resolve_client_mock(get=[artist_resp, song_resp]):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 "/api/v1/music-links/resolve",
@@ -220,3 +259,64 @@ async def test_resolve_apple_music_low_similarity_returns_null():
                 headers={"Authorization": f"Bearer {token}"},
             )
     assert response.json() == {"url": None}
+
+
+# 애플뮤직 - 아티스트 검색 자체가 안 잡히면(존재하지 않는 아티스트 등) 곡 검색은 시도도 안 하고 null
+@pytest.mark.asyncio
+async def test_resolve_apple_music_artist_not_found_returns_null():
+    token = await _get_token()
+    artist_resp = _mock_response({"results": []})
+    with _music_resolve_client_mock(get=artist_resp):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "apple_music", "song": "테스트곡", "artist": "존재안하는아티스트"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.json() == {"url": None}
+
+
+# 애플뮤직 - artist가 없으면(단독 공연 옛날 데이터 등) artistId 대조 자체가 불가능하므로
+# API 호출 없이 바로 null
+@pytest.mark.asyncio
+async def test_resolve_apple_music_without_artist_returns_null():
+    token = await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get(
+            "/api/v1/music-links/resolve",
+            params={"service": "apple_music", "song": "테스트곡"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.json() == {"url": None}
+
+
+# 애플뮤직 - 같은 아티스트의 곡이 여러 버전(라이브 등)으로 잡히면 스튜디오 버전을 우선 채택
+# (실측: "BTS Dynamite" 검색 1등이 "Dynamite (Live)"였던 사례)
+@pytest.mark.asyncio
+async def test_resolve_apple_music_prefers_studio_over_live_version():
+    token = await _get_token()
+    artist_resp = _mock_response({"results": [{"artistId": 111}]})
+    song_resp = _mock_response(
+        {
+            "results": [
+                {
+                    "artistId": 111,
+                    "trackName": "테스트곡 (Live)",
+                    "trackViewUrl": "https://music.apple.com/us/song/live",
+                },
+                {
+                    "artistId": 111,
+                    "trackName": "테스트곡",
+                    "trackViewUrl": "https://music.apple.com/us/song/studio",
+                },
+            ]
+        }
+    )
+    with _music_resolve_client_mock(get=[artist_resp, song_resp]):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "apple_music", "song": "테스트곡", "artist": "테스트가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.json() == {"url": "https://music.apple.com/us/song/studio"}
