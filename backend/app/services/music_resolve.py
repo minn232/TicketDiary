@@ -126,6 +126,19 @@ def _looks_like_official_video(title: str, description: str, channel_title: str,
     return has_mv_marker and _is_trusted_distributor_channel(channel_title)
 
 
+# 공식으로 인정된 영상 중에서도 "오디오만" 올라간 것(Content ID 자동생성 오디오, 정적 이미지)과
+# 실제 뮤직비디오를 구분 - 유튜브로 누르면 무대/영상을 보고 싶은 거지 오디오만 나오는 걸
+# 기대하는 게 아니라서, 뮤비가 후보에 있으면 그쪽을 우선함.
+def _is_audio_only(title: str, description: str) -> bool:
+    title_lower = title.lower()
+    if "audio" in title_lower:  # "(Official Audio)"처럼 직접 명시하는 경우
+        return True
+    # Content ID 자동생성 오디오는 보통 제목에 MV 표시가 없음 - 있으면(제목에 mv 표시가
+    # 있는데 설명란에도 저 문구가 있는 경우) 뮤비 쪽으로 봄.
+    has_mv_marker = any(marker in title_lower for marker in _OFFICIAL_MV_TITLE_MARKERS)
+    return _OFFICIAL_AUDIO_MARKER in description and not has_mv_marker
+
+
 # 유튜브/유튜브뮤직은 카탈로그(영상 ID)가 같아서 검색 로직은 공유하고, 링크 도메인만 다르게
 # 붙임 - 유튜브는 "그 무대 영상/직캠 보기", 유튜브뮤직은 "음악만 바로 듣기" 용도로 구분해서
 # 쓰라는 요청 반영.
@@ -156,14 +169,22 @@ async def _find_official_youtube_video_id(artist: str | None, song: str) -> str 
                 params={"part": "snippet", "id": ",".join(video_ids), "key": settings.YOUTUBE_API_KEY},
             )
         detail_resp.raise_for_status()
+        official_candidates: list[tuple[str, bool]] = []  # (videoId, 오디오만인지)
         for item in detail_resp.json().get("items", []):
             snippet = item.get("snippet", {})
             description = (snippet.get("description") or "").lower()
             title = snippet.get("title") or ""
             channel_title = snippet.get("channelTitle") or ""
             if _looks_like_official_video(title, description, channel_title, artist):
-                return item["id"]
-        return None  # 검색 결과는 있지만 공식 음원/뮤비 표시가 없음(커버/직캠 등) -> 검색화면 폴백
+                official_candidates.append((item["id"], _is_audio_only(title, description)))
+
+        if not official_candidates:
+            return None  # 공식 음원/뮤비 표시가 없음(커버/직캠 등) -> 검색화면 폴백
+
+        # 뮤비 후보가 있으면 우선 채택(유튜브로 누르는 건 보통 영상을 보고 싶은 거라서),
+        # 없으면 오디오만이라도 씀.
+        video = next((vid for vid, audio_only in official_candidates if not audio_only), None)
+        return video or official_candidates[0][0]
     except Exception as e:
         logger.warning(f"YouTube 검색 실패 (artist={artist}, song={song}): {e}")
         return None

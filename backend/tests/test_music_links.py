@@ -134,6 +134,73 @@ async def test_resolve_youtube_official_audio_success():
     assert response.json() == {"url": "https://www.youtube.com/watch?v=vid2"}
 
 
+# 유튜브 - 공식 오디오와 공식 뮤비가 둘 다 후보에 있으면(오디오가 검색순위 1등이어도) 뮤비를
+# 우선 채택 - 유튜브로 누르는 건 보통 영상을 보고 싶은 거라서.
+@pytest.mark.asyncio
+async def test_resolve_youtube_prefers_music_video_over_official_audio():
+    token = await _get_token()
+    search_resp = _mock_response(
+        {"items": [{"id": {"videoId": "vid_audio"}}, {"id": {"videoId": "vid_mv"}}]}
+    )
+    detail_resp = _mock_response(
+        {
+            "items": [
+                # 1등이지만 오디오만
+                {
+                    "id": "vid_audio",
+                    "snippet": {
+                        "title": "노래 - 가수",
+                        "description": "Provided to YouTube by Some Label",
+                    },
+                },
+                # 2등이지만 진짜 뮤비
+                {
+                    "id": "vid_mv",
+                    "snippet": {"title": "가수 'Song' Official MV", "description": ""},
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "노래", "artist": "가수"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=vid_mv"}
+
+
+# 유튜브 - 뮤비 후보가 아예 없으면(오디오만 있으면) 오디오라도 씀(위 test와 대조)
+@pytest.mark.asyncio
+async def test_resolve_youtube_falls_back_to_audio_when_no_mv_candidate():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid_audio"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid_audio",
+                    "snippet": {
+                        "title": "노래 (Official Audio)",
+                        "description": "Provided to YouTube by Some Label",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "노래", "artist": "가수"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=vid_audio"}
+
+
 # 유튜브 - "Provided to YouTube by" 문구가 없어도 제목이 "Official ... MV"면 인정
 # (실측: BTS 'Dynamite' Official MV처럼 레이블이 직접 올리는 공식 뮤직비디오는 이 문구가
 # 없어서 놓쳤던 버그, backend/tests가 아니라 서버 실배포 후 실제 API 호출로 발견함)
