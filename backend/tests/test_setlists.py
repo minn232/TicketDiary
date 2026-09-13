@@ -1058,3 +1058,40 @@ async def test_generate_real_setlist_alias_fallback_still_not_found():
     assert row is not None
     assert row.songs == []
     assert row.attempted_at is not None
+
+
+# Setlist.fm API 자체가 일시 실패(5xx/레이트리밋 등)하면 "못 찾음"과 달리 쿨다운을
+# 기록하지 않아서, 바로 다음 조회 때 다시 시도되는지 테스트 - music_link 캐싱에서
+# API 에러를 "못 찾음"으로 캐싱해버렸던 것과 같은 종류의 버그 재발 방지
+@pytest.mark.asyncio
+async def test_get_ticket_setlist_transient_api_error_does_not_burn_cooldown():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_VIEWCHECK_005", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    # Setlist.fm이 500(우리 쪽에선 502)을 주는 상황
+    with _setlistfm_mock(status_code=500):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    assert get_res.status_code == 200
+    assert get_res.json()["songs"] == []
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    # 쿨다운용 빈 행 자체를 남기지 않아야 함(진짜 "못 찾음"이 아니므로)
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is None
+
+    # 쿨다운이 없으니 바로 다음 조회에서 다시 시도되고, 이번엔 정상 응답이면 채워져야 함
+    search_data = _make_setlistfm_search("SF_VIEWCHECK_005", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert len(row.songs) == 3

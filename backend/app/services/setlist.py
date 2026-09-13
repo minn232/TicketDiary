@@ -106,7 +106,9 @@ async def _search_setlists_with_alias_fallback(
         if not alias_text or normalized in tried:
             continue
         tried.add(normalized)
-        await asyncio.sleep(0.3)
+        # 아티스트 루프 간 간격(0.5초)과 동일하게 맞춤 - 너무 촘촘하면 Setlist.fm
+        # 레이트리밋(429)에 걸릴 수 있음(실측 확인)
+        await asyncio.sleep(0.5)
         candidates = await search_setlists(alias_text, performance_date)
         if candidates:
             return candidates
@@ -297,6 +299,16 @@ async def check_real_setlist_on_view(concert_id: UUID, performance_date: date) -
 
             await generate_real_setlist_auto(db, concert_id, performance_date)
         except HTTPException as e:
+            if e.status_code == 502:
+                # Setlist.fm API 자체가 일시 실패한 경우(레이트리밋/네트워크 등) - 진짜
+                # "검색해봤는데 없음"이 아니므로 쿨다운을 기록하지 않고 다음 조회 때 바로
+                # 재시도되게 둠. music_link 캐싱에서 API 에러를 "못 찾음"으로 캐싱해버렸던
+                # 것과 같은 종류의 버그(실사례: alias 폴백 추가 후 요청이 늘어 ZUTOMAYO
+                # 콘서트에서 순간적으로 429 발생, 하루 쿨다운에 걸려 재시도가 막혔었음).
+                logger.info(
+                    f"조회 시점 실제 셋리스트 확인 - Setlist.fm API 일시 실패, 쿨다운 없이 다음 조회 때 재시도 (concert_id={concert_id}, date={performance_date}): {e.detail}"
+                )
+                return
             logger.info(
                 f"조회 시점 실제 셋리스트 확인 - 아직 없음 (concert_id={concert_id}, date={performance_date}): {e.detail}"
             )
