@@ -332,6 +332,8 @@ async def test_get_pre_setlist_scoped_to_date_lineup():
             f"/api/v1/concerts/{concert_id}/setlist/pre?date=2030-06-01", headers=headers
         )
     assert {s["name"] for s in before_res.json()["songs"]} == {"에이곡1", "비곡1"}
+    # 배정 정보 없을 땐 artist_names도 concert.artist_name 전체로 폴백
+    assert set(before_res.json()["artist_names"]) == {artist_a, artist_b}
 
     # artist_a는 06-01에만 배정
     async with AsyncSessionLocal() as db:
@@ -348,6 +350,8 @@ async def test_get_pre_setlist_scoped_to_date_lineup():
     day1_songs = day1_res.json()["songs"]
     assert {s["name"] for s in day1_songs} == {"에이곡1"}
     assert all(s["artist"] == artist_a for s in day1_songs)
+    # 그 날짜 배정으로 좁혀지면 artist_names도 같이 좁혀짐
+    assert day1_res.json()["artist_names"] == [artist_a]
 
 
 # 아티스트가 1명뿐이면(단독 공연) 기존과 완전히 동일하게 동작(artist 태그 없음, top_n=20) 테스트
@@ -460,6 +464,7 @@ async def test_get_pre_setlist_success():
     data = response.json()
     assert data["concert_id"] == concert_id
     assert len(data["songs"]) == 2
+    assert data["artist_names"] == ["테스트아티스트"]
 
 
 # 예상 셋리스트 없는 공연 조회 시 404 테스트

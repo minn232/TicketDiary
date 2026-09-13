@@ -372,6 +372,123 @@ async def test_normalize_pending_artists_clears_admin_review_on_replacement():
         assert concert.admin_reviewed_at is None
 
 
+# mbid 없는(admin이 "수정" 버튼으로 수동 생성한) canonical은 MusicBrainz 검증이 없어 흔한
+# 한국 이름 동명이인이면 오병합 위험 - 자동 적용하지 말고 "suggested"로만 표시해야 함
+@pytest.mark.asyncio
+async def test_normalize_pending_artists_user_input_alias_needs_confirmation():
+    await _clear_pending_queue()
+    token = await _get_token()
+    concert_id = uuid.UUID(await _create_concert(f"PF_NP_SUGGEST_{uuid.uuid4().hex[:6]}", "존박", token))
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=None, canonical_name="박성규")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text="존박", source="user_input"))
+        await db.commit()
+        canonical_id = canonical.id
+
+        await queue_for_normalization(db, concert_id, ["존박"])
+
+    with _no_kopis_supplement(), _no_wikidata_lookup(), _no_artist_image_lookup():
+        stats = await normalize_pending_artists(limit=10)
+
+    assert stats["suggested"] == 1
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == ["존박"]  # 자동 병합 안 되고 원문 그대로 유지
+
+        status_row = (
+            await db.execute(
+                select(ArtistNormalizationStatus).where(
+                    ArtistNormalizationStatus.concert_id == concert_id,
+                    ArtistNormalizationStatus.artist_text == "존박",
+                )
+            )
+        ).scalar_one()
+        assert status_row.status == "suggested"
+        assert status_row.suggested_canonical_id == canonical_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_artist_suggestion_accept_merges_and_dedupes():
+    from app.services.artist_normalization import resolve_artist_suggestion
+
+    await _clear_pending_queue()
+    token = await _get_token()
+    concert_id = uuid.UUID(
+        await _create_concert(f"PF_SUGGEST_ACCEPT_{uuid.uuid4().hex[:6]}", "존박,박성규", token)
+    )
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=None, canonical_name="박성규")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text="존박", source="user_input"))
+        await db.commit()
+
+        await queue_for_normalization(db, concert_id, ["존박"])
+
+    with _no_kopis_supplement(), _no_wikidata_lookup(), _no_artist_image_lookup():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await resolve_artist_suggestion(db, concert_id, "존박", accept=True)
+        # 이미 있던 "박성규"와 합쳐져 하나로 줄어들어야 함(중복 표기 해소가 이 기능의 목적)
+        assert concert.artist_name == ["박성규"]
+
+        status_row = (
+            await db.execute(
+                select(ArtistNormalizationStatus).where(
+                    ArtistNormalizationStatus.concert_id == concert_id,
+                    ArtistNormalizationStatus.artist_text == "존박",
+                )
+            )
+        ).scalar_one()
+        assert status_row.status == "matched"
+        assert status_row.suggested_canonical_id is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_artist_suggestion_reject_keeps_names_separate():
+    from app.services.artist_normalization import resolve_artist_suggestion
+
+    await _clear_pending_queue()
+    token = await _get_token()
+    concert_id = uuid.UUID(
+        await _create_concert(f"PF_SUGGEST_REJECT_{uuid.uuid4().hex[:6]}", "존박,박성규", token)
+    )
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=None, canonical_name="박성규")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text="존박", source="user_input"))
+        await db.commit()
+
+        await queue_for_normalization(db, concert_id, ["존박"])
+
+    with _no_kopis_supplement(), _no_wikidata_lookup(), _no_artist_image_lookup():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        # 실제로는 동명이인이라 병합을 거부한 경우 - 두 표기 다 그대로 남아있어야 함
+        concert = await resolve_artist_suggestion(db, concert_id, "존박", accept=False)
+        assert set(concert.artist_name) == {"존박", "박성규"}
+
+        status_row = (
+            await db.execute(
+                select(ArtistNormalizationStatus).where(
+                    ArtistNormalizationStatus.concert_id == concert_id,
+                    ArtistNormalizationStatus.artist_text == "존박",
+                )
+            )
+        ).scalar_one()
+        assert status_row.status == "unconfirmed"
+        assert status_row.suggested_canonical_id is None
+
+
 @pytest.mark.asyncio
 async def test_normalize_pending_artists_no_match_keeps_raw_name():
     await _clear_pending_queue()
@@ -972,6 +1089,29 @@ async def test_set_display_name_updates_existing_concerts_and_registers_alias():
         assert [r.artist for r in lineup_rows] == [hangul_name]
 
 
+# 실사례 버그: ConcertLineup(날짜별 출연 배정) row가 없는 콘서트는 표시명 변경이 소급 반영
+# 안 되고 admin 화면에 옛 표기가 계속 남았음 - 단독공연 등 날짜별 배정 자체가 없는 콘서트가
+# 상당수라 흔하게 발생. concerts.artist_name을 직접 훑도록 고침
+@pytest.mark.asyncio
+async def test_set_display_name_updates_concert_without_lineup_rows():
+    token = await _get_token()
+    latin_name = f"David{uuid.uuid4().hex[:6]}"
+    hangul_name = f"데이비드{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_DISP_NOLINEUP_{uuid.uuid4().hex[:6]}", latin_name, token))
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=latin_name)
+        db.add(canonical)
+        await db.commit()
+        canonical_id = canonical.id
+
+    async with AsyncSessionLocal() as db:
+        await set_display_name(db, canonical_id, hangul_name)
+
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [hangul_name]
+
+
 @pytest.mark.asyncio
 async def test_set_display_name_rejects_blank_and_blocklisted():
     async with AsyncSessionLocal() as db:
@@ -1058,6 +1198,30 @@ async def test_collapse_to_group_name_when_all_members_present_without_group_tex
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, concert_id)
         assert concert.artist_name == [group_name]  # 그룹명 텍스트 없이도 로스터 전원 일치로 통합됨
+
+
+@pytest.mark.asyncio
+async def test_collapse_skipped_when_group_roster_has_only_one_member():
+    # MusicBrainz의 member-of 관계는 실제 밴드가 아니라 무관한 관계/솔로 활동까지
+    # 담을 수 있어서, 로스터가 1명뿐이면 "전원 참석"이 항상 참이 되어 무의미함(실측으로
+    # 무관한 아티스트가 그룹명으로 뒤바뀌는 사고 확인함) - 로스터 1명은 통합 안 함
+    await _clear_pending_queue()
+    token = await _get_token()
+    group_name = f"그룹V_{uuid.uuid4().hex[:6]}"
+    m1 = f"멤버_{uuid.uuid4().hex[:4]}"
+    concert_id = uuid.UUID(await _create_concert(f"PF_COLL_ONE_{uuid.uuid4().hex[:6]}", m1, token))
+
+    async with AsyncSessionLocal() as db:
+        await _seed_group_with_members(db, group_name, [m1])
+        await db.commit()
+        await queue_for_normalization(db, concert_id, [m1])
+
+    with _no_kopis_supplement(), _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup():
+        await normalize_pending_artists(limit=10)
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        assert concert.artist_name == [m1]  # 로스터 1명이라 통합 안 되고 원래 표기 유지
 
 
 @pytest.mark.asyncio

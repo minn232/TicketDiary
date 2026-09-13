@@ -10,6 +10,7 @@ from app.models.notification import Notification, NotificationType
 from app.models.refresh_token import RefreshToken
 from app.models.artist_similarity import ArtistSimilarity
 from app.models.artist_genre import ArtistGenre
+from app.models.artist_lastfm_sync_status import ArtistLastfmSyncStatus
 from app.models.artist_normalization import (
     CanonicalArtist, ArtistAlias, ArtistNormalizationStatus, ArtistGroupMembership,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "RefreshToken",
     "ArtistSimilarity",
     "ArtistGenre",
+    "ArtistLastfmSyncStatus",
     "CanonicalArtist", "ArtistAlias", "ArtistNormalizationStatus", "ArtistGroupMembership",
     "BlockedArtistName",
 ]

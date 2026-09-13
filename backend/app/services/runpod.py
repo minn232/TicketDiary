@@ -136,17 +136,13 @@ async def _wait_for_ssh_ready(timeout_seconds: float = 180.0, interval_seconds: 
 
 
 # pod에 SSH로 접속해 /workspace/start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 tmux
-# 세션으로 원격 실행 - nohup은 세션 자체가 사라져 실행 중 개입할 방법이 없었어서, tmux면
-# 나중에 `tmux attach -t llm_start`로 들어와 같은 화면을 보고 타이핑도 할 수 있음(pod에
-# 없으면 최초 설치 필요). 재실행 시 이전 세션과 충돌 방지로 먼저 kill-session 정리, SSH
-# 자체는 바로 반환하고 실제 준비 확인은 wait_until_llm_server_ready()가 별도로 함.
+# 세션으로 원격 실행 - nohup은 세션이 사라져 실행 중 개입할 방법이 없어서, tmux면 나중에
+# `tmux attach -t llm_start`로 들어와 같은 화면을 보고 타이핑도 할 수 있음. 재실행 시 이전
+# 세션과 충돌 방지로 먼저 kill-session 정리, 실제 준비 확인은 wait_until_llm_server_ready()가 함
 _TMUX_SESSION = "llm_start"
-# start_vllm.sh는 vLLM 프로세스 자체를 `> vllm.log 2>&1 &`로 백그라운드+로그파일로 떼어놓기
-# 때문에(스크립트가 그 사이 curl로 준비상태를 폴링해야 해서), llm_start 세션에 붙어도 래퍼
-# 스크립트의 안내 문구만 보이고 vLLM 자체 실시간 로그(요청 처리/생성 진행상황)는 안 보임 -
-# 그래서 로그를 실시간으로 따라가는 tmux 세션을 하나 더 둠(vLLM 코드/스크립트는 안 건드림).
-# `tail -F`(대문자, --retry 포함)라서 vLLM이 아직 vllm.log를 만들기 전에 이 세션을 먼저
-# 띄워도 파일이 생기는 대로 알아서 따라붙음.
+# start_vllm.sh는 vLLM을 `> vllm.log 2>&1 &`로 떼어놔서 llm_start 세션에 붙어도 래퍼 스크립트
+# 안내문만 보이고 vLLM 실시간 로그는 안 보임 - 로그를 따라가는 tmux 세션을 하나 더 둠.
+# `tail -F`(--retry 포함)라 vllm.log가 아직 없어도 생기는 대로 알아서 따라붙음
 _TMUX_LOG_SESSION = "vllm_log"
 _VLLM_LOG_PATH = "/workspace/server/vllm.log"
 

@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,30 +24,46 @@ from app.schemas.admin import (
     AdminArtistListItem,
     AdminArtistListResponse,
     AdminArtistRenameRequest,
+    AdminArtistSuggestionRequest,
     AdminCanonicalNameOptions,
     AdminConcertDetail,
     AdminConcertListItem,
     AdminConcertListResponse,
+    AdminCrawlScreenshotUploadResponse,
+    AdminCrawlTargetCandidate,
+    AdminCrawlTargetItem,
+    AdminCrawlTargetsResponse,
     AdminDisplayNameRequest,
     AdminGroupMembershipRequest,
     AdminGroupRelationAddRequest,
+    AdminReassignArtistRequest,
+    AdminRegisterNewArtistRequest,
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_normalization import (
+    _display_value,
     add_artist_alias,
     add_artist_name,
     add_group_relation,
     confirm_artist_name_change,
     delete_canonical_artist,
     get_canonical_name_options,
+    reassign_artist_to_canonical,
+    register_new_canonical_artist,
     remove_artist_alias,
     remove_artist_name,
     remove_group_relation,
+    resolve_artist_suggestion,
     set_display_name,
     set_group_membership,
     try_link_canonical_to_musicbrainz,
 )
-from app.services.crawler import _ARTIST_EXTRACTION_RETRY_COOLDOWN, _MAX_ARTIST_EXTRACTION_ATTEMPTS
+from app.services.crawler import (
+    _ARTIST_EXTRACTION_RETRY_COOLDOWN,
+    _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+    get_yes24_melon_crawl_targets,
+    save_manual_crawl_screenshot,
+)
 
 router = APIRouter(dependencies=[Depends(verify_admin_key)])
 
@@ -114,6 +130,7 @@ async def list_concerts(
     flagged_only: bool = Query(False),
     unsent_to_llm_only: bool = Query(False),
     unreviewed_only: bool = Query(False),
+    ai_reviewed_only: bool = Query(False),
     upcoming_only: bool = Query(False),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
@@ -121,7 +138,7 @@ async def list_concerts(
 ):
     now = datetime.now(timezone.utc)
     flagged_concert_ids = select(ArtistNormalizationStatus.concert_id).where(
-        ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous"])
+        ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous", "suggested"])
     )
 
     query = select(Concert)
@@ -132,7 +149,10 @@ async def list_concerts(
     if unsent_to_llm_only:
         query = query.where(_needs_manual_artist_fill_filter())
     if unreviewed_only:
-        query = query.where(Concert.admin_reviewed_at.is_(None))
+        # 사람 검수도 Claude 검수도 안 된 것만 - AI 검수완료는 이 탭에서 빠지고 ai_reviewed_only로 따로 봄
+        query = query.where(Concert.admin_reviewed_at.is_(None), Concert.ai_reviewed_at.is_(None))
+    if ai_reviewed_only:
+        query = query.where(Concert.ai_reviewed_at.isnot(None))
     if upcoming_only:
         # 다른 곳(concert_search.py 등)과 동일 기준(end_date > now) - 이미 끝난 공연은
         # 우선순위가 낮으므로 admin이 검수 대상에서 제외해서 볼 수 있게
@@ -150,7 +170,7 @@ async def list_concerts(
             select(ArtistNormalizationStatus.concert_id, func.count())
             .where(
                 ArtistNormalizationStatus.concert_id.in_(concert_ids),
-                ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous"]),
+                ArtistNormalizationStatus.status.in_(["unconfirmed", "ambiguous", "suggested"]),
             )
             .group_by(ArtistNormalizationStatus.concert_id)
         )
@@ -167,6 +187,7 @@ async def list_concerts(
             flagged_count=flag_counts.get(c.id, 0),
             llm_exclusion_reasons=_llm_exclusion_reasons(c, now),
             admin_reviewed_at=c.admin_reviewed_at,
+            ai_reviewed_at=c.ai_reviewed_at,
         )
         for c in concerts
     ]
@@ -185,6 +206,14 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         )
     ).scalars().all()
 
+    # suggested 상태 행이 있으면 제안 중인 canonical의 표시명도 같이 내려줘서 프론트가 "OOO와
+    # 같은 사람?"을 바로 보여줄 수 있게 함(추가 조회 왕복 없이)
+    suggested_ids = {r.suggested_canonical_id for r in status_rows if r.suggested_canonical_id}
+    suggested_names: dict = {}
+    if suggested_ids:
+        suggested_result = await db.execute(select(CanonicalArtist).where(CanonicalArtist.id.in_(suggested_ids)))
+        suggested_names = {c.id: _display_value(c) for c in suggested_result.scalars().all()}
+
     return AdminConcertDetail(
         id=concert.id,
         kopis_id=concert.kopis_id,
@@ -196,11 +225,17 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         event_type=concert.event_type,
         ticketing_links=concert.ticketing_links,
         statuses=[
-            {"artist_text": r.artist_text, "status": r.status, "attempt_count": r.attempt_count}
+            {
+                "artist_text": r.artist_text,
+                "status": r.status,
+                "attempt_count": r.attempt_count,
+                "suggested_name": suggested_names.get(r.suggested_canonical_id),
+            }
             for r in status_rows
         ],
         group_memberships=await _group_memberships_for(db, concert.artist_name),
         admin_reviewed_at=concert.admin_reviewed_at,
+        ai_reviewed_at=concert.ai_reviewed_at,
     )
 
 
@@ -273,6 +308,47 @@ async def set_group_membership_route(
 @router.patch("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)
 async def rename_artist(concert_id: UUID, body: AdminArtistRenameRequest, db: AsyncSession = Depends(get_db)):
     await confirm_artist_name_change(db, concert_id, body.original_name, body.confirmed_name)
+    await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+@router.post("/concerts/{concert_id}/artist-suggestion", response_model=AdminConcertDetail)
+async def resolve_artist_suggestion_route(
+    concert_id: UUID, body: AdminArtistSuggestionRequest, db: AsyncSession = Depends(get_db)
+):
+    await resolve_artist_suggestion(db, concert_id, body.artist_text, body.accept)
+    await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+# 동명이인 오매칭(텍스트는 같은데 실존 인물이 다름, 예: LiSA→블랙핑크 Lisa) 강제 수정용 -
+# 이름 재입력으로는 fuzzy/alias 매칭이 또 같은 틀린 canonical로 가버려서 admin이 검색으로
+# 직접 고른 canonical_id로 통째로 재지정한다(reassign_artist_to_canonical 참고)
+@router.post("/concerts/{concert_id}/artist-name/reassign", response_model=AdminConcertDetail)
+async def reassign_artist_route(
+    concert_id: UUID, body: AdminReassignArtistRequest, db: AsyncSession = Depends(get_db)
+):
+    await reassign_artist_to_canonical(db, concert_id, body.artist_text, body.canonical_id)
+    await _mark_reviewed(db, concert_id)
+    return await get_concert_detail(concert_id, db)
+
+
+# 위 재지정은 "이미 존재하는" 다른 canonical을 검색해서 고르는 용도라, 검색해도 안 나오는
+# (MusicBrainz/canonical_artists에 아예 없는 인디 등) 아티스트는 재지정할 대상이 없어 막혀있었음
+# - 이 표기를 신규 canonical로 직접 등록한다(register_new_canonical_artist 참고)
+@router.post("/concerts/{concert_id}/artist-name/register-new", response_model=AdminConcertDetail)
+async def register_new_artist_route(
+    concert_id: UUID,
+    body: AdminRegisterNewArtistRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    _, canonical = await register_new_canonical_artist(
+        db, concert_id, body.artist_text, body.new_name, force_new=body.force_new
+    )
+    if canonical.mbid is None:
+        # add_artist 라우트와 동일 - 응답 이후 백그라운드로 재조회(스로틀 때문에 여기서 기다리면 느려짐)
+        background_tasks.add_task(try_link_canonical_to_musicbrainz, canonical.id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
@@ -567,6 +643,57 @@ async def remove_group_relation_route(
 async def delete_artist_route(canonical_id: UUID, db: AsyncSession = Depends(get_db)):
     await delete_canonical_artist(db, canonical_id)
     return {"deleted": True}
+
+
+# 인터파크 링크가 없어서 자동 크롤링으로는 못 뽑는 공연(YES24/MELON만 있음) 목록 - 로컬
+# 스크립트(scripts/yes24_melon_local_crawl.py)가 이 목록을 받아 각자 네트워크로 직접
+# 크롤링하고, 결과는 아래 업로드 엔드포인트로 되돌려줌(get_yes24_melon_crawl_targets 참고)
+@router.get("/crawl-targets/yes24-melon", response_model=AdminCrawlTargetsResponse)
+async def list_yes24_melon_crawl_targets(db: AsyncSession = Depends(get_db)):
+    concerts = await get_yes24_melon_crawl_targets(db)
+    items = []
+    for concert in concerts:
+        links = concert.ticketing_links or {}
+        candidates = [
+            AdminCrawlTargetCandidate(site=site, url=links[site])
+            for site in ("YES24", "MELON", "MELONTICKET")
+            if site in links
+        ]
+        if not candidates:
+            continue
+        items.append(
+            AdminCrawlTargetItem(
+                concert_id=concert.id, kopis_id=concert.kopis_id, name=concert.name, candidates=candidates
+            )
+        )
+    return AdminCrawlTargetsResponse(items=items)
+
+
+# 로컬 스크립트가 직접 크롤링한 스크린샷을 업로드 - crawl_and_save가 성공했을 때와 동일한
+# 상태(crawl_screenshot_url 갱신)로 맞춰준다. 전체 페이지 PNG라 일반 이미지 업로드
+# (upload.py)보다 큰 상한을 둠 - 실측으로 20MB 넘는 페이지(이미지/공지사항 많은 상세페이지)가
+# 나와서 60MB로 완화함
+_MAX_CRAWL_SCREENSHOT_SIZE = 60 * 1024 * 1024  # 60MB
+
+
+@router.post("/crawl-targets/{concert_id}/screenshot", response_model=AdminCrawlScreenshotUploadResponse)
+async def upload_manual_crawl_screenshot(
+    concert_id: UUID,
+    request: Request,
+    site: str = Query(..., description="YES24 또는 MELON - 로컬에서 실제로 성공한 사이트"),
+    image: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > _MAX_CRAWL_SCREENSHOT_SIZE:
+        raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
+
+    image_bytes = await image.read(_MAX_CRAWL_SCREENSHOT_SIZE + 1)
+    if len(image_bytes) > _MAX_CRAWL_SCREENSHOT_SIZE:
+        raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
+
+    concert = await save_manual_crawl_screenshot(db, concert_id, site, image_bytes)
+    return AdminCrawlScreenshotUploadResponse(concert_id=concert.id, crawl_screenshot_url=concert.crawl_screenshot_url)
 
 
 _PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin.html"

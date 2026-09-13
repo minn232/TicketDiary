@@ -10,7 +10,8 @@ class AdminConcertListItem(BaseModel):
     # 관리자 목록 한 줄 - flagged_count는 unconfirmed/ambiguous 상태인 아티스트 수(0이면 정상).
     # llm_exclusion_reasons가 비어있지 않으면 send_posters_for_artist_extraction 대상이 아니라는
     # 뜻(포스터 LLM 추출이 영영 안 옴) - 크롤링 등 다른 경로로만 채워질 수 있으니 우선 확인 대상.
-    # admin_reviewed_at은 NULL이면 미검수
+    # admin_reviewed_at은 NULL이면 미검수. ai_reviewed_at은 Claude가 대신 검수한 경우만 채워짐
+    # (사람 검수와 구분해서 admin.html에 별도 표시)
     id: UUID
     kopis_id: str | None
     name: str
@@ -20,6 +21,7 @@ class AdminConcertListItem(BaseModel):
     flagged_count: int
     llm_exclusion_reasons: list[str]
     admin_reviewed_at: datetime | None
+    ai_reviewed_at: datetime | None
 
 
 class AdminConcertListResponse(BaseModel):
@@ -31,10 +33,35 @@ class AdminConcertListResponse(BaseModel):
 
 
 class AdminArtistStatus(BaseModel):
-    # 아티스트 표기 하나의 정규화 상태 (concert 상세 화면에서 뱃지로 보여주기 위함)
+    # 아티스트 표기 하나의 정규화 상태 (concert 상세 화면에서 뱃지로 보여주기 위함).
+    # suggested_name은 status="suggested"일 때만 채워짐(제안 중인 canonical의 표시명)
     artist_text: str
     status: str
     attempt_count: int
+    suggested_name: str | None = None
+
+
+class AdminArtistSuggestionRequest(BaseModel):
+    # resolve_artist_suggestion에 그대로 넘기는 페이로드 - accept=True면 병합, False면 별개 인물로 거부
+    artist_text: str
+    accept: bool
+
+
+class AdminReassignArtistRequest(BaseModel):
+    # reassign_artist_to_canonical에 그대로 넘기는 페이로드 - 동명이인 오매칭(텍스트는 같은데
+    # 실존 인물이 다름) 강제 수정용, canonical_id는 admin이 검색해서 직접 고른 값
+    artist_text: str
+    canonical_id: UUID
+
+
+class AdminRegisterNewArtistRequest(BaseModel):
+    # register_new_canonical_artist에 그대로 넘기는 페이로드 - 재지정 검색에도 안 나오는(즉
+    # MusicBrainz/canonical_artists에 없는) 아티스트를 신규로 등록. new_name은 선택(안 주면
+    # 현재 표기 그대로 등록). force_new=True면 이름이 기존 아티스트와 똑같아도(동명이인) 무조건
+    # 새로 만듦 - 실사례(JAEHA): 표기가 똑같은 다른 실존 인물이라 자동 재사용을 피해야 했음
+    artist_text: str
+    new_name: str | None = None
+    force_new: bool = False
 
 
 class AdminConcertDetail(BaseModel):
@@ -54,6 +81,7 @@ class AdminConcertDetail(BaseModel):
     statuses: list[AdminArtistStatus]
     group_memberships: dict[str, list[str]]
     admin_reviewed_at: datetime | None
+    ai_reviewed_at: datetime | None
 
 
 class AdminArtistRenameRequest(BaseModel):
@@ -168,3 +196,30 @@ class AdminGroupRelationAddRequest(BaseModel):
     # 멤버로 등록. role="group": other_name을 이 아티스트가 속한 그룹으로 등록
     other_name: str
     role: str
+
+
+class AdminCrawlTargetCandidate(BaseModel):
+    # 이 공연에 걸린 YES24/MELON 링크 중 하나 - 로컬 스크립트가 순서대로 시도(먼저 성공하는 것만 사용)
+    site: str
+    url: str
+
+
+class AdminCrawlTargetItem(BaseModel):
+    # get_yes24_melon_crawl_targets가 반환하는 대상 1건 - 인터파크가 없어서 자동 크롤링(서버)이
+    # 못 뽑는 공연. 로컬 스크립트가 이 목록을 받아서 각자 자기 네트워크로 직접 크롤링함
+    concert_id: UUID
+    kopis_id: str | None
+    name: str
+    candidates: list[AdminCrawlTargetCandidate]
+
+
+class AdminCrawlTargetsResponse(BaseModel):
+    items: list[AdminCrawlTargetItem]
+
+
+class AdminCrawlScreenshotUploadResponse(BaseModel):
+    # save_manual_crawl_screenshot에 그대로 대응하는 응답 - crawl_and_save가 성공했을 때와
+    # 동일한 최종 상태(crawl_screenshot_url 갱신)가 됐다는 것만 알려줌. 이 스크린샷의 실제
+    # 내용(배송일/티켓팅일)을 뽑는 건 별도 LLM 분석 단계의 몫이라 여기선 안 건드림
+    concert_id: UUID
+    crawl_screenshot_url: str

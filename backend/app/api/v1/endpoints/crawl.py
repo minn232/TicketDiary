@@ -13,7 +13,7 @@ from app.models.concert import Concert
 from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtractionResponse
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.models.lineup import ConcertLineup
-from app.services.artist_matching import get_known_artist_names, merge_artist_names
+from app.services.artist_matching import get_known_artist_names, merge_crawl_artist_names, merge_or_replace_solo_seed
 from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.lineup import upsert_concert_lineup
@@ -130,15 +130,17 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 delivery_date 형식: {body.delivery_date}")
 
-    # 크롤링 결과와 포스터 기반 추출(artist-result 웹훅) 양쪽에서 아티스트가 들어올 수 있고,
-    # 페스티벌은 1차/2차/3차로 시간차를 두고 라인업이 늘어나므로 덮어쓰지 않고 합집합으로 병합
+    # 솔로(1명 이하)는 KOPIS 원본을 새 이름으로 교체, 다인원/페스티벌은 크롤링 결과를 처음
+    # 받는 거면 1회 교체 후 그 다음부터 합집합(merge_crawl_artist_names 참고)
     upgraded_to_festival = False
     known_artist_names: set[str] | None = None
     if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        merged, newly_seeded = merge_crawl_artist_names(concert, body.artist_name, known_artist_names)
+        if newly_seeded:
+            concert.crawl_lineup_seeded_at = datetime.now(timezone.utc)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화
@@ -221,11 +223,11 @@ async def receive_artist_extraction_result(
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        # 항상 합집합 병합 - 예전엔 소규모 공연에서 KOPIS가 본명/멤버명을 주는 문제(존박→박성규
-        # 등) 때문에 replace=True로 KOPIS 쪽을 통째로 버렸지만, LLM이 포스터에서 일부 멤버를
-        # 놓치면 라인업이 사라지는 부작용이 있었음. 이제 MusicBrainz alias 매칭이 본명↔활동명을
-        # 배치로 자동 정리해주므로 합집합으로 두고 정리는 정규화 배치에 맡김.
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        # merge_or_replace_solo_seed 참고 - 솔로(1명 이하) 공연이면 KOPIS 원본을 포스터 추출
+        # 결과로 교체(노이즈 제거), 블록리스트로 전부 걸러지면 교체 없이 기존 값 유지(재즈/
+        # 오케스트라처럼 LLM이 못 뽑는 장르의 안전망). /crawl-result와 동일 로직 공유 -
+        # 두 웹훅 중 어느 쪽이 이 공연을 먼저 건드리든 결과가 같아야 하기 때문
+        merged = merge_or_replace_solo_seed(concert, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화

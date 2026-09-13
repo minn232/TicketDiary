@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.crawler import (
+    _LINEUP_CAPTURE_CONTAINER,
     _pick_crawl_target,
     crawl_and_save,
     crawl_interpark,
@@ -1233,6 +1234,101 @@ async def test_send_screenshots_posts_to_llm():
     assert payload[0]["concert_name"] == "테스트"
 
 
+# 검수완료(admin_reviewed_at) 공연은 제외돼야 함 - 이 파이프라인의 콜백도 artist_name을
+# 바꿀 수 있어 검수 상태가 다시 풀리는 노이즈를 막기 위함. mock_db 대신 실제 DB로 쿼리
+# 자체를 검증(위 mock 스타일 테스트들은 execute() 반환값을 그대로 통과시키기만 해서
+# WHERE 절 자체는 검증하지 못함).
+@pytest.mark.asyncio
+async def test_send_screenshots_skips_reviewed_concert():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+
+    now = datetime.now(timezone.utc)
+    reviewed = Concert(
+        name=f"검수완료_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/reviewed.png",
+        admin_reviewed_at=now,
+    )
+    unreviewed = Concert(
+        name=f"미검수_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/unreviewed.png",
+    )
+    async with AsyncSessionLocal() as db:
+        db.add_all([reviewed, unreviewed])
+        await db.commit()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.post = AsyncMock(return_value=mock_response)
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.settings") as mock_settings,
+        patch("app.services.crawler.httpx.AsyncClient", return_value=mock_http),
+    ):
+        mock_settings.LLM_CRAWL_URL = "https://llm.example.com/crawl"
+        mock_settings.LLM_EXTRACT_API_KEY = "test-key"
+        await send_screenshots_to_llm()
+
+    sent_names = {item["concert_name"] for item in mock_http.post.call_args[1]["json"]}
+    assert unreviewed.name in sent_names
+    assert reviewed.name not in sent_names
+
+
+# ai_reviewed_at(Claude 검수)도 admin_reviewed_at과 동일하게 제외돼야 함
+@pytest.mark.asyncio
+async def test_send_screenshots_skips_ai_reviewed_concert():
+    from app.core.database import AsyncSessionLocal
+    from app.models.concert import Concert
+
+    now = datetime.now(timezone.utc)
+    ai_reviewed = Concert(
+        name=f"AI검수완료_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/ai-reviewed.png",
+        ai_reviewed_at=now,
+    )
+    unreviewed = Concert(
+        name=f"미검수_{uuid.uuid4().hex[:6]}",
+        artist_name=[],
+        start_date=now,
+        end_date=now + timedelta(days=1),
+        crawl_screenshot_url="https://s3.example.com/unreviewed2.png",
+    )
+    async with AsyncSessionLocal() as db:
+        db.add_all([ai_reviewed, unreviewed])
+        await db.commit()
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_http = AsyncMock()
+    mock_http.post = AsyncMock(return_value=mock_response)
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("app.services.crawler.settings") as mock_settings,
+        patch("app.services.crawler.httpx.AsyncClient", return_value=mock_http),
+    ):
+        mock_settings.LLM_CRAWL_URL = "https://llm.example.com/crawl"
+        mock_settings.LLM_EXTRACT_API_KEY = "test-key"
+        await send_screenshots_to_llm()
+
+    sent_names = {item["concert_name"] for item in mock_http.post.call_args[1]["json"]}
+    assert unreviewed.name in sent_names
+    assert ai_reviewed.name not in sent_names
+
+
 # 라인업 변경 감지 정규화 테스트
 
 def test_normalize_lineup_img_srcs_filters_ads_and_ignores_query_strings():
@@ -1287,6 +1383,14 @@ async def test_capture_lineup_snapshot_scopes_to_container_when_present():
     mock_page.eval_on_selector_all.assert_awaited_once_with(".productMain img", "els => els.map(e => e.src)")
     assert text == "컨테이너 안쪽 텍스트"
     assert img_srcs == ["https://img.example.com/a.jpg"]
+
+
+# interpark → NOL(야놀자) 서비스 이관으로 ".productMain"이 새 DOM에 없어져 매번 body 전체로
+# 조용히 폴백되던 실사례(같은 콘서트가 며칠 간격으로 "라인업 변경"에 계속 걸림 - 실서버 로그로
+# 확인) - 실제 페이지(nol.yanolja.com)를 열어 "#important-info"가 LINE UP 텍스트는 포함하고
+# 실시간으로 바뀌는 "찜 N명" 위시리스트 카운트는 제외하는 걸 확인하고 교체함
+def test_lineup_capture_container_interpark_matches_current_nol_dom():
+    assert _LINEUP_CAPTURE_CONTAINER["interpark"] == "#important-info"
 
 
 @pytest.mark.asyncio

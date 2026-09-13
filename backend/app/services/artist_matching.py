@@ -4,7 +4,7 @@ from rapidfuzz import fuzz, process, utils
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.services.artist_blocklist import is_blocklisted_artist_name
 
 # 이 이상 유사하면 같은 아티스트로 보고 기존 표기를 재사용 (0~100 스케일)
@@ -74,9 +74,11 @@ def _compact(text: str) -> str:
     return _NON_ALNUM_RE.sub("", text.lower())
 
 
-# 한글 이름의 로마자 변환 후보를 known_names(로마자 변환 필요하면 마찬가지로 변환)와 비교해
-# 원문 매칭(normalize_artist_names의 1차 패스)에서 놓친 한글/로마자 표기 쌍을 찾는다.
-# 예: "김현정" ↔ "Kim Hyunjung" - 방탄소년단↔BTS처럼 의미가 다른 별칭은 여전히 못 잡음
+# 한글 이름의 로마자 변환 후보를 known_names와 비교해 원문 매칭에서 놓친 한글/로마자 표기
+# 쌍을 찾는다. 예: "김현정" ↔ "Kim Hyunjung". 실측 확인된 사고: "김중연"이 전혀 다른 사람인
+# "김정균"과 로마자로 바꾸면 우연히 비슷해져(다른 음절이 근사 로마자표에서 겹침) 원문
+# 유사도 미달인데도 잘못 병합됨 - 둘 다 한글이면 이 함수 자체를 안 태움(원문 fuzz.ratio가
+# 이미 담당, 로마자 변환은 정보손실이라 오히려 위험함)
 def _romanization_match(name: str, known_names: set[str]) -> str | None:
     name_has_hangul = _contains_hangul(name)
     name_variants = _romanized_variants(name) if name_has_hangul else [name]
@@ -84,8 +86,8 @@ def _romanization_match(name: str, known_names: set[str]) -> str | None:
     best_score, best_match = 0, None
     for known in known_names:
         known_has_hangul = _contains_hangul(known)
-        if not name_has_hangul and not known_has_hangul:
-            continue  # 둘 다 한글이 아니면 이 함수가 할 일이 없음(원문 매칭에서 이미 처리됨)
+        if name_has_hangul == known_has_hangul:
+            continue  # 둘 다 한글이거나 둘 다 아니면 이 함수가 할 일이 없음(한→한은 원문 매칭이 이미 담당, 로마자 경유는 스크립트가 실제로 다를 때만 필요)
         known_variants = _romanized_variants(known) if known_has_hangul else [known]
         for a in name_variants:
             for b in known_variants:
@@ -154,3 +156,40 @@ def merge_artist_names(
     if replace:
         return sorted(set(normalized_incoming))
     return sorted(set(existing or []) | set(normalized_incoming))
+
+
+# KOPIS/크롤링/포스터 추출 어느 경로로 들어왔든, 기존 인원이 1명 이하(=KOPIS 원본 하나만 있는
+# 솔로 공연으로 추정)면 union 대신 새로 들어온 이름으로 완전히 교체 - KOPIS raw 출연진에 섞이는
+# 노이즈(본명/예명 중복, MC 등)를 없애려는 목적. 크롤링/포스터 추출 두 웹훅이 도착 순서를
+# 보장 못 하므로 이 함수를 공유해서 순서와 무관하게 동일하게 동작하게 함. 다인원(2명+)/
+# 페스티벌은 그대로 union 유지 - 예전에 무조건 교체해서 라인업이 사라지던 사고가 있어 범위를 좁힘
+def merge_or_replace_solo_seed(
+    concert: Concert, incoming: list[str], known_names: set[str] | None = None
+) -> list[str]:
+    normalized_incoming = normalize_artist_names(incoming, known_names)
+    is_solo_seed = concert.event_type != EventType.FESTIVAL.value and len(concert.artist_name or []) <= 1
+    if is_solo_seed and normalized_incoming:
+        return sorted(set(normalized_incoming))
+    return sorted(set(concert.artist_name or []) | set(normalized_incoming))
+
+
+# /crawl-result 전용 - 솔로는 merge_or_replace_solo_seed와 동일하게 매번 교체. 다인원/페스티벌은
+# 이 공연 기준 첫 크롤링 결과면 KOPIS 원본을 통째로 교체(크롤링이 더 신뢰할 만하다는 판단) - 단
+# 인원이 기존보다 적으면(부분적으로만 읽힘) 안전하게 union으로 대체. crawl_lineup_seeded_at이
+# 이미 있으면(두 번째 크롤부터) 페스티벌 라인업이 여러 차례 나눠 공개되는 걸 고려해 항상 union.
+# 반환값의 두 번째 값은 crawl_lineup_seeded_at을 이번에 처음 채워야 하는지
+def merge_crawl_artist_names(
+    concert: Concert, incoming: list[str], known_names: set[str] | None = None
+) -> tuple[list[str], bool]:
+    normalized_incoming = normalize_artist_names(incoming, known_names)
+    is_solo_seed = concert.event_type != EventType.FESTIVAL.value and len(concert.artist_name or []) <= 1
+    if is_solo_seed:
+        merged = sorted(set(normalized_incoming)) if normalized_incoming else (concert.artist_name or [])
+        return merged, False
+
+    if concert.crawl_lineup_seeded_at is not None or not normalized_incoming:
+        return sorted(set(concert.artist_name or []) | set(normalized_incoming)), False
+
+    if len(normalized_incoming) >= len(concert.artist_name or []):
+        return sorted(set(normalized_incoming)), True
+    return sorted(set(concert.artist_name or []) | set(normalized_incoming)), True

@@ -7,9 +7,11 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from fastapi import HTTPException
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -360,12 +362,13 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
     return sorted(normalized)
 
 
-# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 회전 광고 배너(방문마다
-# 문구가 바뀌어 숫자/"더 알아보기" 필터로도 못 걸러지는 노이즈)를 캡처 범위 밖에 둔다.
-# interpark는 실제 오탐 사례로 확인, 나머지는 DOM 구조+재방문 diff로 검증한 예방적 추가
-# (셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 노이즈(회전 광고 배너 등)를
+# 캡처 범위 밖에 둔다(셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+# interpark는 야놀자(NOL) 이관으로 DOM이 바뀌어 ".productMain"이 없어져 매번 조용히 body
+# 전체로 폴백되고 있었음 - 실시간으로 바뀌는 "찜 N명" 위시리스트 수 때문에 라인업이 안 바뀌어도
+# "변경"으로 계속 오탐되던 원인이었음. LINE UP 텍스트가 실제로 들어있는 "#important-info"로 교체
 _LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
-    "interpark": ".productMain",
+    "interpark": "#important-info",
     "yes24": ".renew-content",
     "melon": ".section_detailview_product",
     "kopis": "#su_con",
@@ -808,6 +811,62 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
             logger.info(f"크롤링 완료: {concert.name} → {url}")
 
 
+# 자동 크롤링(_PREFERRED_SITES=INTERPARK만)으로는 절대 못 뽑는 공연 - YES24/MELON 링크만
+# 있고 인터파크는 없는 경우. 배송일/티켓팅일은 실제 예매 사이트 페이지에만 있어서 KOPIS 폴백
+# 으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(데이터센터 아닌 네트워크)에서 직접 돌리기로
+# 함(YES24/MELON은 AWS 서버 IP에서 차단 확정). 이 함수는 대상 목록만 뽑고, 실제 크롤링은
+# scripts/yes24_melon_local_crawl.py가 로컬에서 수행 후 save_manual_crawl_screenshot으로 반영
+async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Concert).where(
+            Concert.end_date > now,
+            Concert.ticketing_date.is_(None),
+            ~Concert.ticketing_links.has_key("INTERPARK"),
+            or_(
+                Concert.ticketing_links.has_key("YES24"),
+                Concert.ticketing_links.has_key("MELON"),
+                Concert.ticketing_links.has_key("MELONTICKET"),
+            ),
+            # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
+            # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
+            # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
+            # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
+            or_(
+                Concert.crawl_attempted_at.is_(None),
+                Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
+            ),
+        )
+    )
+    return list(result.scalars().all())
+
+
+# get_yes24_melon_crawl_targets가 뽑은 공연을 로컬에서 직접 크롤링한 결과를 받아 저장 -
+# crawl_and_save가 성공했을 때와 동일한 상태로 맞춘다(crawl_screenshot_url 갱신 +
+# crawl_attempted_at/attempt_count 갱신 - 안 하면 그날 밤 자동배치가 바로 KOPIS 스크린샷으로
+# 덮어씀). ticketing_date는 여기서 안 채움 - LLM 분석 단계의 몫. S3 키는 _check_festival_lineup과
+# 동일하게 매번 시각을 붙여서(고정 키 아님) 이미 쌓여있는 과거 이력을 지우지 않고 추가만 함
+async def save_manual_crawl_screenshot(
+    db: AsyncSession, concert_id, site: str, image_bytes: bytes
+) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    upload_key = f"{site.lower()}_{int(datetime.now(timezone.utc).timestamp())}"
+    url = await _upload_screenshot(image_bytes, concert_id, upload_key)
+    if url is None:
+        raise HTTPException(status_code=502, detail="스크린샷 업로드에 실패했습니다.")
+
+    concert.crawl_screenshot_url = url
+    concert.crawl_attempted_at = datetime.now(timezone.utc)
+    concert.crawl_attempt_count += 1
+    await db.commit()
+    await db.refresh(concert)
+    logger.info(f"로컬 크롤링 결과 저장: {concert.name} ({site}) → {url}")
+    return concert
+
+
 # 자정 배치: 예정된 공연 스크린샷 LLM팀 웹훅으로 전송
 async def send_screenshots_to_llm() -> None:
     if not settings.LLM_CRAWL_URL:
@@ -821,6 +880,11 @@ async def send_screenshots_to_llm() -> None:
             select(Concert).where(
                 Concert.crawl_screenshot_url.isnot(None),
                 Concert.end_date > now,
+                # 검수완료 공연 제외(artist_extraction_target_filter와 같은 이유 -
+                # 이 파이프라인의 콜백도 artist_name을 바꿔 admin_reviewed_at을 리셋시킴).
+                # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
+                Concert.admin_reviewed_at.is_(None),
+                Concert.ai_reviewed_at.is_(None),
             )
         )
         concerts = list(result.scalars().all())
@@ -862,11 +926,18 @@ _MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
 # 미리보기)가 동일한 조건을 써야 해서 공유 함수로 뺌 - 둘 중 하나만 고치고 잊어버리는 걸 방지
 def artist_extraction_target_filter(now: datetime):
     cutoff = now - _ARTIST_EXTRACTION_RETRY_COOLDOWN
-    return or_(
-        Concert.artist_extraction_attempted_at.is_(None),
-        and_(
-            Concert.artist_extraction_attempted_at < cutoff,
-            Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+    return and_(
+        # admin이 이미 검수 완료로 표시한 공연은 재전송하지 않음 - LLM이 다른 결과를
+        # 내면 artist_name이 바뀌어 admin_reviewed_at이 다시 NULL로 리셋되는 노이즈 방지.
+        # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
+        Concert.admin_reviewed_at.is_(None),
+        Concert.ai_reviewed_at.is_(None),
+        or_(
+            Concert.artist_extraction_attempted_at.is_(None),
+            and_(
+                Concert.artist_extraction_attempted_at < cutoff,
+                Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+            ),
         ),
     )
 

@@ -1,16 +1,32 @@
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.artist_similarity import ArtistSimilarity
 from app.models.artist_genre import ArtistGenre
+from app.models.artist_lastfm_sync_status import ArtistLastfmSyncStatus
 from app.models.ticket import Ticket
 from conftest import _get_token, kopis_mock
+
+
+async def _set_lastfm_status(artist_name: str, sync_type: str, last_attempted_at: datetime, attempt_count: int) -> None:
+    async with AsyncSessionLocal() as db:
+        db.add(
+            ArtistLastfmSyncStatus(
+                artist_name=artist_name,
+                sync_type=sync_type,
+                last_attempted_at=last_attempted_at,
+                attempt_count=attempt_count,
+            )
+        )
+        await db.commit()
 
 
 # 헬퍼
@@ -198,11 +214,143 @@ async def test_sync_artist_similarities_continues_after_one_artist_fails():
         await sync_artist_similarities()
 
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
         result = await db.execute(
             select(ArtistSimilarity).where(ArtistSimilarity.artist_name == artist_ok)
         )
         assert result.scalars().first() is not None
+
+
+# Last.fm이 빈 결과를 주면(못 찾음) 실패로 기록되고, 쿨다운 안에는 재시도 안 하는지 테스트
+# (예전엔 이 기록 자체가 없어서 매일 밤 계속 재시도되던 버그 - lastfm_sync_backlog_no_negative_cache)
+@pytest.mark.asyncio
+async def test_sync_artist_similarities_records_failure_and_skips_within_cooldown():
+    token = await _get_token()
+    artist = f"못찾는아티스트_{uuid.uuid4().hex}"
+    await _create_concert(f"PF_LFM_NF_{uuid.uuid4().hex[:6]}", artist, token)
+
+    mock_fetch = AsyncMock(return_value=[])
+    with patch("app.services.lastfm.fetch_similar_artists", mock_fetch):
+        from app.services.lastfm import sync_artist_similarities
+
+        await sync_artist_similarities()  # 1차: 실패 기록 생성
+        assert artist in {call.args[0] for call in mock_fetch.await_args_list}
+
+        mock_fetch.reset_mock()
+        await sync_artist_similarities()  # 2차: 쿨다운 안이라 재호출 안 해야 함
+        assert artist not in {call.args[0] for call in mock_fetch.await_args_list}
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistLastfmSyncStatus).where(
+                ArtistLastfmSyncStatus.artist_name == artist,
+                ArtistLastfmSyncStatus.sync_type == "similarity",
+            )
+        )
+        row = result.scalar_one()
+    assert row.attempt_count == 1
+
+
+# 쿨다운이 지나면 다시 재시도되고 attempt_count가 증가하는지 테스트
+@pytest.mark.asyncio
+async def test_sync_artist_similarities_retries_after_cooldown_expires():
+    token = await _get_token()
+    artist = f"쿨다운지남_{uuid.uuid4().hex}"
+    await _create_concert(f"PF_LFM_RETRY_{uuid.uuid4().hex[:6]}", artist, token)
+    await _set_lastfm_status(artist, "similarity", datetime.now(timezone.utc) - timedelta(days=8), 1)
+
+    mock_fetch = AsyncMock(return_value=[])
+    with patch("app.services.lastfm.fetch_similar_artists", mock_fetch):
+        from app.services.lastfm import sync_artist_similarities
+
+        await sync_artist_similarities()
+
+    assert artist in {call.args[0] for call in mock_fetch.await_args_list}
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistLastfmSyncStatus).where(
+                ArtistLastfmSyncStatus.artist_name == artist,
+                ArtistLastfmSyncStatus.sync_type == "similarity",
+            )
+        )
+        row = result.scalar_one()
+    assert row.attempt_count == 2
+
+
+# 재시도 상한(5회)에 도달하면 쿨다운이 지났어도 더 이상 대상이 아닌지 테스트 -
+# 이게 없으면 영영 못 찾는 이름을 무한정 재시도하게 됨
+@pytest.mark.asyncio
+async def test_sync_artist_similarities_gives_up_after_max_attempts():
+    token = await _get_token()
+    artist = f"포기대상_{uuid.uuid4().hex}"
+    await _create_concert(f"PF_LFM_GIVEUP_{uuid.uuid4().hex[:6]}", artist, token)
+    await _set_lastfm_status(artist, "similarity", datetime.now(timezone.utc) - timedelta(days=8), 5)
+
+    mock_fetch = AsyncMock(return_value=[])
+    with patch("app.services.lastfm.fetch_similar_artists", mock_fetch):
+        from app.services.lastfm import sync_artist_similarities
+
+        await sync_artist_similarities()
+
+    assert artist not in {call.args[0] for call in mock_fetch.await_args_list}
+
+
+# 실패 기록이 있던 아티스트가 나중에 성공하면 실패 기록이 지워지는지 테스트(다음에 또 실패하면
+# 새로 카운트 시작해야 함 - 과거 실패 이력을 영구히 끌고 다니면 안 됨)
+@pytest.mark.asyncio
+async def test_sync_artist_similarities_clears_failure_record_on_success():
+    token = await _get_token()
+    artist = f"결국성공_{uuid.uuid4().hex}"
+    await _create_concert(f"PF_LFM_SUCCESS_{uuid.uuid4().hex[:6]}", artist, token)
+    await _set_lastfm_status(artist, "similarity", datetime.now(timezone.utc) - timedelta(days=8), 2)
+
+    with patch("app.services.lastfm.fetch_similar_artists", AsyncMock(return_value=[("유사", 0.5)])):
+        from app.services.lastfm import sync_artist_similarities
+
+        await sync_artist_similarities()
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistLastfmSyncStatus).where(
+                ArtistLastfmSyncStatus.artist_name == artist,
+                ArtistLastfmSyncStatus.sync_type == "similarity",
+            )
+        )
+        assert result.scalar_one_or_none() is None
+
+
+# 한꺼번에 몰아서 돌리면(백필 등) 전부 같은 날 last_attempted_at이 찍혀서 정확히 쿨다운(1주) 뒤에
+# 또 한꺼번에 재시도가 몰리는 문제 방지용 - 한 번도 시도 안 한 이름을 먼저, 그 다음 오래 기다린
+# 순으로 처리해야 첫 드레인부터 처리 시각이 자연스럽게 분산됨
+@pytest.mark.asyncio
+async def test_filter_lastfm_retry_eligible_prioritizes_never_attempted_then_oldest():
+    from app.services.lastfm import _filter_lastfm_retry_eligible
+
+    never_attempted = f"신규_{uuid.uuid4().hex}"
+    older_retry = f"오래대기_{uuid.uuid4().hex}"
+    newer_retry = f"최근대기_{uuid.uuid4().hex}"
+
+    now = datetime.now(timezone.utc)
+    await _set_lastfm_status(older_retry, "similarity", now - timedelta(days=20), 1)
+    await _set_lastfm_status(newer_retry, "similarity", now - timedelta(days=8), 1)
+
+    result = await _filter_lastfm_retry_eligible(
+        [newer_retry, older_retry, never_attempted], "similarity"
+    )
+
+    assert result == [never_attempted, older_retry, newer_retry]
+
+
+# limit을 넘기면 우선순위대로 정렬한 뒤 그만큼만 잘라 반환하는지 테스트
+# (_MAX_LASTFM_SYNC_PER_RUN - 하루 처리량을 제한해 부담을 분산시키는 핵심 장치)
+@pytest.mark.asyncio
+async def test_filter_lastfm_retry_eligible_respects_limit():
+    from app.services.lastfm import _filter_lastfm_retry_eligible
+
+    names = [f"제한테스트{i}_{uuid.uuid4().hex[:6]}" for i in range(5)]
+
+    result = await _filter_lastfm_retry_eligible(names, "similarity", limit=2)
+
+    assert result == names[:2]
 
 
 # resolve_genres 화이트리스트 매칭 테스트
@@ -340,12 +488,44 @@ async def test_sync_artist_genres_stores_multiple_genres():
         await sync_artist_genres()
 
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
         result = await db.execute(select(ArtistGenre).where(ArtistGenre.artist_name == artist))
         row = result.scalars().first()
 
     assert row is not None
     assert row.genres == ["K-pop", "힙합"]
+
+
+# 태그 자체를 못 받아오면(빈 리스트) genre 쪽도 실패로 기록되고 쿨다운 안엔 재시도 안 하는지 테스트
+# (whitelist 미매칭=genres None 캐싱과는 다른 케이스 - 이미 처리돼 있던 것과 구분)
+@pytest.mark.asyncio
+async def test_sync_artist_genres_records_failure_and_skips_within_cooldown():
+    token = await _get_token()
+    artist = f"태그없음_{uuid.uuid4().hex}"
+    await _create_concert(f"PF_LFG_NOTAG_{uuid.uuid4().hex[:6]}", artist, token)
+
+    mock_fetch = AsyncMock(return_value=[])
+    with patch("app.services.lastfm.fetch_top_tags", mock_fetch):
+        from app.services.lastfm import sync_artist_genres
+
+        await sync_artist_genres()
+        assert artist in {call.args[0] for call in mock_fetch.await_args_list}
+
+        mock_fetch.reset_mock()
+        await sync_artist_genres()
+        assert artist not in {call.args[0] for call in mock_fetch.await_args_list}
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ArtistLastfmSyncStatus).where(
+                ArtistLastfmSyncStatus.artist_name == artist,
+                ArtistLastfmSyncStatus.sync_type == "genre",
+            )
+        )
+        assert result.scalar_one().attempt_count == 1
+    # genres 캐싱 자체는 안 됐어야 함(태그를 못 받았으므로)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(ArtistGenre).where(ArtistGenre.artist_name == artist))
+        assert result.scalars().first() is None
 
 
 # ensure_artist_genres_cached 테스트 (배치를 기다리지 않고 즉시 캐싱)

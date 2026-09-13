@@ -4,12 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.artist_blocklist import BlockedArtistName
 
 # LLM이 아티스트 자리에 반복적으로 잘못 뽑아내는 것으로 "확정된" 브랜드/페스티벌/공연장명을
-# 저장 직전에 한 번 더 거르는 안전망 - normalize.py의 FESTIVAL+1 필터(event_type 분류가
-# 맞아야만 작동, 오탐도 있음)와 달리 event_type과 무관하게 "이 문자열은 늘 아티스트가 아님"이
-# 사람 검증으로 확정된 것만 정밀 매칭한다(새 케이스 발견용이 아니라 재발 방지용).
-# 출처: docs/artist_extraction_bugs.md 패턴 1/2/3, 실제 포스터 대조로 확정된 것만 담음.
-# 확장: 같은 문자열이 반복 오인되면 추가, 한 번만 나온 애매한 케이스는 넣지 않음(exact match라
-# 그 이름을 실제로 쓰는 신인 아티스트가 나중에 생길 가능성을 고려해 신중히 유지보수).
+# 저장 직전에 한 번 더 거르는 안전망 - event_type과 무관하게 사람 검증으로 확정된 것만 정밀
+# 매칭한다(재발 방지용, 새 케이스 발견용 아님). 출처: docs/artist_extraction_bugs.md 패턴 1/2/3.
+# 같은 문자열이 반복 오인되면 추가, 한 번만 나온 애매한 케이스는 신중히 보류
 BLOCKLISTED_ARTIST_NAMES: set[str] = {
     # 패턴 1: 페스티벌/이벤트 브랜드명 (docs/artist_extraction_bugs.md 패턴1, 18건 확정)
     "SOUNDBERRY",
