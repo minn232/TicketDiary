@@ -37,9 +37,13 @@ async def get_pre_setlist(
     if pre_setlist is None:
         raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
 
+    # artist_names 응답에 채우려고 concert를 항상 조회(이전엔 explicit_date가
+    # 있으면 조회 자체를 생략했음).
+    concert = await _get_concert(db, concert_id)
+    artist_names = concert.artist_name or []
+
     performance_date = explicit_date
     if performance_date is None:
-        concert = await _get_concert(db, concert_id)
         if concert.start_date.date() == concert.end_date.date():
             performance_date = concert.start_date.date()
         # 여러 날짜에 걸친 공연인데 날짜를 특정할 수 없으면 필터링 없이 전체 반환(실제
@@ -49,6 +53,7 @@ async def get_pre_setlist(
     if performance_date is not None:
         lineup_artists = await get_lineup_artists_for_date(db, concert_id, performance_date)
         if lineup_artists:
+            artist_names = lineup_artists
             allowed = set(lineup_artists)
             filtered_songs = [
                 song for song in pre_setlist.songs if not song.get("artist") or song["artist"] in allowed
@@ -63,8 +68,12 @@ async def get_pre_setlist(
                     "songs": filtered_songs,
                     "is_user_edited": pre_setlist.is_user_edited,
                     "edited_user_nickname": pre_setlist.edited_user_nickname,
+                    "artist_names": artist_names,
                 }
 
+    # PreSetlist 테이블엔 없는 필드라, 응답 직렬화 때만 쓰도록 인스턴스에 임시로 붙임
+    # (RealSetlist와 동일 패턴).
+    pre_setlist.artist_names = artist_names
     return pre_setlist
 
 
