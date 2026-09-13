@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 import app.api.v1.endpoints.music_links as music_links_module
 from app.core.config import settings
@@ -714,3 +714,34 @@ async def test_resolve_refetches_after_not_found_ttl_expires():
             )
     assert response.json() == {"url": "https://www.youtube.com/watch?v=found-later"}
     assert mock_resolver.call_count == 1
+
+
+# 리졸버가 예외를 던지면(레이트리밋/네트워크 오류 등) "못 찾음"으로 캐싱하지 않고, url=null만
+# 응답한 뒤 다음 요청 때 다시 시도함 - 실측 버그: 429가 3일짜리 "못 찾음"으로 캐싱돼서 그
+# 이후 진짜로 조회해도 재시도조차 안 됐던 문제(Vaundy "CHAINSAW BLOOD" 등).
+@pytest.mark.asyncio
+async def test_resolve_does_not_cache_when_resolver_raises():
+    token = await _get_token()
+    mock_resolver = AsyncMock(side_effect=[Exception("429 Too Many Requests"), "https://www.youtube.com/watch?v=ok"])
+    with patch.dict(music_links_module._RESOLVERS, {"youtube": mock_resolver}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            first = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "CHAINSAW BLOOD", "artist": "Vaundy"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            second = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "CHAINSAW BLOOD", "artist": "Vaundy"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert first.json() == {"url": None}  # 첫 요청은 에러라 폴백
+    assert second.json() == {"url": "https://www.youtube.com/watch?v=ok"}  # 캐싱 안 됐으니 재시도돼서 성공
+    assert mock_resolver.call_count == 2
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(MusicLinkCache).where(MusicLinkCache.song == "CHAINSAW BLOOD")
+        )
+        row = result.scalar_one()
+        assert row.resolved_url == "https://www.youtube.com/watch?v=ok"

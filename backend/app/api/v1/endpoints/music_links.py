@@ -102,6 +102,14 @@ async def resolve_music_link(
     if hit:
         return MusicLinkResolveResponse(url=cached_url)
 
-    url = await resolver(artist, song)
+    try:
+        url = await resolver(artist, song)
+    except Exception:
+        # music_resolve.py가 API 에러(레이트리밋/네트워크 오류 등)는 그대로 던지도록 돼있음 -
+        # "확인해봤는데 정말 없음"과 구분해서 캐싱하지 않고 다음 요청 때 재시도되게 함(실측:
+        # 이 구분이 없어서 429가 3일짜리 "못 찾음"으로 캐싱돼 재시도 자체가 막혔던 버그).
+        # 경고 로그는 music_resolve.py에서 이미 남김.
+        return MusicLinkResolveResponse(url=None)
+
     await _save_cache(db, service, normalized_artist, song, url)
     return MusicLinkResolveResponse(url=url)

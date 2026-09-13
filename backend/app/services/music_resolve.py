@@ -43,8 +43,11 @@ async def _get_spotify_token() -> str | None:
         _spotify_token_expires_at = time.time() + data["expires_in"] - 60  # 만료 1분 전 갱신
         return _spotify_token
     except Exception as e:
+        # API 에러(레이트리밋/네트워크 오류 등)는 "못 찾음"이 아니라 "확인을 못 함"이라 위로
+        # 그대로 던짐 - 호출부(music_links.py)가 이걸 캐싱하지 않고 다음 요청 때 재시도하게
+        # 하기 위함(실측: 429가 "정말 없음"으로 캐싱돼서 3일간 재시도 자체가 막혔던 버그).
         logger.warning(f"Spotify 토큰 발급 실패: {e}")
-        return None
+        raise
 
 
 # artist:/track: 필드 검색으로 Spotify 자체 매칭엔진에 맡김 - 우리가 직접 문자열 유사도로
@@ -71,8 +74,9 @@ async def resolve_spotify_track(artist: str | None, song: str) -> str | None:
         items = resp.json().get("tracks", {}).get("items", [])
         return items[0]["external_urls"]["spotify"] if items else None
     except Exception as e:
+        # 위 _get_spotify_token과 같은 이유로 그대로 던짐(캐싱 방지).
         logger.warning(f"Spotify 검색 실패 (artist={artist}, song={song}): {e}")
-        return None
+        raise
 
 
 # ---- YouTube ----
@@ -186,8 +190,11 @@ async def _find_official_youtube_video_id(artist: str | None, song: str) -> str 
         video = next((vid for vid, audio_only in official_candidates if not audio_only), None)
         return video or official_candidates[0][0]
     except Exception as e:
+        # API 에러(레이트리밋/네트워크 오류 등)는 "못 찾음"이 아니라 "확인을 못 함"이라 위로
+        # 그대로 던짐 - 호출부(music_links.py)가 이걸 캐싱하지 않고 다음 요청 때 재시도하게
+        # 하기 위함(실측: 429가 "정말 없음"으로 캐싱돼서 3일간 재시도 자체가 막혔던 버그).
         logger.warning(f"YouTube 검색 실패 (artist={artist}, song={song}): {e}")
-        return None
+        raise
 
 
 async def resolve_youtube_video(artist: str | None, song: str) -> str | None:
@@ -274,8 +281,9 @@ async def resolve_apple_music_track(
         studio = next((m for m in matches if not _looks_like_alt_version(m.get("trackName", ""))), None)
         return (studio or matches[0]).get("trackViewUrl")
     except Exception as e:
+        # 위 유튜브와 같은 이유로 그대로 던짐(캐싱 방지).
         logger.warning(f"Apple Music 검색 실패 (artist={artist}, song={song}): {e}")
-        return None
+        raise
 
 
 _ALT_VERSION_MARKERS = ("live", "instrumental", "remix", "acoustic", "karaoke")
