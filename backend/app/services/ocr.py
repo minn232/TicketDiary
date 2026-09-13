@@ -171,22 +171,21 @@ def _to_jpeg(image_bytes: bytes, content_type: str) -> bytes:
         try:
             import pillow_heif
             pillow_heif.register_heif_opener()
-        except ImportError:
+        except ImportError as e:
             raise HTTPException(
                 status_code=422,
                 detail="HEIC/HEIF 이미지 처리를 위해 pillow-heif 패키지가 필요합니다.",
-            )
+            ) from e
         img = Image.open(io.BytesIO(image_bytes))
 
     elif fmt == "dng":
         try:
             import rawpy
-            import numpy as np  # rawpy는 numpy 배열로 RAW 데이터를 반환
-        except ImportError:
+        except ImportError as e:
             raise HTTPException(
                 status_code=422,
                 detail="DNG/RAW 이미지 처리를 위해 rawpy 패키지가 필요합니다.",
-            )
+            ) from e
         with tempfile.NamedTemporaryFile(suffix=".dng", delete=False) as tmp:
             tmp.write(image_bytes)
             tmp_path = tmp.name
