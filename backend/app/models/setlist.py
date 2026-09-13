@@ -1,6 +1,6 @@
 ﻿import uuid
 
-from sqlalchemy import Column, String, ForeignKey, Boolean, Date, UniqueConstraint, text
+from sqlalchemy import Column, String, ForeignKey, Boolean, Date, DateTime, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
@@ -24,6 +24,10 @@ class RealSetlist(Base):
     songs = Column(JSONB, nullable=False)
     is_user_edited = Column(Boolean, nullable=False, server_default=text("false"))
     edited_user_nickname = Column(String, nullable=True)
+    # 마지막으로 Setlist.fm 자동 검색을 시도한 시각(성공/실패 둘 다) - 조회 시점 확인
+    # (check_real_setlist_on_view)의 하루 쿨다운 추적용. 못 찾았을 때도 songs=[]로 빈 행을
+    # 남겨서 이 값을 기록함.
+    attempted_at = Column(DateTime(timezone=True), nullable=True)
 
     concert = relationship("Concert", back_populates="real_setlists")
 

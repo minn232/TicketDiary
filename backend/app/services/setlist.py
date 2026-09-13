@@ -212,6 +212,7 @@ async def generate_real_setlist_auto(
     )
     real_setlist = result.scalar_one_or_none()
     setlistfm_id = matched_ids[0] if len(matched_ids) == 1 else None
+    now = datetime.now(timezone.utc)
 
     if real_setlist is None:
         real_setlist = RealSetlist(
@@ -219,6 +220,7 @@ async def generate_real_setlist_auto(
             performance_date=performance_date,
             setlistfm_id=setlistfm_id,
             songs=all_songs,
+            attempted_at=now,
         )
         db.add(real_setlist)
     else:
@@ -226,10 +228,71 @@ async def generate_real_setlist_auto(
         real_setlist.songs = all_songs
         real_setlist.is_user_edited = False
         real_setlist.edited_user_nickname = None
+        real_setlist.attempted_at = now
 
     await db.commit()
     await db.refresh(real_setlist)
     return real_setlist
+
+
+# 유저가 "공연 후" 화면에서 실제 셋리스트를 조회했는데 비어있으면, 화면은 그대로(빈 상태)
+# 보여주고 백그라운드로 한 번 채워보기를 시도 - 아래 배치의 14일 창을 놓친 공연도 사용자가
+# 계속 들여다보는 한 자연스럽게 재시도됨. (concert_id, performance_date) 단위 하루 쿨다운을
+# real_setlists.attempted_at으로 추적(성공/실패 둘 다 이 값을 남김 - 실패는 songs=[]인
+# 빈 행으로). 화면을 다시 열거나 새로고침해야 결과가 보임(응답을 기다리게 하지 않음).
+_REAL_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(days=1)
+
+
+async def check_real_setlist_on_view(concert_id: UUID, performance_date: date) -> None:
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(RealSetlist).where(
+                    RealSetlist.concert_id == concert_id,
+                    RealSetlist.performance_date == performance_date,
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                # 유저가 직접 편집(빈 채로 확정한 경우 포함)했으면 절대 덮어쓰지 않음
+                if row.is_user_edited or row.songs:
+                    return
+                if row.attempted_at is not None and (
+                    datetime.now(timezone.utc) - row.attempted_at < _REAL_SETLIST_VIEW_CHECK_COOLDOWN
+                ):
+                    return  # 쿨다운 중
+
+            await generate_real_setlist_auto(db, concert_id, performance_date)
+        except HTTPException as e:
+            logger.info(
+                f"조회 시점 실제 셋리스트 확인 - 아직 없음 (concert_id={concert_id}, date={performance_date}): {e.detail}"
+            )
+            await _mark_real_setlist_attempt(db, concert_id, performance_date)
+        except Exception as e:
+            logger.warning(
+                f"조회 시점 실제 셋리스트 확인 실패 (concert_id={concert_id}, date={performance_date}): {e}"
+            )
+            try:
+                await _mark_real_setlist_attempt(db, concert_id, performance_date)
+            except Exception:
+                pass  # 쿨다운 기록조차 실패하면 다음 조회 때 다시 시도되게 그냥 둠
+
+
+# 시도했지만 못 찾았을 때 쿨다운 추적용으로 빈 행을 남기거나(처음) 시각만 갱신(기존 빈 행)
+async def _mark_real_setlist_attempt(db: AsyncSession, concert_id: UUID, performance_date: date) -> None:
+    result = await db.execute(
+        select(RealSetlist).where(
+            RealSetlist.concert_id == concert_id,
+            RealSetlist.performance_date == performance_date,
+        )
+    )
+    row = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if row is None:
+        db.add(RealSetlist(concert_id=concert_id, performance_date=performance_date, songs=[], attempted_at=now))
+    else:
+        row.attempted_at = now
+    await db.commit()
 
 
 # 콘서트 종료 후 이 기간 동안, Setlist.fm에 아직 안 올라온 실제 셋리스트를 매일 자동
