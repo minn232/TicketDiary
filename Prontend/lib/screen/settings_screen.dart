@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/guest_migration_service.dart';
 import '../services/kakao_login_controller.dart';
 import '../services/local_ticket_store.dart';
+import '../services/music_service_links.dart';
 import '../services/notification_settings_service.dart';
 import '../services/ticket_service.dart';
 import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
@@ -71,6 +72,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await _appSettings.setShowExpectedSetlist(v);
     } catch (e) {
       _showSaveError(e, label: '예상 셋리 노출 여부');
+    }
+  }
+
+  // 기기 로컬 저장이라 실패할 일이 거의 없지만(서버 왕복 없음), 다른 설정들과
+  // 형태를 맞춰 실패 안내만 동일하게 남겨둠.
+  Future<void> _setPreferredMusicService(MusicService v) async {
+    try {
+      await _appSettings.setPreferredMusicService(v);
+    } catch (e) {
+      _showSaveError(e, label: '셋리스트 곡 연결 앱');
     }
   }
 
@@ -232,6 +243,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: '예상 셋리 노출 여부',
                         value: _appSettings.showExpectedSetlist,
                         onChanged: _setShowExpectedSetlist,
+                      ),
+                      _divider,
+                      _MusicServiceRow(
+                        value: _appSettings.preferredMusicService,
+                        onChanged: _setPreferredMusicService,
                       ),
                       _divider,
 
@@ -418,6 +434,89 @@ class _SwitchRow extends StatelessWidget {
               activeTrackColor: const Color(0xFF7FB77E),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 셋리스트 포스트잇/기사 아이콘에 쓰일 기본 음악 서비스 선택.
+/// 포스트잇에서 꾹 눌러 바꾸는 건 화면 하나짜리 임시값이고, 여기서 바꾸는
+/// 값만 앱 전역 기본값으로 저장됨([AppSettingsStore.preferredMusicService]).
+class _MusicServiceRow extends StatelessWidget {
+  final MusicService value;
+  final ValueChanged<MusicService> onChanged;
+
+  const _MusicServiceRow({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 56,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 16, right: 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '셋리스트 곡 연결 앱',
+                style: TextStyle(
+                  fontSize: context.sp(15),
+                  fontWeight: FontWeight.w800,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            for (final service in MusicService.values) ...[
+              _ServiceIconButton(
+                service: service,
+                selected: service == value,
+                onTap: () => onChanged(service),
+              ),
+              if (service != MusicService.values.last)
+                const SizedBox(width: 6),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ServiceIconButton extends StatelessWidget {
+  final MusicService service;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ServiceIconButton({
+    required this.service,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(7),
+        decoration: BoxDecoration(
+          color: selected
+              ? service.color.withValues(alpha: 0.15)
+              : Colors.transparent,
+          border: Border.all(
+            color: selected
+                ? service.color
+                : Colors.black.withValues(alpha: 0.15),
+            width: selected ? 1.4 : 1,
+          ),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(
+          service.icon,
+          size: 18,
+          color: selected ? service.color : Colors.black45,
         ),
       ),
     );

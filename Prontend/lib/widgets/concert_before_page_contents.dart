@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/setlist.dart';
@@ -9,10 +10,12 @@ import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
+import '../services/music_service_links.dart';
 import 'fullscreen_poster.dart';
 import 'poster_background.dart';
 import 'pressable_scale.dart';
 import 'responsive_text.dart';
+import 'setlist_music_service_control.dart';
 
 /// "공연 전" 페이지 콘텐츠 — 신문 1면 디자인.
 ///
@@ -199,8 +202,15 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   int? _timetableErrorCode;
 
   List<SongEntry> _fetchedSetlist = const [];
+  // [백엔드 수정] 단독 공연에서 song.artist가 비어있는 곡의 음악앱 검색 폴백용.
+  List<String> _fetchedArtistNames = const [];
   _FetchStatus _presetlistStatus = _FetchStatus.loading;
   int? _presetlistErrorCode;
+
+  // 이 화면을 보는 동안만 유지되는 선택값(설정탭 기본값에서 시작).
+  // [SetlistServiceSelection] 문서 참고.
+  final SetlistServiceSelection _musicServiceSelection =
+      SetlistServiceSelection();
 
   /// 어떤 concertId로 이미 조회했는지 기억해, 같은 concertId로 다시
   /// build되어도 중복 요청하지 않습니다.
@@ -220,6 +230,12 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   }
 
   @override
+  void dispose() {
+    _musicServiceSelection.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(covariant _ConcertBeforeBody oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ticketInfo?.concertId != widget.ticketInfo?.concertId ||
@@ -227,6 +243,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       _loadedConcertId = null;
       _fetchedTimetable = const [];
       _fetchedSetlist = const [];
+      _fetchedArtistNames = const [];
       _timetableStatus = _FetchStatus.loading;
       _presetlistStatus = _FetchStatus.loading;
       _timetableErrorCode = null;
@@ -309,6 +326,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         // 보여줄 수 있어서, 여기서 문자열로 바로 뭉개지 않고 SongEntry
         // 그대로 둠(표시 문구 변환은 위젯에서).
         _fetchedSetlist = res.songs;
+        _fetchedArtistNames = res.artistNames;
         _presetlistStatus = _FetchStatus.loaded;
       });
     } on ApiException catch (e) {
@@ -388,14 +406,24 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
           // 단독 공연처럼 평범한 번호 목록으로 보임).
           : _SetlistNumbered(
               setlist: [for (final name in local) SongEntry(name: name)],
+              selection: _musicServiceSelection,
             );
     }
     if (_presetlistStatus != _FetchStatus.loaded) {
       return _statusText(_presetlistStatus, _presetlistErrorCode);
     }
+    // 단독 공연(등록 아티스트 정확히 1명)일 때만 곡 검색 폴백으로 씀 - 페스티벌은
+    // 어느 아티스트인지 특정 못 하니 원래대로 곡명만으로 검색(그룹 아코디언은
+    // song.artist 태그를 그대로 씀).
+    final fallbackArtist =
+        _fetchedArtistNames.length == 1 ? _fetchedArtistNames.first : null;
     return _fetchedSetlist.isEmpty
         ? const _UndecidedText()
-        : _SetlistNumbered(setlist: _fetchedSetlist);
+        : _SetlistNumbered(
+            setlist: _fetchedSetlist,
+            selection: _musicServiceSelection,
+            fallbackArtist: fallbackArtist,
+          );
   }
 
   @override
@@ -468,6 +496,9 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                     SizedBox(height: context.rs(16)),
                     _ArticleSection(
                       title: '예상 셋 리스트',
+                      trailing: SetlistServiceIcon(
+                        selection: _musicServiceSelection,
+                      ),
                       child: _buildSetlistBody(hasConcertId),
                     ),
                   ],
@@ -695,17 +726,30 @@ class _SpreadPoster extends StatelessWidget {
 class _ArticleSection extends StatelessWidget {
   final String title;
   final Widget child;
+  // "예상 셋 리스트"에서만 쓰는 서비스 아이콘(다른 기사 섹션은 안 씀).
+  final Widget? trailing;
 
-  const _ArticleSection({required this.title, required this.child});
+  const _ArticleSection({
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: _serif(context, size: 15, weight: FontWeight.w900),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: _serif(context, size: 15, weight: FontWeight.w900),
+              ),
+            ),
+            ?trailing,
+          ],
         ),
         SizedBox(height: context.rs(9)),
         child,
@@ -799,8 +843,15 @@ class _NewsTimeRow extends StatelessWidget {
 /// 있는 동안만 미리보기 가능(떼면 다시 블러).
 class _SetlistNumbered extends StatefulWidget {
   final List<SongEntry> setlist;
+  final ValueListenable<MusicService> selection;
+  // 단독 공연에서 song.artist가 비어있는 곡의 검색 폴백(있으면).
+  final String? fallbackArtist;
 
-  const _SetlistNumbered({required this.setlist});
+  const _SetlistNumbered({
+    required this.setlist,
+    required this.selection,
+    this.fallbackArtist,
+  });
 
   @override
   State<_SetlistNumbered> createState() => _SetlistNumberedState();
@@ -832,8 +883,12 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
       builder: (context, _) {
         final groups = _groupByArtist();
         final content = groups.length > 1
-            ? _SetlistGroupedByArtist(groups: groups)
-            : _FlatNumberedSongs(songs: widget.setlist);
+            ? _SetlistGroupedByArtist(groups: groups, selection: widget.selection)
+            : _FlatNumberedSongs(
+                songs: widget.setlist,
+                selection: widget.selection,
+                fallbackArtist: widget.fallbackArtist,
+              );
 
         if (AppSettingsStore.instance.showExpectedSetlist) return content;
 
@@ -865,12 +920,22 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
 
 // [백엔드 수정]
 // (앵콜) 텍스트 제거.
-List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
+List<Widget> _buildSongRows(
+  List<SongEntry> songs, {
+  required double gap,
+  required ValueListenable<MusicService> selection,
+  String? fallbackArtist,
+}) {
   return [
     for (var i = 0; i < songs.length; i++)
       Padding(
         padding: EdgeInsets.only(bottom: i == songs.length - 1 ? 0 : gap),
-        child: _SongRow(index: i + 1, song: songs[i]),
+        child: _SongRow(
+          index: i + 1,
+          song: songs[i],
+          selection: selection,
+          fallbackArtist: fallbackArtist,
+        ),
       ),
   ];
 }
@@ -878,14 +943,27 @@ List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
 /// 단독 공연(또는 아티스트 구분이 없는) 예상 셋리 - 번호만 매긴 평범한 목록.
 class _FlatNumberedSongs extends StatelessWidget {
   final List<SongEntry> songs;
+  final ValueListenable<MusicService> selection;
+  // [백엔드 수정] 콘서트 등록 아티스트가 정확히 1명일 때만 채워짐(_ConcertBeforeBodyState
+  // 참고) - song.artist가 비어있는 곡의 음악앱 검색 폴백용.
+  final String? fallbackArtist;
 
-  const _FlatNumberedSongs({required this.songs});
+  const _FlatNumberedSongs({
+    required this.songs,
+    required this.selection,
+    this.fallbackArtist,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: _buildSongRows(songs, gap: context.rs(9)),
+      children: _buildSongRows(
+        songs,
+        gap: context.rs(9),
+        selection: selection,
+        fallbackArtist: fallbackArtist,
+      ),
     );
   }
 }
@@ -897,8 +975,9 @@ class _FlatNumberedSongs extends StatelessWidget {
 /// 펼칠 때 그 아티스트 위치로 화면을 스크롤.
 class _SetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
+  final ValueListenable<MusicService> selection;
 
-  const _SetlistGroupedByArtist({required this.groups});
+  const _SetlistGroupedByArtist({required this.groups, required this.selection});
 
   @override
   State<_SetlistGroupedByArtist> createState() =>
@@ -951,6 +1030,7 @@ class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
               songs: widget.groups[g].value,
               expanded: g == _expandedIndex,
               onTap: () => _toggle(g),
+              selection: widget.selection,
             ),
           ),
       ],
@@ -966,12 +1046,14 @@ class _ArtistAccordionSection extends StatelessWidget {
   final List<SongEntry> songs;
   final bool expanded;
   final VoidCallback onTap;
+  final ValueListenable<MusicService> selection;
 
   const _ArtistAccordionSection({
     required this.artistName,
     required this.songs,
     required this.expanded,
     required this.onTap,
+    required this.selection,
   });
 
   @override
@@ -1017,7 +1099,11 @@ class _ArtistAccordionSection extends StatelessWidget {
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: _buildSongRows(songs, gap: context.rs(8)),
+              children: _buildSongRows(
+                songs,
+                gap: context.rs(8),
+                selection: selection,
+              ),
             ),
           ),
       ],
@@ -1026,32 +1112,49 @@ class _ArtistAccordionSection extends StatelessWidget {
 }
 
 /// 번호 + 곡 이름 한 줄. 단독/아코디언 펼친 목록 둘 다 재사용.
+/// 누르면 [selection]에 담긴 현재 서비스로 이 곡을 검색.
 class _SongRow extends StatelessWidget {
   final int index;
   final SongEntry song;
+  final ValueListenable<MusicService> selection;
+  final String? fallbackArtist;
 
-  const _SongRow({required this.index, required this.song});
+  const _SongRow({
+    required this.index,
+    required this.song,
+    required this.selection,
+    this.fallbackArtist,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: context.rs(22),
-          child: Text(
-            '$index',
-            softWrap: false,
-            style: _serif(context, size: 14, weight: FontWeight.w900),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => openSetlistSongSearch(
+        selection,
+        artist: song.artist,
+        fallbackArtist: fallbackArtist,
+        songName: song.name,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: context.rs(22),
+            child: Text(
+              '$index',
+              softWrap: false,
+              style: _serif(context, size: 14, weight: FontWeight.w900),
+            ),
           ),
-        ),
-        Expanded(
-          child: Text(
-            _keepWords(song.name),
-            style: _serif(context, size: 14.5, weight: FontWeight.w500),
+          Expanded(
+            child: Text(
+              _keepWords(song.name),
+              style: _serif(context, size: 14.5, weight: FontWeight.w500),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

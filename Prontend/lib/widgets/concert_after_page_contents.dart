@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
@@ -9,11 +10,13 @@ import '../models/setlist.dart';
 import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/concert_detail_service.dart';
+import '../services/music_service_links.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
 import 'responsive_text.dart';
 import 'scrapbook_page_background.dart';
 import 'app_network_image.dart';
+import 'setlist_music_service_control.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
 /// `http(s)`로 시작하지 않습니다 — 이 차이로 [Image.network]/[Image.file] 중
@@ -254,8 +257,13 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
 class _RealSetlistContent extends StatefulWidget {
   final String? ticketId;
   final Color ink;
+  final SetlistServiceSelection selection;
 
-  const _RealSetlistContent({required this.ticketId, this.ink = _kraftInk});
+  const _RealSetlistContent({
+    required this.ticketId,
+    this.ink = _kraftInk,
+    required this.selection,
+  });
 
   @override
   State<_RealSetlistContent> createState() => _RealSetlistContentState();
@@ -344,10 +352,19 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     if (allArtists.length <= 1 && untaggedSongs.isEmpty) {
       final only = allArtists.isEmpty ? songs : songsByArtist[allArtists.first]!;
       if (only.isEmpty) return _buildEmptyState();
+      // 단독 공연은 song.artist가 비어있는 옛날 데이터가 많아서, 콘서트에
+      // 등록된 아티스트(정확히 1명)를 검색용 폴백으로 씀.
+      final fallbackArtist = allArtists.length == 1 ? allArtists.first : null;
       return SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: _buildRealSongRows(context, only, widget.ink),
+          children: _buildRealSongRows(
+            context,
+            only,
+            widget.ink,
+            selection: widget.selection,
+            fallbackArtist: fallbackArtist,
+          ),
         ),
       );
     }
@@ -360,7 +377,11 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     ];
 
     return SingleChildScrollView(
-      child: _RealSetlistGroupedByArtist(groups: groupList, ink: widget.ink),
+      child: _RealSetlistGroupedByArtist(
+        groups: groupList,
+        ink: widget.ink,
+        selection: widget.selection,
+      ),
     );
   }
 }
@@ -369,36 +390,50 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
 // 곡마다 번호 매긴 Row + 앙코르 시작 지점 구분선을 만드는 헬퍼.
 // 단독 공연 목록/아코디언 펼친 목록 둘 다 재사용
 List<Widget> _buildRealSongRows(
-    BuildContext context, List<SongEntry> songs, Color ink) {
+  BuildContext context,
+  List<SongEntry> songs,
+  Color ink, {
+  required ValueListenable<MusicService> selection,
+  String? fallbackArtist,
+}) {
   return [
     for (var i = 0; i < songs.length; i++) ...[
       if (songs[i].encore && (i == 0 || !songs[i - 1].encore))
         _EncoreDivider(ink: ink),
       Padding(
         padding: const EdgeInsets.only(bottom: 5),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              (i + 1).toString().padLeft(2, '0'),
-              style: TextStyle(
-                fontSize: context.sp(11),
-                fontWeight: FontWeight.w900,
-                color: ink.withValues(alpha: 0.55),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                songs[i].name,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => openSetlistSongSearch(
+            selection,
+            artist: songs[i].artist,
+            fallbackArtist: fallbackArtist,
+            songName: songs[i].name,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                (i + 1).toString().padLeft(2, '0'),
                 style: TextStyle(
-                  fontSize: context.sp(12),
-                  fontWeight: FontWeight.w700,
-                  color: ink,
+                  fontSize: context.sp(11),
+                  fontWeight: FontWeight.w900,
+                  color: ink.withValues(alpha: 0.55),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  songs[i].name,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
+                    fontWeight: FontWeight.w700,
+                    color: ink,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     ],
@@ -413,8 +448,13 @@ List<Widget> _buildRealSongRows(
 class _RealSetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
   final Color ink;
+  final ValueListenable<MusicService> selection;
 
-  const _RealSetlistGroupedByArtist({required this.groups, this.ink = _kraftInk});
+  const _RealSetlistGroupedByArtist({
+    required this.groups,
+    this.ink = _kraftInk,
+    required this.selection,
+  });
 
   @override
   State<_RealSetlistGroupedByArtist> createState() =>
@@ -461,6 +501,7 @@ class _RealSetlistGroupedByArtistState
               expanded: g == _expandedIndex,
               onTap: () => _toggle(g),
               ink: widget.ink,
+              selection: widget.selection,
             ),
           ),
       ],
@@ -474,6 +515,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
   final bool expanded;
   final VoidCallback onTap;
   final Color ink;
+  final ValueListenable<MusicService> selection;
 
   const _RealSetlistArtistSection({
     required this.artistName,
@@ -481,6 +523,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
     required this.expanded,
     required this.onTap,
     this.ink = _kraftInk,
+    required this.selection,
   });
 
   @override
@@ -532,7 +575,12 @@ class _RealSetlistArtistSection extends StatelessWidget {
                   )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: _buildRealSongRows(context, songs, ink),
+                    children: _buildRealSongRows(
+                      context,
+                      songs,
+                      ink,
+                      selection: selection,
+                    ),
                   ),
           ),
       ],
@@ -1461,7 +1509,7 @@ class _InfoNote extends StatelessWidget {
 }
 
 /// 실제 셋 리스트 메모.
-class _SetlistNote extends StatelessWidget {
+class _SetlistNote extends StatefulWidget {
   final String? ticketId;
   final Color paper;
   final Color ink;
@@ -1472,16 +1520,45 @@ class _SetlistNote extends StatelessWidget {
   });
 
   @override
+  State<_SetlistNote> createState() => _SetlistNoteState();
+}
+
+class _SetlistNoteState extends State<_SetlistNote> {
+  // 이 포스트잇을 보는 동안만 유지되는 선택값(설정탭 기본값에서 시작).
+  // [SetlistServiceSelection] 문서 참고.
+  final SetlistServiceSelection _selection = SetlistServiceSelection();
+
+  @override
+  void dispose() {
+    _selection.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return _NoteCard(
       tapeColor: const Color(0x66E9D6B4),
-      paper: paper,
+      paper: widget.paper,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('실제 셋 리스트', style: _noteHeader(context, color: ink)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '실제 셋 리스트',
+                  style: _noteHeader(context, color: widget.ink),
+                ),
+              ),
+              SetlistServiceIcon(selection: _selection),
+            ],
+          ),
           SizedBox(height: context.rs(6)),
-          _RealSetlistContent(ticketId: ticketId, ink: ink),
+          _RealSetlistContent(
+            ticketId: widget.ticketId,
+            ink: widget.ink,
+            selection: _selection,
+          ),
         ],
       ),
     );
