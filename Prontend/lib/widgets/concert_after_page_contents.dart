@@ -293,9 +293,37 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         // [백엔드 수정] artistNames도 같이 저장(build()에서 아티스트별 그룹핑에 사용).
         _artistNames = res.artistNames;
       });
+      if (res.songs.isEmpty) {
+        _pollForUpdate(ticketId);
+      }
     } on ApiException catch (_) {
       // 조회 자체가 실패하면(네트워크 오류 등) 조용히 안내 문구를 유지합니다.
     } catch (_) {}
+  }
+
+  // [백엔드 수정]
+  // 서버가 이 화면 조회 시점에 실제 셋리스트가 비어있으면 백그라운드로 한 번 더
+  // 채우기를 시도하는데(check_real_setlist_on_view), 응답은 그 결과를 기다리지 않고
+  // 즉시 오므로 처음엔 항상 비어있음. 채워지면 화면을 나갔다 들어와야만 보이던 걸,
+  // 1초 간격으로 최대 10번(~10초)만 짧게 재확인해서 그 안에 채워지면 자동 반영.
+  // 10초 넘어가도 안 채워지면 포기 - 그 이상은 실패했거나 너무 늦게 나타나 어색함.
+  Future<void> _pollForUpdate(String ticketId) async {
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (!mounted) return;
+      try {
+        final res = await _service.getRealSetlist(ticketId);
+        if (!mounted) return;
+        if (res.songs.isNotEmpty) {
+          setState(() {
+            _songs = res.songs;
+            _artistNames = res.artistNames;
+          });
+          return;
+        }
+      } on ApiException catch (_) {
+      } catch (_) {}
+    }
   }
 
   Widget _buildEmptyState() {
