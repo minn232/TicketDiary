@@ -1,10 +1,16 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import delete
 
+import app.api.v1.endpoints.music_links as music_links_module
 from app.core.config import settings
+from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.music_link_cache import MusicLinkCache
 from conftest import _get_token
 
 
@@ -42,6 +48,17 @@ def _reset_spotify_token_cache():
     yield
     music_resolve._spotify_token = None
     music_resolve._spotify_token_expires_at = 0.0
+
+
+# 응답 캐싱(music_links.py) 도입 후, 여러 테스트가 같은 (service, artist, song) 조합을
+# 다른 기대값으로 재사용하고 있어서(예: "테스트가수"/"테스트곡") 캐시가 테스트 간에 새면
+# 먼저 실행된 테스트의 결과가 나중 테스트에 잘못 적중함 - 매 테스트 전에 비움.
+@pytest_asyncio.fixture(autouse=True)
+async def _clean_music_link_cache():
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(MusicLinkCache))
+        await db.commit()
+    yield
 
 
 # 알 수 없는 service면 그냥 url=None(에러 아님)
@@ -574,3 +591,126 @@ async def test_resolve_apple_music_prefers_studio_over_live_version():
                 headers={"Authorization": f"Bearer {token}"},
             )
     assert response.json() == {"url": "https://music.apple.com/us/song/studio"}
+
+
+# ---- 캐싱(music_links.py) ----
+
+# 같은 (service, artist, song) 조합을 두 번 조회하면 두 번째는 캐시로 응답하고 리졸버(실제
+# API 호출)를 다시 안 부름 - 유튜브 쿼터 소진 방지가 목적이라 이 부분이 핵심.
+@pytest.mark.asyncio
+async def test_resolve_caches_result_and_skips_second_resolver_call():
+    token = await _get_token()
+    mock_resolver = AsyncMock(return_value="https://www.youtube.com/watch?v=cached123")
+    with patch.dict(music_links_module._RESOLVERS, {"youtube": mock_resolver}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            first = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "노래", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            second = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "노래", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert first.json() == {"url": "https://www.youtube.com/watch?v=cached123"}
+    assert second.json() == {"url": "https://www.youtube.com/watch?v=cached123"}
+    assert mock_resolver.call_count == 1
+
+
+# 못 찾은 결과(null)도 캐싱해서 반복 조회가 매번 API를 태우지 않게 함
+@pytest.mark.asyncio
+async def test_resolve_caches_not_found_result_too():
+    token = await _get_token()
+    mock_resolver = AsyncMock(return_value=None)
+    with patch.dict(music_links_module._RESOLVERS, {"youtube": mock_resolver}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            first = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "커버곡", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            second = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "커버곡", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert first.json() == {"url": None}
+    assert second.json() == {"url": None}
+    assert mock_resolver.call_count == 1
+
+
+# 아티스트/곡/서비스 중 하나라도 다르면 별도 캐시 항목이라 각각 리졸버를 부름
+@pytest.mark.asyncio
+async def test_resolve_cache_is_scoped_per_service_artist_song():
+    token = await _get_token()
+    mock_resolver = AsyncMock(return_value="https://www.youtube.com/watch?v=x")
+    with patch.dict(music_links_module._RESOLVERS, {"youtube": mock_resolver}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "노래1", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "노래2", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert mock_resolver.call_count == 2
+
+
+# 찾은 결과라도 쿨다운(30일)이 지나면 캐시를 다시 확인함
+@pytest.mark.asyncio
+async def test_resolve_refetches_after_found_ttl_expires():
+    token = await _get_token()
+    async with AsyncSessionLocal() as db:
+        db.add(
+            MusicLinkCache(
+                service="youtube",
+                artist="가수",
+                song="노래",
+                resolved_url="https://www.youtube.com/watch?v=stale",
+                resolved_at=datetime.now(timezone.utc) - timedelta(days=31),
+            )
+        )
+        await db.commit()
+
+    mock_resolver = AsyncMock(return_value="https://www.youtube.com/watch?v=fresh")
+    with patch.dict(music_links_module._RESOLVERS, {"youtube": mock_resolver}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "노래", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=fresh"}
+    assert mock_resolver.call_count == 1
+
+
+# 못 찾은 결과는 쿨다운(3일)이 훨씬 짧음 - 지나면 재시도
+@pytest.mark.asyncio
+async def test_resolve_refetches_after_not_found_ttl_expires():
+    token = await _get_token()
+    async with AsyncSessionLocal() as db:
+        db.add(
+            MusicLinkCache(
+                service="youtube",
+                artist="가수",
+                song="커버곡",
+                resolved_url=None,
+                resolved_at=datetime.now(timezone.utc) - timedelta(days=4),
+            )
+        )
+        await db.commit()
+
+    mock_resolver = AsyncMock(return_value="https://www.youtube.com/watch?v=found-later")
+    with patch.dict(music_links_module._RESOLVERS, {"youtube": mock_resolver}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": "커버곡", "artist": "가수"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=found-later"}
+    assert mock_resolver.call_count == 1
