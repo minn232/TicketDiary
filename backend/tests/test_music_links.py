@@ -165,6 +165,160 @@ async def test_resolve_youtube_official_mv_title_success():
     assert response.json() == {"url": "https://www.youtube.com/watch?v=vid1"}
 
 
+# 유튜브 - "official" 단어 없이 "곡명 / 아티스트：MUSIC VIDEO"만 있어도, 채널명이 그
+# 아티스트 본인이면 공식 뮤비로 인정 (실측: 일본 아티스트 Vaundy 본인 채널 업로드 컨벤션)
+@pytest.mark.asyncio
+async def test_resolve_youtube_artist_channel_music_video_without_official_word():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid1"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "CHAINSAW BLOOD / Vaundy：MUSIC VIDEO",
+                        "channelTitle": "Vaundy",
+                        "description": "助けてチェンソーマン",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "CHAINSAW BLOOD", "artist": "Vaundy"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=vid1"}
+
+
+# 유튜브 - "MUSIC VIDEO" 표시가 있어도 채널명이 아티스트 본인이 아니면(팬 채널 등) 인정 안 함
+@pytest.mark.asyncio
+async def test_resolve_youtube_music_video_title_wrong_channel_returns_null():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid1"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "CHAINSAW BLOOD / Vaundy：MUSIC VIDEO",
+                        "channelTitle": "무관한 팬 채널",
+                        "description": "",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "CHAINSAW BLOOD", "artist": "Vaundy"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": None}
+
+
+# 유튜브 - 채널이 아티스트 본인이면 "official"/"mv" 표시가 아예 없어도 인정 (실측: 일본
+# 아티스트 Kenshi Yonezu 본인 채널은 그냥 "아티스트 - 곡명"으로만 올림, MV 표시 자체가 없음)
+@pytest.mark.asyncio
+async def test_resolve_youtube_artist_channel_without_any_official_marker():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid1"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "Kenshi Yonezu - Lemon",
+                        "channelTitle": "Kenshi Yonezu 米津玄師",
+                        "description": "New Single release info...",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "Lemon", "artist": "Kenshi Yonezu"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=vid1"}
+
+
+# 유튜브 - 아티스트 본인 채널이 아니라 신뢰 배급채널(1theK 등)이 올린 MV도 인정
+# (실측: 잔나비 "for lovers who hesitate" MV가 1theK 채널에 올라와있었는데 "official" 단어가
+# 아예 없었음 - 채널명은 정규화 부분일치라 "1theK (원더케이)"처럼 뒤에 텍스트가 붙어도 매칭됨)
+@pytest.mark.asyncio
+async def test_resolve_youtube_trusted_distributor_channel():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid1"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "[MV] JANNABI(잔나비) _ for lovers who hesitate(주저하는 연인들을 위해)",
+                        "channelTitle": "1theK (원더케이)",
+                        "description": "",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "for lovers who hesitate", "artist": "잔나비"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": "https://www.youtube.com/watch?v=vid1"}
+
+
+# 유튜브 - 신뢰 배급채널이어도 mv 표시가 없는 컨텐츠(댄스연습/직캠/티저 등)는 인정 안 함
+@pytest.mark.asyncio
+async def test_resolve_youtube_trusted_distributor_channel_without_mv_marker_returns_null():
+    token = await _get_token()
+    search_resp = _mock_response({"items": [{"id": {"videoId": "vid1"}}]})
+    detail_resp = _mock_response(
+        {
+            "items": [
+                {
+                    "id": "vid1",
+                    "snippet": {
+                        "title": "JANNABI(잔나비) Dance Practice",
+                        "channelTitle": "1theK (원더케이)",
+                        "description": "",
+                    },
+                },
+            ]
+        }
+    )
+    with patch.object(settings, "YOUTUBE_API_KEY", "key"):
+        with _music_resolve_client_mock(get=[search_resp, detail_resp]):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                response = await ac.get(
+                    "/api/v1/music-links/resolve",
+                    params={"service": "youtube", "song": "아무곡", "artist": "잔나비"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+    assert response.json() == {"url": None}
+
+
 # 유튜브뮤직 - 유튜브와 검색 로직은 같고 링크 도메인만 music.youtube.com으로 다르게
 @pytest.mark.asyncio
 async def test_resolve_youtube_music_uses_music_domain():
@@ -234,7 +388,8 @@ async def test_resolve_apple_music_success():
 
 # 애플뮤직 - 곡 제목만 우연히 같은 무관한 아티스트 결과는 artistId가 달라서 걸러짐
 # (실측 사례: 잔나비의 비공식 커버곡 "The Moon Represents My Heart" 검색 시 무관한 클래식
-# 기타리스트의 동명 편곡 트랙이 잡혔던 실제 버그 - 문자열 유사도로는 90점 넘게 나와 오탐이었음)
+# 기타리스트의 동명 편곡 트랙이 잡혔던 실제 버그 - 문자열 유사도로는 90점 넘게 나와 오탐이었음).
+# 일반 검색에서 못 찾으면 카탈로그 조회로 한 번 더 시도하므로(아래 참고) lookup도 빈 결과로 채움.
 @pytest.mark.asyncio
 async def test_resolve_apple_music_different_artist_id_returns_null():
     token = await _get_token()
@@ -251,7 +406,8 @@ async def test_resolve_apple_music_different_artist_id_returns_null():
             ]
         }
     )
-    with _music_resolve_client_mock(get=[artist_resp, song_resp]):
+    lookup_resp = _mock_response({"results": []})
+    with _music_resolve_client_mock(get=[artist_resp, song_resp, lookup_resp]):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.get(
                 "/api/v1/music-links/resolve",
@@ -259,6 +415,37 @@ async def test_resolve_apple_music_different_artist_id_returns_null():
                 headers={"Authorization": f"Bearer {token}"},
             )
     assert response.json() == {"url": None}
+
+
+# 애플뮤직 - 일반 검색이 그 아티스트 명의로는 못 찾아도(노래방 커버가 검색순위를 차지하거나,
+# 로마자 띄어쓰기가 카탈로그와 달라서), 아티스트 카탈로그 전체 조회 후 띄어쓰기/기호를 없애고
+# 비교하면 찾아짐 (실측 사례: 쿼리 "Hana Uranai" ↔ Vaundy 카탈로그의 "hanauranai")
+@pytest.mark.asyncio
+async def test_resolve_apple_music_falls_back_to_catalog_lookup_for_spacing_mismatch():
+    token = await _get_token()
+    artist_resp = _mock_response({"results": [{"artistId": 111}]})
+    song_resp = _mock_response({"results": []})  # 일반 검색은 못 찾음(노래방 커버 등에 밀림)
+    catalog_resp = _mock_response(
+        {
+            "results": [
+                {
+                    "wrapperType": "track",
+                    "artistId": 111,
+                    "trackName": "hanauranai",  # 카탈로그 표기는 띄어쓰기 없음
+                    "trackViewUrl": "https://music.apple.com/us/song/hanauranai",
+                },
+                {"wrapperType": "collection", "artistId": 111},  # 앨범 등 트랙 아닌 항목은 무시
+            ]
+        }
+    )
+    with _music_resolve_client_mock(get=[artist_resp, song_resp, catalog_resp]):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "apple_music", "song": "Hana Uranai", "artist": "Vaundy"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    assert response.json() == {"url": "https://music.apple.com/us/song/hanauranai"}
 
 
 # 애플뮤직 - 아티스트 검색 자체가 안 잡히면(존재하지 않는 아티스트 등) 곡 검색은 시도도 안 하고 null

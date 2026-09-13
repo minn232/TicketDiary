@@ -1,5 +1,6 @@
 import base64
 import logging
+import re
 import time
 
 import httpx
@@ -82,16 +83,47 @@ async def resolve_spotify_track(artist: str | None, song: str) -> str | None:
 _OFFICIAL_AUDIO_MARKER = "provided to youtube by"
 
 # 레이블이 직접 편집해 올리는 "공식 뮤직비디오"는 위 문구가 없어서(실측: BTS 'Dynamite'
-# Official MV) 놓치는 문제가 있었음 - 제목에 "official"+"mv/music video" 조합이 있으면
-# 추가로 인정.
+# Official MV) 놓치는 문제가 있었음 - 제목에 "official"+"mv/music video" 조합이 있으면 추가로
+# 인정.
 _OFFICIAL_MV_TITLE_MARKERS = ("mv", "m/v", "music video")
 
+# 아티스트 본인 채널이 아니라 방송사/배급사가 올리는 공식 MV는(실측: 잔나비 MV가 "1theK"
+# 채널에 올라와있었는데 "official" 단어가 아예 없었음) 채널 자체를 신뢰의 근거로 삼음.
+# 정확한 채널명이 아니라 정규화(공백/기호 제거 후 소문자)한 부분일치라 "Sony Music (Japan)"
+# 처럼 지역명이 붙거나 "warnermusichk"처럼 붙여쓴 변형에도 대응됨.
+_TRUSTED_DISTRIBUTOR_CHANNEL_MARKERS = (
+    # 국내 K-pop 배급/방송 채널
+    "1thek", "smtown", "jypentertainment", "ygentertainment", "hybelabels",
+    "mnetkpop", "kbskpop", "mbckpop", "sbskpop",
+    # 해외 메이저 레이블/배급(Vevo는 아티스트별 채널명이 "{아티스트}VEVO" 식이라 이 부분
+    # 일치만으로 그 아티스트별 채널까지 함께 커버됨)
+    "vevo", "avex", "sonymusic", "universalmusic", "warnermusic",
+)
 
-def _looks_like_official_video(title: str, description: str) -> bool:
+
+def _is_trusted_distributor_channel(channel_title: str) -> bool:
+    return any(marker in _normalize_title(channel_title) for marker in _TRUSTED_DISTRIBUTOR_CHANNEL_MARKERS)
+
+
+def _looks_like_official_video(title: str, description: str, channel_title: str, artist: str | None) -> bool:
     if _OFFICIAL_AUDIO_MARKER in description:
         return True
     title_lower = title.lower()
-    return "official" in title_lower and any(marker in title_lower for marker in _OFFICIAL_MV_TITLE_MARKERS)
+    has_mv_marker = any(marker in title_lower for marker in _OFFICIAL_MV_TITLE_MARKERS)
+    if "official" in title_lower and has_mv_marker:
+        return True
+    # 채널이 검색한 아티스트 본인 채널이면(자체 업로드), 제목에 "official"/"mv" 표시가 전혀
+    # 없어도 인정 - 실측으로 표시 문구 관행이 아티스트마다 다 달랐음: Vaundy는 "official" 없이
+    # "MUSIC VIDEO"만, 요네즈 켄시(Kenshi Yonezu)는 그마저도 없이 그냥 "아티스트 - 곡명"으로만
+    # 올림. 특정 문구를 계속 추가하기보다 "본인 채널이 올린 것"이라는 사실 자체를 신뢰.
+    if artist and channel_title:
+        artist_lower = artist.lower()
+        channel_lower = channel_title.lower()
+        if artist_lower in channel_lower or channel_lower in artist_lower:
+            return True
+    # 방송사/배급 채널은 한 채널에 여러 컨텐츠 유형(직캠/댄스연습/티저 등)이 섞여있어서,
+    # 아티스트 본인 채널과 달리 제목에 mv 표시가 있는지는 그대로 확인.
+    return has_mv_marker and _is_trusted_distributor_channel(channel_title)
 
 
 # 유튜브/유튜브뮤직은 카탈로그(영상 ID)가 같아서 검색 로직은 공유하고, 링크 도메인만 다르게
@@ -128,7 +160,8 @@ async def _find_official_youtube_video_id(artist: str | None, song: str) -> str 
             snippet = item.get("snippet", {})
             description = (snippet.get("description") or "").lower()
             title = snippet.get("title") or ""
-            if _looks_like_official_video(title, description):
+            channel_title = snippet.get("channelTitle") or ""
+            if _looks_like_official_video(title, description, channel_title, artist):
                 return item["id"]
         return None  # 검색 결과는 있지만 공식 음원/뮤비 표시가 없음(커버/직캠 등) -> 검색화면 폴백
     except Exception as e:
@@ -187,13 +220,32 @@ async def resolve_apple_music_track(
                     "limit": 10,
                 },
             )
-        song_resp.raise_for_status()
+            song_resp.raise_for_status()
+            matches = [
+                item for item in song_resp.json().get("results", []) if item.get("artistId") == artist_id
+            ]
 
-        matches = [
-            item for item in song_resp.json().get("results", []) if item.get("artistId") == artist_id
-        ]
+            # 일반 검색이 그 아티스트 명의로는 못 찾았을 때의 2차 시도 - 실측(일본 아티스트
+            # Vaundy)으로 두 가지 이유가 확인됨: ①노래방 커버 채널들이 아티스트명을 여러 번
+            # 반복 언급해 검색 순위를 차지해버림 ②로마자 표기 띄어쓰기가 카탈로그마다 달라서
+            # (예: 쿼리 "Hana Uranai" ↔ 카탈로그 "hanauranai") 일반 검색에 안 걸릴 수 있음.
+            # artistId로 그 아티스트의 곡 전체를 받아와 띄어쓰기/기호 없이 비교하면 이 두 문제
+            # 다 피해감.
+            if not matches:
+                catalog_resp = await client.get(
+                    "https://itunes.apple.com/lookup",
+                    params={"id": artist_id, "entity": "song", "limit": 200, "country": country},
+                )
+                catalog_resp.raise_for_status()
+                target = _normalize_title(song)
+                matches = [
+                    item
+                    for item in catalog_resp.json().get("results", [])
+                    if item.get("wrapperType") == "track" and _normalize_title(item.get("trackName", "")) == target
+                ]
+
         if not matches:
-            return None  # 검색은 됐지만 그 아티스트 명의로는 없음(커버/미발매곡 등) -> 폴백
+            return None  # 그 아티스트 명의로는 정말 없음(커버/미발매곡 등) -> 검색화면 폴백
 
         # 같은 곡의 라이브/인스트루멘탈/리믹스 버전이 스튜디오 버전보다 먼저 나오는 경우가
         # 있어서(실측: "BTS Dynamite" 1등이 "Dynamite (Live)"), 그런 표시가 없는 버전을
@@ -211,3 +263,7 @@ _ALT_VERSION_MARKERS = ("live", "instrumental", "remix", "acoustic", "karaoke")
 def _looks_like_alt_version(track_name: str) -> bool:
     lower = track_name.lower()
     return any(marker in lower for marker in _ALT_VERSION_MARKERS)
+
+
+def _normalize_title(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
