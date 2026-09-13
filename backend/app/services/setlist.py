@@ -8,10 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
+from app.models.artist_normalization import ArtistAlias
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.models.ticket import Ticket
 from app.schemas.setlist import SongEntry
+from app.services.artist_normalization import find_canonical_by_alias
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.setlistfm import search_setlists, get_setlist_by_id, extract_songs
 
@@ -80,6 +82,37 @@ async def get_real_setlist(
     return real_setlist
 
 
+# Setlist.fm 검색을 원래 표기로 먼저 시도하고, 결과가 없으면 우리 DB에 이미 저장된
+# MusicBrainz 별칭들로 순서대로 재시도. 실사례: 콘서트에는 "ずっと真夜中でいいのに。"로
+# 저장돼 있는데 Setlist.fm은 로마자 표기 "ZUTOMAYO"로만 검색되는 아티스트가 있어서,
+# 원어 그대로는 0건이지만 실제로는 셋리스트가 존재하는 채로 방치되는 문제가 있었음.
+async def _search_setlists_with_alias_fallback(
+    db: AsyncSession, artist: str, performance_date: date
+) -> list[dict]:
+    candidates = await search_setlists(artist, performance_date)
+    if candidates:
+        return candidates
+
+    canonical = await find_canonical_by_alias(db, artist)
+    if canonical is None:
+        return []
+
+    alias_result = await db.execute(
+        select(ArtistAlias.alias_text).where(ArtistAlias.canonical_artist_id == canonical.id)
+    )
+    tried = {artist.strip().lower()}
+    for (alias_text,) in alias_result.all():
+        normalized = alias_text.strip().lower()
+        if not alias_text or normalized in tried:
+            continue
+        tried.add(normalized)
+        await asyncio.sleep(0.3)
+        candidates = await search_setlists(alias_text, performance_date)
+        if candidates:
+            return candidates
+    return []
+
+
 # concert의 아티스트, 공연일 기반 Setlist.fm 검색 -> 후보 목록 반환
 async def search_setlists_for_concert(
     db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
@@ -90,7 +123,7 @@ async def search_setlists_for_concert(
         raise HTTPException(status_code=400, detail="공연에 아티스트 정보가 없습니다.")
 
     performance_date = resolve_performance_date(concert, explicit_date)
-    return await search_setlists(concert.artist_name[0], performance_date)
+    return await _search_setlists_with_alias_fallback(db, concert.artist_name[0], performance_date)
 
 
 # 유저가 직접 곡 목록 수정
@@ -189,7 +222,7 @@ async def generate_real_setlist_auto(
             # search_setlists_by_artist(pre_setlist.py 경로)의 페이지 간 sleep과 동일한 이유 -
             # 아티스트 많은 페스티벌에서 Setlist.fm에 순간적으로 요청이 몰리지 않도록 간격을 둠
             await asyncio.sleep(0.5)
-        candidates = await search_setlists(artist, performance_date)
+        candidates = await _search_setlists_with_alias_fallback(db, artist, performance_date)
         if not candidates:
             continue  # 이 아티스트만 스킵, 나머지는 계속 진행
 

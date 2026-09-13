@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.services.lineup import upsert_concert_lineup
@@ -987,3 +988,73 @@ async def test_get_ticket_setlist_never_overwrites_user_edited_empty_setlist():
     row = await _get_real_setlist_row(concert_id, performance_date)
     assert row.songs == []
     assert row.is_user_edited is True
+
+
+# ---- Setlist.fm 검색 별칭 폴백 ----
+# 콘서트에 저장된 원어 표기(예: 한자/가나)로는 Setlist.fm 검색이 0건이어도, 우리 DB에
+# 이미 저장된 MusicBrainz 별칭(예: 로마자 표기)으로 재시도하면 찾을 수 있는 실제 사례
+# ("ずっと真夜中でいいのに。" -> Setlist.fm엔 "ZUTOMAYO"로만 검색됨) 대응 테스트.
+
+# 원어 표기로 검색하면 0건이지만 별칭으로 재시도하면 찾아지는지 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_falls_back_to_known_alias():
+    original_name = "원어아티스트"
+    alias_name = "ROMANIZED"
+    concert_id = await _create_concert("PF_SL_ALIAS_001", artist=original_name)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-alias-test", canonical_name=original_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=alias_name, source="musicbrainz"))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    # 원어 표기는 mock에 아예 등록 안 해서 404(0건), 별칭으로만 결과가 나오게 함
+    search_data = _make_setlistfm_search("SF_ALIAS_001", artist=alias_name)
+    with _setlistfm_search_mock_multi({alias_name: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert len(row.songs) == 3
+
+
+# 원어 표기와 별칭 둘 다 못 찾으면 그냥 빈 채로(예외 없이) 남는지 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_alias_fallback_still_not_found():
+    original_name = "원어아티스트2"
+    alias_name = "ROMANIZED2"
+    concert_id = await _create_concert("PF_SL_ALIAS_002", artist=original_name)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-alias-test-2", canonical_name=original_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=alias_name, source="musicbrainz"))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    with _setlistfm_search_mock_multi({}):  # 원어/별칭 둘 다 못 찾음
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    assert get_res.status_code == 200
+    assert get_res.json()["songs"] == []
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert row.songs == []
+    assert row.attempted_at is not None
