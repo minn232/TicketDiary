@@ -215,9 +215,9 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     try:
         db.add(ticket)
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
+        raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.") from e
 
     await schedule_ticket_notifications(db, ticket, user)
 

@@ -49,7 +49,7 @@ def _do_upload(image_bytes: bytes, key: str, content_type: str) -> str:
         return f"https://{settings.S3_BUCKET_NAME}.s3.{settings.AWS_REGION}.amazonaws.com/{key}"
     except (BotoCoreError, ClientError) as e:
         logger.error(f"S3 업로드 실패: {e}")
-        raise HTTPException(status_code=502, detail="이미지 업로드에 실패했습니다.")
+        raise HTTPException(status_code=502, detail="이미지 업로드에 실패했습니다.") from e
 
 
 # 이미지 S3 업로드 후 URL 반환

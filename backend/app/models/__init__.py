@@ -15,6 +15,7 @@ from app.models.artist_normalization import (
     CanonicalArtist, ArtistAlias, ArtistNormalizationStatus, ArtistGroupMembership,
 )
 from app.models.artist_blocklist import BlockedArtistName
+from app.models.music_link_cache import MusicLinkCache
 
 __all__ = [
     "User", "UserRole",
@@ -32,4 +33,5 @@ __all__ = [
     "ArtistLastfmSyncStatus",
     "CanonicalArtist", "ArtistAlias", "ArtistNormalizationStatus", "ArtistGroupMembership",
     "BlockedArtistName",
+    "MusicLinkCache",
 ]

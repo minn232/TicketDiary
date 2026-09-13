@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,10 +8,11 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.services.lineup import upsert_concert_lineup
-from app.services.setlist import retry_real_setlist_generation
+from app.services.setlist import retry_real_setlist_generation, check_real_setlist_on_view
 from conftest import _get_token, kopis_mock
 
 
@@ -745,6 +746,12 @@ async def _get_real_setlist_row(concert_id: str, performance_date) -> RealSetlis
         return result.scalar_one_or_none()
 
 
+async def _get_concert_row(concert_id: str) -> Concert:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
+        return result.scalar_one()
+
+
 # 티켓 등록된, 3일 전에 끝난(=14일 창 안) 공연은 자동으로 채워지는지 테스트
 @pytest.mark.asyncio
 async def test_retry_real_setlist_generation_backfills_within_window():
@@ -846,3 +853,245 @@ async def test_retry_real_setlist_generation_skips_already_filled():
     row = await _get_real_setlist_row(concert_id, show_date)
     assert row is not None
     assert [s["name"] for s in row.songs] == ["이미있는곡"]
+
+
+# ---- 조회 시점 실제 셋리스트 확인 (check_real_setlist_on_view) ----
+# 자동 백필(14일 창)을 놓친 공연도, 사용자가 "공연 후" 화면을 열 때마다(티켓 기준 실제
+# 셋리스트 GET) 비어있으면 백그라운드로 한 번 더 채워보기를 시도하는 기능.
+
+# 실제 셋리스트가 없는 티켓을 조회하면(GET) 화면엔 빈 채로 응답하고, 백그라운드로 채워져서
+# DB엔 다음 조회 시점엔 반영돼있는지 테스트
+@pytest.mark.asyncio
+async def test_get_ticket_setlist_triggers_background_fill_when_empty():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_VIEWCHECK_001", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    search_data = _make_setlistfm_search("SF_VIEWCHECK_001", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    # 이번 응답 자체는 비어있음 - 백그라운드 결과를 기다리지 않고 바로 응답하므로
+    assert get_res.status_code == 200
+    assert get_res.json()["songs"] == []
+
+    # 백그라운드로 채워졌는지 DB에서 확인(다음 조회부터 반영됨)
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert len(row.songs) == 3  # 본공연 2곡 + 앙코르 1곡
+    assert row.attempted_at is not None
+
+
+# 검색해도 못 찾으면 songs=[]인 빈 행이라도 남겨서 attempted_at(쿨다운 시작점)을 기록하는지 테스트
+@pytest.mark.asyncio
+async def test_get_ticket_setlist_records_attempt_when_not_found():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_VIEWCHECK_002", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    with _setlistfm_search_mock_multi({}):  # 아무 아티스트도 못 찾음
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert row.songs == []
+    assert row.attempted_at is not None
+
+
+# 하루 쿨다운 안에는(직전 시도가 최근이면) 재시도 자체를 안 하는지 테스트 - 검색 mock이
+# 실제 곡을 주더라도 쿨다운 중이면 반영되면 안 됨
+@pytest.mark.asyncio
+async def test_get_ticket_setlist_skips_retry_within_cooldown():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_VIEWCHECK_003", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+    ticket_res_json = ticket_res.json()
+
+    concert = await _get_concert_row(concert_id)
+    performance_date = concert.start_date.date()
+
+    # 방금(10분 전) 시도했지만 못 찾았던 것으로 미리 기록해둠 - 하루 쿨다운 안
+    async with AsyncSessionLocal() as db:
+        db.add(
+            RealSetlist(
+                concert_id=uuid.UUID(concert_id),
+                performance_date=performance_date,
+                songs=[],
+                attempted_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+            )
+        )
+        await db.commit()
+
+    # mock은 성공 데이터를 주지만, 쿨다운 중이라 호출 자체가 안 되고 여전히 빈 채여야 함
+    search_data = _make_setlistfm_search("SF_VIEWCHECK_003", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row.songs == []
+
+
+# 유저가 직접 편집해서 빈 채로 확정한 셋리스트는(is_user_edited=True) 쿨다운과 무관하게
+# 절대 자동으로 덮어쓰지 않는지 테스트
+@pytest.mark.asyncio
+async def test_get_ticket_setlist_never_overwrites_user_edited_empty_setlist():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_VIEWCHECK_004", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    concert = await _get_concert_row(concert_id)
+    performance_date = concert.start_date.date()
+
+    async with AsyncSessionLocal() as db:
+        db.add(
+            RealSetlist(
+                concert_id=uuid.UUID(concert_id),
+                performance_date=performance_date,
+                songs=[],
+                is_user_edited=True,
+                edited_user_nickname="테스트유저",
+                attempted_at=datetime.now(timezone.utc) - timedelta(days=10),  # 쿨다운은 지났어도
+            )
+        )
+        await db.commit()
+
+    search_data = _make_setlistfm_search("SF_VIEWCHECK_004", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row.songs == []
+    assert row.is_user_edited is True
+
+
+# ---- Setlist.fm 검색 별칭 폴백 ----
+# 콘서트에 저장된 원어 표기(예: 한자/가나)로는 Setlist.fm 검색이 0건이어도, 우리 DB에
+# 이미 저장된 MusicBrainz 별칭(예: 로마자 표기)으로 재시도하면 찾을 수 있는 실제 사례
+# ("ずっと真夜中でいいのに。" -> Setlist.fm엔 "ZUTOMAYO"로만 검색됨) 대응 테스트.
+
+# 원어 표기로 검색하면 0건이지만 별칭으로 재시도하면 찾아지는지 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_falls_back_to_known_alias():
+    original_name = "원어아티스트"
+    alias_name = "ROMANIZED"
+    concert_id = await _create_concert("PF_SL_ALIAS_001", artist=original_name)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-alias-test", canonical_name=original_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=alias_name, source="musicbrainz"))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    # 원어 표기는 mock에 아예 등록 안 해서 404(0건), 별칭으로만 결과가 나오게 함
+    search_data = _make_setlistfm_search("SF_ALIAS_001", artist=alias_name)
+    with _setlistfm_search_mock_multi({alias_name: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert len(row.songs) == 3
+
+
+# 원어 표기와 별칭 둘 다 못 찾으면 그냥 빈 채로(예외 없이) 남는지 테스트
+@pytest.mark.asyncio
+async def test_generate_real_setlist_alias_fallback_still_not_found():
+    original_name = "원어아티스트2"
+    alias_name = "ROMANIZED2"
+    concert_id = await _create_concert("PF_SL_ALIAS_002", artist=original_name)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-alias-test-2", canonical_name=original_name)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=alias_name, source="musicbrainz"))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    with _setlistfm_search_mock_multi({}):  # 원어/별칭 둘 다 못 찾음
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    assert get_res.status_code == 200
+    assert get_res.json()["songs"] == []
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert row.songs == []
+    assert row.attempted_at is not None
+
+
+# Setlist.fm API 자체가 일시 실패(5xx/레이트리밋 등)하면 "못 찾음"과 달리 쿨다운을
+# 기록하지 않아서, 바로 다음 조회 때 다시 시도되는지 테스트 - music_link 캐싱에서
+# API 에러를 "못 찾음"으로 캐싱해버렸던 것과 같은 종류의 버그 재발 방지
+@pytest.mark.asyncio
+async def test_get_ticket_setlist_transient_api_error_does_not_burn_cooldown():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_VIEWCHECK_005", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    # Setlist.fm이 500(우리 쪽에선 502)을 주는 상황
+    with _setlistfm_mock(status_code=500):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    assert get_res.status_code == 200
+    assert get_res.json()["songs"] == []
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    # 쿨다운용 빈 행 자체를 남기지 않아야 함(진짜 "못 찾음"이 아니므로)
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is None
+
+    # 쿨다운이 없으니 바로 다음 조회에서 다시 시도되고, 이번엔 정상 응답이면 채워져야 함
+    search_data = _make_setlistfm_search("SF_VIEWCHECK_005", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert len(row.songs) == 3

@@ -27,6 +27,7 @@ from app.services.setlist import (
     search_setlists_for_concert,
     fetch_and_save_real_setlist,
     generate_real_setlist_auto,
+    check_real_setlist_on_view,
     update_real_setlist,
 )
 from app.services.ticket import (
@@ -106,16 +107,26 @@ def _ticket_concert_and_date(ticket: Ticket):
     return ticket.concert_id, explicit_date
 
 
-# 티켓 기준 실제 셋리스트 조회 (내부적으로 ticket.concert_id + attended_date로 위임)
+# 티켓 기준 실제 셋리스트 조회 (내부적으로 ticket.concert_id + attended_date로 위임).
+# 결과가 비어있으면(자동 백필 14일 창을 놓친 경우 등) 화면은 그대로 빈 상태로 응답하고,
+# 백그라운드로 한 번 더 채워보기를 시도함(check_real_setlist_on_view - 콘서트+날짜 단위
+# 하루 쿨다운). 응답을 기다리게 하지 않으므로, 채워지더라도 이번 조회엔 안 보이고 다음에
+# 다시 열어야 반영됨.
 @router.get("/{ticket_id}/setlist", response_model=RealSetlistResponse)
 async def get_ticket_real_setlist(
     ticket_id: UUID,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, explicit_date = _ticket_concert_and_date(ticket)
-    return await get_real_setlist(db, concert_id, explicit_date)
+    result = await get_real_setlist(db, concert_id, explicit_date)
+    songs = result["songs"] if isinstance(result, dict) else result.songs
+    if not songs:
+        performance_date = result["performance_date"] if isinstance(result, dict) else result.performance_date
+        background_tasks.add_task(check_real_setlist_on_view, concert_id, performance_date)
+    return result
 
 
 # 티켓 기준 Setlist.fm 후보 검색
