@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/app_settings_store.dart';
+import '../services/music_link_resolve_service.dart';
 import '../services/music_service_links.dart';
 
 /// 셋리스트 화면(포스트잇/기사) 하나를 보는 동안만 유지되는 "지금 어느
@@ -74,16 +76,37 @@ class SetlistServiceIcon extends StatelessWidget {
   }
 }
 
-/// 곡 한 줄을 눌렀을 때 [selection]에 담긴 현재 서비스로 검색을 엽니다.
+final MusicLinkResolveService _resolveService = MusicLinkResolveService();
+
+/// 곡 한 줄을 눌렀을 때 [selection]에 담긴 현재 서비스로 연결합니다.
 /// [artist]가 없으면(단독 공연에서 아티스트 태그가 비었을 때) [fallbackArtist]를
 /// 대신 씀(예: 실제 셋리스트의 콘서트 등록 아티스트 전원 목록이 1명뿐일 때).
+///
+/// 먼저 백엔드에 정확한 트랙/영상을 물어봐서(`MusicLinkResolveService`) 찾으면
+/// 그 링크로 원탭 직결하고, 못 찾으면(비공식 발매곡 등) 기존처럼 검색화면을
+/// 엽니다 - 실패가 항상 "검색화면"으로 안전하게 떨어지도록.
 Future<void> openSetlistSongSearch(
   ValueListenable<MusicService> selection, {
   String? artist,
   String? fallbackArtist,
   required String songName,
-}) {
+}) async {
+  final service = selection.value;
   final effectiveArtist =
       (artist != null && artist.trim().isNotEmpty) ? artist : fallbackArtist;
-  return openMusicSearch(selection.value, artist: effectiveArtist, song: songName);
+
+  final resolved = await _resolveService.resolve(
+    service,
+    artist: effectiveArtist,
+    song: songName,
+  );
+  if (resolved != null) {
+    try {
+      await launchUrl(resolved, mode: LaunchMode.externalApplication);
+      return;
+    } catch (_) {
+      // 링크는 받았는데 실행에 실패하면(설치 안 된 앱 등) 검색화면으로 폴백.
+    }
+  }
+  await openMusicSearch(service, artist: effectiveArtist, song: songName);
 }

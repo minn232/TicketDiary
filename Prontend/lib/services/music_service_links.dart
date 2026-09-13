@@ -1,18 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// 셋리스트 곡 하나를 검색해볼 음악 서비스. 지금은 검색화면만 열어주는
-/// 수준(원탭 직결 X) - 로마자/번역 표기는 의외로 잘 맞지만 커버곡·비공식
-/// 발매곡은 서비스가 헛돌 수 있어서, 사용자가 검색결과를 직접 보고 확인할 수
-/// 있게 하기 위함(자동재생/자동선택 금지).
+/// 셋리스트 곡 하나를 연결해볼 음악 서비스. 원탭 직결(정확한 트랙/영상)을
+/// 먼저 시도하고([MusicLinkResolveService]), 못 찾으면(커버곡·비공식 발매곡
+/// 등) 여기 [buildSearchUri]로 검색화면을 열어 사용자가 직접 확인하게
+/// 폴백함(자동재생/자동선택 금지).
 enum MusicService {
   spotify,
   youtube,
+  // 유튜브와 카탈로그(영상 ID)는 같지만 앱이 달라서 따로 둠 - 유튜브는 "그 무대 영상/직캠
+  // 보기", 유튜브뮤직은 "음악만 바로 듣기" 용도로 구분해서 쓰라는 요청 반영.
+  youtubeMusic,
   appleMusic;
 
   String get label => switch (this) {
         MusicService.spotify => '스포티파이',
         MusicService.youtube => '유튜브',
+        MusicService.youtubeMusic => '유튜브뮤직',
         MusicService.appleMusic => '애플뮤직',
       };
 
@@ -21,12 +25,14 @@ enum MusicService {
   IconData get icon => switch (this) {
         MusicService.spotify => Icons.graphic_eq,
         MusicService.youtube => Icons.smart_display,
+        MusicService.youtubeMusic => Icons.headphones,
         MusicService.appleMusic => Icons.apple,
       };
 
   Color get color => switch (this) {
         MusicService.spotify => const Color(0xFF1DB954),
         MusicService.youtube => const Color(0xFFFF0000),
+        MusicService.youtubeMusic => const Color(0xFFFF0000),
         MusicService.appleMusic => const Color(0xFFFA243C),
       };
 
@@ -34,6 +40,7 @@ enum MusicService {
   String get prefsName => switch (this) {
         MusicService.spotify => 'spotify',
         MusicService.youtube => 'youtube',
+        MusicService.youtubeMusic => 'youtube_music',
         MusicService.appleMusic => 'apple_music',
       };
 
@@ -57,6 +64,8 @@ enum MusicService {
         return Uri.https('www.youtube.com', '/results', {
           'search_query': query,
         });
+      case MusicService.youtubeMusic:
+        return Uri.https('music.youtube.com', '/search', {'q': query});
       case MusicService.appleMusic:
         // 스토어프론트를 kr로 고정 - 한국 아티스트/유저 기준 앱이라 국가코드
         // 안 맞으면 검색이 잘 안 잡힐 수 있음(실측 필요, 일단 kr로 시작).
