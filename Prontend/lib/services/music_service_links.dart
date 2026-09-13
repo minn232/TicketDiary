@@ -20,15 +20,17 @@ enum MusicService {
         MusicService.appleMusic => '애플뮤직',
       };
 
-  // TODO: 예매처(vendorTicketingInfo)처럼 실제 브랜드 로고 이미지로 교체할 것.
-  // 지금은 별도 에셋 없이 구분 가능한 Material 아이콘+브랜드색으로 대체.
-  IconData get icon => switch (this) {
-        MusicService.spotify => Icons.graphic_eq,
-        MusicService.youtube => Icons.smart_display,
-        MusicService.youtubeMusic => Icons.headphones,
-        MusicService.appleMusic => Icons.apple,
+  // 예매처(vendorTicketingInfo)와 동일하게 각 서비스 공식 앱 아이콘(App Store 아트워크
+  // 원본) 에셋 사용 - Material 아이콘 대체물이라 헷갈린다는 피드백으로 교체함.
+  String get iconAsset => switch (this) {
+        MusicService.spotify => 'assets/images/streaming/spotify.jpg',
+        MusicService.youtube => 'assets/images/streaming/youtube.jpg',
+        MusicService.youtubeMusic => 'assets/images/streaming/youtube_music.jpg',
+        MusicService.appleMusic => 'assets/images/streaming/apple_music.jpg',
       };
 
+  // 설정탭 선택 표시 테두리/배경 등 - 아이콘 자체는 이미 실제 브랜드색을 담고 있어서 더 이상
+  // 틴트하는 데는 안 씀.
   Color get color => switch (this) {
         MusicService.spotify => const Color(0xFF1DB954),
         MusicService.youtube => const Color(0xFFFF0000),

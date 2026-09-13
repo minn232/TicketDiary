@@ -513,10 +513,12 @@ class _ServiceIconButton extends StatelessWidget {
           ),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: Icon(
-          service.icon,
-          size: 18,
-          color: selected ? service.color : Colors.black45,
+        child: Opacity(
+          opacity: selected ? 1 : 0.55,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Image.asset(service.iconAsset, width: 18, height: 18),
+          ),
         ),
       ),
     );

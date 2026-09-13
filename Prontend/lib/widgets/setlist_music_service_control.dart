@@ -46,7 +46,10 @@ class SetlistServiceIcon extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(service.icon, size: 18, color: service.color),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.asset(service.iconAsset, width: 18, height: 18),
+                ),
                 const SizedBox(width: 8),
                 Text(service.label),
               ],
@@ -68,7 +71,10 @@ class SetlistServiceIcon extends StatelessWidget {
               _openPicker(context, details.globalPosition),
           child: Padding(
             padding: const EdgeInsets.all(4),
-            child: Icon(current.icon, size: size, color: current.color),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Image.asset(current.iconAsset, width: size, height: size),
+            ),
           ),
         );
       },
