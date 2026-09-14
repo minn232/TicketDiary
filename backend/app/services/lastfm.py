@@ -23,6 +23,15 @@ _REQUEST_INTERVAL = 0.3
 # 포스터/크롤링과 달리 Last.fm 카탈로그가 나중에 갱신될 수도 있어 쿨다운을 길게(1주) 잡음
 _LASTFM_RETRY_COOLDOWN = timedelta(days=7)
 _MAX_LASTFM_ATTEMPTS = 5
+# [2026-09-14] 예전엔 _MAX_LASTFM_ATTEMPTS(5회)를 넘기면 영구 제외했는데, 그러면 등록 당시
+# 무명/신인이라 Last.fm에 데이터가 없던 아티스트가 나중에 유명해져도 다시는 확인 안 하는 문제가
+# 있었음(사용자 지적). 그래서 완전 포기 대신 5회 이후엔 훨씬 긴 주기(한 달)로 계속 재확인.
+# API 부담은 무시할 수준(하루 300건 상한 대비, 이 장기재시도 몫은 하루 수십 건 정도)이라
+# 굳이 영구히 끊을 이유가 없음
+_LASTFM_LONG_TAIL_RETRY_COOLDOWN = timedelta(days=30)
+# 성공적으로 캐싱된 것도 무기한 고정하지 않고 이 주기가 지나면 재조회 대상에 다시 포함시킴
+# (아티스트 스타일 변화/Last.fm 태그 누적으로 장르·유사아티스트 관계가 실제로 바뀔 수 있음)
+_LASTFM_CACHE_TTL = timedelta(days=180)
 
 # 1회 배치 실행당 처리 상한 - 백필 등으로 한꺼번에 몰아서 돌리면 그 시점에 한꺼번에 기록된
 # last_attempted_at 때문에 정확히 쿨다운(1주) 뒤에 또 전부 몰려서 재시도되는 게 반복됨. 상한을
@@ -32,16 +41,19 @@ _MAX_LASTFM_SYNC_PER_RUN = 300
 
 
 # names 중 아직 Last.fm 재시도가 허용되는 것만 골라 우선순위대로 정렬해 반환 - 실패 기록이
-# 없는(한 번도 안 시도한) 이름을 먼저, 그 다음 재시도 가능한(쿨다운 지났고 상한 미만) 이름을
-# 오래 기다린 순으로. limit을 넘기면 그만큼만 잘라 반환(_MAX_LASTFM_SYNC_PER_RUN 참고 - 하루치
-# 부담을 분산시키는 핵심 장치)
+# 없는(한 번도 안 시도한) 이름을 먼저, 그 다음 재시도 가능한 이름을 오래 기다린 순으로.
+# 재시도 쿨다운은 2단계: 상한(_MAX_LASTFM_ATTEMPTS) 미만이면 짧은 쿨다운(1주), 상한을 넘겼으면
+# 완전히 끊지 않고 긴 쿨다운(한 달)으로 계속 재확인(_LASTFM_LONG_TAIL_RETRY_COOLDOWN 참고).
+# limit을 넘기면 그만큼만 잘라 반환(_MAX_LASTFM_SYNC_PER_RUN 참고 - 하루치 부담을 분산시키는 핵심 장치)
 async def _filter_lastfm_retry_eligible(
     names: list[str], sync_type: str, *, limit: int | None = None
 ) -> list[str]:
     if not names:
         return []
 
-    cutoff = datetime.now(timezone.utc) - _LASTFM_RETRY_COOLDOWN
+    now = datetime.now(timezone.utc)
+    short_cutoff = now - _LASTFM_RETRY_COOLDOWN
+    long_cutoff = now - _LASTFM_LONG_TAIL_RETRY_COOLDOWN
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(ArtistLastfmSyncStatus).where(
@@ -57,7 +69,9 @@ async def _filter_lastfm_retry_eligible(
         status = status_by_name.get(name)
         if status is None:
             never_attempted.append(name)
-        elif status.attempt_count < _MAX_LASTFM_ATTEMPTS and status.last_attempted_at < cutoff:
+            continue
+        cutoff = short_cutoff if status.attempt_count < _MAX_LASTFM_ATTEMPTS else long_cutoff
+        if status.last_attempted_at < cutoff:
             retry_eligible.append((status.last_attempted_at, name))
 
     retry_eligible.sort(key=lambda pair: pair[0])
@@ -211,7 +225,9 @@ async def fetch_top_tags(artist_name: str) -> list[str]:
 
 # 아티스트 한 명의 Last.fm 태그를 가져와 화이트리스트로 정규화한 장르를 캐싱.
 # 태그 자체를 못 받아오면(API 키 없음/호출 실패/Last.fm에 없는 이름) 실패로 기록해 쿨다운
-# 재시도가 걸리게 하고 조용히 리턴 - 안 그러면 매 배치/이벤트마다 똑같이 재시도됨
+# 재시도가 걸리게 하고 조용히 리턴 - 안 그러면 매 배치/이벤트마다 똑같이 재시도됨.
+# artist_name이 unique라 재조회(TTL 만료) 케이스에선 기존 행이 있을 수 있어 delete 후 insert로
+# 처리(fetched_at도 새 값으로 자연스럽게 갱신됨) - artist_similarities와 동일 패턴
 async def _fetch_and_cache_artist_genre(artist_name: str) -> None:
     tags = await fetch_top_tags(artist_name)
     if not tags:
@@ -219,16 +235,18 @@ async def _fetch_and_cache_artist_genre(artist_name: str) -> None:
         return
 
     async with AsyncSessionLocal() as db:
+        await db.execute(delete(ArtistGenre).where(ArtistGenre.artist_name == artist_name))
         db.add(ArtistGenre(artist_name=artist_name, genres=resolve_genres(tags) or None))
         await _clear_lastfm_failure(db, artist_name, "genre")
         await db.commit()
 
 
-# 아직 캐싱 안 된 아티스트만 Last.fm 태그를 가져와 화이트리스트로 정규화한 장르로 저장
-# (genres=None도 "확인했지만 태그 없었음"으로 캐싱해 재조회 안 함).
+# 캐싱 안 됐거나 캐싱한 지 오래된(_LASTFM_CACHE_TTL 경과) 아티스트를 Last.fm 태그로 (재)조회해서
+# 저장 (genres=None도 "확인했지만 태그 없었음"으로 캐싱해 TTL 전까진 재조회 안 함).
 # "안전망" 역할 - 실제론 티켓 등록 시점에 ensure_artist_genres_cached가 즉시 캐싱해서
-# 평소 처리 대상이 거의 없어야 정상. 즉시 캐싱 실패/로직 붙기 전 오래된 티켓 뒤처리용.
+# 평소 신규분 처리 대상이 거의 없어야 정상(TTL 만료로 인한 재조회 대상은 이 배치가 전담).
 async def sync_artist_genres() -> None:
+    stale_cutoff = datetime.now(timezone.utc) - _LASTFM_CACHE_TTL
     async with AsyncSessionLocal() as db:
         concert_result = await db.execute(select(Concert.artist_name).where(Concert.artist_name != []))
         all_names = {
@@ -238,10 +256,12 @@ async def sync_artist_genres() -> None:
             if name and name.strip()
         }
 
-        cached_result = await db.execute(select(ArtistGenre.artist_name))
-        cached_names = set(cached_result.scalars().all())
+        fresh_result = await db.execute(
+            select(ArtistGenre.artist_name).where(ArtistGenre.fetched_at >= stale_cutoff)
+        )
+        fresh_names = set(fresh_result.scalars().all())
 
-    pending = sorted(all_names - cached_names)
+    pending = sorted(all_names - fresh_names)
     pending = await _filter_lastfm_retry_eligible(pending, "genre", limit=_MAX_LASTFM_SYNC_PER_RUN)
     if not pending:
         logger.info("Last.fm 신규 장르 캐싱 대상 아티스트 없음")
@@ -287,9 +307,11 @@ async def ensure_artist_genres_cached(artist_names: list[str]) -> None:
             continue
 
 
-# 아직 캐싱 안 된 아티스트만 골라 Last.fm에서 유사 아티스트를 가져와 저장
-# (한 번 캐싱된 아티스트는 재조회하지 않음 - 유사 아티스트 관계는 자주 바뀌지 않는다고 가정)
+# 캐싱 안 됐거나 캐싱한 지 오래된(_LASTFM_CACHE_TTL 경과) 아티스트만 골라 Last.fm에서
+# 유사 아티스트를 (재)조회해서 저장 - 무기한 고정하면 아티스트 활동이 쌓이면서 실제로 바뀌는
+# 유사 아티스트 관계를 영영 못 따라가서, 주기적으로 다시 물어보게 함(성공/실패 모두 동일 TTL)
 async def sync_artist_similarities() -> None:
+    stale_cutoff = datetime.now(timezone.utc) - _LASTFM_CACHE_TTL
     async with AsyncSessionLocal() as db:
         concert_result = await db.execute(select(Concert.artist_name).where(Concert.artist_name != []))
         all_names = {
@@ -299,10 +321,12 @@ async def sync_artist_similarities() -> None:
             if name and name.strip()
         }
 
-        cached_result = await db.execute(select(ArtistSimilarity.artist_name.distinct()))
-        cached_names = set(cached_result.scalars().all())
+        fresh_result = await db.execute(
+            select(ArtistSimilarity.artist_name).distinct().where(ArtistSimilarity.fetched_at >= stale_cutoff)
+        )
+        fresh_names = set(fresh_result.scalars().all())
 
-    pending = sorted(all_names - cached_names)
+    pending = sorted(all_names - fresh_names)
     pending = await _filter_lastfm_retry_eligible(pending, "similarity", limit=_MAX_LASTFM_SYNC_PER_RUN)
     if not pending:
         logger.info("Last.fm 신규 캐싱 대상 아티스트 없음")
