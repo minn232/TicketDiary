@@ -34,6 +34,8 @@
     flex-wrap: wrap;
   }
   header h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  header a.nav-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  header a.nav-link:hover { text-decoration: underline; }
   .field { display: flex; align-items: center; gap: 6px; }
   .field label { color: var(--muted); font-size: 12px; }
   input[type="text"], input[type="password"] {
@@ -68,6 +70,9 @@
   .poster-thumb { width: 44px; height: 60px; object-fit: cover; border-radius: 4px; background: var(--border); display: block; }
   .chip { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
   .badge-flag { display: inline-block; background: var(--danger); color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .badge-llm { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin: 2px 4px 0 0; }
+  .badge-reviewed { display: inline-block; background: #e4efe7; color: var(--ok); border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .badge-ai-reviewed { display: inline-block; background: #e8e4fb; color: #6c4fd4; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
   .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 
   /* 상세 패널 */
@@ -78,13 +83,16 @@
   #detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
   #detail .body { display: flex; gap: 16px; }
   #detail img.poster { width: 180px; border-radius: 8px; border: 1px solid var(--border); flex-shrink: 0; }
-  .artist-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
+  .artist-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; }
+  .artist-row .actions { flex-shrink: 0; white-space: nowrap; }
   .artist-row .name { font-size: 13px; }
   .artist-row .status-tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; margin-left: 8px; }
   .status-matched { background: #e4efe7; color: var(--ok); }
   .status-unconfirmed { background: #efe9e0; color: var(--muted); }
   .status-ambiguous { background: #fbeadf; color: var(--accent); }
   .status-pending { background: #eee; color: var(--muted); }
+  .status-suggested { background: #fdf3d8; color: #a67c00; }
+  .suggestion-box { border: 1px dashed var(--border); border-radius: 6px; padding: 8px 10px; margin-top: 4px; font-size: 12px; }
   .artist-row .actions button { padding: 3px 8px; font-size: 12px; margin-left: 4px; }
   #detail .close-row { text-align: right; margin-top: 14px; }
   .ticket-links { margin: 10px 0 14px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -109,7 +117,24 @@
     <input type="checkbox" id="flagged-only" checked onchange="load(1)" />
     <label for="flagged-only">확인 필요만 보기</label>
   </div>
+  <div class="field">
+    <input type="checkbox" id="unsent-to-llm-only" onchange="load(1)" />
+    <label for="unsent-to-llm-only" title="크롤링 스크린샷 재추출(찜/티켓등록 크롤링, 페스티벌 라인업 재확인) 어느 쪽 대상도 아닌 공연만 - 포스터 LLM 추출 진행 상태와는 무관">크롤링으로 안 채워지는 공연만 보기</label>
+  </div>
+  <div class="field">
+    <input type="checkbox" id="unreviewed-only" onchange="load(1)" />
+    <label for="unreviewed-only">검수 안 된 것만 보기</label>
+  </div>
+  <div class="field">
+    <input type="checkbox" id="ai-reviewed-only" onchange="load(1)" />
+    <label for="ai-reviewed-only" title="사람이 아니라 Claude가 대신 검수한 공연만">AI 검수완료만 보기</label>
+  </div>
+  <div class="field">
+    <input type="checkbox" id="upcoming-only" onchange="load(1)" />
+    <label for="upcoming-only" title="이미 끝난 공연(end_date 지남)은 제외">아직 진행 예정인 공연만 보기</label>
+  </div>
   <button onclick="load(1)">검색</button>
+  <a class="nav-link" href="/artists">아티스트 조회 →</a>
 </header>
 
 <main>
@@ -135,6 +160,7 @@
 <script>
 const API = '/api/v1/admin';
 let page = 1, pageSize = 20, totalPages = 1;
+let currentDetail = null;
 
 function adminKey() { return localStorage.getItem('td_admin_key') || ''; }
 function saveKey() {
@@ -166,7 +192,16 @@ async function load(p) {
   page = p || page;
   const search = document.getElementById('search').value.trim();
   const flaggedOnly = document.getElementById('flagged-only').checked;
-  const qs = new URLSearchParams({ page, page_size: pageSize, flagged_only: flaggedOnly });
+  const unsentToLlmOnly = document.getElementById('unsent-to-llm-only').checked;
+  const unreviewedOnly = document.getElementById('unreviewed-only').checked;
+  const aiReviewedOnly = document.getElementById('ai-reviewed-only').checked;
+  const upcomingOnly = document.getElementById('upcoming-only').checked;
+  const qs = new URLSearchParams({
+    page, page_size: pageSize,
+    flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly, unreviewed_only: unreviewedOnly,
+    ai_reviewed_only: aiReviewedOnly,
+    upcoming_only: upcomingOnly,
+  });
   if (search) qs.set('search', search);
 
   document.getElementById('status-line').textContent = '불러오는 중...';
@@ -194,10 +229,17 @@ function renderRows(items) {
     const poster = c.poster_url ? `<img class="poster-thumb" src="${esc(c.poster_url)}" />` : '';
     const chips = (c.artist_name || []).map(n => `<span class="chip">${esc(n)}</span>`).join('');
     const flag = c.flagged_count > 0 ? `<span class="badge-flag">확인 필요 ${c.flagged_count}</span>` : '';
+    // admin_reviewed_at(사람)이 있으면 그걸 우선 표시, 없고 ai_reviewed_at(Claude)만 있으면 구분 표시
+    const reviewed = c.admin_reviewed_at
+      ? `<span class="badge-reviewed">검수완료</span>`
+      : c.ai_reviewed_at
+        ? `<span class="badge-ai-reviewed">AI 검수완료</span>`
+        : '';
+    const llmReasons = (c.llm_exclusion_reasons || []).map(r => `<span class="badge-llm">수동 확인 필요: ${esc(r)}</span>`).join('');
     tr.innerHTML = `
       <td>${poster}</td>
-      <td>${esc(c.name)}${flag}<div style="color:var(--muted);font-size:11px;">${esc(c.kopis_id || '')}</div></td>
-      <td>${chips}</td>
+      <td>${esc(c.name)}${flag}${reviewed}<div style="color:var(--muted);font-size:11px;">${esc(c.kopis_id || '')}</div></td>
+      <td>${chips}${llmReasons ? `<div>${llmReasons}</div>` : ''}</td>
       <td>${(c.start_date || '').slice(0, 10)}</td>
     `;
     tbody.appendChild(tr);
@@ -207,6 +249,7 @@ function renderRows(items) {
 async function openDetail(id) {
   try {
     const c = await api(`/concerts/${id}`);
+    currentDetail = c;
     renderDetail(c);
     document.getElementById('overlay').classList.add('open');
   } catch (e) {
@@ -215,33 +258,65 @@ async function openDetail(id) {
 }
 function closeDetail() { document.getElementById('overlay').classList.remove('open'); }
 
-function statusOf(c, name) {
-  const found = (c.statuses || []).find(s => s.artist_text === name);
-  return found ? found.status : null;
-}
-
 function renderDetail(c) {
   const poster = c.poster_url ? `<img class="poster" src="${esc(c.poster_url)}" />` : '';
   const links = Object.entries(c.ticketing_links || {})
     .map(([site, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(site)} 예매 ↗</a>`)
     .join('');
   const rows = (c.artist_name || []).map(name => {
-    const st = statusOf(c, name);
+    const statusRow = (c.statuses || []).find(s => s.artist_text === name);
+    const st = statusRow ? statusRow.status : null;
     const tag = st ? `<span class="status-tag status-${st}">${st}</span>` : '';
+    const members = (c.group_memberships || {})[name];
+    const memberLine = members && members.length
+      ? `<div style="color:var(--muted); font-size:11px; margin-top:2px;">멤버: ${members.map(esc).join(', ')}</div>`
+      : '';
+    // MusicBrainz에 없는 아티스트(인디 등)는 ambiguous/unconfirmed에서 영영 못 벗어남 -
+    // 표기 자체는 이미 맞으니 수정 없이 그대로 확정(user_input canonical 등록)하는 버튼
+    const confirmBtn = (st === 'ambiguous' || st === 'unconfirmed')
+      ? `<button onclick="submitConfirm(this)" title="MusicBrainz에 없는 아티스트라도 표기가 맞으면 그대로 확정 처리">확정</button>`
+      : '';
+    // 동명이인 오병합 방지 - mbid 없는 수동 별칭과 문자열만 일치한 경우라 자동 병합 대신 여기서
+    // 직접 확인받음(같은 사람이면 병합 적용, 아니면 별개 인물로 남김)
+    const suggestionBox = st === 'suggested'
+      ? `<div class="suggestion-box">"${esc(statusRow.suggested_name)}"와 같은 사람인가요?
+          <button onclick="submitSuggestion(this, true)">맞음, 병합</button>
+          <button onclick="submitSuggestion(this, false)">다른 사람</button>
+        </div>`
+      : '';
     return `
       <div class="artist-row" data-concert-id="${c.id}" data-name="${esc(name)}">
-        <span class="name">${esc(name)}${tag}</span>
+        <div style="flex:1;">
+          <span class="name">${esc(name)}${tag}</span>
+          ${memberLine}
+          ${suggestionBox}
+        </div>
         <span class="actions">
+          ${confirmBtn}
           <button onclick="startRename(this)">수정</button>
           <button onclick="startDisplayName(this)">표시명</button>
+          <button onclick="startAddAlias(this)">별칭 추가</button>
+          <button onclick="startReassign(this)" title="동명이인 오매칭(텍스트는 같은데 실존 인물이 다름) 강제 수정 - 검색해서 올바른 아티스트로 재지정">재지정</button>
           <button class="danger" onclick="startDeleteConfirm(this)">삭제</button>
         </span>
       </div>`;
   }).join('');
 
+  // admin_reviewed_at(사람)이 있으면 그것만 보여줌. ai_reviewed_at(Claude)만 있으면 그 사실을
+  // 같이 보여주되, 사람이 직접 재검수할 수 있게 버튼은 그대로 둠
+  const reviewStatus = c.admin_reviewed_at
+    ? `<span class="badge-reviewed">검수완료 (${esc(c.admin_reviewed_at.slice(0, 16).replace('T', ' '))})</span>`
+    : `${c.ai_reviewed_at ? `<span class="badge-ai-reviewed">AI 검수완료 (${esc(c.ai_reviewed_at.slice(0, 16).replace('T', ' '))})</span> ` : ''}<button onclick="submitMarkReviewed()">${c.ai_reviewed_at ? '사람 검수로 표시' : '검수 완료로 표시'}</button>`;
+
+  // event_type이 이미 FESTIVAL이면 자동으로 라인업 재확인 대상이라 버튼 자체가 불필요
+  const festivalButton = c.event_type !== 'FESTIVAL'
+    ? `<button onclick="submitMarkFestival()" style="margin-left:8px;" title="event_type을 FESTIVAL로 바꿔 라인업 재확인 배치(24시간마다) 대상에 편입시킴 - LLM 전송은 자정 배치가 알아서 하므로 여기선 안 건드림, 검수완료로도 안 바뀜">페스티벌로 지정</button>`
+    : '';
+
   document.getElementById('detail').innerHTML = `
     <h2>${esc(c.name)}</h2>
     <div class="sub">${esc(c.kopis_id || '')} · ${esc(c.venue || '')} · ${(c.start_date || '').slice(0, 10)}</div>
+    <div style="margin-bottom:10px;">${reviewStatus}${festivalButton}</div>
     ${links ? `<div class="ticket-links">${links}</div>` : ''}
     <div class="body">
       ${poster}
@@ -251,6 +326,8 @@ function renderDetail(c) {
           <input type="text" class="add-input" placeholder="놓친 아티스트명 입력" style="flex:1; margin-right:8px; border:none;" />
           <button onclick="submitAdd(this)">추가</button>
         </div>
+        ${(c.artist_name || []).length >= 2 ? `<div style="margin-top:6px;"><button onclick="startGroupCleanup()">밴드 멤버 정리</button></div>` : ''}
+        <div id="group-cleanup-area"></div>
       </div>
     </div>
     <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
@@ -272,6 +349,78 @@ async function submitAdd(el) {
       body: JSON.stringify({ name }),
     });
     toast('추가됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 수정 없이 봐도 이미 맞는 경우, 직접 검수 완료로 표시
+async function submitMarkReviewed() {
+  const concertId = currentDetail.id;
+  try {
+    await api(`/concerts/${concertId}/review`, { method: 'POST' });
+    toast('검수 완료로 표시됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 실제로는 페스티벌인데 event_type이 아니라서 크롤링/포스터 파이프라인 어느 쪽 자동 대상도
+// 아니었던 공연용 - event_type만 바꾸고 LLM 전송은 자정 배치 타이밍 그대로 둠(즉시 전송 안 함).
+// 아티스트가 아직 안 채워진 상태이므로 검수 완료로도 표시하지 않음(review 엔드포인트 호출 안 함)
+async function submitMarkFestival() {
+  const concertId = currentDetail.id;
+  try {
+    await api(`/concerts/${concertId}/mark-festival`, { method: 'POST' });
+    toast('페스티벌로 지정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// "밴드명 + 멤버 여러 명"이 개별 표기로 뽑힌 공연을 밴드명 하나로 접는 UI. currentDetail의
+// artist_name 전체를 라디오(밴드 하나 선택)+체크박스(멤버로 접을 이름들)로 보여줌
+function startGroupCleanup() {
+  const c = currentDetail;
+  const names = c.artist_name || [];
+  document.getElementById('group-cleanup-area').innerHTML = `
+    <div style="border:1px dashed var(--border); border-radius:6px; padding:10px; margin-top:6px;">
+      <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">밴드명 하나 선택 + 멤버로 접을 이름 체크</div>
+      ${names.map(n => `
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:4px; font-size:13px;">
+          <input type="radio" name="group-pick" value="${esc(n)}" />
+          <input type="checkbox" class="member-pick" value="${esc(n)}" />
+          ${esc(n)}
+        </label>
+      `).join('')}
+      <div style="margin-top:8px;">
+        <button onclick="submitGroupCleanup()">적용</button>
+        <button onclick="document.getElementById('group-cleanup-area').innerHTML=''">취소</button>
+      </div>
+    </div>`;
+}
+
+async function submitGroupCleanup() {
+  const groupRadio = document.querySelector('input[name="group-pick"]:checked');
+  if (!groupRadio) { toast('밴드명을 선택하세요'); return; }
+  const groupName = groupRadio.value;
+  const memberNames = [...document.querySelectorAll('.member-pick:checked')]
+    .map(el => el.value)
+    .filter(v => v !== groupName);
+  if (memberNames.length === 0) { toast('멤버를 1명 이상 체크하세요'); return; }
+  const concertId = currentDetail.id;
+  try {
+    await api(`/concerts/${concertId}/group-membership`, {
+      method: 'POST',
+      body: JSON.stringify({ group_name: groupName, member_names: memberNames }),
+    });
+    toast('밴드로 정리됨');
     openDetail(concertId);
     load(page);
   } catch (e) {
@@ -324,6 +473,45 @@ async function submitRename(el) {
   }
 }
 
+// 표기를 바꾸지 않고 그대로 확정 - rename과 같은 엔드포인트를 original_name===confirmed_name으로
+// 호출(confirm_artist_name_change가 이 경우도 정상 처리: mbid=NULL canonical 등록 + status
+// matched 전환). submitRename은 이름이 같으면 API 호출 자체를 건너뛰므로 별도 함수로 분리함
+async function submitConfirm(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  try {
+    await api(`/concerts/${concertId}/artist-name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ original_name: name, confirmed_name: name }),
+    });
+    toast('확정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 동명이인 방지 확인 응답 - accept=true면 제안된 canonical로 병합, false면 별개 인물로 거부
+// (같은 표기가 다른 공연에서 또 나오면 그때 다시 물어봄, 여기서 영구 차단하지 않음)
+async function submitSuggestion(button, accept) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  try {
+    await api(`/concerts/${concertId}/artist-suggestion`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_text: name, accept }),
+    });
+    toast(accept ? '병합됨' : '별개 인물로 표시됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
 // canonical_id는 UUID라 따옴표/특수문자 걱정 없이 onclick 인자로 바로 넣어도 안전
 async function startDisplayName(button) {
   const row = button.closest('.artist-row');
@@ -357,6 +545,148 @@ async function submitDisplayName(el, canonicalId) {
       body: JSON.stringify({ display_name: value }),
     });
     toast('표시명 변경됨(관련 공연 전체에 반영)');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 이 자리에서 바로 별칭을 추가 - 원래는 /artists 페이지로 가서 따로 해야 했던 걸 concert
+// 상세 화면 안에서 끝낼 수 있게 함. canonical_id 조회는 startDisplayName과 동일(아직 매칭
+// 안 된 아티스트면 404)
+async function startAddAlias(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  let data;
+  try {
+    data = await api(`/canonical-artist?name=${encodeURIComponent(name)}`);
+  } catch (e) {
+    toast('오류: ' + e.message);  // 아직 매칭 안 된 아티스트면 404
+    return;
+  }
+  row.innerHTML = `
+    <input type="text" class="alias-input" placeholder="추가할 별칭" style="flex:1; margin-right:8px;" />
+    <span class="actions">
+      <button onclick="submitAddAlias(this, '${data.canonical_id}')">저장</button>
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+  const input = row.querySelector('.alias-input');
+  input.focus();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitAddAlias(input, data.canonical_id);
+    if (e.key === 'Escape') openDetail(concertId);
+  });
+}
+
+async function submitAddAlias(el, canonicalId) {
+  const row = el.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const aliasText = row.querySelector('.alias-input').value.trim();
+  if (!aliasText) { openDetail(concertId); return; }
+  try {
+    await api(`/artists/${canonicalId}/alias`, {
+      method: 'POST',
+      body: JSON.stringify({ alias_text: aliasText }),
+    });
+    toast('별칭 추가됨');
+    openDetail(concertId);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 동명이인 오매칭(텍스트는 같은데 실존 인물이 다름, 예: LiSA→블랙핑크 Lisa) 강제 수정용 -
+// 이름을 다시 입력해도 fuzzy/alias 매칭이 또 같은 틀린 canonical로 가버려서, 검색해서
+// canonical_id를 직접 골라 재지정한다(admin.py reassign_artist_to_canonical 참고)
+function startReassign(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const name = row.dataset.name;
+  row.innerHTML = `
+    <div style="flex:1;">
+      <div style="display:flex; margin-bottom:6px;">
+        <input type="text" class="reassign-search" placeholder="올바른 아티스트 이름 검색" style="flex:1; margin-right:8px;" value="${esc(name)}" />
+        <button onclick="searchReassignCandidates(this)">검색</button>
+      </div>
+      <div class="reassign-results" style="font-size:12px;"></div>
+      <div style="margin-top:6px; font-size:12px; color:var(--muted);">위 결과 중에 없으면(검색 결과가 있어도 전부 다른 사람이면) 신규 등록:</div>
+      <div style="display:flex; flex-wrap:wrap; align-items:center; margin-top:4px;">
+        <input type="text" class="register-new-name" placeholder="새 아티스트명(비우면 위 표기 그대로)" style="flex:1 1 160px; min-width:0; margin-right:6px; margin-bottom:4px;" />
+        <button onclick="submitRegisterNew(this)" title="이 표기를 신규 아티스트로 등록" style="flex-shrink:0; white-space:nowrap;">신규 등록</button>
+      </div>
+      <label style="display:flex; align-items:center; gap:4px; margin-top:4px; font-size:11px; color:var(--muted);">
+        <input type="checkbox" class="register-new-force" />
+        이름이 기존 아티스트와 완전히 똑같아도 동명이인이니 무조건 새로 만들기
+      </label>
+    </div>
+    <span class="actions">
+      <button onclick="openDetail('${concertId}')">취소</button>
+    </span>`;
+  const input = row.querySelector('.reassign-search');
+  input.focus();
+  input.select();
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') searchReassignCandidates(input);
+    if (e.key === 'Escape') openDetail(concertId);
+  });
+}
+
+async function searchReassignCandidates(el) {
+  const row = el.closest('.artist-row');
+  const resultsBox = row.querySelector('.reassign-results');
+  const q = row.querySelector('.reassign-search').value.trim();
+  if (!q) return;
+  resultsBox.textContent = '검색 중...';
+  let data;
+  try {
+    data = await api(`/artists?search=${encodeURIComponent(q)}&page_size=8`);
+  } catch (e) {
+    resultsBox.textContent = '오류: ' + e.message;
+    return;
+  }
+  if (!data.items.length) {
+    resultsBox.textContent = '검색 결과 없음';
+    return;
+  }
+  resultsBox.innerHTML = data.items.map(a => `
+    <div style="display:flex; justify-content:space-between; align-items:center; border:1px solid var(--border); border-radius:6px; padding:4px 8px; margin-bottom:4px;">
+      <span>${esc(a.display_name || a.canonical_name)}${a.display_name ? ` <span style="color:var(--muted);">(${esc(a.canonical_name)})</span>` : ''}${a.mbid ? '' : ' <span style="color:var(--muted);">[MusicBrainz 미연동]</span>'}</span>
+      <button onclick="submitReassign(this, '${a.id}')">이걸로 재지정</button>
+    </div>`).join('');
+}
+
+async function submitReassign(button, canonicalId) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const artistText = row.dataset.name;
+  try {
+    await api(`/concerts/${concertId}/artist-name/reassign`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_text: artistText, canonical_id: canonicalId }),
+    });
+    toast('재지정됨');
+    openDetail(concertId);
+    load(page);
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 재지정 검색에도 안 나오는(MusicBrainz/canonical_artists에 없는) 아티스트를 신규로 등록
+async function submitRegisterNew(button) {
+  const row = button.closest('.artist-row');
+  const concertId = row.dataset.concertId;
+  const artistText = row.dataset.name;
+  const newName = row.querySelector('.register-new-name').value.trim();
+  const forceNew = row.querySelector('.register-new-force').checked;
+  try {
+    await api(`/concerts/${concertId}/artist-name/register-new`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_text: artistText, new_name: newName || null, force_new: forceNew }),
+    });
+    toast('신규 등록됨');
     openDetail(concertId);
     load(page);
   } catch (e) {

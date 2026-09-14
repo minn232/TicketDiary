@@ -53,11 +53,10 @@ def _detect_first_last_day(
 # "페스티벌 아님"의 근거가 될 수 없음.
 _MULTI_ARTIST_FESTIVAL_THRESHOLD = 5
 
-# VLM이 포스터를 직접 보고 "FESTIVAL"이라고 판단해도(llm_server event_type, 2026-08-22 추가)
-# 그 판단만으로 바로 승격하지 않고, 같은 응답의 artist_name 결과가 서로 다른 이름 최소 이 개수
-# 이상이어야 반영한다(교차검증) - 모델이 화려한 콜라보 포스터를 페스티벌로 착각했는데 실제로는
-# lineup을 1명만 뽑았다면 그 FESTIVAL 판단은 무시한다. 대신 위 5명 임계치보다 낮게 잡아서,
-# 초반 라인업이 2~3팀만 공개된 실제 페스티벌을 더 일찍 잡아낼 수 있게 한다(이게 이 기능의 목적)
+# VLM이 포스터를 보고 "FESTIVAL"이라고 판단해도(llm_server event_type) 그 판단만으로 바로
+# 승격하지 않고, 같은 응답의 artist_name 결과가 서로 다른 이름 최소 이 개수 이상이어야
+# 반영(교차검증) - 콜라보 포스터를 페스티벌로 착각했는데 실제 lineup은 1명뿐인 오판을 거름.
+# 위 5명 임계치보다 낮게 잡아 초반 라인업 2~3팀만 공개된 실제 페스티벌을 더 일찍 잡아냄.
 _LLM_FESTIVAL_MIN_ARTISTS = 2
 
 
@@ -216,9 +215,9 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     try:
         db.add(ticket)
         await db.commit()
-    except IntegrityError:
+    except IntegrityError as e:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
+        raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.") from e
 
     await schedule_ticket_notifications(db, ticket, user)
 

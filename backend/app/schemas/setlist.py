@@ -60,3 +60,6 @@ class PreSetlistResponse(BaseModel):
     songs: list[SongEntry]
     is_user_edited: bool
     edited_user_nickname: str | None
+    # RealSetlistResponse와 동일 패턴 - 프론트가 단독 공연에서 song.artist가
+    # 비어있는 곡을 음악앱 검색으로 연결할 때 폴백 아티스트로 씀.
+    artist_names: list[str] = []

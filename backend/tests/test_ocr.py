@@ -477,7 +477,7 @@ def test_extract_title_from_layout_skips_chrome_text():
     assert _extract_title_from_layout(rows, None)[0] == "YUURI ARENA LIVE 2025 at SEOUL"
 
 
-# 실사용 캡처(2026-08-03)로 확인된 회귀: 헤더 맨 위 화면 상태표시줄(시계 "2:37", 신호/배터리
+# 실사용 캡처로 확인된 회귀: 헤더 맨 위 화면 상태표시줄(시계 "2:37", 신호/배터리
 # 아이콘 오인식 "l (41)")이 제목 후보로 잘못 채택되던 문제. 상태표시줄은 걸러내고
 # 그 아래의 진짜 공연명을 채택해야 함
 def test_extract_title_from_layout_skips_status_bar():

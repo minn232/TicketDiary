@@ -8,10 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
+from app.models.artist_normalization import ArtistAlias
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.models.ticket import Ticket
 from app.schemas.setlist import SongEntry
+from app.services.artist_normalization import find_canonical_by_alias
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.setlistfm import search_setlists, get_setlist_by_id, extract_songs
 
@@ -80,6 +82,39 @@ async def get_real_setlist(
     return real_setlist
 
 
+# Setlist.fm 검색을 원래 표기로 먼저 시도하고, 결과가 없으면 우리 DB에 이미 저장된
+# MusicBrainz 별칭들로 순서대로 재시도. 실사례: 콘서트에는 "ずっと真夜中でいいのに。"로
+# 저장돼 있는데 Setlist.fm은 로마자 표기 "ZUTOMAYO"로만 검색되는 아티스트가 있어서,
+# 원어 그대로는 0건이지만 실제로는 셋리스트가 존재하는 채로 방치되는 문제가 있었음.
+async def _search_setlists_with_alias_fallback(
+    db: AsyncSession, artist: str, performance_date: date
+) -> list[dict]:
+    candidates = await search_setlists(artist, performance_date)
+    if candidates:
+        return candidates
+
+    canonical = await find_canonical_by_alias(db, artist)
+    if canonical is None:
+        return []
+
+    alias_result = await db.execute(
+        select(ArtistAlias.alias_text).where(ArtistAlias.canonical_artist_id == canonical.id)
+    )
+    tried = {artist.strip().lower()}
+    for (alias_text,) in alias_result.all():
+        normalized = alias_text.strip().lower()
+        if not alias_text or normalized in tried:
+            continue
+        tried.add(normalized)
+        # 아티스트 루프 간 간격(0.5초)과 동일하게 맞춤 - 너무 촘촘하면 Setlist.fm
+        # 레이트리밋(429)에 걸릴 수 있음(실측 확인)
+        await asyncio.sleep(0.5)
+        candidates = await search_setlists(alias_text, performance_date)
+        if candidates:
+            return candidates
+    return []
+
+
 # concert의 아티스트, 공연일 기반 Setlist.fm 검색 -> 후보 목록 반환
 async def search_setlists_for_concert(
     db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
@@ -90,7 +125,7 @@ async def search_setlists_for_concert(
         raise HTTPException(status_code=400, detail="공연에 아티스트 정보가 없습니다.")
 
     performance_date = resolve_performance_date(concert, explicit_date)
-    return await search_setlists(concert.artist_name[0], performance_date)
+    return await _search_setlists_with_alias_fallback(db, concert.artist_name[0], performance_date)
 
 
 # 유저가 직접 곡 목록 수정
@@ -168,9 +203,8 @@ async def fetch_and_save_real_setlist(
 
 # 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음) - concert.artist_name을
 # 순회해서 페스티벌/단독 공연 다 동작. retry_real_setlist_generation()의 매일 백필 잡용,
-# 기존 수동 검색/선택 흐름과는 완전히 별도 경로.
-# search_setlists(artist, date)로 가장 근접한 후보를 자동으로 고르는 방식이라 동명이인/
-# 같은 날 다른 도시 공연이 섞이면 틀릴 수 있음(정확도 낮음) - 그래서 수동 흐름도 남겨둠.
+# 기존 수동 검색/선택 흐름과는 별도 경로. 가장 근접한 후보를 자동으로 고르는 방식이라
+# 동명이인/같은 날 다른 도시 공연이 섞이면 틀릴 수 있어(정확도 낮음) 수동 흐름도 남겨둠.
 async def generate_real_setlist_auto(
     db: AsyncSession,
     concert_id: UUID,
@@ -190,7 +224,7 @@ async def generate_real_setlist_auto(
             # search_setlists_by_artist(pre_setlist.py 경로)의 페이지 간 sleep과 동일한 이유 -
             # 아티스트 많은 페스티벌에서 Setlist.fm에 순간적으로 요청이 몰리지 않도록 간격을 둠
             await asyncio.sleep(0.5)
-        candidates = await search_setlists(artist, performance_date)
+        candidates = await _search_setlists_with_alias_fallback(db, artist, performance_date)
         if not candidates:
             continue  # 이 아티스트만 스킵, 나머지는 계속 진행
 
@@ -213,6 +247,7 @@ async def generate_real_setlist_auto(
     )
     real_setlist = result.scalar_one_or_none()
     setlistfm_id = matched_ids[0] if len(matched_ids) == 1 else None
+    now = datetime.now(timezone.utc)
 
     if real_setlist is None:
         real_setlist = RealSetlist(
@@ -220,6 +255,7 @@ async def generate_real_setlist_auto(
             performance_date=performance_date,
             setlistfm_id=setlistfm_id,
             songs=all_songs,
+            attempted_at=now,
         )
         db.add(real_setlist)
     else:
@@ -227,10 +263,81 @@ async def generate_real_setlist_auto(
         real_setlist.songs = all_songs
         real_setlist.is_user_edited = False
         real_setlist.edited_user_nickname = None
+        real_setlist.attempted_at = now
 
     await db.commit()
     await db.refresh(real_setlist)
     return real_setlist
+
+
+# 유저가 "공연 후" 화면에서 실제 셋리스트를 조회했는데 비어있으면, 화면은 그대로(빈 상태)
+# 보여주고 백그라운드로 한 번 채워보기를 시도 - 아래 배치의 14일 창을 놓친 공연도 사용자가
+# 계속 들여다보는 한 자연스럽게 재시도됨. (concert_id, performance_date) 단위 하루 쿨다운을
+# real_setlists.attempted_at으로 추적(성공/실패 둘 다 이 값을 남김 - 실패는 songs=[]인
+# 빈 행으로). 화면을 다시 열거나 새로고침해야 결과가 보임(응답을 기다리게 하지 않음).
+_REAL_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(days=1)
+
+
+async def check_real_setlist_on_view(concert_id: UUID, performance_date: date) -> None:
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(RealSetlist).where(
+                    RealSetlist.concert_id == concert_id,
+                    RealSetlist.performance_date == performance_date,
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                # 유저가 직접 편집(빈 채로 확정한 경우 포함)했으면 절대 덮어쓰지 않음
+                if row.is_user_edited or row.songs:
+                    return
+                if row.attempted_at is not None and (
+                    datetime.now(timezone.utc) - row.attempted_at < _REAL_SETLIST_VIEW_CHECK_COOLDOWN
+                ):
+                    return  # 쿨다운 중
+
+            await generate_real_setlist_auto(db, concert_id, performance_date)
+        except HTTPException as e:
+            if e.status_code == 502:
+                # Setlist.fm API 자체가 일시 실패한 경우(레이트리밋/네트워크 등) - 진짜
+                # "검색해봤는데 없음"이 아니므로 쿨다운을 기록하지 않고 다음 조회 때 바로
+                # 재시도되게 둠. music_link 캐싱에서 API 에러를 "못 찾음"으로 캐싱해버렸던
+                # 것과 같은 종류의 버그(실사례: alias 폴백 추가 후 요청이 늘어 ZUTOMAYO
+                # 콘서트에서 순간적으로 429 발생, 하루 쿨다운에 걸려 재시도가 막혔었음).
+                logger.info(
+                    f"조회 시점 실제 셋리스트 확인 - Setlist.fm API 일시 실패, 쿨다운 없이 다음 조회 때 재시도 (concert_id={concert_id}, date={performance_date}): {e.detail}"
+                )
+                return
+            logger.info(
+                f"조회 시점 실제 셋리스트 확인 - 아직 없음 (concert_id={concert_id}, date={performance_date}): {e.detail}"
+            )
+            await _mark_real_setlist_attempt(db, concert_id, performance_date)
+        except Exception as e:
+            logger.warning(
+                f"조회 시점 실제 셋리스트 확인 실패 (concert_id={concert_id}, date={performance_date}): {e}"
+            )
+            try:
+                await _mark_real_setlist_attempt(db, concert_id, performance_date)
+            except Exception:
+                pass  # 쿨다운 기록조차 실패하면 다음 조회 때 다시 시도되게 그냥 둠
+
+
+# 시도했지만 못 찾았을 때 쿨다운 추적용으로 빈 행을 남기거나(처음) 시각만 갱신(기존 빈 행)
+async def _mark_real_setlist_attempt(db: AsyncSession, concert_id: UUID, performance_date: date) -> None:
+    result = await db.execute(
+        select(RealSetlist).where(
+            RealSetlist.concert_id == concert_id,
+            RealSetlist.performance_date == performance_date,
+        )
+    )
+    row = result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    if row is None:
+        db.add(RealSetlist(concert_id=concert_id, performance_date=performance_date, songs=[], attempted_at=now))
+    else:
+        row.attempted_at = now
+    await db.commit()
 
 
 # 콘서트 종료 후 이 기간 동안, Setlist.fm에 아직 안 올라온 실제 셋리스트를 매일 자동

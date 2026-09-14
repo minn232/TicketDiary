@@ -145,6 +145,9 @@ class _SplashScreenState extends State<SplashScreen>
 
   /// [백엔드 수정]
   /// 크로스페이드 완전히 제거(지속 시간 0) - 겹쳐 보이는 프레임 자체를 없앰.
+  /// 150ms로 되살렸다가 "RenderOpacity was mutated in
+  /// _RenderLayoutBuilder.performLayout" assertion 에러가 실기기에서 재현돼
+  /// 원복함(DiaryPageFrame 내부 LayoutBuilder들과 충돌).
   static const Duration _fadeToMainDuration = Duration.zero;
 
   late final AnimationController _controller;
@@ -320,7 +323,12 @@ class _SplashScreenState extends State<SplashScreen>
     if (_navigated || !mounted) return;
     if (!_dataReady || _controller.value < _navigateAt) return;
     _navigated = true;
-    Navigator.of(context).pushReplacement(
+    // [백엔드 수정]
+    // pushReplacement -> pushAndRemoveUntil(false). pushReplacement는 새 라우트
+    // 진입 중 스플래시 라우트를 한 프레임 남겨둬서, 둘이 동시에 그려져 바인더
+    // 링이 두 겹으로 보이는 버그가 있었음(실기기 녹화로 확인). 이전 라우트를
+    // 전환 애니메이션 없이 즉시 제거해 그 프레임 자체를 없앰.
+    Navigator.of(context).pushAndRemoveUntil(
       PageRouteBuilder(
         settings: const RouteSettings(name: DiaryRoutes.diary),
         transitionDuration: _fadeToMainDuration,
@@ -335,6 +343,7 @@ class _SplashScreenState extends State<SplashScreen>
           ),
         ),
       ),
+      (route) => false,
     );
   }
 
@@ -380,8 +389,31 @@ class _SplashScreenState extends State<SplashScreen>
           // 전체 화면(constraints)의 정중앙에 놓고 있어서, 실제 화면과
           // 위아래(또는 좌우) 위치가 살짝 어긋나 보였습니다. 그 차이만큼
           // 미리 상쇄해둡니다.
+          // [백엔드 수정]
+          // 가로모드 2페이지 스프레드 지원 추가 — 실제 DiaryPageFrame이
+          // 화면 정중앙이 아니라 오른쪽 페이지 자리에 놓이므로,
+          // resolveTwoPageLayout으로 같은 위치를 계산해 스플래시 종료
+          // 시 위치가 안 튀게 함.
+          final twoPageLayout = DiaryPageFrame.resolveTwoPageLayout(
+            pageHeight: screenH,
+          );
+          final usesTwoPage = twoPageLayout.spreadWidth <= screenW;
+          final spreadOffsetX = usesTwoPage
+              ? () {
+                  final spreadLeft = math.max(
+                    0.0,
+                    (screenW - twoPageLayout.spreadWidth) / 2,
+                  );
+                  final pageCenterX =
+                      spreadLeft +
+                      twoPageLayout.rightPageLeft +
+                      twoPageLayout.pageWidth / 2;
+                  return pageCenterX - screenW / 2;
+                }()
+              : 0.0;
+
           final centeringOffset = Offset(
-            (safePadding.left - safePadding.right) / 2,
+            (safePadding.left - safePadding.right) / 2 + spreadOffsetX,
             (safePadding.top - safePadding.bottom) / 2,
           );
 
@@ -420,10 +452,11 @@ class _SplashScreenState extends State<SplashScreen>
             kMinTextScale,
             kMaxTextScale,
           );
-          final previewMarginEachSide = math.max(
-            0.0,
-            (screenW - frameWidthReal) / 2,
-          );
+          // 2페이지 모드는 marginEachSide=0(위 spreadOffsetX로 위치는 이미
+          // 옮김) — 화면 전체 기준 여백을 또 더하면 탭이 이중으로 밀림.
+          final previewMarginEachSide = usesTwoPage
+              ? 0.0
+              : math.max(0.0, (screenW - frameWidthReal) / 2);
 
           return AnimatedBuilder(
             animation: _controller,
@@ -709,9 +742,17 @@ class _SplashScreenState extends State<SplashScreen>
                   width: w * bookGrowth,
                   height: h * bookGrowth,
                   child: MediaQuery(
+                    // [백엔드 수정]
+                    // padding만 0으로 덮으면 DiaryPageFrame의
+                    // SafeArea(maintainBottomViewPadding: true)가 padding 대신
+                    // viewPadding.bottom을 그대로 써서, 그 인셋 크기만큼 미리보기
+                    // 높이가 진짜 화면보다 작게 계산되던 버그(실기기 녹화+로그로
+                    // 확인). viewPadding/viewInsets도 같이 0으로 덮어야 함.
                     data: MediaQuery.of(context).copyWith(
                       size: Size(w * bookGrowth, h * bookGrowth),
                       padding: EdgeInsets.zero,
+                      viewPadding: EdgeInsets.zero,
+                      viewInsets: EdgeInsets.zero,
                     ),
                     child: IgnorePointer(
                       child: DiaryScreen(

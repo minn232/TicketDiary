@@ -85,6 +85,7 @@ flutter:
     - assets/
     - assets/images/summary/
     - assets/images/vendors/
+    - assets/images/streaming/
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

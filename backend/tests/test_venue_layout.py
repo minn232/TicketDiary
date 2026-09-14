@@ -181,8 +181,8 @@ async def test_crawl_result_timetable_only():
 
 # prices만 포함된 결과 수신 → Concert.price 업데이트
 # kopis_id를 매번 새로 생성함 - 이 테스트 스위트는 트랜잭션 롤백 없이 실제 로컬 DB를 그대로
-# 쓰고, crawl-result의 prices는 이제 KOPIS 값과 겹치지 않는 seat_type만 추가하는 병합 방식이라
-# (2026-08-06), 고정 kopis_id를 재사용하면 이전 실행에서 이미 추가된 S석이 남아있어 재실행 시
+# 쓰고, crawl-result의 prices는 KOPIS 값과 겹치지 않는 seat_type만 추가하는 병합 방식이라
+# 고정 kopis_id를 재사용하면 이전 실행에서 이미 추가된 S석이 남아있어 재실행 시
 # "새로 추가할 게 없다"고 판단해 실패함
 @pytest.mark.asyncio
 async def test_crawl_result_prices_only():
@@ -210,7 +210,7 @@ async def test_crawl_result_prices_only():
 
 # KOPIS가 이미 채운 R석과 대소문자/공백만 다른 표기("r 석")로 크롤링 결과가 들어오면 같은
 # 좌석으로 인식해서 KOPIS 값을 유지(덮어쓰지 않음)하고, 진짜 새로운 seat_type(얼리버드)만
-# 추가하는지 테스트 (2026-08-06)
+# 추가하는지 테스트
 @pytest.mark.asyncio
 async def test_crawl_result_prices_seat_type_normalized_dedup():
     concert_id = await _create_concert(f"PF_CR_PRICE_NORM_{uuid.uuid4().hex[:8]}")
@@ -272,7 +272,9 @@ async def test_crawl_result_artist_name_fills_when_empty():
 # 이미 포스터 기반 추출(prfcast/artist-result)로 아티스트가 채워져 있어도 크롤링 결과로 온 새
 # 아티스트는 합집합으로 병합되는지 테스트 (페스티벌 1차/2차/3차 라인업처럼 시간차를 두고 늘어나는 경우 대응)
 @pytest.mark.asyncio
-async def test_crawl_result_artist_name_merges_with_existing():
+# 솔로(기존 1명뿐) 공연은 병합이 아니라 교체돼야 함(merge_or_replace_solo_seed 참고, KOPIS
+# 원본 본명/예명 중복 노이즈 방지 - artist-result 웹훅과 동일 로직 공유)
+async def test_crawl_result_artist_name_replaces_solo_existing():
     concert_id = await _create_concert(f"PF_CR_ARTIST_MERGE_{uuid.uuid4().hex}")  # prfcast="테스트아티스트"로 이미 채워짐
 
     body = {"artist_name": ["다른아티스트"]}
@@ -291,7 +293,7 @@ async def test_crawl_result_artist_name_merges_with_existing():
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
         concert = result.scalar_one()
-    assert set(concert.artist_name) == {"테스트아티스트", "다른아티스트"}
+    assert concert.artist_name == ["다른아티스트"]
 
 
 # 크롤링 결과로 온 아티스트가 기존과 완전히 동일하면(병합 결과가 안 바뀌면) updated에 안 잡히는지 테스트
@@ -377,7 +379,7 @@ async def test_crawl_result_does_not_upgrade_event_type_below_threshold():
 @pytest.mark.asyncio
 async def test_crawl_result_all_fields():
     # kopis_id를 매번 새로 생성함 - test_crawl_result_prices_only와 같은 이유
-    # (prices 병합 방식이 고정 ID 재사용 시 재실행에 취약함, 2026-08-06)
+    # (prices 병합 방식이 고정 ID 재사용 시 재실행에 취약함)
     concert_id = await _create_concert(f"PF_CR_ALL_{uuid.uuid4().hex[:8]}")
 
     body = {

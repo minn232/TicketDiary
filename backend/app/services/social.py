@@ -195,13 +195,10 @@ async def cleanup_ended_concert_follows(db: AsyncSession) -> None:
 _DEFAULT_NEWS_FEED_LIMIT = 200
 
 
-# [백엔드 수정]
-# D-day(공연 당일)/지나간 공연은 소식에서 아예 안 보이게 필터링. 한 번 만들어진
-# NewsFeed는 안 지워지는 정책이라(팔로우 해제해도 유지) 생성 시점 필터만으로는
-# 시간이 지나 D-day/과거가 된 소식을 못 걸러냄 - 조회 시점 기준으로 매번 다시
-# 걸러야 함. start_date는 KOPIS 관례상 "그 날짜의 KST 자정을 UTC로 표기"한
-# 값이라(예: KST 9/10 공연 -> 9/10 00:00+00 저장), 오늘 KST 날짜도 같은
-# 방식(UTC 자정 표기)으로 만들어서 비교해야 날짜 하나 단위로 정확히 맞음.
+# D-day(공연 당일)/지나간 공연은 소식에서 아예 안 보이게 필터링. NewsFeed는 한 번 만들어지면
+# 안 지워지는 정책이라(팔로우 해제해도 유지) 조회 시점 기준으로 매번 다시 걸러야 함.
+# start_date는 "그 날짜의 KST 자정을 UTC로 표기"한 값이라(예: KST 9/10 → 9/10 00:00+00
+# 저장), 오늘 KST 날짜도 같은 방식으로 만들어야 날짜 하나 단위로 정확히 비교됨.
 async def get_news_feed(
     db: AsyncSession, user_id: UUID, limit: int = _DEFAULT_NEWS_FEED_LIMIT, offset: int = 0
 ) -> list[NewsFeed]:

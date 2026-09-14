@@ -8,4 +8,5 @@ class ArtistSearchResult(BaseModel):
 
 
 class ArtistSearchResponse(BaseModel):
+    # 아티스트 검색 결과 목록 응답
     results: list[ArtistSearchResult]

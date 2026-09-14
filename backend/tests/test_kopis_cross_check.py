@@ -2,7 +2,7 @@
 # KOPIS 재조회 자체는 kopis.py의 기존 _fetch_kopis_detail_data를 그대로 재사용하므로 여기서
 # 따로 검증하지 않음.
 
-from scripts.kopis_cross_check import _is_covered
+from scripts.ongoing.kopis_cross_check import _is_covered
 
 
 def test_covered_when_name_in_title():

@@ -173,10 +173,13 @@ Form: image (파일, 최대 10MB, JPEG/PNG/HEIC/WebP 지원)
 - `candidates`: KOPIS에서 검색된 공연 후보 목록 (유저가 선택)
 - `event_type`: `"SOLO"` | `"FESTIVAL"` | `"UNKNOWN"`
 
-### 공연 검색
-키워드로 KOPIS에서 공연 검색.
+### 공연 검색 (찜 공연 검색용)
+DB 기준 검색(KOPIS 실시간 아님, 2026-09-09부터) - 공연명 + 아티스트명(별칭/원어 표기 포함)으로
+매치, 타이핑마다 호출해도 되도록 외부 API를 안 탐. 종료된 공연은 제외. 매일 밤 KOPIS 동기화
+배치 주기만큼(최대 하루) 지연 가능. `/scan`(티켓 사진 스캔) 후보 검색은 이 엔드포인트를 안 쓰고
+KOPIS 실시간 검색을 그대로 씀.
 ```
-GET /concerts/search?keyword=아이유&start_date=2030-01-01&end_date=2030-12-31
+GET /concerts/search?keyword=아이유
 Authorization: Bearer <token>
 ```
 ```json

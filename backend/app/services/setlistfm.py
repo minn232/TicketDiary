@@ -23,10 +23,9 @@ _ARTIST_MATCH_THRESHOLD = 70
 
 
 # 후보 아티스트명이 검색어와 실제 같은 아티스트인지 확인 - 짧고 흔한 이름("Nell")은
-# Setlist.fm이 다른 아티스트(Nell Mescal 등)까지 섞어 반환하는 걸 실측 확인해 추가함.
-# 문자 체계(한글/로마자)가 다르면 판단 보류(True) - Setlist.fm이 한글→로마자 변환을 자체
-# 처리해서 문자열 유사도로 검증하면 정답까지 걸러짐. 같은 체계일 때만 유사도로 판단함.
-# 완전 동명이인/극단적으로 짧은 이름 겹침까진 못 잡음 - 실사용 이름은 보통 더 길어 남겨둔 잔여 위험.
+# Setlist.fm이 다른 아티스트(Nell Mescal 등)까지 섞어 반환하는 걸 실측 확인해 추가함. 문자
+# 체계(한글/로마자)가 다르면 판단 보류(True, Setlist.fm이 한글→로마자 변환을 자체 처리해서
+# 문자열 유사도로 걸러지면 정답까지 걸러짐) - 완전 동명이인까진 못 잡는 잔여 위험은 남음.
 def _artist_name_matches(query: str, candidate_name: str) -> bool:
     if not candidate_name:
         return False

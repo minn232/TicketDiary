@@ -13,7 +13,7 @@ from app.models.concert import Concert
 from app.schemas.artist_extraction import ArtistExtractionResult, ArtistExtractionResponse
 from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.models.lineup import ConcertLineup
-from app.services.artist_matching import get_known_artist_names, merge_artist_names
+from app.services.artist_matching import get_known_artist_names, merge_crawl_artist_names, merge_or_replace_solo_seed
 from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.lineup import upsert_concert_lineup
@@ -45,6 +45,7 @@ def _normalize_seat_type(seat_type: str) -> str:
 async def receive_crawl_result(
     concert_id: UUID,
     body: CrawlResultRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
@@ -129,17 +130,20 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 delivery_date 형식: {body.delivery_date}")
 
-    # 크롤링 결과와 포스터 기반 추출(artist-result 웹훅) 양쪽에서 아티스트가 들어올 수 있고,
-    # 페스티벌은 1차/2차/3차로 시간차를 두고 라인업이 늘어나므로 덮어쓰지 않고 합집합으로 병합
+    # 솔로(1명 이하)는 KOPIS 원본을 새 이름으로 교체, 다인원/페스티벌은 크롤링 결과를 처음
+    # 받는 거면 1회 교체 후 그 다음부터 합집합(merge_crawl_artist_names 참고)
     upgraded_to_festival = False
     known_artist_names: set[str] | None = None
     if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        merged, newly_seeded = merge_crawl_artist_names(concert, body.artist_name, known_artist_names)
+        if newly_seeded:
+            concert.crawl_lineup_seeded_at = datetime.now(timezone.utc)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
+            concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화
             updated.append("artist_name")
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert)
 
@@ -155,8 +159,28 @@ async def receive_crawl_result(
         if lineup_changed:
             updated.append("lineup")
 
+    # MusicBrainz 정규화 큐잉 - pending row만 적립(외부 호출 없음, 응답 시간과 무관). 원래 이
+    # 웹훅은 아티스트명 병합만 하고 큐잉을 안 해서, 크롤링/KOPIS로만 들어온 표기가 정규화 기회를
+    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견).
+    queue_names = set(concert.artist_name or [])
+    if body.lineup:
+        lineup_result = await db.execute(
+            select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert_id)
+        )
+        queue_names |= set(lineup_result.scalars().all())
+    if queue_names:
+        # updated가 비어있어도(이번 호출로 바뀐 건 없지만 concert.artist_name엔 이미 값이 있는
+        # 경우) 큐잉이 유실되지 않도록 독립적으로 커밋(commit=True, 기본값) - 아래 "if updated"
+        # 커밋에 얹혀가면 updated가 empty일 때 add()만 되고 세션이 그냥 닫히며 롤백될 수 있음
+        await queue_for_normalization(db, concert_id, list(queue_names))
+
     if updated:
         await db.commit()
+
+    if queue_names:
+        # 다음날 밤 정기 배치를 기다리지 않고 바로 시도 - 응답 이후 백그라운드로 실행되므로
+        # 웹훅 응답 시간엔 영향 없음(services/artist_normalization.py의 normalize_specific_artists 참고)
+        background_tasks.add_task(normalize_specific_artists, concert_id, list(queue_names))
 
     # 티켓팅 날 알림은 commit 확정 후 처리 (중복 방지 + 유저 조회 포함)
     if "ticketing_date" in updated:
@@ -199,15 +223,14 @@ async def receive_artist_extraction_result(
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        # 항상 합집합 병합 - 예전엔 소규모(4명 미만) 공연에서 KOPIS가 본명/멤버명을 주는 문제
-        # (존박→박성규 등) 때문에 replace=True로 KOPIS 쪽을 통째로 버렸지만, LLM이 포스터에서
-        # 일부 멤버를 놓치면 그만큼 라인업이 사라지는 부작용이 있었음. 이제 MusicBrainz alias
-        # 매칭(services/artist_normalization.py)이 본명↔활동명을 배치로 자동 정리해주므로 그냥
-        # 합집합으로 두고 정리는 정규화 배치에 맡김. merge_artist_names의 replace=True 자체는
-        # 다른 상황에 필요할 수 있어 남겨둠(artist_matching.py)
-        merged = merge_artist_names(concert.artist_name, body.artist_name, known_artist_names)
+        # merge_or_replace_solo_seed 참고 - 솔로(1명 이하) 공연이면 KOPIS 원본을 포스터 추출
+        # 결과로 교체(노이즈 제거), 블록리스트로 전부 걸러지면 교체 없이 기존 값 유지(재즈/
+        # 오케스트라처럼 LLM이 못 뽑는 장르의 안전망). /crawl-result와 동일 로직 공유 -
+        # 두 웹훅 중 어느 쪽이 이 공연을 먼저 건드리든 결과가 같아야 하기 때문
+        merged = merge_or_replace_solo_seed(concert, body.artist_name, known_artist_names)
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
+            concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화
             upgraded_to_festival = upgrade_event_type_if_multi_artist(concert, body.event_type)
             await db.commit()
             await db.refresh(concert)

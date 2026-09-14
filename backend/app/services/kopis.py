@@ -788,10 +788,8 @@ async def get_concert_detail(
 
 
 # 다중 아티스트로 확정된(FESTIVAL) 공연의 ticketing_links를 KOPIS에서 다시 받아와 갱신 -
-# GET 상세조회는 kopis_detail_synced_at이 채워지면 재호출 안 해서, ticketing_links가 유저
-# 최초 조회 시점(라인업 공개 직후, 얼리버드 시점과 겹칠 수 있음)에 영원히 고정되는 문제가 있음.
-# crawler.py의 라인업 재확인 배치에서 같이 호출돼 ticketing_links만 덮어씀 - artist_name은
-# 안 건드림(병합 로직이 따로 있어, KOPIS prfcast로 덮으면 이미 병합된 목록이 되돌아감).
+# kopis_detail_synced_at이 채워지면 GET 재호출 안 해서 유저 최초 조회 시점에 고정되는 문제.
+# 라인업 재확인 배치에서 같이 호출돼 ticketing_links만 덮어씀(artist_name은 안 건드림).
 # KOPIS가 새 값을 안 주면 기존 링크 유지(크롤링 대상을 잃는 회귀 방지).
 async def refresh_ticketing_links(concert: Concert) -> bool:
     try:

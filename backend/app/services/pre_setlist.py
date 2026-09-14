@@ -37,9 +37,13 @@ async def get_pre_setlist(
     if pre_setlist is None:
         raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
 
+    # artist_names 응답에 채우려고 concert를 항상 조회(이전엔 explicit_date가
+    # 있으면 조회 자체를 생략했음).
+    concert = await _get_concert(db, concert_id)
+    artist_names = concert.artist_name or []
+
     performance_date = explicit_date
     if performance_date is None:
-        concert = await _get_concert(db, concert_id)
         if concert.start_date.date() == concert.end_date.date():
             performance_date = concert.start_date.date()
         # 여러 날짜에 걸친 공연인데 날짜를 특정할 수 없으면 필터링 없이 전체 반환(실제
@@ -49,6 +53,7 @@ async def get_pre_setlist(
     if performance_date is not None:
         lineup_artists = await get_lineup_artists_for_date(db, concert_id, performance_date)
         if lineup_artists:
+            artist_names = lineup_artists
             allowed = set(lineup_artists)
             filtered_songs = [
                 song for song in pre_setlist.songs if not song.get("artist") or song["artist"] in allowed
@@ -63,8 +68,12 @@ async def get_pre_setlist(
                     "songs": filtered_songs,
                     "is_user_edited": pre_setlist.is_user_edited,
                     "edited_user_nickname": pre_setlist.edited_user_nickname,
+                    "artist_names": artist_names,
                 }
 
+    # PreSetlist 테이블엔 없는 필드라, 응답 직렬화 때만 쓰도록 인스턴스에 임시로 붙임
+    # (RealSetlist와 동일 패턴).
+    pre_setlist.artist_names = artist_names
     return pre_setlist
 
 
@@ -118,10 +127,9 @@ async def _top_songs_for_artist(artist_name: str, n: int) -> list[dict]:
 
 
 # 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트
-# 전체를 순회해 각자 top_n(기본 20곡)씩 뽑아 artist 태그를 붙여 합침. 곡 수를 안 줄이는
-# 이유는 비용이 Setlist.fm 검색/집계에서 다 발생하고 top_n은 자르는 것뿐이라(넉넉히
-# 저장해도 API 호출 안 늘어남), 나중에 날짜별 매핑이 갖춰지면 재수집 없이 확장 가능.
-# 단독 공연은 기존과 동일(artist 태그 없음), 이 함수만 고치면 페스티벌도 자동 커버됨.
+# 전체를 순회해 각자 top_n(기본 20곡)씩 뽑아 artist 태그를 붙여 합침. 비용은 Setlist.fm
+# 검색/집계에서 다 발생하고 top_n은 자르는 것뿐이라 넉넉히 저장해도 API 호출은 안 늘어남.
+# 단독 공연은 기존과 동일(artist 태그 없음).
 async def generate_pre_setlist(
     db: AsyncSession, concert_id: UUID, top_n: int = 20
 ) -> PreSetlist:

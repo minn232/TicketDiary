@@ -5,9 +5,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# oEmbed는 공개 임베드 미리보기용 엔드포인트라 앱 등록/Client Credentials 토큰 없이 누구나 호출
-# 가능(정식 Web API로 아티스트 상세를 조회하려면 별도 인증이 필요하지만 사진 하나만 필요한
-# 여기서는 불필요, 2026-09-07 실측 확인). 문서화된 요청 제한은 없지만 예의상 최소 간격만 둠
+# oEmbed는 공개 임베드 미리보기용 엔드포인트라 앱 등록/Client Credentials 토큰 없이 누구나
+# 호출 가능(정식 Web API 인증은 사진 하나만 필요한 여기서는 불필요, 실측 확인). 문서화된
+# 요청 제한은 없지만 예의상 최소 간격만 둠
 _OEMBED_URL = "https://open.spotify.com/oembed"
 _MIN_REQUEST_INTERVAL = 0.5
 

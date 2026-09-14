@@ -7,9 +7,11 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
+from fastapi import HTTPException
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -77,8 +79,8 @@ _UNAVAILABLE_PAGE_KEYWORDS = [
     "페이지를 찾을 수 없습니다",
     "오픈 예정",
     # "오픈예정"(공백 없음)은 넣지 않음 - 인터파크 상단 내비게이션의 카테고리 링크로 모든
-    # 페이지에 항상 존재해서(실측 확인, 2026-07-29), 실제 공연 정보가 정상적으로 있는
-    # 페이지도 전부 "오픈 전"으로 오판시키는 false positive였음
+    # 페이지에 항상 존재해서(실측 확인), 실제 공연 정보가 정상적으로 있는 페이지도
+    # 전부 "오픈 전"으로 오판시키는 false positive였음
     "준비중입니다",
     "준비 중입니다",
     "등록된 공연이 없습니다",
@@ -191,10 +193,9 @@ _ATTR_CLOSE_SELECTORS = (
 # 단어가 섞인 문장을 잘못 클릭하는 걸 방지
 _CLOSE_TEXT_CANDIDATES = ("×", "✕", "X", "닫기", "확인")
 
-# "예매 안내" 팝업 - 인터파크/YES24/멜론/티켓링크 등 대부분의 예매 사이트 상세 페이지에서
-# 방문할 때마다(당일 재방문 제외) 뜨는 가장 흔한 팝업(실측 확인, 2026-08-06). 이 문구로 먼저
-# 정확히 컨테이너를 특정한 뒤 닫기를 시도하고, 문구 자체가 없는 사이트(YES24 등)는 아래
-# _POPUP_CONTAINER_SELECTORS 범용 탐색이 대신 커버함
+# "예매 안내" 팝업 - 인터파크/YES24/멜론/티켓링크 상세 페이지 방문 시(당일 재방문 제외)
+# 가장 흔히 뜨는 팝업(실측 확인). 이 문구로 먼저 컨테이너를 특정해 닫기를 시도하고,
+# 문구가 없는 사이트(YES24 등)는 아래 _POPUP_CONTAINER_SELECTORS 범용 탐색이 대신 커버함
 _BOOKING_NOTICE_SIGNAL_TEXTS = ("예매 안내", "예매안내")
 
 
@@ -278,10 +279,9 @@ async def _dismiss_popups(page) -> None:
     except Exception:
         pass
 
-    # 가장 흔한 "예매 안내" 팝업을 텍스트로 먼저 정확히 특정해서 시도.
-    # exact=True로 찾는다 - 부분 일치(exact=False)로 찾으면 "[휠체어석 예매 안내]" 같은 전혀
-    # 다른 버튼이 먼저 걸려서 엉뚱한 걸 컨테이너로 잡는 경우가 실측으로 확인됨(멜론, 2026-08-06).
-    # 실제 팝업 제목은 앞뒤에 다른 글자 없이 정확히 "예매 안내"/"예매안내"만 있음
+    # 가장 흔한 "예매 안내" 팝업을 텍스트로 정확히 특정해 시도. exact=True로 찾음 -
+    # 부분 일치(exact=False)면 "[휠체어석 예매 안내]" 같은 다른 버튼이 먼저 걸려 엉뚱한
+    # 걸 컨테이너로 잡는 경우가 실측 확인됨(멜론). 실제 제목은 정확히 "예매 안내"/"예매안내"뿐
     for signal_text in _BOOKING_NOTICE_SIGNAL_TEXTS:
         try:
             signals = page.get_by_text(signal_text, exact=True)
@@ -362,12 +362,13 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
     return sorted(normalized)
 
 
-# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 회전 광고 배너(방문마다
-# 문구가 바뀌어 숫자/"더 알아보기" 필터로도 못 걸러지는 노이즈)를 캡처 범위 밖에 둔다.
-# interpark는 실제 오탐 사례로 확인, 나머지는 DOM 구조+재방문 diff로 검증한 예방적 추가
-# (셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 노이즈(회전 광고 배너 등)를
+# 캡처 범위 밖에 둔다(셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
+# interpark는 야놀자(NOL) 이관으로 DOM이 바뀌어 ".productMain"이 없어져 매번 조용히 body
+# 전체로 폴백되고 있었음 - 실시간으로 바뀌는 "찜 N명" 위시리스트 수 때문에 라인업이 안 바뀌어도
+# "변경"으로 계속 오탐되던 원인이었음. LINE UP 텍스트가 실제로 들어있는 "#important-info"로 교체
 _LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
-    "interpark": ".productMain",
+    "interpark": "#important-info",
     "yes24": ".renew-content",
     "melon": ".section_detailview_product",
     "kopis": "#su_con",
@@ -661,10 +662,9 @@ _CRAWLERS: dict[str, callable] = {
     "멜론": crawl_melon,
 }
 
-# 크롤링 지원 사이트 우선순위. 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
-# AWS 서버 IP 차단으로 한 달 내내 100% 실패 확정된 상태라([[crawler_block_detection_and_fallback_fix]])
-# 매 재시도 사이클마다 헛되이 먼저 시도하고 실패하는 낭비를 없애기 위해 임시로 INTERPARK만 남김.
-# 프록시 등으로 YES24/MELON 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
+# 크롤링 지원 사이트 우선순위 - 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
+# AWS IP 차단으로 100% 실패 확정이라 임시로 INTERPARK만 남김(헛된 재시도 낭비 방지).
+# 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
 _PREFERRED_SITES = ["INTERPARK"]
 
 # 크롤링 미지원 사이트
@@ -811,6 +811,62 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
             logger.info(f"크롤링 완료: {concert.name} → {url}")
 
 
+# 자동 크롤링(_PREFERRED_SITES=INTERPARK만)으로는 절대 못 뽑는 공연 - YES24/MELON 링크만
+# 있고 인터파크는 없는 경우. 배송일/티켓팅일은 실제 예매 사이트 페이지에만 있어서 KOPIS 폴백
+# 으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(데이터센터 아닌 네트워크)에서 직접 돌리기로
+# 함(YES24/MELON은 AWS 서버 IP에서 차단 확정). 이 함수는 대상 목록만 뽑고, 실제 크롤링은
+# scripts/yes24_melon_local_crawl.py가 로컬에서 수행 후 save_manual_crawl_screenshot으로 반영
+async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Concert).where(
+            Concert.end_date > now,
+            Concert.ticketing_date.is_(None),
+            ~Concert.ticketing_links.has_key("INTERPARK"),
+            or_(
+                Concert.ticketing_links.has_key("YES24"),
+                Concert.ticketing_links.has_key("MELON"),
+                Concert.ticketing_links.has_key("MELONTICKET"),
+            ),
+            # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
+            # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
+            # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
+            # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
+            or_(
+                Concert.crawl_attempted_at.is_(None),
+                Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
+            ),
+        )
+    )
+    return list(result.scalars().all())
+
+
+# get_yes24_melon_crawl_targets가 뽑은 공연을 로컬에서 직접 크롤링한 결과를 받아 저장 -
+# crawl_and_save가 성공했을 때와 동일한 상태로 맞춘다(crawl_screenshot_url 갱신 +
+# crawl_attempted_at/attempt_count 갱신 - 안 하면 그날 밤 자동배치가 바로 KOPIS 스크린샷으로
+# 덮어씀). ticketing_date는 여기서 안 채움 - LLM 분석 단계의 몫. S3 키는 _check_festival_lineup과
+# 동일하게 매번 시각을 붙여서(고정 키 아님) 이미 쌓여있는 과거 이력을 지우지 않고 추가만 함
+async def save_manual_crawl_screenshot(
+    db: AsyncSession, concert_id, site: str, image_bytes: bytes
+) -> Concert:
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    upload_key = f"{site.lower()}_{int(datetime.now(timezone.utc).timestamp())}"
+    url = await _upload_screenshot(image_bytes, concert_id, upload_key)
+    if url is None:
+        raise HTTPException(status_code=502, detail="스크린샷 업로드에 실패했습니다.")
+
+    concert.crawl_screenshot_url = url
+    concert.crawl_attempted_at = datetime.now(timezone.utc)
+    concert.crawl_attempt_count += 1
+    await db.commit()
+    await db.refresh(concert)
+    logger.info(f"로컬 크롤링 결과 저장: {concert.name} ({site}) → {url}")
+    return concert
+
+
 # 자정 배치: 예정된 공연 스크린샷 LLM팀 웹훅으로 전송
 async def send_screenshots_to_llm() -> None:
     if not settings.LLM_CRAWL_URL:
@@ -824,6 +880,11 @@ async def send_screenshots_to_llm() -> None:
             select(Concert).where(
                 Concert.crawl_screenshot_url.isnot(None),
                 Concert.end_date > now,
+                # 검수완료 공연 제외(artist_extraction_target_filter와 같은 이유 -
+                # 이 파이프라인의 콜백도 artist_name을 바꿔 admin_reviewed_at을 리셋시킴).
+                # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
+                Concert.admin_reviewed_at.is_(None),
+                Concert.ai_reviewed_at.is_(None),
             )
         )
         concerts = list(result.scalars().all())
@@ -865,21 +926,26 @@ _MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
 # 미리보기)가 동일한 조건을 써야 해서 공유 함수로 뺌 - 둘 중 하나만 고치고 잊어버리는 걸 방지
 def artist_extraction_target_filter(now: datetime):
     cutoff = now - _ARTIST_EXTRACTION_RETRY_COOLDOWN
-    return or_(
-        Concert.artist_extraction_attempted_at.is_(None),
-        and_(
-            Concert.artist_extraction_attempted_at < cutoff,
-            Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+    return and_(
+        # admin이 이미 검수 완료로 표시한 공연은 재전송하지 않음 - LLM이 다른 결과를
+        # 내면 artist_name이 바뀌어 admin_reviewed_at이 다시 NULL로 리셋되는 노이즈 방지.
+        # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
+        Concert.admin_reviewed_at.is_(None),
+        Concert.ai_reviewed_at.is_(None),
+        or_(
+            Concert.artist_extraction_attempted_at.is_(None),
+            and_(
+                Concert.artist_extraction_attempted_at < cutoff,
+                Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+            ),
         ),
     )
 
 
-# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 보낸 적
-# 있어도 쿨다운이 지났고 시도 횟수가 상한 미만이면 다시 대상(artist_extraction_target_filter).
-# KOPIS가 이미 채운 공연도 대상에 포함 - prfcast가 예명 대신 본명/그룹명 대신 멤버명인 경우가
-# 많아서(merge는 합집합이라 기존 값은 안 지워짐). 다만 이미 4명 이상이면(ticket.py의
-# _MULTI_ARTIST_FESTIVAL_THRESHOLD=5 코앞이라 1명만 추가돼도 SOLO->FESTIVAL 오승격 위험) 제외.
-# limit: scripts/send_artist_extraction_now.py 같은 수동 트리거용, 자정 배치는 안 넘김.
+# 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 쿨다운
+# 지났고 시도 횟수가 상한 미만이면 재대상. KOPIS가 이미 채운 공연도 포함 - prfcast가 예명/
+# 그룹명 대신 본명/멤버명인 경우가 많아서(merge는 합집합이라 기존 값은 안 지워짐). 4명 이상이면
+# SOLO->FESTIVAL 오승격 위험(THRESHOLD=5 코앞)이라 제외. limit은 수동 트리거용, 자정 배치는 안 넘김.
 async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     if not settings.LLM_ARTIST_URL:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
@@ -940,7 +1006,7 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
 
 # 재시도 배치에서 동시에 띄우는 브라우저 프로세스 수 상한 (무제한 병렬은 메모리/CPU 부담이 큼).
 # 서버 RAM이 1.9GB/스왑 0이라 4는 이미 위태로운 수준 - 밤배치 도중 OOM killer가 headless_shell을
-# 반복해서 죽이는 문제(2026-09-04, 09-05) 확인 후 2로 완화함
+# 반복해서 죽이는 문제 확인 후 2로 완화함
 _RETRY_CRAWL_CONCURRENCY = 2
 
 
