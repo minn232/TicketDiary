@@ -13,6 +13,7 @@ import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart';
+import 'package:ticketdiary/widgets/tab_nav_coordinator.dart';
 
 import 'favorite_pinned_settings_screen.dart';
 import 'news_detail_overlay.dart';
@@ -49,9 +50,9 @@ enum _FlipPhase { news, toFav, fav, loading, toNews }
 class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   static const Color _paperColor = Color(0xFFF4F1E1);
 
-  /// 소식 페이지 상단 여백을 기본(10)보다 늘려, 페이지 뒤에서 끼워 올린
-  /// 풀탭 손잡이가 상단 경계선 위로 삐져나올 공간을 만듭니다.
-  static const double _pageTop = 40;
+  /// 다른 탭과 동일한 페이지 규격을 사용합니다.
+  static const double _pageTop = DiaryPageFrame.defaultPageTop;
+  static const double _pullTabHeight = 29;
 
   late Future<List<NewsModel>> _newsFuture;
 
@@ -73,7 +74,10 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 티켓을 눌렀을 때와 같은 느낌을 냅니다.
   Key? _overlayHiddenRegionKey;
 
-  Widget _hideWhileOverlayOpen({required Key regionKey, required Widget child}) {
+  Widget _hideWhileOverlayOpen({
+    required Key regionKey,
+    required Widget child,
+  }) {
     final hidden = _overlayHiddenRegionKey == regionKey;
     return IgnorePointer(
       ignoring: hidden,
@@ -94,6 +98,10 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 오버레이의 페이드. 0.0=글레어가 꽉 차 하얗게 가림(로딩 중), 1.0=글레어가
   /// 완전히 걷혀 카드가 보임. 로딩이 끝나면 0→1로 부드럽게 걷습니다.
   late final AnimationController _glassReveal;
+
+  /// 소식 페이지 조각이 페이지 뒤에 숨어 있다가 로딩 완료 후 위로 올라오는
+  /// 애니메이션. 0.0=조각 높이만큼 아래, 1.0=현재 위치.
+  late final AnimationController _pullTabReveal;
 
   _FlipPhase _phase = _FlipPhase.news;
 
@@ -137,21 +145,52 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 750),
     );
+    _pullTabReveal = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    TabNavCoordinator.instance.currentTab.addListener(_onCurrentTabChanged);
+    TabNavCoordinator.instance.isTransitioning.addListener(
+      _onTabTransitionChanged,
+    );
 
     // 화면 초기화 시 데이터 호출 시작. 진입 시 페이지 넘김은 이제 이
     // 로딩을 기다리지 않고 곧바로 이 화면을 드러내며, 로딩 중에는 아래
     // 소식 본문 위에 백색 유리 글레어를 씌웠다가 로딩이 끝나면 걷어냅니다.
     _newsFuture = _loadNewsWithCache();
     _armGlassReveal(_newsFuture);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _onTabTransitionChanged();
+    });
   }
 
   @override
   void dispose() {
     _returnTimeout?.cancel();
+    TabNavCoordinator.instance.currentTab.removeListener(_onCurrentTabChanged);
+    TabNavCoordinator.instance.isTransitioning.removeListener(
+      _onTabTransitionChanged,
+    );
     _slide.dispose();
     _heartWipe.dispose();
     _glassReveal.dispose();
+    _pullTabReveal.dispose();
     super.dispose();
+  }
+
+  void _onCurrentTabChanged() {
+    if (TabNavCoordinator.instance.currentTab.value != DiaryTab.news) {
+      _pullTabReveal.reverse();
+    }
+  }
+
+  void _onTabTransitionChanged() {
+    final tabNav = TabNavCoordinator.instance;
+    if (tabNav.currentTab.value == DiaryTab.news &&
+        !tabNav.isTransitioning.value) {
+      _pullTabReveal.forward();
+    }
   }
 
   /// [future] 조회가 진행되는 동안 유리 글레어를 꽉 채웠다가(값 0), 조회가
@@ -160,9 +199,11 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 않습니다.
   void _armGlassReveal(Future<List<NewsModel>> future) {
     _glassReveal.value = 0.0;
+    _pullTabReveal.value = 0.0;
     unawaited(
       future.whenComplete(() {
-        if (mounted) _glassReveal.forward();
+        if (!mounted) return;
+        _glassReveal.forward();
       }),
     );
   }
@@ -341,7 +382,11 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         .where((c) {
           final start = c.startDate;
           if (start == null) return true;
-          return DateTime(start.year, start.month, start.day).isAfter(todayDate);
+          return DateTime(
+            start.year,
+            start.month,
+            start.day,
+          ).isAfter(todayDate);
         })
         .map(NewsModel.fromFavoritedConcert)
         .toList();
@@ -417,15 +462,21 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       isTabRoot: true,
       pageTop: _pageTop,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.news),
-      // 페이지 상단 경계에 "페이지 뒤에서" 끼워 올린 풀탭 손잡이(빨간 하트 +
-      // 방향 화살표). 우측 인덱스 탭과 같은 원리로, 경계선 위로 삐져나온
-      // 부분만 보입니다.
       frameBehindPage: NewsPullTabOverlay(
         slide: _slide,
         onTap: _onPullTab,
         pageTop: _pageTop,
         heartWipe: _heartWipe,
+        reveal: _pullTabReveal,
       ),
+      frameAbovePage: NewsPullTabHitAreaOverlay(
+        slide: _slide,
+        reveal: _pullTabReveal,
+        onTap: _onPullTab,
+        pageTop: _pageTop,
+        topHitTestInset: _pullTabHeight,
+      ),
+      frameAbovePageTopOverflow: _pullTabHeight,
       child: Container(color: _paperColor, child: _buildFlipBody()),
     );
   }
@@ -590,6 +641,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   Widget _buildNewsGrid(BoxConstraints constraints, List<NewsModel> items) {
     const rowCount = 2;
     const spacing = 18.0;
+    const firstPageVisualOrder = [0, 2, 1, 3];
     // 이 그리드를 감싸는 Padding(all: 12) 만큼, 실제로 카드가 놓일 폭은
     // [constraints]보다 좌우 12씩(총 24) 더 좁다. 이걸 빼지 않고 계산하면
     // 카드 2열의 실제 폭이 창보다 24 더 커져 오른쪽 카드가 잘려 보인다.
@@ -612,9 +664,15 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       padding: EdgeInsets.zero,
       physics: const BouncingScrollPhysics(),
       gridDelegate: gridDelegate,
-      itemCount: items.length,
+      itemCount: items.length < firstPageVisualOrder.length
+          ? firstPageVisualOrder.length
+          : items.length,
       itemBuilder: (context, index) {
-        final item = items[index];
+        final itemIndex = index < firstPageVisualOrder.length
+            ? firstPageVisualOrder[index]
+            : index;
+        if (itemIndex >= items.length) return const SizedBox.shrink();
+        final item = items[itemIndex];
         final angle = switch (index % 4) {
           0 => -0.02,
           1 => 0.015,
@@ -674,9 +732,7 @@ class _NewsFrame extends StatelessWidget {
               // 유리 광택(내용 위, 프레임의 일부라 슬라이드해도 고정). 그 아래로
               // 내용이 지나가서 "유리 낀 액자"처럼 보입니다.
               const Positioned.fill(
-                child: IgnorePointer(
-                  child: _GlassGloss(radius: _windowRadius),
-                ),
+                child: IgnorePointer(child: _GlassGloss(radius: _windowRadius)),
               ),
               // 액자 안쪽 그림자 + 얇은 테두리(가장 위, 터치는 통과).
               const Positioned.fill(
@@ -747,11 +803,7 @@ class _GlassGlaze extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                Color(0xFFFFFFFF),
-                Color(0xFAFFFFFF),
-                Color(0xF5FFFFFF),
-              ],
+              colors: [Color(0xFFFFFFFF), Color(0xFAFFFFFF), Color(0xF5FFFFFF)],
               stops: [0.0, 0.55, 1.0],
             ),
           ),

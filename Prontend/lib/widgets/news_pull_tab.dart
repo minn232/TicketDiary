@@ -4,14 +4,13 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 
 import 'diary_page_frame.dart';
-import 'pressable_scale.dart';
 import 'responsive_text.dart';
 
 /// 소식 페이지 상단 경계에 "페이지 뒤에서" 끼워 올린 작은 페이지 조각(풀탭).
 ///
-/// [DiaryPageFrame.frameBehindPage]로 넘겨 메인 페이지보다 뒤에 그립니다 —
-/// 우측 인덱스 탭이 페이지 오른쪽 경계 밖으로만 삐져나와 보이듯, 이 조각도
-/// 페이지에 가려지고 페이지 상단 경계선 위로 삐져나온 부분만 보입니다.
+/// [DiaryPageFrame]의 자유 레이어로 넘겨 페이지 상단에 손잡이처럼 그립니다.
+/// 우측 인덱스 탭이 페이지 오른쪽 경계 밖으로 삐져나와 보이듯, 이 조각도
+/// 페이지 상단 근처에 걸친 작은 조각으로 보입니다.
 /// 아래쪽 끝은 페이지 뒤로 들어가(경계선에 맞닿아) 손잡이처럼 보입니다.
 ///
 /// [slide] 0.0이면 왼쪽 끝(원래 자리), 1.0이면 오른쪽 끝입니다. 조각을 누르면
@@ -19,6 +18,7 @@ import 'responsive_text.dart';
 /// 가리키도록 자동으로 바뀝니다(왼쪽에선 오른쪽 화살표, 오른쪽에선 왼쪽).
 class NewsPullTabOverlay extends StatelessWidget {
   final Animation<double> slide;
+  final Animation<double> reveal;
   final VoidCallback onTap;
 
   /// 이 오버레이가 얹히는 소식 프레임의 페이지 상단 여백(px). 조각의 아래
@@ -34,6 +34,7 @@ class NewsPullTabOverlay extends StatelessWidget {
   const NewsPullTabOverlay({
     super.key,
     required this.slide,
+    this.reveal = const AlwaysStoppedAnimation<double>(1),
     required this.onTap,
     required this.pageTop,
     required this.heartWipe,
@@ -49,47 +50,108 @@ class NewsPullTabOverlay extends StatelessWidget {
           pageTop: pageTop,
         );
 
-        // 하트(30) + 화살표(18) + 좌우 패딩(9*2) + 테두리(1*2)를 여유 있게
-        // 담을 수 있도록 72로 잡았습니다(66이면 테두리 두께만큼 딱 맞아
-        // RenderFlex가 살짝 넘칩니다).
-        final tabWidth = context.rs(72);
-        final tabHeight = context.rs(58);
+        // 검색 아이콘 + 화살표 + 좌우 패딩을 담는 작은 페이지 조각입니다.
+        final tabWidth = context.rs(56);
+        final tabHeight = context.rs(29);
         final inset = context.rs(8);
-        // 조각의 아래쪽 일부는 페이지 상단 경계선 아래(페이지 뒤)로 들어가
-        // 가려집니다 — 그만큼 "페이지 뒤에서 끼워 올린" 느낌이 납니다.
-        final overlapIntoPage = context.rs(18);
-        // 조각의 아래 끝이 (경계선 + overlap)에 오도록 top을 잡습니다.
-        final topY = pageTop + overlapIntoPage - tabHeight;
+        // 조각의 아래 끝이 페이지 상단 경계선과 맞닿도록 top을 잡습니다.
+        final topY = pageTop - tabHeight;
 
-        final leftX = metrics.pivotX + inset;
+        final leftX = metrics.pivotX;
         final rightX = metrics.pivotX + metrics.pageWidth - tabWidth - inset;
 
-        // 조각 안에서 보이는(경계선 위) 부분의 비율 — 아이콘을 그 안쪽에
-        // 두기 위한 정렬 기준으로 씁니다.
-        final visibleFraction =
-            ((pageTop - topY) / tabHeight).clamp(0.0, 1.0);
+        // 조각 전체가 경계선 위에 보이므로 아이콘은 조각 중앙에 둡니다.
+        const visibleFraction = 1.0;
 
         return AnimatedBuilder(
-          animation: slide,
+          animation: Listenable.merge([slide, reveal]),
           builder: (context, _) {
             final t = slide.value.clamp(0.0, 1.0);
+            final lift = Curves.easeOutCubic.transform(
+              reveal.value.clamp(0.0, 1.0),
+            );
             final x = lerpDouble(leftX, rightX, t)!;
+            final y = topY + tabHeight * (1 - lift);
             return Stack(
               clipBehavior: Clip.none,
               children: [
                 Positioned(
                   left: x,
-                  top: topY,
+                  top: y,
                   width: tabWidth,
                   height: tabHeight,
-                  child: PressableScale(
-                    onTap: onTap,
-                    pressScale: 0.94,
-                    tapScale: 1.05,
-                    child: _PullTabPiece(
-                      pointLeft: t > 0.5,
-                      visibleFraction: visibleFraction,
-                      heartWipe: heartWipe,
+                  child: _PullTabPiece(
+                    pointLeft: t > 0.5,
+                    visibleFraction: visibleFraction,
+                    heartWipe: heartWipe,
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class NewsPullTabHitAreaOverlay extends StatelessWidget {
+  final Animation<double> slide;
+  final Animation<double> reveal;
+  final VoidCallback onTap;
+  final double pageTop;
+  final double topHitTestInset;
+
+  const NewsPullTabHitAreaOverlay({
+    super.key,
+    required this.slide,
+    this.reveal = const AlwaysStoppedAnimation<double>(1),
+    required this.onTap,
+    required this.pageTop,
+    this.topHitTestInset = 0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final metrics = DiaryPageFrame.computeRingMetrics(
+          frameWidth: constraints.maxWidth,
+          frameHeight: constraints.maxHeight,
+          pageTop: pageTop,
+        );
+
+        final tabWidth = context.rs(56);
+        final tabHeight = context.rs(29);
+        final inset = context.rs(8);
+        final topY = pageTop + topHitTestInset - tabHeight;
+        final leftX = metrics.pivotX;
+        final rightX = metrics.pivotX + metrics.pageWidth - tabWidth - inset;
+
+        return AnimatedBuilder(
+          animation: Listenable.merge([slide, reveal]),
+          builder: (context, _) {
+            final t = slide.value.clamp(0.0, 1.0);
+            final lift = Curves.easeOutCubic.transform(
+              reveal.value.clamp(0.0, 1.0),
+            );
+            final x = lerpDouble(leftX, rightX, t)!;
+            final y = topY + tabHeight * (1 - lift);
+
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned(
+                  left: x,
+                  top: y,
+                  width: tabWidth,
+                  height: tabHeight,
+                  child: IgnorePointer(
+                    ignoring: lift < 0.95,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onTap,
+                      child: const SizedBox.expand(),
                     ),
                   ),
                 ),
@@ -129,45 +191,72 @@ class _PullTabPiece extends StatelessWidget {
     // 위로 올립니다.
     final iconAlignY = (visibleFraction - 1.0).clamp(-1.0, 0.0);
 
+    final radius = BorderRadius.vertical(top: Radius.circular(context.rs(7)));
+
     return Container(
       decoration: BoxDecoration(
         color: _pieceColor,
         // 위쪽(삐져나온 쪽) 모서리만 둥글게 — 아래쪽은 페이지 뒤로 각지게
         // 들어갑니다.
-        borderRadius: BorderRadius.vertical(top: Radius.circular(context.rs(11))),
+        borderRadius: radius,
         border: Border.all(
           color: Colors.black.withValues(alpha: 0.14),
           width: 1,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
-            blurRadius: 5,
-            offset: const Offset(0, 2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: context.rs(7)),
+            child: Align(
+              alignment: Alignment(0, iconAlignY),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  AnimatedBuilder(
+                    animation: heartWipe,
+                    builder: (context, child) => ClipPath(
+                      clipper: _HeartWipeClipper(heartWipe.value),
+                      child: child,
+                    ),
+                    child: Icon(
+                      Icons.search,
+                      size: context.rs(20),
+                      color: _heartColor,
+                    ),
+                  ),
+                  Icon(
+                    pointLeft ? Icons.chevron_left : Icons.chevron_right,
+                    size: context.rs(14),
+                    color: Colors.brown.withValues(alpha: 0.7),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: context.rs(8),
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0),
+                      Colors.black.withValues(alpha: 0.12),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ],
-      ),
-      padding: EdgeInsets.symmetric(horizontal: context.rs(9)),
-      child: Align(
-        alignment: Alignment(0, iconAlignY),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            AnimatedBuilder(
-              animation: heartWipe,
-              builder: (context, child) => ClipPath(
-                clipper: _HeartWipeClipper(heartWipe.value),
-                child: child,
-              ),
-              child: Icon(Icons.search, size: context.rs(30), color: _heartColor),
-            ),
-            Icon(
-              pointLeft ? Icons.chevron_left : Icons.chevron_right,
-              size: context.rs(18),
-              color: Colors.brown.withValues(alpha: 0.7),
-            ),
-          ],
-        ),
       ),
     );
   }

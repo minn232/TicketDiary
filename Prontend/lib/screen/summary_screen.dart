@@ -36,8 +36,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
   /// 계산해서 [onPeriodTransition]으로 올려준다. ValueNotifier로 들고
   /// 있어서, 이 값이 바뀔 때 페이지 전체(setState)가 아니라 배경색+결산
   /// 보고서만 다시 그린다([_StageCollage]는 그대로 캐싱).
-  final ValueNotifier<({_SummaryPeriod? committed, _SummaryPeriod? target, double progress})>
-      _transition = ValueNotifier((committed: null, target: null, progress: 0.0));
+  final ValueNotifier<
+    ({_SummaryPeriod? committed, _SummaryPeriod? target, double progress})
+  >
+  _transition = ValueNotifier((committed: null, target: null, progress: 0.0));
 
   Future<SummaryModel>? _committedFuture;
   Future<SummaryModel>? _targetFuture;
@@ -75,7 +77,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
   /// (예: 드래그가 끝나 target이 committed로 확정된 경우) 재사용해서
   /// 중복 요청을 피한다.
   void _onPeriodTransition(
-      _SummaryPeriod? committed, _SummaryPeriod? target, double progress) {
+    _SummaryPeriod? committed,
+    _SummaryPeriod? target,
+    double progress,
+  ) {
     final old = _transition.value;
     if (committed != old.committed) {
       _committedFuture = committed == null
@@ -87,16 +92,20 @@ class _SummaryScreenState extends State<SummaryScreen> {
           ? null
           : (target == old.committed ? _committedFuture : _fetch(target));
     }
-    _transition.value = (committed: committed, target: target, progress: progress);
+    _transition.value = (
+      committed: committed,
+      target: target,
+      progress: progress,
+    );
   }
 
   /// 기간별 배경색: 미선택(결산)=중립 톤, 6개월=연보라, 1년=연노랑, 전체=연파랑.
   Color _colorFor(_SummaryPeriod? period) => switch (period) {
-        null => const Color(0xFFEDEAE3),
-        _SummaryPeriod.sixMonths => const Color(0xFFEDE6F7),
-        _SummaryPeriod.oneYear => const Color(0xFFFAF3D6),
-        _SummaryPeriod.all => const Color(0xFFDFEAF8),
-      };
+    null => const Color(0xFFEDEAE3),
+    _SummaryPeriod.sixMonths => const Color(0xFFEDE6F7),
+    _SummaryPeriod.oneYear => const Color(0xFFFAF3D6),
+    _SummaryPeriod.all => const Color(0xFFDFEAF8),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -106,8 +115,11 @@ class _SummaryScreenState extends State<SummaryScreen> {
       child: ValueListenableBuilder(
         valueListenable: _transition,
         builder: (context, t, child) {
-          final bgColor =
-              Color.lerp(_colorFor(t.committed), _colorFor(t.target), t.progress)!;
+          final bgColor = Color.lerp(
+            _colorFor(t.committed),
+            _colorFor(t.target),
+            t.progress,
+          )!;
           return ColoredBox(
             color: bgColor,
             child: Stack(
@@ -177,8 +189,11 @@ class _WhiteInsetBorder extends StatelessWidget {
 /// 관객은 하단 결산 보고서와 겹치지 않도록 위쪽으로 배치합니다.
 class _StageCollage extends StatefulWidget {
   final void Function(
-          _SummaryPeriod? committed, _SummaryPeriod? target, double progress)
-      onPeriodTransition;
+    _SummaryPeriod? committed,
+    _SummaryPeriod? target,
+    double progress,
+  )
+  onPeriodTransition;
 
   /// 사용자가 등록한 전체 티켓(관람) 수(기간 필터와 무관하게 항상 "전체"
   /// 기준). 티켓 한 장마다 관객 스티커를 하나씩 무대 앞에 세운다.
@@ -216,7 +231,7 @@ class _StageCollage extends StatefulWidget {
   // 늘어날 때마다 이 자리를 순서대로 채우고, fan1~9 그림도 같은 순서로
   // 돌아가며 씁니다(9장을 넘으면 다시 fan1/첫 자리부터, 즉 그대로 겹침).
   static const List<(double fx, double fy, double wf, double aspect)>
-      _fanSlots = [
+  _fanSlots = [
     (0.30, 0.545, 0.16, 0.577),
     (0.88, 0.545, 0.17, 0.420),
     (0.72, 0.575, 0.18, 0.511),
@@ -230,9 +245,7 @@ class _StageCollage extends StatefulWidget {
 
   List<_Sticker> get _fans {
     final n = ticketCount.clamp(0, 999);
-    return [
-      for (var i = 0; i < n; i++) _fanSticker(i),
-    ];
+    return [for (var i = 0; i < n; i++) _fanSticker(i)];
   }
 
   /// [index]번째(0부터) 관객 스티커. 그림/자리는 9종류뿐이라, 9명을 넘으면
@@ -345,7 +358,10 @@ class _StageCollageState extends State<_StageCollage>
     final touched = _StageCollage.periodForIndex[index];
     final raising = touched == _target;
     final signedDelta = raising ? upDelta : -upDelta;
-    _progress.value = (_progress.value + signedDelta / maxOffset).clamp(0.0, 1.0);
+    _progress.value = (_progress.value + signedDelta / maxOffset).clamp(
+      0.0,
+      1.0,
+    );
   }
 
   /// 요청3: 손을 떼면 절반(0.5)을 기준으로 target까지 마저 이동(확정)하거나
@@ -458,11 +474,13 @@ class _StageCollageState extends State<_StageCollage>
                               dir: _StageCollage._dir,
                               offset: _offsetFor(i, sharedMaxOffset),
                               onDragStart: () => _onDragStart(i),
-                              onDragDelta: (d) => _onDrag(i, d, sharedMaxOffset),
+                              onDragDelta: (d) =>
+                                  _onDrag(i, d, sharedMaxOffset),
                               onDragEnd: () => _onDragEnd(i),
                             ),
                           ),
-                        for (final s in widget._fans) widget._positioned(s, w, h),
+                        for (final s in widget._fans)
+                          widget._positioned(s, w, h),
                       ],
                     );
                   },
@@ -621,7 +639,9 @@ class _PageBar extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFFFBF7EC),
-        border: Border.all(color: const Color(0xFF5C4033).withValues(alpha: 0.25)),
+        border: Border.all(
+          color: const Color(0xFF5C4033).withValues(alpha: 0.25),
+        ),
         borderRadius: BorderRadius.circular(4),
       ),
     );
@@ -658,11 +678,11 @@ class _PeriodReelHole extends StatelessWidget {
   static const double heightBase = 34;
 
   static int _indexFor(_SummaryPeriod? p) => switch (p) {
-        null => 0,
-        _SummaryPeriod.sixMonths => 1,
-        _SummaryPeriod.oneYear => 2,
-        _SummaryPeriod.all => 3,
-      };
+    null => 0,
+    _SummaryPeriod.sixMonths => 1,
+    _SummaryPeriod.oneYear => 2,
+    _SummaryPeriod.all => 3,
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -833,10 +853,16 @@ class _ReportDrawerState extends State<_ReportDrawer>
     if (hasOld && hasNew) {
       if (p < 0.5) {
         return _CardDisplay(
-            w.committedPeriod, w.committedFuture, (p * 2).clamp(0.0, 1.0));
+          w.committedPeriod,
+          w.committedFuture,
+          (p * 2).clamp(0.0, 1.0),
+        );
       }
       return _CardDisplay(
-          w.targetPeriod, w.targetFuture, (2 - p * 2).clamp(0.0, 1.0));
+        w.targetPeriod,
+        w.targetFuture,
+        (2 - p * 2).clamp(0.0, 1.0),
+      );
     }
     if (hasOld) {
       return _CardDisplay(w.committedPeriod, w.committedFuture, p);
@@ -968,7 +994,8 @@ class _ReportDrawerState extends State<_ReportDrawer>
                           height: cardHeight,
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
-                            onVerticalDragUpdate: (d) => _onDragUpdate(d, bodyH),
+                            onVerticalDragUpdate: (d) =>
+                                _onDragUpdate(d, bodyH),
                             onVerticalDragEnd: _onDragEnd,
                             onTap: () {
                               if (widget.progress != 0) return;
@@ -976,8 +1003,14 @@ class _ReportDrawerState extends State<_ReportDrawer>
                             },
                             child: display.period == null
                                 ? const SizedBox.shrink()
-                                : _card(context, titleH, bodyH, reveal,
-                                    display.period!, display.future),
+                                : _card(
+                                    context,
+                                    titleH,
+                                    bodyH,
+                                    reveal,
+                                    display.period!,
+                                    display.future,
+                                  ),
                           ),
                         ),
                       ],
@@ -992,13 +1025,21 @@ class _ReportDrawerState extends State<_ReportDrawer>
     );
   }
 
-  Widget _card(BuildContext context, double titleH, double bodyH,
-      double reveal, _SummaryPeriod period, Future<SummaryModel>? future) {
+  Widget _card(
+    BuildContext context,
+    double titleH,
+    double bodyH,
+    double reveal,
+    _SummaryPeriod period,
+    Future<SummaryModel>? future,
+  ) {
     return DecoratedBox(
       decoration: BoxDecoration(
         color: const Color(0xFFFBF7EC),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        border: Border.all(color: const Color(0xFF5C4033).withValues(alpha: 0.25)),
+        border: Border.all(
+          color: const Color(0xFF5C4033).withValues(alpha: 0.25),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.22),
@@ -1054,7 +1095,9 @@ class _ReportDrawerState extends State<_ReportDrawer>
                             width: 26,
                             height: 26,
                             child: CircularProgressIndicator(
-                                strokeWidth: 3, color: Colors.brown),
+                              strokeWidth: 3,
+                              color: Colors.brown,
+                            ),
                           ),
                         );
                       }
@@ -1065,7 +1108,9 @@ class _ReportDrawerState extends State<_ReportDrawer>
                       if (data == null || data.concertCount == 0) {
                         return _empty(context, '아직 이 기간의 공연 기록이 없어요.');
                       }
-                      return SingleChildScrollView(child: _stats(context, data));
+                      return SingleChildScrollView(
+                        child: _stats(context, data),
+                      );
                     },
                   ),
                 ),
@@ -1114,9 +1159,9 @@ class _ReportDrawerState extends State<_ReportDrawer>
 
   Widget _stats(BuildContext context, SummaryModel d) {
     final spending = d.totalSpending.toString().replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]},',
-        );
+      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+      (m) => '${m[1]},',
+    );
     String pct(double ratio) => '${(ratio * 100).round()}%';
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1125,10 +1170,18 @@ class _ReportDrawerState extends State<_ReportDrawer>
         _row(context, '💰', '총 지출 금액', '$spending원'),
         _row(context, '🎭', '가장 많이 본 장르', d.favoriteGenre),
         _row(context, '🎵', '들은 곡', '${d.songCount}곡'),
-        _row(context, '🧍', '스탠딩 / 좌석',
-            '${pct(d.standingRatio)} / ${pct(d.seatRatio)}'),
-        _row(context, '🎬', '개막일 / 막콘',
-            '${pct(d.firstConcertRatio)} / ${pct(d.lastConcertRatio)}'),
+        _row(
+          context,
+          '🧍',
+          '스탠딩 / 좌석',
+          '${pct(d.standingRatio)} / ${pct(d.seatRatio)}',
+        ),
+        _row(
+          context,
+          '🎬',
+          '개막일 / 막콘',
+          '${pct(d.firstConcertRatio)} / ${pct(d.lastConcertRatio)}',
+        ),
       ],
     );
   }

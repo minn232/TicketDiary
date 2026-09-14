@@ -421,13 +421,6 @@ class _ExpandedConcertBefore extends StatelessWidget {
                           color: Colors.black.withValues(alpha: 0.10),
                           width: 1.5,
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.22),
-                            blurRadius: 18,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
                       ),
                     ),
                   ),

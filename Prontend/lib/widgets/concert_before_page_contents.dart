@@ -84,21 +84,15 @@ class ConcertBeforePageContents extends StatelessWidget {
       ],
     );
 
-    // 요청4: 페이지 전체(모든 구성요소)에 신문지 질감 — 뒤에 구겨짐/얼룩
-    // 텍스처를 깔고(고정, 스크롤과 무관), 내용 위에 아주 옅은 구겨짐 그림자를
-    // 한 겹 더 얹어 글자 위로도 종이 결이 지나가는 느낌을 줍니다. 둘 다
-    // 히트테스트를 붙잡지 않아(포인터 무시) 탭/스크롤에 영향이 없습니다.
+    // 신문 바탕과 미세한 종이 결만 내용 뒤에 그립니다.
     return Stack(
       children: [
         Positioned.fill(
-          child: CustomPaint(painter: _NewsprintPainter(foreground: false)),
-        ),
-        content,
-        Positioned.fill(
           child: IgnorePointer(
-            child: CustomPaint(painter: _NewsprintPainter(foreground: true)),
+            child: CustomPaint(painter: _NewsprintPainter()),
           ),
         ),
+        content,
       ],
     );
   }
@@ -551,9 +545,7 @@ class _Masthead extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _DDayStamp(label: dday),
-          ],
+          children: [_DDayStamp(label: dday)],
         ),
         SizedBox(height: context.rs(8)),
         // 제호 아래 이중 괘선(굵은 선 + 얇은 선).
@@ -703,10 +695,7 @@ class _ArticleSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: _serif(context, size: 15, weight: FontWeight.w900),
-        ),
+        Text(title, style: _serif(context, size: 15, weight: FontWeight.w900)),
         SizedBox(height: context.rs(9)),
         child,
       ],
@@ -997,11 +986,7 @@ class _ArtistAccordionSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _keepWords(artistName),
-                    style: _serif(
-                      context,
-                      size: 14.5,
-                      weight: FontWeight.w900,
-                    ),
+                    style: _serif(context, size: 14.5, weight: FontWeight.w900),
                   ),
                 ),
               ],
@@ -1077,34 +1062,32 @@ class _UndecidedText extends StatelessWidget {
 }
 
 /// 신문지 질감(요청4): 약간 회색끼 도는 바탕 + 은은한 얼룩(mottle) + 구겨짐
-/// 주름(crease) + 미세한 종이 결(grain). [foreground]가 false면 내용 뒤에
-/// 까는 바탕(색 채움 + 얼룩 + 주름 + 결)이고, true면 내용 위에 아주 옅게
-/// 얹는 주름/비네팅만 그립니다(글자 위로도 종이 결이 지나가는 느낌).
+/// 신문 바탕색과 은은한 얼룩, 미세한 종이 결.
 /// 고정 시드라 리빌드 때 무늬가 흔들리지 않습니다.
 class _NewsprintPainter extends CustomPainter {
-  final bool foreground;
-
-  const _NewsprintPainter({required this.foreground});
-
   @override
   void paint(Canvas canvas, Size size) {
     final rnd = math.Random(20260912);
     final rect = Offset.zero & size;
 
-    if (!foreground) {
+    {
       // 바탕색(회색끼 도는 신문지).
       canvas.drawRect(rect, Paint()..color = _newsprint);
 
       // 은은한 얼룩(밝고 어두운 큰 원들을 아주 옅게 겹쳐 종이 얼룩 느낌).
       for (var i = 0; i < 16; i++) {
-        final c = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+        final c = Offset(
+          rnd.nextDouble() * size.width,
+          rnd.nextDouble() * size.height,
+        );
         final r = size.shortestSide * (0.12 + rnd.nextDouble() * 0.22);
         final dark = rnd.nextBool();
         final paint = Paint()
           ..shader = RadialGradient(
             colors: [
-              (dark ? Colors.black : Colors.white)
-                  .withValues(alpha: dark ? 0.035 : 0.05),
+              (dark ? Colors.black : Colors.white).withValues(
+                alpha: dark ? 0.035 : 0.05,
+              ),
               const Color(0x00000000),
             ],
           ).createShader(Rect.fromCircle(center: c, radius: r));
@@ -1112,54 +1095,20 @@ class _NewsprintPainter extends CustomPainter {
       }
     }
 
-    // 구겨짐 주름: 밝은 선 + 바로 옆 어두운 선(접힌 능선처럼 보이게).
-    final creaseCount = foreground ? 5 : 9;
-    for (var i = 0; i < creaseCount; i++) {
-      final start = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
-      final angle = rnd.nextDouble() * math.pi * 2;
-      final len = size.longestSide * (0.35 + rnd.nextDouble() * 0.55);
-      final dir = Offset(math.cos(angle), math.sin(angle));
-      final end = start + dir * len;
-      final perp = Offset(-dir.dy, dir.dx);
-      final lightA = foreground ? 0.03 : 0.06;
-      final darkA = foreground ? 0.025 : 0.05;
-      canvas.drawLine(
-        start,
-        end,
-        Paint()
-          ..color = Colors.white.withValues(alpha: lightA)
-          ..strokeWidth = 1.1,
-      );
-      canvas.drawLine(
-        start + perp * 1.3,
-        end + perp * 1.3,
-        Paint()
-          ..color = Colors.black.withValues(alpha: darkA)
-          ..strokeWidth = 1.0,
-      );
-    }
-
-    if (!foreground) {
+    {
       // 미세한 종이 결(작은 점들).
       final grain = Paint();
       for (var i = 0; i < 260; i++) {
-        final p = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+        final p = Offset(
+          rnd.nextDouble() * size.width,
+          rnd.nextDouble() * size.height,
+        );
         grain.color = Colors.black.withValues(alpha: rnd.nextDouble() * 0.03);
         canvas.drawCircle(p, 0.6, grain);
       }
-    } else {
-      // 가장자리 비네팅(살짝 어둡게) — 오래된 신문지 느낌.
-      final vignette = Paint()
-        ..shader = RadialGradient(
-          radius: 0.9,
-          colors: [const Color(0x00000000), Colors.black.withValues(alpha: 0.05)],
-          stops: const [0.75, 1.0],
-        ).createShader(rect);
-      canvas.drawRect(rect, vignette);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _NewsprintPainter old) =>
-      old.foreground != foreground;
+  bool shouldRepaint(covariant _NewsprintPainter old) => false;
 }

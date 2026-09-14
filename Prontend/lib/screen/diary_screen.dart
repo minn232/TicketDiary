@@ -844,7 +844,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   PriceEntry? _matchTierBySeat(String seat, List<PriceEntry> tiers) {
     final target = seat.replaceAll(' ', '').toLowerCase();
     for (final tier in tiers) {
-      if (tier.seatType.replaceAll(' ', '').toLowerCase() == target) return tier;
+      if (tier.seatType.replaceAll(' ', '').toLowerCase() == target)
+        return tier;
     }
     for (final tier in tiers) {
       final tierSeat = tier.seatType.replaceAll(' ', '').toLowerCase();
@@ -1081,7 +1082,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
     // 반복 테스트 편의를 위해 배송 전 중복 교체 없이 항상 새로 추가합니다.
     setState(() => _tickets.insert(0, testTicket));
-    _showSnack('[TEST] 테스트 티켓이 추가되었습니다 (${_debugStatusLabel(testTicket.status)}).');
+    _showSnack(
+      '[TEST] 테스트 티켓이 추가되었습니다 (${_debugStatusLabel(testTicket.status)}).',
+    );
   }
 
   /// [TEST-ONLY] 달력 대신 숫자만 입력받아 날짜를 만듭니다. "2026826"처럼
@@ -1920,7 +1923,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
             child: Container(
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.horizontal(right: Radius.circular(8)),
+                borderRadius: BorderRadius.horizontal(
+                  right: Radius.circular(8),
+                ),
               ),
               padding: const EdgeInsets.all(12),
               child: Column(
@@ -2095,7 +2100,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
           Container(width: 1, color: Colors.grey.shade400),
           Expanded(
             flex: 27,
-            child: _PosterTicketFace(title: title, info: info, radiusOnRight: true),
+            child: _PosterTicketFace(
+              title: title,
+              info: info,
+              radiusOnRight: true,
+            ),
           ),
         ],
       );
@@ -2275,7 +2284,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
     bool radiusOnRight = false,
   }) {
     return _usePosterTicketDesign
-        ? _PosterTicketFace(title: title, info: info, radiusOnRight: radiusOnRight)
+        ? _PosterTicketFace(
+            title: title,
+            info: info,
+            radiusOnRight: radiusOnRight,
+          )
         : Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -2563,9 +2576,7 @@ class _PosterTicketFace extends StatelessWidget {
           ),
         ],
         const Spacer(),
-        Row(
-          children: [if (seat.isNotEmpty) _miniStat(context, '좌석', seat)],
-        ),
+        Row(children: [if (seat.isNotEmpty) _miniStat(context, '좌석', seat)]),
       ],
     );
   }

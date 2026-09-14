@@ -166,6 +166,11 @@ class DiaryPageFrame extends StatelessWidget {
   /// 프레임 밖 여백까지 그릴 수 있도록 스택은 [Clip.none]입니다.
   final Widget? frameBehindPage;
 
+  /// 메인 페이지(종이) 위에 얹는 자유 레이어. 페이지 크기는 그대로 유지하면서
+  /// 별도의 손잡이/장식이 페이지 위에서도 확실히 보이고 눌려야 할 때 씁니다.
+  final Widget? frameAbovePage;
+  final double frameAbovePageTopOverflow;
+
   /// [scale]/[marginEachSide]를 이 프레임 자신의 레이아웃 측정 대신 바깥에서
   /// 넘겨준 값으로 강제합니다(null이면 기존처럼 직접 측정). 스플래시
   /// 애니메이션이 진짜 화면 크기(실제 MediaQuery)를 기준으로 미리 정확히
@@ -206,6 +211,8 @@ class DiaryPageFrame extends StatelessWidget {
     this.overlayFlipProgress,
     this.sideTabsOpacity,
     this.frameBehindPage,
+    this.frameAbovePage,
+    this.frameAbovePageTopOverflow = 0,
     this.scaleOverride,
     this.marginEachSideOverride,
   });
@@ -567,7 +574,7 @@ class DiaryPageFrame extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: child,
+                    child: Stack(fit: StackFit.expand, children: [child]),
                   ),
           ),
         ),
@@ -588,6 +595,17 @@ class DiaryPageFrame extends StatelessWidget {
             ),
           ),
         ),
+
+        /// 5.5. 페이지 위 자유 레이어. 소식 탭의 검색 풀탭처럼 페이지 규격과
+        /// 별개로 충분한 터치 영역이 필요한 요소를 올립니다.
+        if (frameAbovePage != null)
+          Positioned(
+            top: -frameAbovePageTopOverflow,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: frameAbovePage!,
+          ),
 
         /// 6. 활성 탭 레이어 (메인 페이지 종이 위로 드러나는 부분)
         ///

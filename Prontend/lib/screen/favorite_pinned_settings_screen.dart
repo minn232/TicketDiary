@@ -266,10 +266,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     final trailingNew = pendingNew; // 마지막 survivor 이후에 남은 신규 항목
 
     final orderedNames = <String>[
-      for (final name in survivors) ...[
-        ...?beforeSurvivor[name],
-        name,
-      ],
+      for (final name in survivors) ...[...?beforeSurvivor[name], name],
       ...trailingNew,
     ];
     return [for (final name in orderedNames) byName[name]!];
@@ -385,7 +382,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   // [백엔드 수정]
   // 검색어 미입력 시 빈 결과 대신 추천 아티스트를 보여줌.
   bool get _showingArtistRecommendations =>
-      _artistQueryController.text.trim().isEmpty && _recommendedArtists.isNotEmpty;
+      _artistQueryController.text.trim().isEmpty &&
+      _recommendedArtists.isNotEmpty;
 
   Widget _buildContent() {
     return Column(
@@ -416,8 +414,12 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
               _CategorySearchPage<ArtistModel>(
                 controller: _artistQueryController,
                 hintText: '아티스트 이름 검색',
-                items: _showingArtistRecommendations ? _recommendedArtists : _artistResults,
-                sectionLabel: _showingArtistRecommendations ? '이런 아티스트는 어때요?' : null,
+                items: _showingArtistRecommendations
+                    ? _recommendedArtists
+                    : _artistResults,
+                sectionLabel: _showingArtistRecommendations
+                    ? '이런 아티스트는 어때요?'
+                    : null,
                 newlyAddedNames: _showingArtistRecommendations
                     ? _newlyRecommendedNames
                     : const {},
@@ -647,7 +649,7 @@ class _CategoryPill extends StatelessWidget {
 }
 
 /// 검색 버튼 없이, 입력할 때마다 바로 검색되는 것을 알려주는 검색창.
-class _SearchField extends StatelessWidget {
+class _SearchField extends StatefulWidget {
   final TextEditingController controller;
   final String hintText;
   final ValueChanged<String> onSubmitted;
@@ -659,49 +661,73 @@ class _SearchField extends StatelessWidget {
   });
 
   @override
+  State<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<_SearchField> {
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode();
+  }
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 46,
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: Colors.black.withValues(alpha: 0.22),
-          width: 1.3,
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Icon(
-            Icons.search,
-            size: 18,
-            color: Colors.black.withValues(alpha: 0.35),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _focusNode.requestFocus(),
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: Colors.black.withValues(alpha: 0.22),
+            width: 1.3,
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              textInputAction: TextInputAction.search,
-              onSubmitted: onSubmitted,
-              decoration: InputDecoration(
-                border: InputBorder.none,
-                isDense: true,
-                hintText: hintText,
-                hintStyle: TextStyle(
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Icon(
+              Icons.search,
+              size: 18,
+              color: Colors.black.withValues(alpha: 0.35),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                focusNode: _focusNode,
+                controller: widget.controller,
+                textInputAction: TextInputAction.search,
+                onSubmitted: widget.onSubmitted,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  isDense: true,
+                  hintText: widget.hintText,
+                  hintStyle: TextStyle(
+                    fontSize: context.sp(14),
+                    fontWeight: FontWeight.w900,
+                    color: Colors.black.withValues(alpha: 0.25),
+                  ),
+                ),
+                style: TextStyle(
                   fontSize: context.sp(14),
                   fontWeight: FontWeight.w900,
-                  color: Colors.black.withValues(alpha: 0.25),
+                  color: Colors.black87,
                 ),
               ),
-              style: TextStyle(
-                fontSize: context.sp(14),
-                fontWeight: FontWeight.w900,
-                color: Colors.black87,
-              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
