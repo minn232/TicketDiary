@@ -32,9 +32,37 @@ async def start_pod() -> bool:
         return False
 
 
-# pod 정지. 매일 자정 배치 종료 후 1회 + 안전장치로 1시간 뒤 백업 job에서 한 번 더 호출됨
-# (stop도 멱등이라 이미 정지된 상태에서 또 불러도 무해 - 밤새 GPU 켜진 채 방치되는 비용
-# 누수를 막는 게 목적이라 중복 호출보다 누락이 훨씬 나쁨)
+# pod의 실제 상태를 조회. RunPod는 실제로 떠있을 때만 "runtime" 객체를 채워주므로(정지되면
+# 사라짐) desiredStatus(요청한 목표 상태) 대신 runtime 유무로 실제 상태를 판단한다
+async def _fetch_pod_status() -> dict:
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(
+            f"{_RUNPOD_PODS_URL}/{settings.RUNPOD_POD_ID}",
+            headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+# stop 요청 뒤 실제로 꺼졌는지 확인. RunPod API가 stop 요청에 200을 줘도 실제 종료는 비동기라
+# 시간이 걸릴 수 있고, API 레벨 성공이 실제 종료를 보장하지 않으므로 GET으로 재확인한다
+async def _wait_until_actually_stopped(timeout_seconds: float = 120.0, interval_seconds: float = 10.0) -> bool:
+    elapsed = 0.0
+    while elapsed < timeout_seconds:
+        try:
+            data = await _fetch_pod_status()
+            if not data.get("runtime"):
+                return True
+        except Exception as e:
+            logger.warning(f"pod 상태 확인 중 오류(재시도함): {e}")
+        await asyncio.sleep(interval_seconds)
+        elapsed += interval_seconds
+    return False
+
+
+# pod 정지 - 밤배치 조기완료 시 즉시 + 자정 배치 종료 후 안전망 + 1시간 뒤 백업까지 여러
+# 경로에서 호출됨(멱등이라 중복 호출 무해, 누락이 훨씬 나쁨). 반환값은 "정지 요청 성공"이 아니라
+# "실제로 꺼짐"을 뜻함 - 전자만 보면 RunPod 쪽 지연/실패로 계속 켜진 채 방치되는 걸 놓칠 수 있음
 async def stop_pod() -> bool:
     if not settings.RUNPOD_API_KEY or not settings.RUNPOD_POD_ID:
         logger.info("RUNPOD_API_KEY/RUNPOD_POD_ID 미설정, pod 정지 건너뜀")
@@ -46,11 +74,16 @@ async def stop_pod() -> bool:
                 headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
             )
             response.raise_for_status()
-        logger.info("RunPod pod 정지 요청 성공")
-        return True
+        logger.info("RunPod pod 정지 요청 성공, 실제 정지 확인 중...")
     except Exception as e:
         logger.error(f"RunPod pod 정지 요청 실패: {e}")
         return False
+
+    if await _wait_until_actually_stopped():
+        logger.info("RunPod pod 실제 정지 확인됨")
+        return True
+    logger.error("RunPod pod 정지 요청은 성공했지만 실제 정지를 확인하지 못함 - 계속 켜져있을 수 있음")
+    return False
 
 
 # pod을 깨운 직후엔 vLLM 로딩 시간이 있어 llm_server 헬스체크(base+"/health")가 응답할

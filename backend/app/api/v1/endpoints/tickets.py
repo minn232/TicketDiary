@@ -16,6 +16,7 @@ from app.schemas.setlist import (
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
+from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
 from app.services.pre_setlist import (
     get_pre_setlist,
     generate_pre_setlist,
@@ -245,6 +246,7 @@ async def create_ticket_diary(
 async def receive_diary_result(
     ticket_id: UUID,
     body: DiaryResultRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
@@ -252,6 +254,11 @@ async def receive_diary_result(
     ticket = result.scalar_one_or_none()
     if ticket is None:
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
+
+    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
+    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
 
     ticket.diary = body.diary
     await db.commit()

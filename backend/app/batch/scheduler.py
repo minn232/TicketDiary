@@ -18,6 +18,12 @@ from app.services.setlist import retry_real_setlist_generation
 from app.services.social import cleanup_ended_concert_follows
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
+from app.services.llm_batch_state import (
+    is_llm_batch_idle,
+    mark_all_sent_for_tonight,
+    mark_stopped_early,
+    reset_llm_night_state,
+)
 from app.services.runpod import start_pod_and_launch_services, stop_pod, wait_until_llm_server_ready
 
 logger = logging.getLogger(__name__)
@@ -44,6 +50,9 @@ async def _run_daily_kopis_sync() -> None:
 
 async def _run_pod_start() -> None:
     try:
+        # 그날 밤 LLM 조기정지 판단 기준을 초기화 (llm_batch_state.py) - start 성공/실패와
+        # 무관하게 초기화해도 무해함(실패하면 이후 전송 배치도 다 스킵되니 idle 판단이 쓰일 일이 없음)
+        await reset_llm_night_state()
         # pod 시작 + SSH 원격으로 start_vllm.sh 실행까지 한 번에 (LLM팀 Container Start
         # Command 자동화가 무산되면서 SSH 방식으로 대체함)
         await start_pod_and_launch_services()
@@ -56,6 +65,20 @@ async def _run_pod_stop() -> None:
         await stop_pod()
     except Exception as e:
         logger.error(f"RunPod pod 정지 오류: {e}")
+
+
+# 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡은 밤을 위한 안전망 - 유휴 5분 감지되면 01시
+# 안전망보다 먼저 정지. stop_pod()이 실제 정지를 못 확인하면 다음 tick에서 재시도됨
+async def _run_llm_idle_check() -> None:
+    try:
+        if not await is_llm_batch_idle(idle_minutes=5.0):
+            return
+        logger.info("야간 LLM 배치 유휴 5분 감지 - 조기 정지 시도")
+        if await stop_pod():
+            await mark_stopped_early()
+            logger.info("야간 배치 조기 완료로 pod 조기 정지 완료 (01시/02시 안전망은 그대로 유지됨)")
+    except Exception as e:
+        logger.error(f"LLM 배치 유휴 감지/조기 정지 오류: {e}")
 
 
 async def _run_crawl_send() -> None:
@@ -132,6 +155,10 @@ async def _run_diary_send() -> None:
         await send_diary_requests_to_llm()
     except Exception as e:
         logger.error(f"일기 생성 요청 전송 오류: {e}")
+    finally:
+        # 그날 밤 예정된 전송 배치 3개 중 마지막 - 성공/실패 무관하게 "오늘 밤 전송은 이걸로
+        # 끝"을 표시해야 정확한 건수 매칭(llm_batch_state.py)이 조기 정지를 판단할 수 있음
+        await mark_all_sent_for_tonight()
 
 
 async def _run_real_setlist_backfill() -> None:
@@ -171,6 +198,11 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_artist_extraction_send, "cron", hour=15, minute=25, id="artist_extraction_send", max_instances=1)
     # 요청된 일기 생성 건을 LLM팀에 전송 (LLM팀 서버가 KST 00~01시 사이에만 떠있어 그 시간대로 맞춤, 00:30)
     scheduler.add_job(_run_diary_send, "cron", hour=15, minute=30, id="diary_send", max_instances=1)
+    # 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡는 밤을 위한 유휴시간 안전망 - diary_send(30)
+    # 1분 뒤부터 01시 안전망 직전까지 3분 간격 확인. minute=31로 diary_send와 겹치지 않게 함
+    scheduler.add_job(
+        _run_llm_idle_check, "cron", hour=15, minute="31-59/3", id="llm_idle_check", max_instances=1
+    )
     # event_type=FESTIVAL 공연들의 라인업(출연진) 변경 여부를 매일 재확인 (KST 00:35)
     scheduler.add_job(_run_festival_lineup_check, "cron", hour=15, minute=35, id="festival_lineup_check", max_instances=1)
     # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)

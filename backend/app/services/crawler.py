@@ -18,6 +18,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert, EventType
 from app.models.social import ConcertFollow
 from app.services.kopis import refresh_ticketing_links
+from app.services.llm_batch_state import mark_llm_sent
 from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
 
@@ -911,6 +912,8 @@ async def send_screenshots_to_llm() -> None:
             )
             response.raise_for_status()
         logger.info(f"LLM팀 스크린샷 전송 완료: {len(concerts)}건")
+        # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
+        await mark_llm_sent(len(concerts))
     except Exception as e:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
@@ -1001,6 +1004,8 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         await db.commit()
 
     logger.info(f"LLM팀 포스터 전송 완료: {len(concerts)}건")
+    # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
+    await mark_llm_sent(len(concerts))
     return len(concerts)
 
 

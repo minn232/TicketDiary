@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.ticket import Ticket
+from app.services.llm_batch_state import mark_llm_sent
 
 logger = logging.getLogger(__name__)
 
@@ -53,5 +54,7 @@ async def send_diary_requests_to_llm() -> None:
             )
             response.raise_for_status()
         logger.info(f"LLM팀 일기 생성 요청 전송 완료: {len(tickets)}건")
+        # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
+        await mark_llm_sent(len(tickets))
     except Exception as e:
         logger.error(f"LLM팀 일기 생성 요청 전송 실패: {e}")
