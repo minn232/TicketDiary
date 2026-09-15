@@ -1517,6 +1517,46 @@ async def test_admin_crawl_targets_excludes_recently_attempted_concert():
     assert all(i["concert_id"] != concert_id for i in res.json()["items"])
 
 
+# 로컬 크롤링은 성공해서 crawl_screenshot_url은 채워졌지만(=쿨다운도 지남) LLM 분석
+# 배치가 아직 ticketing_date를 못 뽑은 건 - exclude_already_crawled=True면 매크로 탐지
+# 위험을 줄이려고 재크롤링 대상에서 빼고, 기본값(false)이면 그대로 포함되는지 확인
+@pytest.mark.asyncio
+async def test_admin_crawl_targets_exclude_already_crawled_param():
+    already_crawled_id = await _create_concert(f"PF_CRAWLTGT_DONE_{uuid.uuid4().hex[:6]}", "테스트가수")
+    never_crawled_id = await _create_concert(f"PF_CRAWLTGT_NEW_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(already_crawled_id))
+            .values(
+                ticketing_links={"YES24": "https://ticket.yes24.com/perf/123"},
+                crawl_screenshot_url="https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/x/yes24.png",
+                crawl_attempted_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            )
+        )
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(never_crawled_id))
+            .values(ticketing_links={"MELON": "https://ticket.melon.com/perf/789"})
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            default_res = await ac.get("/api/v1/admin/crawl-targets/yes24-melon", headers=_admin_headers())
+            filtered_res = await ac.get(
+                "/api/v1/admin/crawl-targets/yes24-melon",
+                params={"exclude_already_crawled": True},
+                headers=_admin_headers(),
+            )
+
+    default_ids = {i["concert_id"] for i in default_res.json()["items"]}
+    filtered_ids = {i["concert_id"] for i in filtered_res.json()["items"]}
+    assert {already_crawled_id, never_crawled_id} <= default_ids
+    assert never_crawled_id in filtered_ids
+    assert already_crawled_id not in filtered_ids
+
+
 @pytest.mark.asyncio
 async def test_admin_crawl_targets_includes_concert_attempted_long_ago():
     concert_id = await _create_concert(f"PF_CRAWLTGT_OLDATTEMPT_{uuid.uuid4().hex[:6]}", "테스트가수")

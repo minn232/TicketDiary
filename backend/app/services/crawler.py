@@ -817,28 +817,39 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
 # 으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(데이터센터 아닌 네트워크)에서 직접 돌리기로
 # 함(YES24/MELON은 AWS 서버 IP에서 차단 확정). 이 함수는 대상 목록만 뽑고, 실제 크롤링은
 # scripts/yes24_melon_local_crawl.py가 로컬에서 수행 후 save_manual_crawl_screenshot으로 반영
-async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
+#
+# 대상 조건이 ticketing_date IS NULL이라, 스크린샷은 이미 로컬에서 성공적으로 올렸어도(=
+# crawl_screenshot_url은 채워짐) 그걸 읽어 ticketing_date를 뽑는 LLM 분석 배치가 아직 안
+# 돌았으면 계속 대상에 남는다. LLM 분석이 밀리는 동안(RunPod 자리 문제 등) 이미 스크린샷을
+# 올린 건까지 매번 다시 크롤링 대상으로 잡혀 로컬 스크립트를 반복 실행하면 매크로 탐지
+# 위험이 커지므로, exclude_already_crawled=True면 crawl_screenshot_url이 이미 있는 건
+# (=로컬 크롤링은 끝났고 LLM 분석만 밀린 건) 제외하고 진짜 신규만 남긴다
+async def get_yes24_melon_crawl_targets(
+    db: AsyncSession, exclude_already_crawled: bool = False
+) -> list[Concert]:
     now = datetime.now(timezone.utc)
-    result = await db.execute(
-        select(Concert).where(
-            Concert.end_date > now,
-            Concert.ticketing_date.is_(None),
-            ~Concert.ticketing_links.has_key("INTERPARK"),
-            or_(
-                Concert.ticketing_links.has_key("YES24"),
-                Concert.ticketing_links.has_key("MELON"),
-                Concert.ticketing_links.has_key("MELONTICKET"),
-            ),
-            # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
-            # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
-            # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
-            # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
-            or_(
-                Concert.crawl_attempted_at.is_(None),
-                Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
-            ),
-        )
-    )
+    conditions = [
+        Concert.end_date > now,
+        Concert.ticketing_date.is_(None),
+        ~Concert.ticketing_links.has_key("INTERPARK"),
+        or_(
+            Concert.ticketing_links.has_key("YES24"),
+            Concert.ticketing_links.has_key("MELON"),
+            Concert.ticketing_links.has_key("MELONTICKET"),
+        ),
+        # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
+        # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
+        # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
+        # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
+        or_(
+            Concert.crawl_attempted_at.is_(None),
+            Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
+        ),
+    ]
+    if exclude_already_crawled:
+        conditions.append(Concert.crawl_screenshot_url.is_(None))
+
+    result = await db.execute(select(Concert).where(*conditions))
     return list(result.scalars().all())
 
 
