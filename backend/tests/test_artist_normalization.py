@@ -17,6 +17,7 @@ from app.models.artist_normalization import (
 )
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
+from app.models.social import NewsFeed
 from app.services.artist_normalization import (
     apply_canonical_replacement,
     decide_match,
@@ -1359,6 +1360,49 @@ async def test_news_feed_matches_group_follow_against_member_only_concert():
         await db.commit()
 
     assert (user_id, band_name) in matched
+
+
+# 실사례: 페스티벌 라인업에 한 그룹의 현재 멤버가 여러 명 동시에 등장하면(예: 넬의
+# 김종완+이재경+이정훈이 각자 이름으로 라인업에 올라간 록페스티벌), 그룹을 팔로우한 유저가
+# 멤버명 매칭이 여러 번 겹쳐 뉴스피드가 중복 생성되던 버그 회귀 테스트
+@pytest.mark.asyncio
+async def test_news_feed_dedupes_when_multiple_group_members_in_lineup():
+    token = await _get_token()
+    user_id = await _get_user_id(token)
+    band_name = f"밴드_{uuid.uuid4().hex[:6]}"
+    member1 = f"멤버1_{uuid.uuid4().hex[:6]}"
+    member2 = f"멤버2_{uuid.uuid4().hex[:6]}"
+
+    async with AsyncSessionLocal() as db:
+        band = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=band_name)
+        m1 = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=member1)
+        m2 = CanonicalArtist(mbid=uuid.uuid4().hex, canonical_name=member2)
+        db.add_all([band, m1, m2])
+        await db.flush()
+        db.add(ArtistGroupMembership(member_canonical_id=m1.id, group_canonical_id=band.id, is_current=True))
+        db.add(ArtistGroupMembership(member_canonical_id=m2.id, group_canonical_id=band.id, is_current=True))
+        await db.commit()
+
+    await _follow_artist(token, band_name)
+
+    # 라인업에 같은 그룹의 멤버 2명이 각자 이름으로 등장 (그룹명은 어디에도 등장하지 않음)
+    concert_id = uuid.UUID(
+        await _create_concert(f"PF_NF_{uuid.uuid4().hex[:6]}", f"{member1},{member2}", token)
+    )
+
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        follow_index = await _build_follow_index(db)
+        matched = await _create_news_feeds_for_concert(db, concert, follow_index)
+        await db.commit()
+
+    assert matched.count((user_id, band_name)) == 1
+
+    async with AsyncSessionLocal() as db:
+        feed_rows = await db.execute(
+            select(NewsFeed).where(NewsFeed.user_id == user_id, NewsFeed.concert_id == concert_id)
+        )
+        assert len(feed_rows.scalars().all()) == 1
 
 
 # KOPIS 원본 라인업 보강 (_supplement_from_kopis_originals) - LLM이 일부 멤버만 추출해도

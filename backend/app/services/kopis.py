@@ -515,16 +515,21 @@ async def _create_news_feeds_for_concert(
     if follow_index is None:
         follow_index = await _build_follow_index(db)
 
-    # 매칭되는 팔로워 및 아티스트명 수집
-    matched: list[tuple] = []
+    # 매칭되는 팔로워 및 아티스트명 수집. 같은 유저가 그룹+현재 멤버 여러 명으로 동시에
+    # 매칭될 수 있어서(페스티벌 라인업에 한 그룹의 멤버가 여러 명 등장하는 경우 등) 유저당
+    # 1건만 남도록 dedup - schedule_new_concert_notifications의 동일 패턴 참고
+    matched_by_user: dict = {}
     for artist in concert.artist_name:
-        matched.extend(follow_index.get(artist.lower(), []))
+        for user_id, artist_name in follow_index.get(artist.lower(), []):
+            matched_by_user.setdefault(user_id, artist_name)
 
-    if not matched:
+    if not matched_by_user:
         return []
 
+    matched = list(matched_by_user.items())
+
     # 이미 존재하는 뉴스피드 일괄 조회 (N+1 방지)
-    matched_user_ids = [uid for uid, _ in matched]
+    matched_user_ids = list(matched_by_user.keys())
     existing_result = await db.execute(
         select(NewsFeed.user_id).where(
             NewsFeed.concert_id == concert.id,
