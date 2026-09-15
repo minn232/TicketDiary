@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
@@ -12,6 +12,7 @@ from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.artist_similarity import ArtistSimilarity
 from app.models.artist_genre import ArtistGenre
 from app.models.artist_lastfm_sync_status import ArtistLastfmSyncStatus
+from app.models.concert import Concert
 from app.models.ticket import Ticket
 from conftest import _get_token, kopis_mock
 
@@ -89,6 +90,17 @@ async def _follow_artist(token: str, artist_name: str) -> None:
         res = await ac.patch(
             "/api/v1/social/artists",
             json={"artists": [{"artist_name": artist_name}]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert res.status_code == 200
+
+
+# 공연 찜 설정 (전체 교체이므로 이미 찜해둔 목록에 추가하려면 concert_ids 전체를 다시 넘겨야 함)
+async def _follow_concerts(token: str, concert_ids: list[str]) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch(
+            "/api/v1/social/concerts",
+            json={"concerts": [{"concert_id": cid} for cid in concert_ids]},
             headers={"Authorization": f"Bearer {token}"},
         )
     assert res.status_code == 200
@@ -824,3 +836,170 @@ async def test_recommendations_cold_start_falls_back_to_ticket_history():
     assert res.status_code == 200
     names = [r["artist_name"] for r in res.json()["recommendations"]]
     assert similar in names
+
+
+# GET /recommendations/concerts 테스트 - 아티스트 추천과 달리 팔로우/티켓 이력이 전혀
+# 없는 완전 신규 유저도 바로 봐야 해서, 개인화 신호 대신 앱 내 찜/티켓 등록 인기도로 순위를 매김
+
+@pytest.mark.asyncio
+async def test_concert_recommendations_no_auth_401():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/recommendations/concerts")
+    assert res.status_code == 401
+
+
+# 콜드스타트 확인 - 팔로우/티켓 이력이 전혀 없는 신규 유저도(=아티스트 추천과 달리) 다른 유저들이
+# 찜한 공연이 있으면 바로 추천이 나와야 함
+@pytest.mark.asyncio
+async def test_concert_recommendations_shows_for_brand_new_user_with_no_history():
+    viewer_token = await _get_token()
+    follower_token = await _get_token()
+    concert_id = await _create_concert(f"PF_CREC_COLD_{uuid.uuid4().hex[:6]}", "테스트아티스트", follower_token)
+    await _follow_concerts(follower_token, [concert_id])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/v1/recommendations/concerts", headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+    assert res.status_code == 200
+    ids = [c["id"] for c in res.json()]
+    assert concert_id in ids
+
+
+# 찜한 유저 수가 많을수록 더 위로 랭킹되는지, 아무도 찜/티켓 등록 안 한 공연은 후보에서
+# 아예 빠지는지 테스트
+@pytest.mark.asyncio
+async def test_concert_recommendations_ranks_by_follow_count():
+    viewer_token = await _get_token()
+    high_id = await _create_concert(f"PF_CREC_HIGH_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token)
+    mid_id = await _create_concert(f"PF_CREC_MID_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token)
+    zero_id = await _create_concert(f"PF_CREC_ZERO_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token)
+
+    for _ in range(3):
+        follower_token = await _get_token()
+        await _follow_concerts(follower_token, [high_id])
+
+    follower_token = await _get_token()
+    await _follow_concerts(follower_token, [mid_id])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/v1/recommendations/concerts", headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+    assert res.status_code == 200
+    ids = [c["id"] for c in res.json()]
+    assert zero_id not in ids  # 아무도 찜/티켓 등록 안 한 공연은 추천 후보가 아님
+    assert ids.index(high_id) < ids.index(mid_id)
+
+
+# 티켓 등록 수도 찜 수와 합산되어 점수에 반영되는지 테스트
+@pytest.mark.asyncio
+async def test_concert_recommendations_counts_tickets_too():
+    viewer_token = await _get_token()
+    ticketed_id = await _create_concert(f"PF_CREC_TIX_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token)
+    followed_only_id = await _create_concert(
+        f"PF_CREC_FOLLOWONLY_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token
+    )
+
+    for _ in range(2):
+        other_token = await _get_token()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(
+                "/api/v1/tickets",
+                json={"concert_id": ticketed_id},
+                headers={"Authorization": f"Bearer {other_token}"},
+            )
+
+    other_token = await _get_token()
+    await _follow_concerts(other_token, [followed_only_id])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/v1/recommendations/concerts", headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+    ids = [c["id"] for c in res.json()]
+    assert ticketed_id in ids
+    assert ids.index(ticketed_id) < ids.index(followed_only_id)
+
+
+# 이미 자기가 찜했거나 티켓 등록한 공연은 (다른 유저들 사이에서 인기가 많아도) 추천에서
+# 빠지는지 테스트 - 이미 갖고 있는 걸 또 추천할 필요 없음
+@pytest.mark.asyncio
+async def test_concert_recommendations_excludes_own_followed_and_ticketed():
+    viewer_token = await _get_token()
+    viewer_user_id = await _get_user_id(viewer_token)
+    already_followed_id = await _create_concert(
+        f"PF_CREC_OWNFOLLOW_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token
+    )
+    already_ticketed_id = await _create_concert(
+        f"PF_CREC_OWNTIX_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token
+    )
+
+    for _ in range(3):
+        other_token = await _get_token()
+        await _follow_concerts(other_token, [already_followed_id, already_ticketed_id])
+
+    await _follow_concerts(viewer_token, [already_followed_id])
+    async with AsyncSessionLocal() as db:
+        db.add(Ticket(user_id=uuid.UUID(viewer_user_id), concert_id=uuid.UUID(already_ticketed_id)))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/v1/recommendations/concerts", headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+    ids = [c["id"] for c in res.json()]
+    assert already_followed_id not in ids
+    assert already_ticketed_id not in ids
+
+
+# 이미 끝난 공연은 아무리 인기가 많아도 추천에서 빠지는지 테스트
+@pytest.mark.asyncio
+async def test_concert_recommendations_excludes_ended_concerts():
+    viewer_token = await _get_token()
+    ended_id = await _create_concert(f"PF_CREC_ENDED_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token)
+
+    for _ in range(3):
+        other_token = await _get_token()
+        await _follow_concerts(other_token, [ended_id])
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(ended_id)).values(
+                end_date=datetime(2020, 1, 1, tzinfo=timezone.utc)
+            )
+        )
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/v1/recommendations/concerts", headers={"Authorization": f"Bearer {viewer_token}"}
+        )
+
+    ids = [c["id"] for c in res.json()]
+    assert ended_id not in ids
+
+
+@pytest.mark.asyncio
+async def test_concert_recommendations_limit_param():
+    viewer_token = await _get_token()
+    concert_ids = []
+    for i in range(3):
+        cid = await _create_concert(f"PF_CREC_LIM_{i}_{uuid.uuid4().hex[:6]}", "테스트아티스트", viewer_token)
+        other_token = await _get_token()
+        await _follow_concerts(other_token, [cid])
+        concert_ids.append(cid)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get(
+            "/api/v1/recommendations/concerts",
+            params={"limit": 2},
+            headers={"Authorization": f"Bearer {viewer_token}"},
+        )
+
+    assert res.status_code == 200
+    assert len(res.json()) == 2

@@ -4,8 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
+from app.schemas.concert import ConcertResponse
 from app.schemas.recommendation import ArtistRecommendationResponse
-from app.services.recommendation import get_artist_recommendations
+from app.services.recommendation import get_artist_recommendations, get_concert_recommendations
 
 router = APIRouter()
 
@@ -19,3 +20,13 @@ async def get_artist_recommendations_endpoint(
 ):
     recommendations = await get_artist_recommendations(db, current_user.id, limit=limit)
     return ArtistRecommendationResponse(recommendations=recommendations)
+
+
+# 찜 공연 추천 목록 조회 (앱 내 찜/티켓 등록 인기도 기반, 팔로우/티켓 이력 없어도 바로 응답)
+@router.get("/concerts", response_model=list[ConcertResponse])
+async def get_concert_recommendations_endpoint(
+    limit: int = Query(30, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_concert_recommendations(db, current_user.id, limit=limit)
