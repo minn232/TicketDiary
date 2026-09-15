@@ -162,6 +162,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   Int32List? _meshColors;
   Uint16List? _meshIndices;
   Size? _leafImageSize;
+  bool _leafImageRoundBothSides = false;
 
   @override
   void initState() {
@@ -189,8 +190,20 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   /// 합성하고 셰이더/메시 버퍼를 준비합니다. toImageSync라 빌드 중에
   /// 동기적으로 만들 수 있고(setState 불필요), 별도 스냅샷 캡처가 필요한
   /// 실제 페이지 넘김과 달리 폴백 프레임 없이 첫 프레임부터 곡면입니다.
-  void _ensureLeafImage(BuildContext context, Size frameSize) {
-    if (_leafImage != null && _leafImageSize == frameSize) return;
+  ///
+  // [백엔드 수정]
+  // [roundBothSides] 매개변수 추가 — true(2페이지 스프레드)면 양쪽 모서리를
+  // 다 둥글리고, false(기존 단일 페이지)면 오른쪽만 둥글임.
+  void _ensureLeafImage(
+    BuildContext context,
+    Size frameSize, {
+    bool roundBothSides = false,
+  }) {
+    if (_leafImage != null &&
+        _leafImageSize == frameSize &&
+        _leafImageRoundBothSides == roundBothSides) {
+      return;
+    }
     final dpr =
         math.min(MediaQuery.devicePixelRatioOf(context), _rasterMaxDpr);
 
@@ -216,6 +229,8 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     canvas.scale(dpr);
     final rrect = RRect.fromRectAndCorners(
       pageRect,
+      topLeft: roundBothSides ? const Radius.circular(15) : Radius.zero,
+      bottomLeft: roundBothSides ? const Radius.circular(15) : Radius.zero,
       topRight: const Radius.circular(15),
       bottomRight: const Radius.circular(15),
     );
@@ -237,6 +252,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     _leafImage?.dispose();
     _leafImage = image;
     _leafImageSize = frameSize;
+    _leafImageRoundBothSides = roundBothSides;
 
     // 이하 셰이더/버퍼 구성은 DiaryPageFlipper._prepareLeafMesh와 동일.
     _leafShader = ui.ImageShader(
@@ -350,34 +366,80 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
           final availableHeight = constraints.maxHeight;
           const aspectRatio = DiaryPageFrame.diaryAspectRatio;
 
-          // AspectRatio 위젯과 완전히 같은 규칙: 화면비가 더 넓으면
-          // 높이를 꽉 채우고, 더 좁거나 같으면 폭을 꽉 채웁니다.
+          // [백엔드 수정]
+          // 2페이지 모드 지원 추가 — 목적지 화면(DiaryPageFrame.build)과
+          // 반드시 같은 계산을 써야 회전축이 안 어긋나므로
+          // resolveTwoPageLayout을 그대로 공유. 안 맞으면 기존 단일
+          // 페이지 규칙으로 폴백.
+          final twoPageLayout = DiaryPageFrame.resolveTwoPageLayout(
+            pageHeight: availableHeight,
+            aspectRatio: aspectRatio,
+          );
+
+          final isTwoPage = twoPageLayout.spreadWidth <= availableWidth;
+
           double frameWidth;
           double frameHeight;
-          if (availableWidth / availableHeight > aspectRatio) {
+          double marginEachSide;
+          double marginTop;
+          late final ({
+            double barWidth,
+            double barHeight,
+            double circleShiftX,
+            double binderLeft,
+            double pivotX,
+            double pageWidth,
+          })
+          metrics;
+          if (isTwoPage) {
+            // 속지를 오른쪽 페이지 폭이 아니라 스프레드 전체(동반 패널+
+            // 페이지) 폭으로 넓혀서, 책 전체가 한 장처럼 넘어가게 함.
+            // 회전축도 공유 바인더 링 스파인 중심([spineCenterX]).
+            frameWidth = twoPageLayout.spreadWidth;
             frameHeight = availableHeight;
-            frameWidth = frameHeight * aspectRatio;
+            final spreadLeft = math.max(
+              0.0,
+              (availableWidth - twoPageLayout.spreadWidth) / 2,
+            );
+            marginEachSide = spreadLeft;
+            marginTop = 0.0;
+            metrics = (
+              barWidth: twoPageLayout.metrics.barWidth,
+              barHeight: twoPageLayout.metrics.barHeight,
+              circleShiftX: twoPageLayout.metrics.circleShiftX,
+              binderLeft: twoPageLayout.metrics.binderLeft,
+              pivotX: twoPageLayout.spineCenterX,
+              pageWidth: twoPageLayout.metrics.pageWidth,
+            );
           } else {
-            frameWidth = availableWidth;
-            frameHeight = frameWidth / aspectRatio;
+            if (availableWidth / availableHeight > aspectRatio) {
+              frameHeight = availableHeight;
+              frameWidth = frameHeight * aspectRatio;
+            } else {
+              frameWidth = availableWidth;
+              frameHeight = frameWidth / aspectRatio;
+            }
+            marginEachSide = math.max(0.0, (availableWidth - frameWidth) / 2);
+            // DiaryPageFrame.build()는 AspectRatio를 Center로 감싸서
+            // 가로뿐 아니라 세로도 중앙 정렬합니다(diaryAspectRatio가
+            // 화면비보다 좁은 대부분의 폰에서는 frameHeight <
+            // availableHeight라 위아래 여백이 생김). 여기서 top을 0으로
+            // 고정하면 그 여백만큼 실제 다이어리 페이지 위치보다 위로
+            // 밀려 보이므로, 같은 공식으로 세로 마진도 계산해 맞춰야
+            // 합니다 — 기기별 화면비 차이로 이 여백 크기가 달라, "몇몇
+            // 기기에서만" 어긋나 보이던 원인입니다.
+            marginTop = math.max(0.0, (availableHeight - frameHeight) / 2);
+            metrics = DiaryPageFrame.computeRingMetrics(
+              frameWidth: frameWidth,
+              frameHeight: frameHeight,
+            );
           }
-          final marginEachSide =
-              math.max(0.0, (availableWidth - frameWidth) / 2);
-          // DiaryPageFrame.build()는 AspectRatio를 Center로 감싸서 가로뿐
-          // 아니라 세로도 중앙 정렬합니다(diaryAspectRatio가 화면비보다
-          // 좁은 대부분의 폰에서는 frameHeight < availableHeight라 위아래
-          // 여백이 생김). 여기서 top을 0으로 고정하면 그 여백만큼 실제
-          // 다이어리 페이지 위치보다 위로 밀려 보이므로, 같은 공식으로
-          // 세로 마진도 계산해 맞춰야 합니다 — 기기별 화면비 차이로 이
-          // 여백 크기가 달라, "몇몇 기기에서만" 어긋나 보이던 원인입니다.
-          final marginTop =
-              math.max(0.0, (availableHeight - frameHeight) / 2);
 
-          final metrics = DiaryPageFrame.computeRingMetrics(
-            frameWidth: frameWidth,
-            frameHeight: frameHeight,
+          _ensureLeafImage(
+            context,
+            Size(frameWidth, frameHeight),
+            roundBothSides: isTwoPage,
           );
-          _ensureLeafImage(context, Size(frameWidth, frameHeight));
 
           final leaves = Positioned(
             left: marginEachSide,

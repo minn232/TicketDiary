@@ -10,6 +10,7 @@ import 'package:ticketdiary/models/ticket_scan.dart';
 // ignore: unused_import
 import 'package:ticketdiary/services/local_ticket_store.dart';
 import 'package:ticketdiary/widgets/concert_after_page_contents.dart';
+import 'package:ticketdiary/widgets/concert_envelope.dart';
 
 /// [ConcertAfterPageContents]가 공연 소감/사진 저장에 성공했을 때
 /// [ConcertAfterPageContents.onTicketInfoChanged]로 최신 [TicketInfo]를
@@ -115,5 +116,155 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(Image), findsOneWidget);
+  });
+
+  testWidgets('메모지를 꾹 누르면 편집 모드로 들어간다', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConcertAfterPageContents(
+            concertTitle: '테스트 공연',
+            ticketInfo: const TicketInfo(
+              concertName: '테스트 공연',
+              venueName: '테스트홀',
+              price: '',
+              seat: '',
+              ticketId: 'ticket-1',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('잠금 (꾹 눌러 편집)'), findsOneWidget);
+
+    await tester.longPress(find.byType(ConcertEnvelope));
+    await tester.pumpAndSettle();
+
+    expect(find.text('편집 모드'), findsOneWidget);
+  });
+
+  testWidgets('봉투를 열면 가로 3단 편지가 나타나고 바깥을 누르면 접힌다', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ConcertAfterPageContents(
+            concertTitle: '테스트 공연',
+            ticketInfo: TicketInfo(
+              concertName: '테스트 공연',
+              venueName: '테스트홀',
+              price: '',
+              seat: '',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('공연 정보'), findsNothing);
+    expect(find.text('타임테이블'), findsNothing);
+    expect(find.text('실제 셋 리스트'), findsNothing);
+    await tester.tap(find.byType(ConcertEnvelope));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(tester.takeException(), isNull);
+    await tester.pumpAndSettle();
+    expect(find.text('공연 정보'), findsOneWidget);
+    expect(find.text('타임테이블'), findsOneWidget);
+    expect(find.text('실제 셋 리스트'), findsOneWidget);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('integrated_concert_letter')))
+          .height,
+      lessThan(400),
+    );
+    expect(
+      tester.getTopLeft(find.text('공연 정보')).dx,
+      lessThan(tester.getTopLeft(find.text('타임테이블')).dx),
+    );
+    expect(
+      tester.getTopLeft(find.text('타임테이블')).dx,
+      lessThan(tester.getTopLeft(find.text('실제 셋 리스트')).dx),
+    );
+    await tester.tap(find.text('공연 정보'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('integrated_concert_letter')),
+      findsOneWidget,
+    );
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(
+      find.byKey(const ValueKey('integrated_concert_letter')),
+      findsOneWidget,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('공연 정보'), findsNothing);
+    await tester.longPress(find.byType(ConcertEnvelope));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(ConcertEnvelope).first);
+    await tester.pumpAndSettle();
+    expect(find.text('편집 모드'), findsOneWidget);
+    expect(find.text('공연 정보'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('좁은 화면에서도 통합 편지는 세 문단을 유지한다', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ConcertAfterPageContents(
+            concertTitle: '테스트 공연',
+            ticketInfo: TicketInfo(
+              concertName: '아주 긴 이름의 테스트 공연입니다',
+              venueName: '테스트 공연장',
+              price: '',
+              seat: '',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(ConcertEnvelope));
+    await tester.pumpAndSettle();
+    expect(find.text('공연 정보'), findsOneWidget);
+    expect(find.text('타임테이블'), findsOneWidget);
+    expect(find.text('실제 셋 리스트'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('메모지가 없는 페이지 영역을 꾹 눌러도 편집 모드로 들어간다', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConcertAfterPageContents(
+            concertTitle: '테스트 공연',
+            ticketInfo: const TicketInfo(
+              concertName: '테스트 공연',
+              venueName: '테스트홀',
+              price: '',
+              seat: '',
+              ticketId: 'ticket-1',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('잠금 (꾹 눌러 편집)'), findsOneWidget);
+
+    await tester.longPressAt(const Offset(760, 560));
+    await tester.pumpAndSettle();
+
+    expect(find.text('편집 모드'), findsOneWidget);
   });
 }

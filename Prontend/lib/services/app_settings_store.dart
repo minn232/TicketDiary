@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
+import 'music_service_links.dart';
 import 'notification_settings_service.dart';
 
 /// 설정 탭의 토글들을 앱 전역에서 공유하는 저장소.
@@ -29,11 +30,15 @@ class AppSettingsStore extends ChangeNotifier {
   static final AppSettingsStore instance = AppSettingsStore._();
 
   static const _showExpectedSetlistPrefsKey = 'show_expected_setlist_v1';
+  // 셋리스트 곡 연결 기본 서비스 - 서버 동기화 없이 기기 로컬에만 저장(계정보다
+  // 기기/앱 취향에 가까운 값이라 다른 설정들과 달리 서버 소스오브트루스 불필요).
+  static const _preferredMusicServicePrefsKey = 'preferred_music_service_v1';
 
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
 
   bool _showExpectedSetlist = true;
+  MusicService _preferredMusicService = MusicService.spotify;
   bool _loaded = false;
 
   /// 마지막으로 load()를 실행했던 유저 id.
@@ -52,6 +57,10 @@ class AppSettingsStore extends ChangeNotifier {
   /// false(꺼짐)면 스포일러 방지로 블러 처리.
   bool get showExpectedSetlist => _showExpectedSetlist;
 
+  /// 셋리스트 포스트잇/기사 헤더 아이콘의 기본값(설정탭에서 바꿈). 화면에서
+  /// 꾹 눌러 바꾸는 임시 선택([SetlistServiceSelection])과는 별개.
+  MusicService get preferredMusicService => _preferredMusicService;
+
   Future<void> load() async {
     if (_loaded) return;
     _loaded = true;
@@ -61,9 +70,12 @@ class AppSettingsStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _showExpectedSetlist =
           prefs.getBool(_showExpectedSetlistPrefsKey) ?? true;
+      _preferredMusicService = MusicService.fromPrefsName(
+        prefs.getString(_preferredMusicServicePrefsKey),
+      );
       notifyListeners();
     } catch (_) {
-      // 로컬 저장소를 못 읽어도 기본값(true)으로 시작합니다.
+      // 로컬 저장소를 못 읽어도 기본값(true/스포티파이)으로 시작합니다.
     }
 
     // 2) 서버 값이 진짜 source of truth이므로, 조회에 성공하면 덮어씀.
@@ -98,6 +110,16 @@ class AppSettingsStore extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_showExpectedSetlistPrefsKey, value);
+    } catch (_) {}
+  }
+
+  /// 기기 로컬에만 저장(서버 동기화 없음 - 위 [_preferredMusicServicePrefsKey] 참고).
+  Future<void> setPreferredMusicService(MusicService value) async {
+    _preferredMusicService = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_preferredMusicServicePrefsKey, value.prefsName);
     } catch (_) {}
   }
 }

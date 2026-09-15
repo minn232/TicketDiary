@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/setlist.dart';
@@ -9,10 +10,12 @@ import '../models/ticket_info.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
+import '../services/music_service_links.dart';
 import 'fullscreen_poster.dart';
 import 'poster_background.dart';
 import 'pressable_scale.dart';
 import 'responsive_text.dart';
+import 'setlist_music_service_control.dart';
 
 /// "공연 전" 페이지 콘텐츠 — 신문 1면 디자인.
 ///
@@ -84,21 +87,15 @@ class ConcertBeforePageContents extends StatelessWidget {
       ],
     );
 
-    // 요청4: 페이지 전체(모든 구성요소)에 신문지 질감 — 뒤에 구겨짐/얼룩
-    // 텍스처를 깔고(고정, 스크롤과 무관), 내용 위에 아주 옅은 구겨짐 그림자를
-    // 한 겹 더 얹어 글자 위로도 종이 결이 지나가는 느낌을 줍니다. 둘 다
-    // 히트테스트를 붙잡지 않아(포인터 무시) 탭/스크롤에 영향이 없습니다.
+    // 신문 바탕과 미세한 종이 결만 내용 뒤에 그립니다.
     return Stack(
       children: [
         Positioned.fill(
-          child: CustomPaint(painter: _NewsprintPainter(foreground: false)),
-        ),
-        content,
-        Positioned.fill(
           child: IgnorePointer(
-            child: CustomPaint(painter: _NewsprintPainter(foreground: true)),
+            child: CustomPaint(painter: _NewsprintPainter()),
           ),
         ),
+        content,
       ],
     );
   }
@@ -199,8 +196,15 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   int? _timetableErrorCode;
 
   List<SongEntry> _fetchedSetlist = const [];
+  // [백엔드 수정] 단독 공연에서 song.artist가 비어있는 곡의 음악앱 검색 폴백용.
+  List<String> _fetchedArtistNames = const [];
   _FetchStatus _presetlistStatus = _FetchStatus.loading;
   int? _presetlistErrorCode;
+
+  // 이 화면을 보는 동안만 유지되는 선택값(설정탭 기본값에서 시작).
+  // [SetlistServiceSelection] 문서 참고.
+  final SetlistServiceSelection _musicServiceSelection =
+      SetlistServiceSelection();
 
   /// 어떤 concertId로 이미 조회했는지 기억해, 같은 concertId로 다시
   /// build되어도 중복 요청하지 않습니다.
@@ -220,6 +224,12 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   }
 
   @override
+  void dispose() {
+    _musicServiceSelection.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(covariant _ConcertBeforeBody oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ticketInfo?.concertId != widget.ticketInfo?.concertId ||
@@ -227,6 +237,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       _loadedConcertId = null;
       _fetchedTimetable = const [];
       _fetchedSetlist = const [];
+      _fetchedArtistNames = const [];
       _timetableStatus = _FetchStatus.loading;
       _presetlistStatus = _FetchStatus.loading;
       _timetableErrorCode = null;
@@ -309,6 +320,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         // 보여줄 수 있어서, 여기서 문자열로 바로 뭉개지 않고 SongEntry
         // 그대로 둠(표시 문구 변환은 위젯에서).
         _fetchedSetlist = res.songs;
+        _fetchedArtistNames = res.artistNames;
         _presetlistStatus = _FetchStatus.loaded;
       });
     } on ApiException catch (e) {
@@ -388,14 +400,25 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
           // 단독 공연처럼 평범한 번호 목록으로 보임).
           : _SetlistNumbered(
               setlist: [for (final name in local) SongEntry(name: name)],
+              selection: _musicServiceSelection,
             );
     }
     if (_presetlistStatus != _FetchStatus.loaded) {
       return _statusText(_presetlistStatus, _presetlistErrorCode);
     }
+    // 단독 공연(등록 아티스트 정확히 1명)일 때만 곡 검색 폴백으로 씀 - 페스티벌은
+    // 어느 아티스트인지 특정 못 하니 원래대로 곡명만으로 검색(그룹 아코디언은
+    // song.artist 태그를 그대로 씀).
+    final fallbackArtist = _fetchedArtistNames.length == 1
+        ? _fetchedArtistNames.first
+        : null;
     return _fetchedSetlist.isEmpty
         ? const _UndecidedText()
-        : _SetlistNumbered(setlist: _fetchedSetlist);
+        : _SetlistNumbered(
+            setlist: _fetchedSetlist,
+            selection: _musicServiceSelection,
+            fallbackArtist: fallbackArtist,
+          );
   }
 
   @override
@@ -468,6 +491,9 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                     SizedBox(height: context.rs(16)),
                     _ArticleSection(
                       title: '예상 셋 리스트',
+                      trailing: SetlistServiceIcon(
+                        selection: _musicServiceSelection,
+                      ),
                       child: _buildSetlistBody(hasConcertId),
                     ),
                   ],
@@ -551,9 +577,7 @@ class _Masthead extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _DDayStamp(label: dday),
-          ],
+          children: [_DDayStamp(label: dday)],
         ),
         SizedBox(height: context.rs(8)),
         // 제호 아래 이중 괘선(굵은 선 + 얇은 선).
@@ -695,17 +719,30 @@ class _SpreadPoster extends StatelessWidget {
 class _ArticleSection extends StatelessWidget {
   final String title;
   final Widget child;
+  // "예상 셋 리스트"에서만 쓰는 서비스 아이콘(다른 기사 섹션은 안 씀).
+  final Widget? trailing;
 
-  const _ArticleSection({required this.title, required this.child});
+  const _ArticleSection({
+    required this.title,
+    required this.child,
+    this.trailing,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: _serif(context, size: 15, weight: FontWeight.w900),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: _serif(context, size: 15, weight: FontWeight.w900),
+              ),
+            ),
+            ?trailing,
+          ],
         ),
         SizedBox(height: context.rs(9)),
         child,
@@ -799,8 +836,15 @@ class _NewsTimeRow extends StatelessWidget {
 /// 있는 동안만 미리보기 가능(떼면 다시 블러).
 class _SetlistNumbered extends StatefulWidget {
   final List<SongEntry> setlist;
+  final ValueListenable<MusicService> selection;
+  // 단독 공연에서 song.artist가 비어있는 곡의 검색 폴백(있으면).
+  final String? fallbackArtist;
 
-  const _SetlistNumbered({required this.setlist});
+  const _SetlistNumbered({
+    required this.setlist,
+    required this.selection,
+    this.fallbackArtist,
+  });
 
   @override
   State<_SetlistNumbered> createState() => _SetlistNumberedState();
@@ -832,8 +876,15 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
       builder: (context, _) {
         final groups = _groupByArtist();
         final content = groups.length > 1
-            ? _SetlistGroupedByArtist(groups: groups)
-            : _FlatNumberedSongs(songs: widget.setlist);
+            ? _SetlistGroupedByArtist(
+                groups: groups,
+                selection: widget.selection,
+              )
+            : _FlatNumberedSongs(
+                songs: widget.setlist,
+                selection: widget.selection,
+                fallbackArtist: widget.fallbackArtist,
+              );
 
         if (AppSettingsStore.instance.showExpectedSetlist) return content;
 
@@ -865,12 +916,22 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
 
 // [백엔드 수정]
 // (앵콜) 텍스트 제거.
-List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
+List<Widget> _buildSongRows(
+  List<SongEntry> songs, {
+  required double gap,
+  required ValueListenable<MusicService> selection,
+  String? fallbackArtist,
+}) {
   return [
     for (var i = 0; i < songs.length; i++)
       Padding(
         padding: EdgeInsets.only(bottom: i == songs.length - 1 ? 0 : gap),
-        child: _SongRow(index: i + 1, song: songs[i]),
+        child: _SongRow(
+          index: i + 1,
+          song: songs[i],
+          selection: selection,
+          fallbackArtist: fallbackArtist,
+        ),
       ),
   ];
 }
@@ -878,14 +939,27 @@ List<Widget> _buildSongRows(List<SongEntry> songs, {required double gap}) {
 /// 단독 공연(또는 아티스트 구분이 없는) 예상 셋리 - 번호만 매긴 평범한 목록.
 class _FlatNumberedSongs extends StatelessWidget {
   final List<SongEntry> songs;
+  final ValueListenable<MusicService> selection;
+  // [백엔드 수정] 콘서트 등록 아티스트가 정확히 1명일 때만 채워짐(_ConcertBeforeBodyState
+  // 참고) - song.artist가 비어있는 곡의 음악앱 검색 폴백용.
+  final String? fallbackArtist;
 
-  const _FlatNumberedSongs({required this.songs});
+  const _FlatNumberedSongs({
+    required this.songs,
+    required this.selection,
+    this.fallbackArtist,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: _buildSongRows(songs, gap: context.rs(9)),
+      children: _buildSongRows(
+        songs,
+        gap: context.rs(9),
+        selection: selection,
+        fallbackArtist: fallbackArtist,
+      ),
     );
   }
 }
@@ -897,8 +971,12 @@ class _FlatNumberedSongs extends StatelessWidget {
 /// 펼칠 때 그 아티스트 위치로 화면을 스크롤.
 class _SetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
+  final ValueListenable<MusicService> selection;
 
-  const _SetlistGroupedByArtist({required this.groups});
+  const _SetlistGroupedByArtist({
+    required this.groups,
+    required this.selection,
+  });
 
   @override
   State<_SetlistGroupedByArtist> createState() =>
@@ -951,6 +1029,7 @@ class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
               songs: widget.groups[g].value,
               expanded: g == _expandedIndex,
               onTap: () => _toggle(g),
+              selection: widget.selection,
             ),
           ),
       ],
@@ -966,12 +1045,14 @@ class _ArtistAccordionSection extends StatelessWidget {
   final List<SongEntry> songs;
   final bool expanded;
   final VoidCallback onTap;
+  final ValueListenable<MusicService> selection;
 
   const _ArtistAccordionSection({
     required this.artistName,
     required this.songs,
     required this.expanded,
     required this.onTap,
+    required this.selection,
   });
 
   @override
@@ -997,11 +1078,7 @@ class _ArtistAccordionSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _keepWords(artistName),
-                    style: _serif(
-                      context,
-                      size: 14.5,
-                      weight: FontWeight.w900,
-                    ),
+                    style: _serif(context, size: 14.5, weight: FontWeight.w900),
                   ),
                 ),
               ],
@@ -1017,7 +1094,11 @@ class _ArtistAccordionSection extends StatelessWidget {
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: _buildSongRows(songs, gap: context.rs(8)),
+              children: _buildSongRows(
+                songs,
+                gap: context.rs(8),
+                selection: selection,
+              ),
             ),
           ),
       ],
@@ -1026,32 +1107,49 @@ class _ArtistAccordionSection extends StatelessWidget {
 }
 
 /// 번호 + 곡 이름 한 줄. 단독/아코디언 펼친 목록 둘 다 재사용.
+/// 누르면 [selection]에 담긴 현재 서비스로 이 곡을 검색.
 class _SongRow extends StatelessWidget {
   final int index;
   final SongEntry song;
+  final ValueListenable<MusicService> selection;
+  final String? fallbackArtist;
 
-  const _SongRow({required this.index, required this.song});
+  const _SongRow({
+    required this.index,
+    required this.song,
+    required this.selection,
+    this.fallbackArtist,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: context.rs(22),
-          child: Text(
-            '$index',
-            softWrap: false,
-            style: _serif(context, size: 14, weight: FontWeight.w900),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => openSetlistSongSearch(
+        selection,
+        artist: song.artist,
+        fallbackArtist: fallbackArtist,
+        songName: song.name,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: context.rs(22),
+            child: Text(
+              '$index',
+              softWrap: false,
+              style: _serif(context, size: 14, weight: FontWeight.w900),
+            ),
           ),
-        ),
-        Expanded(
-          child: Text(
-            _keepWords(song.name),
-            style: _serif(context, size: 14.5, weight: FontWeight.w500),
+          Expanded(
+            child: Text(
+              _keepWords(song.name),
+              style: _serif(context, size: 14.5, weight: FontWeight.w500),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -1077,34 +1175,32 @@ class _UndecidedText extends StatelessWidget {
 }
 
 /// 신문지 질감(요청4): 약간 회색끼 도는 바탕 + 은은한 얼룩(mottle) + 구겨짐
-/// 주름(crease) + 미세한 종이 결(grain). [foreground]가 false면 내용 뒤에
-/// 까는 바탕(색 채움 + 얼룩 + 주름 + 결)이고, true면 내용 위에 아주 옅게
-/// 얹는 주름/비네팅만 그립니다(글자 위로도 종이 결이 지나가는 느낌).
+/// 신문 바탕색과 은은한 얼룩, 미세한 종이 결.
 /// 고정 시드라 리빌드 때 무늬가 흔들리지 않습니다.
 class _NewsprintPainter extends CustomPainter {
-  final bool foreground;
-
-  const _NewsprintPainter({required this.foreground});
-
   @override
   void paint(Canvas canvas, Size size) {
     final rnd = math.Random(20260912);
     final rect = Offset.zero & size;
 
-    if (!foreground) {
+    {
       // 바탕색(회색끼 도는 신문지).
       canvas.drawRect(rect, Paint()..color = _newsprint);
 
       // 은은한 얼룩(밝고 어두운 큰 원들을 아주 옅게 겹쳐 종이 얼룩 느낌).
       for (var i = 0; i < 16; i++) {
-        final c = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+        final c = Offset(
+          rnd.nextDouble() * size.width,
+          rnd.nextDouble() * size.height,
+        );
         final r = size.shortestSide * (0.12 + rnd.nextDouble() * 0.22);
         final dark = rnd.nextBool();
         final paint = Paint()
           ..shader = RadialGradient(
             colors: [
-              (dark ? Colors.black : Colors.white)
-                  .withValues(alpha: dark ? 0.035 : 0.05),
+              (dark ? Colors.black : Colors.white).withValues(
+                alpha: dark ? 0.035 : 0.05,
+              ),
               const Color(0x00000000),
             ],
           ).createShader(Rect.fromCircle(center: c, radius: r));
@@ -1112,54 +1208,20 @@ class _NewsprintPainter extends CustomPainter {
       }
     }
 
-    // 구겨짐 주름: 밝은 선 + 바로 옆 어두운 선(접힌 능선처럼 보이게).
-    final creaseCount = foreground ? 5 : 9;
-    for (var i = 0; i < creaseCount; i++) {
-      final start = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
-      final angle = rnd.nextDouble() * math.pi * 2;
-      final len = size.longestSide * (0.35 + rnd.nextDouble() * 0.55);
-      final dir = Offset(math.cos(angle), math.sin(angle));
-      final end = start + dir * len;
-      final perp = Offset(-dir.dy, dir.dx);
-      final lightA = foreground ? 0.03 : 0.06;
-      final darkA = foreground ? 0.025 : 0.05;
-      canvas.drawLine(
-        start,
-        end,
-        Paint()
-          ..color = Colors.white.withValues(alpha: lightA)
-          ..strokeWidth = 1.1,
-      );
-      canvas.drawLine(
-        start + perp * 1.3,
-        end + perp * 1.3,
-        Paint()
-          ..color = Colors.black.withValues(alpha: darkA)
-          ..strokeWidth = 1.0,
-      );
-    }
-
-    if (!foreground) {
+    {
       // 미세한 종이 결(작은 점들).
       final grain = Paint();
       for (var i = 0; i < 260; i++) {
-        final p = Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height);
+        final p = Offset(
+          rnd.nextDouble() * size.width,
+          rnd.nextDouble() * size.height,
+        );
         grain.color = Colors.black.withValues(alpha: rnd.nextDouble() * 0.03);
         canvas.drawCircle(p, 0.6, grain);
       }
-    } else {
-      // 가장자리 비네팅(살짝 어둡게) — 오래된 신문지 느낌.
-      final vignette = Paint()
-        ..shader = RadialGradient(
-          radius: 0.9,
-          colors: [const Color(0x00000000), Colors.black.withValues(alpha: 0.05)],
-          stops: const [0.75, 1.0],
-        ).createShader(rect);
-      canvas.drawRect(rect, vignette);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _NewsprintPainter old) =>
-      old.foreground != foreground;
+  bool shouldRepaint(covariant _NewsprintPainter old) => false;
 }

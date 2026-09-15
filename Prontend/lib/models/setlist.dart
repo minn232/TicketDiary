@@ -76,6 +76,11 @@ class PreSetlistResponse {
   final bool isUserEdited;
   final String? editedUserNickname;
 
+  /// 콘서트에 등록된 아티스트(그 날짜 배정이 있으면 그 아티스트로 좁혀짐).
+  /// [RealSetlistResponse.artistNames]와 동일 - 단독 공연에서 song.artist가
+  /// 비어있는 곡을 음악앱 검색으로 연결할 때 폴백 아티스트로 씀.
+  final List<String> artistNames;
+
   const PreSetlistResponse({
     required this.id,
     required this.concertId,
@@ -83,6 +88,7 @@ class PreSetlistResponse {
     required this.songs,
     required this.isUserEdited,
     this.editedUserNickname,
+    this.artistNames = const [],
   });
 
   factory PreSetlistResponse.fromJson(Map<String, dynamic> json) {
@@ -95,6 +101,9 @@ class PreSetlistResponse {
           .toList(),
       isUserEdited: json['is_user_edited'] as bool,
       editedUserNickname: json['edited_user_nickname'] as String?,
+      artistNames: (json['artist_names'] as List<dynamic>? ?? const [])
+          .map((e) => e as String)
+          .toList(),
     );
   }
 }
