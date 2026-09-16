@@ -29,13 +29,16 @@ class Settings(BaseSettings):
     # vLLM은 보통 임의 문자열이면 충분
     VLLM_API_KEY: str = "EMPTY"
 
-    # 배치 처리 시 모델 호출을 동시에 몇 건까지 허용할지 (crawl/artist/diary 배치 전부
-    # 공유하는 값 - 셋 다 결국 같은 GPU/vLLM 인스턴스를 두고 경쟁하기 때문). 평소
-    # 트래픽(하루 수십 건)은 기본값으로도 충분하고, 최초 아티스트 백필처럼 한 번에
-    # 수천 건을 몰아서 보낼 때만 일시적으로 올리는 용도. vLLM 쪽 GPU 메모리 여유에
-    # 따라 감당 가능한 동시 요청 수가 다르므로, 낮은 값으로 먼저 테스트하고 점진적으로
-    # 올릴 것 (너무 높이면 vLLM이 OOM 날 수 있음).
-    BATCH_CONCURRENCY: int = 3
+    # 배치 처리 시 모델 호출을 동시에 몇 건까지 허용할지 - crawl/artist/diary 배치별로 독립.
+    # 셋 다 결국 같은 GPU/vLLM 인스턴스를 두고 경쟁하니 동시에 여러 배치를 몰아서 돌리면
+    # 부하는 합산된다는 점은 감안할 것. crawl은 필드가 많고(타임테이블/가격/아티스트 등)
+    # 이미지 프리필 비용도 커서 낮게, artist는 상대적으로 가벼워 실측상 훨씬 높여도
+    # 문제없었음. 평소 트래픽은 기본값으로 충분하고, 몰아서 보낼 때만 일시적으로 올리는
+    # 용도 - vLLM 쪽 GPU 메모리 여유에 따라 감당 가능한 값이 다르므로 낮게 시작해서
+    # 점진적으로 올릴 것 (너무 높이면 vLLM이 OOM 나거나 스케줄러가 요청을 계속 deferred함).
+    CRAWL_BATCH_CONCURRENCY: int = 30
+    ARTIST_BATCH_CONCURRENCY: int = 5
+    DIARY_BATCH_CONCURRENCY: int = 3
 
 
 settings = Settings()
