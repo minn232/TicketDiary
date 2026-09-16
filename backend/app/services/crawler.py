@@ -771,6 +771,14 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         if concert.ticketing_date is not None:
             return
 
+        # LLM이 이미 지금 스크린샷을 분석해서 결과를 줬는데 ticketing_date를 못 찾은 경우 -
+        # _upload_screenshot의 업로드 키가 concert_id당 고정(타임스탬프 없음)이라 재크롤링해도
+        # URL이 그대로라서 pod dedup에 걸려 재분석 자체가 안 됨. 재크롤링해봤자 소용없으므로
+        # 포기. 페스티벌 라인업 재확인(_check_festival_lineup)은 이 함수를 안 쓰고 타임스탬프
+        # URL을 쓰는 별도 경로라 무관 - 새 스크린샷이 생기면 그쪽에서 이 값을 다시 None으로 리셋함
+        if concert.crawl_result_received_at is not None:
+            return
+
         # 공연이 이미 끝났으면 더 이상 의미 없음
         if concert.end_date is not None and concert.end_date <= now:
             return
@@ -897,6 +905,10 @@ async def send_screenshots_to_llm() -> None:
                 # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
                 Concert.admin_reviewed_at.is_(None),
                 Concert.ai_reviewed_at.is_(None),
+                # 이미 지금 스크린샷으로 LLM 콜백을 받은 건 재전송 안 함(ticketing_date 유무와
+                # 무관 - 못 찾았어도 이미 처리는 된 것). 새 스크린샷이 생기면(_check_festival_lineup
+                # 등) 그쪽에서 이 값을 None으로 리셋하므로 여기 다시 걸림
+                Concert.crawl_result_received_at.is_(None),
             )
         )
         concerts = list(result.scalars().all())
@@ -1052,6 +1064,7 @@ async def retry_pending_crawls() -> None:
             select(Concert.id).where(
                 Concert.id.in_([UUID(cid) for cid in followed_ids]),
                 Concert.ticketing_date.is_(None),
+                Concert.crawl_result_received_at.is_(None),
                 Concert.end_date > now,
             )
         )
@@ -1142,6 +1155,10 @@ async def _check_festival_lineup(concert_id) -> None:
         concert.crawl_screenshot_url = url
         concert.lineup_snapshot_hash = text_hash
         concert.lineup_snapshot_img_srcs = img_srcs
+        # 새 스크린샷이라 이전 분석 결과는 더 이상 유효하지 않음 - 리셋 안 하면
+        # send_screenshots_to_llm의 crawl_result_received_at IS NULL 필터에 걸려 이 새
+        # 스크린샷이 영영 재전송 대상에서 빠지게 됨
+        concert.crawl_result_received_at = None
         await db.commit()
         logger.info(f"페스티벌 라인업 변경 감지, 스크린샷 갱신: {concert.name} → {url}")
 
