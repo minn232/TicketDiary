@@ -41,6 +41,11 @@ class Concert(Base):
     # 재시도하지 않도록 _MAX_CRAWL_ATTEMPTS(crawler.py)와 비교해 포기 시점을 판단하는 데 씀
     crawl_attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     ticketing_date = Column(DateTime(timezone=True), nullable=True)
+    # LLM 크롤링 분석 콜백(/crawl-result)이 실제로 도착한 시각 - ticketing_date 등 개별 필드
+    # 유무와 무관하게 무조건 찍힘. ticketing_date만으로 "크롤링 분석 완료"를 판단하면 스크린샷에서
+    # 날짜를 못 찾은 건(페스티벌 등)을 영원히 미완료로 오판하고 재전송을 반복하게 됨(2026-09-16
+    # 실측 확인, pod dedup 11건 vs ticketing_date 3건) - 그걸 막기 위해 별도로 둠
+    crawl_result_received_at = Column(DateTime(timezone=True), nullable=True)
     # 선예매/1차/2차 등 예매 단계별 전체 내역: [{"phase": "선예매", "date": "2026-08-25"}, ...].
     # ticketing_date는 이 중 가장 이른 날짜(크롤링 "완료" 판정용)만 담고 있어 단계 구분이
     # 안 남으므로, 화면에 전체 단계를 보여주기 위해 원본 배열을 별도로 둔다.

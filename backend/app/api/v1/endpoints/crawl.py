@@ -60,6 +60,12 @@ async def receive_crawl_result(
     await mark_llm_callback_received()
     background_tasks.add_task(try_stop_pod_if_done)
 
+    # 이 콜백이 도착했다는 사실 자체를 기록 - 아래 개별 필드가 하나도 안 채워져도(스크린샷에서
+    # 못 찾은 경우) LLM이 이 공연을 이미 처리했다는 건 남아야 재전송 배치가 다시 안 보낸다.
+    # updated가 비어도 유실되지 않도록 독립적으로 커밋
+    concert.crawl_result_received_at = datetime.now(timezone.utc)
+    await db.commit()
+
     updated: list[str] = []
 
     if body.timetable is not None:
