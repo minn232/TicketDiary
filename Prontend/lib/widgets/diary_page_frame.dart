@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'pressable_scale.dart';
+import 'hanji_texture.dart';
 import 'responsive_text.dart';
 
 /// 다이어리 UI의 공통 프레임(가죽 배경 + 겹친 페이지 레이어 + 바인더 링 + 우측 탭)을
@@ -187,6 +188,10 @@ class DiaryPageFrame extends StatelessWidget {
   // 레터박스 그대로.
   final Widget? landscapeCompanionPanel;
 
+  /// 설정 탭을 제외한 다이어리 속지에 공연 후 페이지 크라프트지와 같은
+  /// 한지 질감을 아주 옅게 얹습니다.
+  final bool pageTextureEnabled;
+
   const DiaryPageFrame({
     super.key,
     required this.child,
@@ -222,6 +227,7 @@ class DiaryPageFrame extends StatelessWidget {
     this.scaleOverride,
     this.marginEachSideOverride,
     this.landscapeCompanionPanel,
+    this.pageTextureEnabled = true,
   });
 
   /// 페이지 한 장을 [pageHeight] 높이에 맞춰 그렸을 때의 폭.
@@ -788,7 +794,21 @@ class DiaryPageFrame extends StatelessWidget {
                         ),
                       ],
                     ),
-                    child: Stack(fit: StackFit.expand, children: [child]),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        child,
+                        if (pageTextureEnabled)
+                          IgnorePointer(
+                            child: CustomPaint(
+                              painter: HanjiTexturePainter(
+                                opacity: kHanjiTextureOpacity * .7,
+                                seed: kHanjiTextureSeed + 37,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
           ),
         ),

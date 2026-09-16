@@ -36,6 +36,7 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
+      pageTextureEnabled: false,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
       child: FavoritePinnedPanel(
         onBack: () => Navigator.pop(context),

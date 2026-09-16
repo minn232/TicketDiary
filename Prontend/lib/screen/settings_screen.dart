@@ -190,6 +190,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
+      pageTextureEnabled: false,
       isTabRoot: true,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.settings),
       landscapeCompanionPanel: DiaryLandscapeCoverPanel(
@@ -335,7 +336,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           title: '알림함',
                           onTap: () => NotificationsScreen.show(
                             menuContext,
-                            frameScale: DiaryFrameScale.maybeOf(menuContext) ??
+                            frameScale:
+                                DiaryFrameScale.maybeOf(menuContext) ??
                                 diaryScaleFromMediaQuery(menuContext),
                           ),
                         ),
@@ -397,7 +399,6 @@ class _SwitchRow extends StatelessWidget {
   final String title;
   final bool value;
   final ValueChanged<bool> onChanged;
-  final Color? titleColor;
   // "푸쉬 알림" 하위 항목처럼 상위 줄과 구분되게 왼쪽으로 들여써야 할 때 true.
   final bool indent;
 
@@ -405,7 +406,6 @@ class _SwitchRow extends StatelessWidget {
     required this.title,
     required this.value,
     required this.onChanged,
-    this.titleColor,
     this.indent = false,
   });
 
@@ -423,7 +423,7 @@ class _SwitchRow extends StatelessWidget {
                 style: TextStyle(
                   fontSize: context.sp(15),
                   fontWeight: FontWeight.w800,
-                  color: titleColor ?? Colors.black87,
+                  color: Colors.black87,
                 ),
               ),
             ),
@@ -473,8 +473,7 @@ class _MusicServiceRow extends StatelessWidget {
                 selected: service == value,
                 onTap: () => onChanged(service),
               ),
-              if (service != MusicService.values.last)
-                const SizedBox(width: 6),
+              if (service != MusicService.values.last) const SizedBox(width: 6),
             ],
           ],
         ),
@@ -644,7 +643,9 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   /// 비정상 종료/실패를 알리는 확인용 알림창. 확인을 누르면 닫히고, 이미
@@ -728,8 +729,9 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
       return;
     }
 
-    final result = await GuestMigrationService.instance
-        .migrateGuestDataToKakao(code);
+    final result = await GuestMigrationService.instance.migrateGuestDataToKakao(
+      code,
+    );
     _showMessage(
       result.hasFailures
           ? '${result.migratedCount}개를 옮겼어요. ${result.failedCount}개는 옮기지 못해 기기에 남아있어요.'
@@ -855,10 +857,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
                       onTap: _busy ? null : _loginWithKakao,
                       busy: _busy,
                     )
-                  : _LogoutButton(
-                      onTap: _busy ? null : _logout,
-                      busy: _busy,
-                    ),
+                  : _LogoutButton(onTap: _busy ? null : _logout, busy: _busy),
             ),
           ],
         ),
@@ -883,7 +882,8 @@ class _ProfileRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasImage = !isGuest && profileImageUrl != null && profileImageUrl!.isNotEmpty;
+    final hasImage =
+        !isGuest && profileImageUrl != null && profileImageUrl!.isNotEmpty;
     final label = isGuest
         ? '게스트로 로그인 중'
         : (nickname != null && nickname!.isNotEmpty ? nickname! : '카카오 계정');
@@ -930,7 +930,10 @@ class _ProfileRow extends StatelessWidget {
         const SizedBox(height: 10),
         Text(
           label,
-          style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
+          style: TextStyle(
+            fontSize: context.sp(16),
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ],
     );
@@ -967,7 +970,10 @@ class _KakaoLoginButton extends StatelessWidget {
               )
             : Text(
                 '카카오로 로그인',
-                style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
+                style: TextStyle(
+                  fontSize: context.sp(16),
+                  fontWeight: FontWeight.w800,
+                ),
               ),
       ),
     );
@@ -1004,7 +1010,10 @@ class _LogoutButton extends StatelessWidget {
               )
             : Text(
                 '로그아웃',
-                style: TextStyle(fontSize: context.sp(16), fontWeight: FontWeight.w800),
+                style: TextStyle(
+                  fontSize: context.sp(16),
+                  fontWeight: FontWeight.w800,
+                ),
               ),
       ),
     );
