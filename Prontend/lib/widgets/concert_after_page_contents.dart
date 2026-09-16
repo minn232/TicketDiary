@@ -4,7 +4,14 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart' show kLongPressTimeout, kTouchSlop;
+import 'package:flutter/gestures.dart'
+    show
+        kLongPressTimeout,
+        kTouchSlop,
+        PointerPanZoomStartEvent,
+        PointerPanZoomUpdateEvent,
+        PointerScrollEvent,
+        PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1378,6 +1385,102 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     }
   }
 
+  void _measureMemoForGesture(String key, _MemoTransform t) {
+    final box = _keyFor(key).currentContext?.findRenderObject() as RenderBox?;
+    if (box != null && box.hasSize) t.measuredSize = box.size;
+  }
+
+  void _applyMemoTransform(
+    _MemoTransform t, {
+    required double canvasW,
+    required double canvasH,
+    required double titleSafeBottom,
+    required Offset rawOffset,
+    required double rawScale,
+    required double rawRotation,
+  }) {
+    final newScale = _clampMemoScaleToCanvas(
+      rawScale,
+      rawRotation,
+      t.measuredSize,
+      canvasW,
+      canvasH,
+      minTop: titleSafeBottom,
+    );
+    t.scale = newScale;
+    t.rotation = rawRotation;
+    t.offset = _clampToCanvas(
+      rawOffset,
+      newScale,
+      rawRotation,
+      t.measuredSize,
+      canvasW,
+      canvasH,
+      minTop: titleSafeBottom,
+    );
+  }
+
+  // 임시 발표/노트북 테스트용: 트랙패드에서도 포스터/사진/편지봉투의
+  // 확대·회전을 확인할 수 있게 둔 보조 입력입니다. 배포 전 제거 예정입니다.
+  void _handleTemporaryTrackpadSignal(
+    String key,
+    _MemoTransform t,
+    PointerSignalEvent event, {
+    required double canvasW,
+    required double canvasH,
+    required double titleSafeBottom,
+  }) {
+    if (event is! PointerScrollEvent) return;
+    _bringFront(key);
+    _measureMemoForGesture(key, t);
+    final delta = event.scrollDelta;
+    final scaleFactor = math.exp(-delta.dy * .0015).clamp(.92, 1.08);
+    final rotationDelta = delta.dx * .005;
+    setState(() {
+      _applyMemoTransform(
+        t,
+        canvasW: canvasW,
+        canvasH: canvasH,
+        titleSafeBottom: titleSafeBottom,
+        rawOffset: t.offset,
+        rawScale: t.scale * scaleFactor,
+        rawRotation: t.rotation + rotationDelta,
+      );
+    });
+  }
+
+  void _startTemporaryTrackpadPanZoom(
+    String key,
+    _MemoTransform t,
+    PointerPanZoomStartEvent event,
+  ) {
+    _bringFront(key);
+    _startScale = t.scale;
+    _startRot = t.rotation;
+    _startOffset = t.offset;
+    _measureMemoForGesture(key, t);
+  }
+
+  void _updateTemporaryTrackpadPanZoom(
+    _MemoTransform t,
+    PointerPanZoomUpdateEvent event, {
+    required double canvasW,
+    required double canvasH,
+    required double titleSafeBottom,
+  }) {
+    setState(() {
+      _applyMemoTransform(
+        t,
+        canvasW: canvasW,
+        canvasH: canvasH,
+        titleSafeBottom: titleSafeBottom,
+        rawOffset: _startOffset + event.pan,
+        rawScale: _startScale * event.scale,
+        rawRotation: _startRot + event.rotation,
+      );
+    });
+  }
+
   /// 메모지의 이동·회전·확대 제스처. 실제 변환 경계는 텍스트 배치에도 사용합니다.
   Widget _memo(
     String key, {
@@ -1401,46 +1504,51 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         : SizedBox(key: _keyFor(key), width: baseW, child: child);
     Widget gestured;
     if (_edit) {
-      gestured = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: key == 'envelope' ? _openLetter : null,
-        onScaleStart: (d) {
-          _bringFront(key);
-          _startScale = t.scale;
-          _startRot = t.rotation;
-          _startOffset = t.offset;
-          _startFocal = d.focalPoint;
-          // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
-          // 경계 클램프 계산에 필요합니다.
-          final box =
-              _keyFor(key).currentContext?.findRenderObject() as RenderBox?;
-          if (box != null && box.hasSize) t.measuredSize = box.size;
-        },
-        onScaleUpdate: (d) => setState(() {
-          // 한 손가락=이동, 두 손가락=확대축소(scale)+회전(rotation) 동시.
-          final rawOffset = _startOffset + (d.focalPoint - _startFocal);
-          final newRotation = _startRot + d.rotation;
-          final newScale = _clampMemoScaleToCanvas(
-            _startScale * d.scale,
-            newRotation,
-            t.measuredSize,
-            canvasW,
-            canvasH,
-            minTop: titleSafeBottom,
-          );
-          t.scale = newScale;
-          t.rotation = newRotation;
-          t.offset = _clampToCanvas(
-            rawOffset,
-            newScale,
-            newRotation,
-            t.measuredSize,
-            canvasW,
-            canvasH,
-            minTop: titleSafeBottom,
-          );
-        }),
-        child: content,
+      gestured = Listener(
+        onPointerSignal: (event) => _handleTemporaryTrackpadSignal(
+          key,
+          t,
+          event,
+          canvasW: canvasW,
+          canvasH: canvasH,
+          titleSafeBottom: titleSafeBottom,
+        ),
+        onPointerPanZoomStart: (event) =>
+            _startTemporaryTrackpadPanZoom(key, t, event),
+        onPointerPanZoomUpdate: (event) => _updateTemporaryTrackpadPanZoom(
+          t,
+          event,
+          canvasW: canvasW,
+          canvasH: canvasH,
+          titleSafeBottom: titleSafeBottom,
+        ),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: key == 'envelope' ? _openLetter : null,
+          onScaleStart: (d) {
+            _bringFront(key);
+            _startScale = t.scale;
+            _startRot = t.rotation;
+            _startOffset = t.offset;
+            _startFocal = d.focalPoint;
+            // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
+            // 경계 클램프 계산에 필요합니다.
+            _measureMemoForGesture(key, t);
+          },
+          onScaleUpdate: (d) => setState(() {
+            // 한 손가락=이동, 두 손가락=확대축소(scale)+회전(rotation) 동시.
+            _applyMemoTransform(
+              t,
+              canvasW: canvasW,
+              canvasH: canvasH,
+              titleSafeBottom: titleSafeBottom,
+              rawOffset: _startOffset + (d.focalPoint - _startFocal),
+              rawScale: _startScale * d.scale,
+              rawRotation: _startRot + d.rotation,
+            );
+          }),
+          child: content,
+        ),
       );
     } else {
       gestured = content;

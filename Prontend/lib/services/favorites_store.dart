@@ -124,13 +124,12 @@ class FavoritesStore extends ChangeNotifier {
           changed = true;
         }
       }
-      // [백엔드 수정]
-      // 서버에서 지워진 항목은 로컬에서도 삭제.
-      final staleArtists =
-          _artists.keys.where((n) => !serverNames.contains(n)).toList();
-      for (final name in staleArtists) {
-        _artists.remove(name);
-        changed = true;
+      // 서버가 비어 있거나 새 브랜치/새 DB에서 아직 동기화되지 않은 상태라면,
+      // 기기에 남아 있는 로컬 찜을 먼저 서버로 올립니다. 그렇지 않으면 소식 탭
+      // 진입 시 빈 서버 목록이 로컬 찜을 지워버려 연동이 끊긴 것처럼 보입니다.
+      final localNames = _artists.keys.toList();
+      if (localNames.isNotEmpty) {
+        await _social.replaceArtistFollows(localNames);
       }
     } catch (_) {
       _serverSynced = false;
@@ -174,15 +173,11 @@ class FavoritesStore extends ChangeNotifier {
           // 개별 공연 복원 실패는 건너뜁니다.
         }
       }
-      // [백엔드 수정]
-      // 서버에서 지워진 공연은 로컬에서도 삭제(id 없는 옛 데이터는 제외).
-      final staleConcerts = [
-        for (final c in _concerts.values)
-          if (c.id.isNotEmpty && !serverIds.contains(c.id)) c.name,
-      ];
-      for (final name in staleConcerts) {
-        _concerts.remove(name);
-        changed = true;
+      // 서버가 비어 있거나 새 브랜치/새 DB에서 아직 동기화되지 않은 상태라면,
+      // 기기에 남아 있는 로컬 찜 공연을 먼저 서버로 올립니다. 서버 응답에 없는
+      // 값을 곧바로 지우면, 백엔드가 잠시 꺼져 있었던 뒤에도 로컬 찜이 사라집니다.
+      if (_concerts.values.any((c) => c.id.isNotEmpty)) {
+        await _pushConcertsToServer();
       }
     } catch (_) {
       _serverSynced = false;
@@ -227,17 +222,21 @@ class FavoritesStore extends ChangeNotifier {
         id: map['id'] as String? ?? '',
         kopisId: map['kopisId'] as String?,
         venue: map['venue'] as String?,
-        startDate: startDateRaw != null ? DateTime.tryParse(startDateRaw) : null,
+        startDate: startDateRaw != null
+            ? DateTime.tryParse(startDateRaw)
+            : null,
         endDate: endDateRaw != null ? DateTime.tryParse(endDateRaw) : null,
-        artistName: (map['artistName'] as List<dynamic>?)
+        artistName:
+            (map['artistName'] as List<dynamic>?)
                 ?.map((e) => e as String)
                 .toList() ??
             const [],
         ticketingDate: ticketingDateRaw != null
             ? DateTime.tryParse(ticketingDateRaw)
             : null,
-        ticketingLinks: (map['ticketingLinks'] as Map<String, dynamic>?)
-            ?.map((key, value) => MapEntry(key, value as String)),
+        ticketingLinks: (map['ticketingLinks'] as Map<String, dynamic>?)?.map(
+          (key, value) => MapEntry(key, value as String),
+        ),
       );
       if (concert.name.isNotEmpty) {
         _concerts[concert.name] = concert;
@@ -293,7 +292,8 @@ class FavoritesStore extends ChangeNotifier {
   /// KOPIS 상세에 보통 존재하므로 옛날 로컬 데이터를 채우는 역할도 합니다.
   Future<void> _backfillMissingConcertFields(ConcertModel concert) async {
     final kopisId = concert.kopisId;
-    final missingSomething = concert.venue == null ||
+    final missingSomething =
+        concert.venue == null ||
         concert.startDate == null ||
         concert.ticketingDate == null ||
         concert.ticketingLinks == null;
@@ -313,8 +313,9 @@ class FavoritesStore extends ChangeNotifier {
         venue: current.venue ?? detail.venue,
         startDate: current.startDate ?? detail.startDate,
         endDate: current.endDate ?? detail.endDate,
-        artistName:
-            current.artistName.isNotEmpty ? current.artistName : detail.artistName,
+        artistName: current.artistName.isNotEmpty
+            ? current.artistName
+            : detail.artistName,
         ticketingDate: current.ticketingDate ?? detail.ticketingDate,
         ticketingLinks: current.ticketingLinks ?? detail.ticketingLinks,
       );
@@ -396,12 +397,15 @@ class FavoritesStore extends ChangeNotifier {
   Future<Set<String>> _pushConcertsToServer() async {
     final requested = [
       for (final c in _concerts.values)
-        if (c.id.isNotEmpty) {'concert_id': c.id, 'kopis_concert_id': c.kopisId},
+        if (c.id.isNotEmpty)
+          {'concert_id': c.id, 'kopis_concert_id': c.kopisId},
     ];
     try {
       final saved = await _social.replaceConcertFollows(requested);
       final savedIds = {for (final e in saved) e['concert_id'] as String};
-      final requestedIds = {for (final e in requested) e['concert_id'] as String};
+      final requestedIds = {
+        for (final e in requested) e['concert_id'] as String,
+      };
       return requestedIds.difference(savedIds);
     } catch (_) {
       return {};
