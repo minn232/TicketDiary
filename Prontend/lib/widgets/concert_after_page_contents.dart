@@ -25,6 +25,7 @@ import 'concert_after_palette.dart';
 import 'hanji_texture.dart';
 import 'concert_after_text_canvas.dart';
 import 'app_network_image.dart';
+import 'setlist_editor_sheet.dart';
 import 'setlist_music_service_control.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
@@ -451,8 +452,58 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     );
   }
 
+  // [백엔드 수정]
+  // 셋리스트 유저 수정 진입점 신규. 저장 성공 시 서버 응답(res.songs/
+  // artistNames)을 그대로 반영 - 태그/그룹핑까지 서버 응답 기준으로 다시
+  // 계산되도록 로컬에서 임의로 합치지 않음.
+  Future<void> _openEditor(BuildContext context) async {
+    final ticketId = widget.ticketId;
+    if (ticketId == null) return;
+    await SetlistEditorSheet.show(
+      context,
+      initialSongs: _songs ?? const [],
+      artistNames: _artistNames,
+      onSave: (songs) async {
+        final res = await _service.editRealSetlist(ticketId, songs);
+        if (!mounted) return;
+        setState(() {
+          _songs = res.songs;
+          _artistNames = res.artistNames;
+        });
+      },
+    );
+  }
+
+  Widget _buildEditButton(BuildContext context) {
+    if (widget.ticketId == null) return const SizedBox.shrink();
+    return Align(
+      alignment: Alignment.centerRight,
+      child: TextButton.icon(
+        onPressed: () => _openEditor(context),
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          foregroundColor: widget.ink,
+        ),
+        icon: const Icon(Icons.edit_outlined, size: 14),
+        label: const Text('수정', style: TextStyle(fontSize: 11)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildEditButton(context),
+        Expanded(child: _buildBody(context)),
+      ],
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
     final songs = _songs ?? const <SongEntry>[];
     if (songs.isEmpty && _artistNames.length <= 1) return _buildEmptyState();
 

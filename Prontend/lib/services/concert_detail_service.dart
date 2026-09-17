@@ -38,4 +38,32 @@ class ConcertDetailService {
     final json = await _client.get('/tickets/$ticketId/setlist');
     return RealSetlistResponse.fromJson(json);
   }
+
+  // [백엔드 수정]
+  // 셋리스트 유저 수정 신규 - PATCH는 곡 배열을 통째로 교체(부분 수정 아님).
+  // is_user_edited가 true로 바뀌어, 이후 자동 채움(check_real_setlist_on_view)이
+  // 이 값을 덮어쓰지 않게 서버가 알아서 보호함.
+  /// 실제 셋리스트 수정(`PATCH /tickets/{ticketId}/setlist`).
+  Future<RealSetlistResponse> editRealSetlist(
+    String ticketId,
+    List<SongEntry> songs,
+  ) async {
+    final json = await _client.patch(
+      '/tickets/$ticketId/setlist',
+      body: {'songs': songs.map((s) => s.toJson()).toList()},
+    );
+    return RealSetlistResponse.fromJson(json);
+  }
+
+  /// 예상 셋리스트 수정(`PATCH /tickets/{ticketId}/setlist/pre`).
+  Future<PreSetlistResponse> editPreSetlist(
+    String ticketId,
+    List<SongEntry> songs,
+  ) async {
+    final json = await _client.patch(
+      '/tickets/$ticketId/setlist/pre',
+      body: {'songs': songs.map((s) => s.toJson()).toList()},
+    );
+    return PreSetlistResponse.fromJson(json);
+  }
 }

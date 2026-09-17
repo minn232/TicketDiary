@@ -20,6 +20,13 @@ class SongEntry {
       artist: json['artist'] as String?,
     );
   }
+
+  // [백엔드 수정] 셋리스트 유저 수정(PATCH) 요청 body 직렬화용.
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'encore': encore,
+    'artist': artist,
+  };
 }
 
 /// `GET /concerts/{concertId}/setlist` 응답(실제 셋리스트).

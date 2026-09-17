@@ -15,6 +15,7 @@ import 'fullscreen_poster.dart';
 import 'poster_background.dart';
 import 'pressable_scale.dart';
 import 'responsive_text.dart';
+import 'setlist_editor_sheet.dart';
 import 'setlist_music_service_control.dart';
 
 /// "공연 전" 페이지 콘텐츠 — 신문 1면 디자인.
@@ -339,6 +340,27 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     }
   }
 
+  // [백엔드 수정]
+  // 예상 셋리스트 유저 수정 진입점 신규. 저장 성공 시 서버 응답을 그대로
+  // 반영(로컬에서 임의로 합치지 않음 - artistNames 그룹핑까지 서버 기준).
+  Future<void> _openPreSetlistEditor(BuildContext context) async {
+    final ticketId = widget.ticketInfo?.ticketId;
+    if (ticketId == null) return;
+    await SetlistEditorSheet.show(
+      context,
+      initialSongs: _fetchedSetlist,
+      artistNames: _fetchedArtistNames,
+      onSave: (songs) async {
+        final res = await _service.editPreSetlist(ticketId, songs);
+        if (!mounted) return;
+        setState(() {
+          _fetchedSetlist = res.songs;
+          _fetchedArtistNames = res.artistNames;
+        });
+      },
+    );
+  }
+
   /// 상태별로 보여줄 안내 위젯. [loaded]는 호출부에서 별도로 처리하므로
   /// 여기선 다루지 않습니다.
   Widget _statusText(_FetchStatus status, int? errorCode) {
@@ -491,8 +513,24 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                     SizedBox(height: context.rs(16)),
                     _ArticleSection(
                       title: '예상 셋 리스트',
-                      trailing: SetlistServiceIcon(
-                        selection: _musicServiceSelection,
+                      // [백엔드 수정] 유저 수정 진입점(연필) - ticketId 있을 때만.
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.ticketInfo?.ticketId != null) ...[
+                            IconButton(
+                              onPressed: () => _openPreSetlistEditor(context),
+                              icon: const Icon(Icons.edit_outlined, size: 16),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            SizedBox(width: context.rs(6)),
+                          ],
+                          SetlistServiceIcon(
+                            selection: _musicServiceSelection,
+                          ),
+                        ],
                       ),
                       child: _buildSetlistBody(hasConcertId),
                     ),
