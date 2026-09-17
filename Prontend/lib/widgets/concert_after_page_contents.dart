@@ -803,8 +803,9 @@ TextStyle _articleText(
 // ===== 공연 후 "스크랩북" 자유배치 캔버스 =====
 // 크래프트 종이 위에 메모지(포스터/공연정보/폴라로이드 사진/실제 셋리스트/
 // 공연 후기/타임테이블)를 겹쳐 붙입니다. 페이지 안쪽 어디를 꾹 누르면
-// 편집↔잠금이 토글되고, 편집모드에서 각 메모지를 드래그(이동)·두 손가락(확대축소+회전)
-// 할 수 있으며, 공연 후기는 더블탭하면 타이핑할 수 있습니다. 배치/크기/회전은
+// 잠금모드에서 페이지를 꾹 누르면 편집모드로 들어가고, 편집모드에서 각 메모지를
+// 드래그(이동)·두 손가락(확대축소+회전)할 수 있습니다. 공연 후기는 더블탭하면
+// 타이핑할 수 있습니다. 배치/크기/회전은
 // 서버에 저장하지 않고 세션 동안만 [_scrapStore]/[_scrapZStore]에 담아둡니다.
 // =============================================================================
 
@@ -929,7 +930,6 @@ const List<String> _defaultScrapZOrder = [
 final Map<String, Map<String, _MemoTransform>> _scrapStore = {};
 final Map<String, List<String>> _scrapZStore = {};
 
-enum _TemporaryWidgetTool { move, scale, rotate }
 
 class _ScrapbookCanvas extends StatefulWidget {
   final String layoutKey;
@@ -1053,10 +1053,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   Offset _startOffset = Offset.zero;
   Offset _startFocal = Offset.zero;
 
-  // 임시 발표/노트북 테스트용: 실제 핀치 없이도 버튼을 누른 뒤 위젯을
-  // 드래그해 확대·축소/회전을 확인할 수 있게 둔 보조 도구입니다.
-  // 배포 전 제거 예정입니다.
-  _TemporaryWidgetTool _temporaryWidgetTool = _TemporaryWidgetTool.move;
 
   // 새 공연 후 페이지가 처음 생성될 때 적용되는 고정 기본 프리셋입니다.
   // 한 번 저장된 기본 프리셋은 특정 공연 페이지를 다시 편집해도 갱신하지 않습니다.
@@ -1143,11 +1139,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
 
   void _startPageLongPress(Offset position) {
     _cancelPageLongPress();
-    if (_edit &&
-        (_textCanvasKey.currentState?.containsTextAt(position) ?? false)) {
-      return;
-    }
-    if (_letterOpen) return;
+    if (_edit || _letterOpen) return;
     _pageLongPressDownPosition = position;
     _pageLongPressTimer = Timer(kLongPressTimeout, () {
       if (!mounted) return;
@@ -1479,7 +1471,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
                     child: Center(child: _ModeBadge(edit: _edit)),
                   ),
                 ),
-                _temporaryWidgetToolBar(),
               ],
             ),
           ),
@@ -1553,77 +1544,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     );
   }
 
-  void _setTemporaryWidgetTool(_TemporaryWidgetTool tool) {
-    setState(() {
-      _temporaryWidgetTool = _temporaryWidgetTool == tool
-          ? _TemporaryWidgetTool.move
-          : tool;
-    });
-  }
-
-  Widget _temporaryWidgetToolButton({
-    required _TemporaryWidgetTool tool,
-    required IconData icon,
-    required String label,
-  }) {
-    final active = _temporaryWidgetTool == tool;
-    return Material(
-      color: active ? const Color(0xFF3E3024) : const Color(0xCCFFF7E8),
-      borderRadius: BorderRadius.circular(16),
-      elevation: active ? 4 : 1,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => _setTemporaryWidgetTool(tool),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: active ? Colors.white : const Color(0xFF4B3828),
-              ),
-              const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: active ? Colors.white : const Color(0xFF4B3828),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _temporaryWidgetToolBar() {
-    if (!_edit) return const SizedBox.shrink();
-    return Positioned(
-      right: 18,
-      top: 52,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _temporaryWidgetToolButton(
-            tool: _TemporaryWidgetTool.scale,
-            icon: Icons.open_in_full,
-            label: '확대',
-          ),
-          const SizedBox(width: 8),
-          _temporaryWidgetToolButton(
-            tool: _TemporaryWidgetTool.rotate,
-            icon: Icons.rotate_right,
-            label: '회전',
-          ),
-        ],
-      ),
-    );
-  }
-
   /// 메모지의 이동·회전·확대 제스처. 실제 변환 경계는 텍스트 배치에도 사용합니다.
   Widget _memo(
     String key, {
@@ -1662,16 +1582,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         },
         onScaleUpdate: (d) => setState(() {
           final dragDelta = d.focalPoint - _startFocal;
-          final rawOffset = _temporaryWidgetTool == _TemporaryWidgetTool.move
-              ? _startOffset + dragDelta
-              : _startOffset;
-          final rawScale = _temporaryWidgetTool == _TemporaryWidgetTool.scale
-              ? _startScale * math.exp(-dragDelta.dy * .006)
-              : _startScale * d.scale;
-          final rawRotation =
-              _temporaryWidgetTool == _TemporaryWidgetTool.rotate
-              ? _startRot + dragDelta.dx * .018
-              : _startRot + d.rotation;
+          final rawOffset = _startOffset + dragDelta;
+          final rawScale = _startScale * d.scale;
+          final rawRotation = _startRot + d.rotation;
           _applyMemoTransform(
             t,
             canvasW: canvasW,
