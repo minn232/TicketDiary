@@ -6,6 +6,7 @@ import 'package:ticketdiary/models/artist_model.dart';
 import 'package:ticketdiary/models/concert_model.dart';
 import 'package:ticketdiary/services/artist_recommendation_service.dart';
 import 'package:ticketdiary/services/artist_search_service.dart';
+import 'package:ticketdiary/services/concert_recommendation_service.dart';
 import 'package:ticketdiary/services/concert_search_service.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
@@ -25,12 +26,14 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
   final ArtistRecommendationService? recommendationService;
   final ArtistSearchService? artistSearchService;
   final ConcertSearchService? concertSearchService;
+  final ConcertRecommendationService? concertRecommendationService;
 
   const FavoritePinnedSettingsScreen({
     super.key,
     this.recommendationService,
     this.artistSearchService,
     this.concertSearchService,
+    this.concertRecommendationService,
   });
 
   @override
@@ -43,6 +46,7 @@ class FavoritePinnedSettingsScreen extends StatelessWidget {
         recommendationService: recommendationService,
         artistSearchService: artistSearchService,
         concertSearchService: concertSearchService,
+        concertRecommendationService: concertRecommendationService,
       ),
     );
   }
@@ -68,6 +72,7 @@ class FavoritePinnedPanel extends StatefulWidget {
   final ArtistRecommendationService? recommendationService;
   final ArtistSearchService? artistSearchService;
   final ConcertSearchService? concertSearchService;
+  final ConcertRecommendationService? concertRecommendationService;
 
   const FavoritePinnedPanel({
     super.key,
@@ -76,6 +81,7 @@ class FavoritePinnedPanel extends StatefulWidget {
     this.recommendationService,
     this.artistSearchService,
     this.concertSearchService,
+    this.concertRecommendationService,
   });
 
   @override
@@ -89,6 +95,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
       widget.concertSearchService ?? BackendConcertSearchService();
   late final ArtistRecommendationService _recommendationService =
       widget.recommendationService ?? BackendArtistRecommendationService();
+  late final ConcertRecommendationService _concertRecommendationService =
+      widget.concertRecommendationService ?? BackendConcertRecommendationService();
   final FavoritesStore _favorites = FavoritesStore.instance;
 
   // [백엔드 수정]
@@ -96,16 +104,23 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   List<ArtistModel> _recommendedArtists = const [];
 
   // [백엔드 수정]
-  // 팔로우 직후 새로 나타난 추천 이름 집합(그리드 카드에 NEW 배지).
+  // 찜 공연 검색창이 비어있을 때 보여줄 추천 공연(GET /recommendations/concerts) 신규 연동.
+  List<ConcertModel> _recommendedConcerts = const [];
+
+  // [백엔드 수정]
+  // 팔로우/찜 직후 새로 나타난 추천 이름 집합(그리드 카드에 NEW 배지).
   // 최초 로딩 때는 비교 대상이 없어 강조 안 함.
   Set<String> _newlyRecommendedNames = const {};
+  Set<String> _newlyRecommendedConcertNames = const {};
 
   // [백엔드 수정]
   // 테두리 글로우가 언제 끝나는지 절대 시각으로 기록 - 그리드가 화면
   // 밖으로 나갔다 다시 들어오면 카드 위젯이 새로 만들어져서 로컬 애니메이션
   // 경과 시간이 초기화되는데, 이 값 기준으로 "남은 시간"만 계산해서 재생하면
   // 스크롤할 때마다 글로우가 처음부터 다시 나오지 않고 딱 한 번만 재생됨.
+  // 카테고리별로 독립된 시점을 가져야 해서 아티스트/공연 값을 따로 둡니다.
   DateTime? _newHighlightExpiresAt;
+  DateTime? _concertNewHighlightExpiresAt;
 
   final TextEditingController _artistQueryController = TextEditingController();
   final TextEditingController _concertQueryController = TextEditingController();
@@ -145,6 +160,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     // 다른 기기/이전 세션에서 서버에 저장해둔 찜도 불러와 합칩니다.
     unawaited(_favorites.syncFromServer());
     unawaited(_loadRecommendations());
+    unawaited(_loadConcertRecommendations());
     _favorites.addListener(_onFavoritesChanged);
     // 자동 검색은 안 하지만, 지웠을 때 이전 검색 결과가 남아있지 않도록
     // 빈 텍스트가 됐는지만 감지합니다(네트워크 요청 없음).
@@ -239,7 +255,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
           : <String>{};
       setState(() {
         _recommendedArtists = highlightNew
-            ? _mergeKeepingOrder(previousOrder, recommendations)
+            ? _mergeKeepingOrderBy(previousOrder, recommendations, (a) => a.name)
             : recommendations;
         _newlyRecommendedNames = newlyAdded;
         if (newlyAdded.isNotEmpty) {
@@ -251,42 +267,80 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     }
   }
 
+  // [백엔드 수정]
+  // 찜 공연 추천 API 신규 연동. 위 _loadRecommendations(아티스트)와 동일한
+  // 구조 - 방금 찜한 공연은 서버가 알아서 다음 응답에서 제외해줌.
+  int _concertRecommendationRequestSeq = 0;
+
+  Future<void> _loadConcertRecommendations({bool highlightNew = false}) async {
+    final seq = ++_concertRecommendationRequestSeq;
+    final previousOrder = _recommendedConcerts;
+    final previousNames = previousOrder.map((c) => c.name).toSet();
+    try {
+      final recommendations =
+          await _concertRecommendationService.getRecommendations();
+      if (!mounted || seq != _concertRecommendationRequestSeq) return;
+      final newlyAdded = highlightNew
+          ? {
+              for (final c in recommendations)
+                if (!previousNames.contains(c.name)) c.name,
+            }
+          : <String>{};
+      setState(() {
+        _recommendedConcerts = highlightNew
+            ? _mergeKeepingOrderBy(previousOrder, recommendations, (c) => c.name)
+            : recommendations;
+        _newlyRecommendedConcertNames = newlyAdded;
+        if (newlyAdded.isNotEmpty) {
+          _concertNewHighlightExpiresAt = DateTime.now().add(
+            _kNewHighlightDuration,
+          );
+        }
+      });
+    } catch (_) {
+      // 실패 시 조용히 무시.
+    }
+  }
+
   /// [oldOrder]에 있던 항목은 순서를 그대로 유지하고, [newList]에만 새로
   /// 나타난 항목은 [newList]가 매긴 순위대로 그 사이사이에 끼워 넣습니다.
   /// 예: oldOrder가 [1,2,3,4]이고 newList가 [1,2,5,3,4]면(서버가 5를 2와
   /// 3 사이로 랭크) 결과도 [1,2,5,3,4] - 기존 카드들이 화면에서 위치를
-  /// 갑자기 바꾸며 재배치되지 않도록 함.
-  List<ArtistModel> _mergeKeepingOrder(
-    List<ArtistModel> oldOrder,
-    List<ArtistModel> newList,
+  /// 갑자기 바꾸며 재배치되지 않도록 함. [keyOf]로 아티스트/공연 어느
+  /// 목록이든 공유해서 씁니다.
+  List<T> _mergeKeepingOrderBy<T>(
+    List<T> oldOrder,
+    List<T> newList,
+    String Function(T) keyOf,
   ) {
-    final byName = {for (final a in newList) a.name: a};
-    final newNames = newList.map((a) => a.name).toSet();
+    final byKey = {for (final item in newList) keyOf(item): item};
+    final newKeys = newList.map(keyOf).toSet();
     final survivors = [
-      for (final a in oldOrder)
-        if (newNames.contains(a.name)) a.name,
+      for (final item in oldOrder)
+        if (newKeys.contains(keyOf(item))) keyOf(item),
     ];
     final survivorSet = survivors.toSet();
 
     // newList를 순서대로 훑으면서, survivor를 만나기 전까지 쌓인
-    // "신규" 이름들을 그 survivor 바로 앞에 끼워 넣을 목록으로 기록.
+    // "신규" 항목들을 그 survivor 바로 앞에 끼워 넣을 목록으로 기록.
     final beforeSurvivor = <String, List<String>>{};
     var pendingNew = <String>[];
-    for (final a in newList) {
-      if (survivorSet.contains(a.name)) {
-        beforeSurvivor[a.name] = pendingNew;
+    for (final item in newList) {
+      final key = keyOf(item);
+      if (survivorSet.contains(key)) {
+        beforeSurvivor[key] = pendingNew;
         pendingNew = [];
       } else {
-        pendingNew.add(a.name);
+        pendingNew.add(key);
       }
     }
     final trailingNew = pendingNew; // 마지막 survivor 이후에 남은 신규 항목
 
-    final orderedNames = <String>[
-      for (final name in survivors) ...[...?beforeSurvivor[name], name],
+    final orderedKeys = <String>[
+      for (final key in survivors) ...[...?beforeSurvivor[key], key],
       ...trailingNew,
     ];
-    return [for (final name in orderedNames) byName[name]!];
+    return [for (final key in orderedKeys) byKey[key]!];
   }
 
   // [백엔드 수정]
@@ -300,6 +354,11 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   Future<void> _removeArtist(String name) async {
     await _favorites.removeArtist(name);
     unawaited(_loadRecommendations(highlightNew: true));
+  }
+
+  Future<void> _removeConcert(String name) async {
+    await _favorites.removeConcert(name);
+    unawaited(_loadConcertRecommendations(highlightNew: true));
   }
 
   // [백엔드 수정]
@@ -366,13 +425,18 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   }
 
   // [백엔드 수정]
-  // 이미 티켓 등록된 공연이면 서버가 찜을 거부하므로 안내 문구를 띄움
+  // 이미 티켓 등록된 공연이면 서버가 찜을 거부하므로 안내 문구를 띄움. 찜에
+  // 성공하면 추천 목록도 다시 불러옴(방금 찜한 공연은 서버가 제외해서 응답).
   Future<void> _onConcertTap(ConcertModel c) async {
     final rejected = await _favorites.toggleConcert(c);
-    if (!mounted || !rejected) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('이미 티켓으로 등록된 공연입니다')));
+    if (!mounted) return;
+    if (rejected) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('이미 티켓으로 등록된 공연입니다')));
+      return;
+    }
+    unawaited(_loadConcertRecommendations(highlightNew: true));
   }
 
   @override
@@ -403,10 +467,14 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   }
 
   // [백엔드 수정]
-  // 검색어 미입력 시 빈 결과 대신 추천 아티스트를 보여줌.
+  // 검색어 미입력 시 빈 결과 대신 추천 아티스트/공연을 보여줌.
   bool get _showingArtistRecommendations =>
       _artistQueryController.text.trim().isEmpty &&
       _recommendedArtists.isNotEmpty;
+
+  bool get _showingConcertRecommendations =>
+      _concertQueryController.text.trim().isEmpty &&
+      _recommendedConcerts.isNotEmpty;
 
   Widget _buildContent() {
     return Column(
@@ -428,6 +496,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
           category: _currentCategory,
           favorites: _favorites,
           onArtistRemoved: _removeArtist,
+          onConcertRemoved: _removeConcert,
         ),
         Expanded(
           child: PageView(
@@ -461,7 +530,16 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
               _CategorySearchPage<ConcertModel>(
                 controller: _concertQueryController,
                 hintText: '공연 이름 검색',
-                items: _concertResults,
+                items: _showingConcertRecommendations
+                    ? _recommendedConcerts
+                    : _concertResults,
+                sectionLabel: _showingConcertRecommendations
+                    ? '이런 공연은 어때요?'
+                    : null,
+                newlyAddedNames: _showingConcertRecommendations
+                    ? _newlyRecommendedConcertNames
+                    : const {},
+                newHighlightExpiresAt: _concertNewHighlightExpiresAt,
                 searching: _concertSearching,
                 statusText: _concertStatusText,
                 nameOf: (c) => c.name,
@@ -1071,14 +1149,16 @@ class _FavoritedStrip extends StatelessWidget {
   final FavoritesStore favorites;
 
   // [백엔드 수정]
-  // 아티스트 찜 해제 직후 추천 목록도 다시 불러오도록 콜백 추가(공연은 추천과
-  // 무관해서 그대로 favorites.removeConcert 직접 호출).
+  // 찜 해제 직후 각 카테고리의 추천 목록도 다시 불러오도록 콜백 추가(해제한
+  // 항목이 다시 추천 후보에 들어갈 수 있음).
   final ValueChanged<String>? onArtistRemoved;
+  final ValueChanged<String>? onConcertRemoved;
 
   const _FavoritedStrip({
     required this.category,
     required this.favorites,
     this.onArtistRemoved,
+    this.onConcertRemoved,
   });
 
   @override
@@ -1125,7 +1205,9 @@ class _FavoritedStrip extends StatelessWidget {
                   return _FavoritedChip(
                     label: c.name,
                     imageUrl: c.posterImageUrl,
-                    onRemove: () => favorites.removeConcert(c.name),
+                    onRemove: onConcertRemoved == null
+                        ? () => favorites.removeConcert(c.name)
+                        : () => onConcertRemoved!(c.name),
                   );
                 },
               ),

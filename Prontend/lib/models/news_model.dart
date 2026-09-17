@@ -1,4 +1,5 @@
 import 'concert_model.dart';
+import 'ticket_scan.dart' show TicketingPhaseEntry;
 
 /// 소식(뉴스 피드) 데이터 모델.
 ///
@@ -70,6 +71,11 @@ class NewsModel {
   /// 색칠하는 데 씁니다.
   final DateTime? ticketingDate;
 
+  // [백엔드 수정]
+  // 선예매/1차/2차 등 예매 단계별 전체 내역. 상세 화면 티켓팅 타일에서
+  // 다음 단계만 요약해 보여주고, 탭하면 전체 단계를 목록으로 보여줍니다.
+  final List<TicketingPhaseEntry>? ticketingPhases;
+
   NewsModel({
     required this.artist,
     required this.concert,
@@ -89,6 +95,7 @@ class NewsModel {
     this.ticketingText,
     this.concertEndDate,
     this.ticketingDate,
+    this.ticketingPhases,
   });
 
   /// 카드 좌상단에 보여줄 공연 D-day 라벨. 날짜 정보가 없으면 "미정".
@@ -131,6 +138,15 @@ class NewsModel {
       concertJson?['start_date'] as String?,
       concertJson?['end_date'] as String?,
     );
+    // [백엔드 수정]
+    // ticketing_date/ticketing_phases 파싱 추가 - 그동안 빠져 있어서 아티스트
+    // 소식 카드는 티켓팅 타일이 항상 "미정"으로만 뜸(찜한 공연 카드만 정상).
+    final ticketingDate = DateTime.tryParse(
+      concertJson?['ticketing_date'] as String? ?? '',
+    );
+    final ticketingPhases = (concertJson?['ticketing_phases'] as List<dynamic>?)
+        ?.map((e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>))
+        .toList();
 
     final descriptionParts = <String>['새 공연이 등록됐어요!', ?period];
 
@@ -161,6 +177,9 @@ class NewsModel {
       periodText: period,
       concertEndDate:
           DateTime.tryParse(concertJson?['end_date'] as String? ?? ''),
+      ticketingDate: ticketingDate,
+      ticketingText: _ticketingDDay(ticketingDate),
+      ticketingPhases: ticketingPhases,
     );
   }
 
@@ -205,6 +224,7 @@ class NewsModel {
       ticketingText: dDay,
       concertEndDate: concert.endDate,
       ticketingDate: concert.ticketingDate,
+      ticketingPhases: concert.ticketingPhases,
     );
   }
 
@@ -230,6 +250,7 @@ class NewsModel {
     'ticketingText': ticketingText,
     'concertEndDate': concertEndDate?.toIso8601String(),
     'ticketingDate': ticketingDate?.toIso8601String(),
+    'ticketingPhases': ticketingPhases?.map((e) => e.toJson()).toList(),
   };
 
   factory NewsModel.fromCacheJson(Map<String, dynamic> json) {
@@ -259,6 +280,11 @@ class NewsModel {
       ticketingDate: json['ticketingDate'] != null
           ? DateTime.tryParse(json['ticketingDate'] as String)
           : null,
+      ticketingPhases: (json['ticketingPhases'] as List<dynamic>?)
+          ?.map(
+            (e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>),
+          )
+          .toList(),
     );
   }
 

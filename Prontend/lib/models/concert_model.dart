@@ -1,3 +1,5 @@
+import 'ticket_scan.dart' show TicketingPhaseEntry;
+
 /// 공연 검색/찜 기능에서 사용하는 모델.
 /// 백엔드 `GET /concerts/search`에서 이름/포스터/식별자를 조회해 채워집니다.
 class ConcertModel {
@@ -25,6 +27,11 @@ class ConcertModel {
   final DateTime? ticketingDate;
 
   // [백엔드 수정]
+  // 선예매/1차/2차 등 예매 단계별 전체 내역(ticketingDate는 이 중 가장 이른
+  // 날짜만 담음). ticketingDate와 마찬가지로 크롤러가 채워준 경우에만 값이 옴.
+  final List<TicketingPhaseEntry>? ticketingPhases;
+
+  // [백엔드 수정]
   // 예매처 바로가기 버튼용(키: YES24/INTERPARK/TICKETLINK/MELON). KOPIS가
   // 못 준 공연은 null/빈 맵.
   final Map<String, String>? ticketingLinks;
@@ -39,6 +46,7 @@ class ConcertModel {
     this.endDate,
     this.artistName = const [],
     this.ticketingDate,
+    this.ticketingPhases,
     this.ticketingLinks,
   });
 }

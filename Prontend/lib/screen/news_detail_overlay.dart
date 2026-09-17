@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import '../models/news_model.dart';
+import '../models/ticket_scan.dart' show TicketingPhaseEntry;
 import '../widgets/diary_page_frame.dart';
 import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
@@ -542,6 +543,8 @@ class _ExpandedNewsDetail extends StatelessWidget {
 
   Widget _infoTiles(BuildContext context, double k) {
     final day = news.concertDate?.day;
+    final ticketingPhases = news.ticketingPhases;
+    final nextTicketingPhase = _nextTicketingPhase(ticketingPhases);
     // IntrinsicHeight로 Row 높이를 확정해야 stretch가 무한 높이로 터지지
     // 않고(SingleChildScrollView 안), 타일 3개가 같은 높이로 맞춰집니다.
     return IntrinsicHeight(
@@ -593,16 +596,24 @@ class _ExpandedNewsDetail extends StatelessWidget {
                 color: const Color(0xFF5C4033),
               ),
               label: '티켓팅 날짜',
-              value: news.ticketingText ?? '미정',
-              onTap: news.ticketingDate != null
-                  ? () => _showCalendar(
-                      context,
-                      title: '티켓팅 날짜',
-                      start: news.ticketingDate!,
-                      end: news.ticketingDate!,
-                      color: const Color(0xFF3DBE6B),
-                    )
-                  : null,
+              // [백엔드 수정]
+              // 예매 단계 정보가 있으면 가장 가까운 다음 단계만 요약해서
+              // 보여주고, 탭하면 전체 단계 목록을 봄. 없으면(구버전 크롤링
+              // 데이터 등) 기존처럼 단일 날짜 캘린더로 폴백.
+              value: nextTicketingPhase != null
+                  ? '${nextTicketingPhase.phase} ${_phaseDDayLabel(nextTicketingPhase.date)}'
+                  : news.ticketingText ?? '미정',
+              onTap: ticketingPhases != null && ticketingPhases.isNotEmpty
+                  ? () => _showTicketingPhases(context, ticketingPhases)
+                  : (news.ticketingDate != null
+                        ? () => _showCalendar(
+                            context,
+                            title: '티켓팅 날짜',
+                            start: news.ticketingDate!,
+                            end: news.ticketingDate!,
+                            color: const Color(0xFF3DBE6B),
+                          )
+                        : null),
             ),
           ),
         ],
@@ -631,6 +642,156 @@ Future<void> _showCalendar(
       highlight: color,
     ),
   );
+}
+
+// [백엔드 수정]
+// 예매 단계 중 다음(날짜 미정이거나 아직 안 지난) 단계. 전부 지났으면
+// 마지막 단계를 돌려줌(예매가 이미 열렸다는 뜻). 단계가 없으면 null.
+TicketingPhaseEntry? _nextTicketingPhase(List<TicketingPhaseEntry>? phases) {
+  if (phases == null || phases.isEmpty) return null;
+  final today = DateTime.now();
+  final todayDate = DateTime(today.year, today.month, today.day);
+  for (final phase in phases) {
+    if (phase.date == null || !phase.date!.isBefore(todayDate)) return phase;
+  }
+  return phases.last;
+}
+
+// [백엔드 수정] 단계 하나의 D-day 라벨. NewsModel._ticketingDDay와 동일한 규칙.
+String _phaseDDayLabel(DateTime? date) {
+  if (date == null) return '미정';
+  final today = DateTime.now();
+  final todayDate = DateTime(today.year, today.month, today.day);
+  final target = DateTime(date.year, date.month, date.day);
+  final diff = target.difference(todayDate).inDays;
+  if (diff > 0) return 'D-$diff';
+  if (diff == 0) return 'D-DAY';
+  return '예매 중';
+}
+
+// [백엔드 수정]
+// 선예매/1차/2차 등 예매 단계 전체를 목록으로 보여줌. 날짜가 있는 단계는
+// 눌러서 그 날짜만 캘린더로 볼 수 있음(기존 _showCalendar 재사용).
+Future<void> _showTicketingPhases(
+  BuildContext context,
+  List<TicketingPhaseEntry> phases,
+) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => _TicketingPhasesDialog(phases: phases),
+  );
+}
+
+class _TicketingPhasesDialog extends StatelessWidget {
+  final List<TicketingPhaseEntry> phases;
+
+  const _TicketingPhasesDialog({required this.phases});
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '티켓팅 날짜',
+                    style: TextStyle(
+                      fontSize: context.sp(16),
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF5C4033),
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    behavior: HitTestBehavior.opaque,
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: context.sp(20),
+                      color: Colors.black45,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final phase in phases) _phaseRow(context, phase),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _phaseRow(BuildContext context, TicketingPhaseEntry phase) {
+    final date = phase.date;
+    final dateText = date == null
+        ? '날짜 미정'
+        : '${date.year}.${date.month.toString().padLeft(2, '0')}.'
+              '${date.day.toString().padLeft(2, '0')}';
+    return InkWell(
+      onTap: date == null
+          ? null
+          : () => _showCalendar(
+              context,
+              title: phase.phase,
+              start: date,
+              end: date,
+              color: const Color(0xFF3DBE6B),
+            ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Text(
+              phase.phase,
+              style: TextStyle(
+                fontSize: context.sp(14),
+                fontWeight: FontWeight.w800,
+                color: const Color(0xFF3E2C22),
+              ),
+            ),
+            const Spacer(),
+            Text(
+              dateText,
+              style: TextStyle(
+                fontSize: context.sp(13),
+                color: Colors.black.withValues(alpha: 0.55),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _phaseDDayLabel(date),
+              style: TextStyle(
+                fontSize: context.sp(12),
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF3DBE6B),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// 달력 다이얼로그. [start]~[end]가 걸친 달(1개 또는 최대 2개)을 세로로

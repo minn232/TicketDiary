@@ -3,9 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ticketdiary/models/artist_model.dart';
+import 'package:ticketdiary/models/concert_model.dart';
 import 'package:ticketdiary/screen/favorite_pinned_settings_screen.dart';
 import 'package:ticketdiary/services/artist_recommendation_service.dart';
 import 'package:ticketdiary/services/artist_search_service.dart';
+import 'package:ticketdiary/services/concert_recommendation_service.dart';
 
 class _FakeArtistRecommendationService implements ArtistRecommendationService {
   const _FakeArtistRecommendationService(this.artists);
@@ -15,6 +17,17 @@ class _FakeArtistRecommendationService implements ArtistRecommendationService {
   @override
   Future<List<ArtistModel>> getRecommendations({int limit = 20}) async =>
       artists;
+}
+
+class _FakeConcertRecommendationService
+    implements ConcertRecommendationService {
+  const _FakeConcertRecommendationService(this.concerts);
+
+  final List<ConcertModel> concerts;
+
+  @override
+  Future<List<ConcertModel>> getRecommendations({int limit = 20}) async =>
+      concerts;
 }
 
 // [백엔드 수정]
@@ -133,5 +146,30 @@ void main() {
 
     expect(find.text('자우림'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  // [백엔드 수정]
+  // 찜 공연 검색어 미입력 시 추천 공연(GET /recommendations/concerts) 표시 회귀 테스트.
+  testWidgets('검색어가 없으면 찜 공연 탭에 추천 공연이 보인다', (tester) async {
+    const concertRecommendationService = _FakeConcertRecommendationService([
+      ConcertModel(name: 'IU HEREH WORLD TOUR', posterImageUrl: ''),
+      ConcertModel(name: 'DAY6 FOREVER YOUNG', posterImageUrl: ''),
+    ]);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: FavoritePinnedSettingsScreen(
+          concertRecommendationService: concertRecommendationService,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.tap(find.text('찜 공연'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('이런 공연은 어때요?'), findsOneWidget);
+    expect(find.text('DAY6 FOREVER YOUNG'), findsOneWidget);
   });
 }

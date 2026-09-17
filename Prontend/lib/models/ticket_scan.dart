@@ -18,6 +18,36 @@ class PriceEntry {
   Map<String, dynamic> toJson() => {'seat_type': seatType, 'price': price};
 }
 
+// [백엔드 수정]
+// 예매 단계 1건(예: {"phase": "선예매", "date": "2030-05-01"}). 백엔드
+// `schemas/concert.py`의 `TicketingPhaseEntry`와 대응. date는 크롤링이 아직
+// 특정 못 했으면 null.
+@immutable
+class TicketingPhaseEntry {
+  final String phase;
+  final DateTime? date;
+
+  const TicketingPhaseEntry({required this.phase, this.date});
+
+  factory TicketingPhaseEntry.fromJson(Map<String, dynamic> json) {
+    return TicketingPhaseEntry(
+      phase: json['phase'] as String,
+      date: json['date'] != null
+          ? DateTime.tryParse(json['date'] as String)
+          : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'phase': phase,
+    'date': date == null
+        ? null
+        : '${date!.year.toString().padLeft(4, '0')}-'
+              '${date!.month.toString().padLeft(2, '0')}-'
+              '${date!.day.toString().padLeft(2, '0')}',
+  };
+}
+
 /// 공연 정보(= KOPIS 매칭 후보 1건). 백엔드 `ConcertResponse`와 대응.
 @immutable
 class ConcertResponse {
@@ -34,6 +64,11 @@ class ConcertResponse {
   final List<PriceEntry>? price;
   final String eventType;
   final DateTime? ticketingDate;
+
+  // [백엔드 수정]
+  // 선예매/1차/2차 등 예매 단계별 전체 내역(ticketingDate는 이 중 가장 이른
+  // 날짜만 담음).
+  final List<TicketingPhaseEntry>? ticketingPhases;
 
   // [백엔드 수정]
   // 예매처 바로가기 버튼용(키: YES24/INTERPARK/TICKETLINK/MELON).
@@ -53,6 +88,7 @@ class ConcertResponse {
     this.price,
     required this.eventType,
     this.ticketingDate,
+    this.ticketingPhases,
     this.ticketingLinks,
   });
 
@@ -77,6 +113,9 @@ class ConcertResponse {
       ticketingDate: json['ticketing_date'] != null
           ? DateTime.parse(json['ticketing_date'] as String)
           : null,
+      ticketingPhases: (json['ticketing_phases'] as List<dynamic>?)
+          ?.map((e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
       ticketingLinks: (json['ticketing_links'] as Map<String, dynamic>?)
           ?.map((key, value) => MapEntry(key, value as String)),
     );
@@ -98,6 +137,7 @@ class ConcertResponse {
     'price': price?.map((e) => e.toJson()).toList(),
     'event_type': eventType,
     'ticketing_date': ticketingDate?.toIso8601String(),
+    'ticketing_phases': ticketingPhases?.map((e) => e.toJson()).toList(),
     'ticketing_links': ticketingLinks,
   };
 }

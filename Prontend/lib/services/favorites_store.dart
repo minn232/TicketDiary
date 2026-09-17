@@ -165,6 +165,7 @@ class FavoritesStore extends ChangeNotifier {
               endDate: detail.endDate,
               artistName: detail.artistName,
               ticketingDate: detail.ticketingDate,
+              ticketingPhases: detail.ticketingPhases,
               ticketingLinks: detail.ticketingLinks,
             );
             changed = true;
@@ -234,6 +235,11 @@ class FavoritesStore extends ChangeNotifier {
         ticketingDate: ticketingDateRaw != null
             ? DateTime.tryParse(ticketingDateRaw)
             : null,
+        ticketingPhases: (map['ticketingPhases'] as List<dynamic>?)
+            ?.map(
+              (e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>),
+            )
+            .toList(),
         ticketingLinks: (map['ticketingLinks'] as Map<String, dynamic>?)?.map(
           (key, value) => MapEntry(key, value as String),
         ),
@@ -296,6 +302,7 @@ class FavoritesStore extends ChangeNotifier {
         concert.venue == null ||
         concert.startDate == null ||
         concert.ticketingDate == null ||
+        concert.ticketingPhases == null ||
         concert.ticketingLinks == null;
     if (!missingSomething || kopisId == null || kopisId.isEmpty) return;
 
@@ -317,6 +324,7 @@ class FavoritesStore extends ChangeNotifier {
             ? current.artistName
             : detail.artistName,
         ticketingDate: current.ticketingDate ?? detail.ticketingDate,
+        ticketingPhases: current.ticketingPhases ?? detail.ticketingPhases,
         ticketingLinks: current.ticketingLinks ?? detail.ticketingLinks,
       );
       _revision++;
@@ -371,6 +379,9 @@ class FavoritesStore extends ChangeNotifier {
                 'endDate': c.endDate?.toIso8601String(),
                 'artistName': c.artistName,
                 'ticketingDate': c.ticketingDate?.toIso8601String(),
+                'ticketingPhases': c.ticketingPhases
+                    ?.map((e) => e.toJson())
+                    .toList(),
                 'ticketingLinks': c.ticketingLinks,
               },
             )
