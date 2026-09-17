@@ -133,7 +133,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
                 // 무대 콜라주(밴드 스티커 드래그가 여기서 일어남). progress가
                 // 바뀔 때마다 이 트리 전체를 다시 만들 필요는 없으므로(무대
                 // 위젯 스스로 애니메이션을 처리) child로 캐싱해 재사용한다.
-                if (child != null) child,
+                ?child,
                 // 하단 슬롯에서 위로 잡아당기는 결산 보고서. 밴드 스티커
                 // 중 아무것도 최대로 안 당겨져 기간이 미선택 상태여도 구멍
                 // 자체는 항상 존재하고, 카드만 없다.

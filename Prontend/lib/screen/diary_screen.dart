@@ -28,6 +28,7 @@ import 'package:ticketdiary/widgets/responsive_text.dart';
 import 'package:ticketdiary/widgets/sparkle_highlight.dart';
 import 'package:ticketdiary/widgets/ticket_flip_card.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart';
+import 'package:ticketdiary/widgets/scrapbook_page_background.dart';
 import 'package:ticketdiary/widgets/ticket_scan_camera_screen.dart';
 import 'package:ticketdiary/widgets/app_network_image.dart';
 
@@ -883,8 +884,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
   PriceEntry? _matchTierBySeat(String seat, List<PriceEntry> tiers) {
     final target = seat.replaceAll(' ', '').toLowerCase();
     for (final tier in tiers) {
-      if (tier.seatType.replaceAll(' ', '').toLowerCase() == target)
+      if (tier.seatType.replaceAll(' ', '').toLowerCase() == target) {
         return tier;
+      }
     }
     for (final tier in tiers) {
       final tierSeat = tier.seatType.replaceAll(' ', '').toLowerCase();
@@ -1334,7 +1336,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   color: _paperColor,
                   borderRadius: DiaryPageFrame.defaultPageBorderRadius,
                 ),
-                child: _buildPageContent(context, pageIndex, constraints),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const ScrapbookPaperTextureOverlay(opacity: .95, seed: 110),
+                    _buildPageContent(context, pageIndex, constraints),
+                    const ScrapbookPaperTextureOverlay(opacity: .65, seed: 111),
+                  ],
+                ),
               ),
             ),
           ),

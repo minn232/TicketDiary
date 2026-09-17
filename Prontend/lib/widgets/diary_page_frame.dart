@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'pressable_scale.dart';
-import 'hanji_texture.dart';
+import 'scrapbook_page_background.dart';
 import 'responsive_text.dart';
 
 /// 다이어리 UI의 공통 프레임(가죽 배경 + 겹친 페이지 레이어 + 바인더 링 + 우측 탭)을
@@ -797,15 +797,16 @@ class DiaryPageFrame extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
+                        if (pageTextureEnabled)
+                          const ScrapbookPaperTextureOverlay(
+                            opacity: .95,
+                            seed: 110,
+                          ),
                         child,
                         if (pageTextureEnabled)
-                          IgnorePointer(
-                            child: CustomPaint(
-                              painter: HanjiTexturePainter(
-                                opacity: kHanjiTextureOpacity * .7,
-                                seed: kHanjiTextureSeed + 37,
-                              ),
-                            ),
+                          const ScrapbookPaperTextureOverlay(
+                            opacity: .65,
+                            seed: 111,
                           ),
                       ],
                     ),
