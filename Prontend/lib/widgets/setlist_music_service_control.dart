@@ -8,7 +8,7 @@ import '../services/music_service_links.dart';
 
 /// 셋리스트 화면(포스트잇/기사) 하나를 보는 동안만 유지되는 "지금 어느
 /// 서비스로 연결할지" 선택값. 초기값은 설정탭 기본값을 그대로 물려받지만,
-/// 꾹 눌러서 바꾼 값은 이 화면 인스턴스에만 적용되고 설정탭 기본값 자체는
+/// 여기서 바꾼 값은 이 화면 인스턴스에만 적용되고 설정탭 기본값 자체는
 /// 건드리지 않습니다(화면을 나갔다 들어오면 다시 설정탭 기본값으로 리셋) -
 /// 그래야 곡 하나 때문에 우연히 바꾼 값이 이후 전체 기본값으로 굳어버리는
 /// 걸 막을 수 있음.
@@ -17,9 +17,8 @@ class SetlistServiceSelection extends ValueNotifier<MusicService> {
       : super(AppSettingsStore.instance.preferredMusicService);
 }
 
-/// 포스트잇/기사 헤더 한 켠에 놓는 작은 서비스 아이콘. 꾹 누르면 다른
-/// 서비스로 바꿀 수 있는 팝업 메뉴가 뜸(탭만으로는 안 바뀜 - 실수로 스크롤
-/// 하다 바뀌는 걸 방지).
+/// 포스트잇/기사 헤더 한 켠에 놓는 작은 서비스 아이콘. 탭하면 다른
+/// 서비스로 바꿀 수 있는 팝업 메뉴가 뜸.
 class SetlistServiceIcon extends StatelessWidget {
   final SetlistServiceSelection selection;
   final double size;
@@ -67,8 +66,8 @@ class SetlistServiceIcon extends StatelessWidget {
       builder: (context, current, _) {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onLongPressStart: (details) =>
-              _openPicker(context, details.globalPosition),
+          // [백엔드 수정] 롱프레스 대신 탭 한 번으로 변경(발견성 개선 요청).
+          onTapUp: (details) => _openPicker(context, details.globalPosition),
           child: Padding(
             padding: const EdgeInsets.all(4),
             child: ClipRRect(
