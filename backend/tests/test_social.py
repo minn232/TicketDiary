@@ -387,6 +387,42 @@ async def test_news_feed_created_on_artist_concert_detail():
     assert feed[0]["concert"] is not None
 
 
+# NewsFeedConcert에 ticketing_date/ticketing_phases가 빠져있어 아티스트 소식 카드가 항상
+# "미정"으로 뜨던 문제 수정 테스트
+@pytest.mark.asyncio
+async def test_news_feed_includes_ticketing_date_and_phases():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    artist_name = f"뉴스피드티케팅아티스트_{uuid.uuid4().hex}"
+    kopis_id = f"PF_FEEDTKT_{uuid.uuid4().hex[:8]}"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    concert_id = await _fetch_concert(kopis_id, artist_name, token)
+    ticketing_date = datetime(2030, 5, 1, tzinfo=timezone.utc)
+    phases = [{"phase": "선예매", "date": "2030-05-01"}, {"phase": "일반예매", "date": "2030-05-08"}]
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == concert_id)
+            .values(ticketing_date=ticketing_date, ticketing_phases=phases)
+        )
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+
+    assert res.status_code == 200
+    concert = res.json()[0]["concert"]
+    assert concert["ticketing_date"] is not None
+    assert concert["ticketing_phases"] == phases
+
+
 # limit/offset 파라미터로 페이지네이션되는지, 생략 시 기본값(최대 200건)이 적용되는지 테스트
 @pytest.mark.asyncio
 async def test_news_feed_pagination():
