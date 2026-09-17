@@ -394,6 +394,21 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         .map(NewsModel.fromFavoritedConcert)
         .toList();
 
+    // 이미 찜한 공연 카드로 나온 concertId는 아티스트 소식 카드에서 제외합니다
+    // (공연 찜 + 그 공연 아티스트 팔로우가 겹치면 같은 공연이 카드 2장으로
+    // 중복 노출되던 버그).
+    final favoritedConcertIds = favoritedConcertCards
+        .map((c) => c.concertId)
+        .whereType<String>()
+        .toSet();
+    filteredFeed = filteredFeed
+        .where(
+          (item) =>
+              item.concertId == null ||
+              !favoritedConcertIds.contains(item.concertId),
+        )
+        .toList();
+
     final combined = [...favoritedConcertCards, ...filteredFeed];
     // 공연이 가까운 순(D-day 오름차순)으로 정렬합니다 — 그리드는 왼쪽
     // 위부터 오른쪽 아래로 채워지므로, 리스트 순서가 곧 화면 배치 순서가
