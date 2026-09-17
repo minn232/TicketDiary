@@ -151,10 +151,19 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     _pullTabReveal = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 360),
+      // [백엔드 수정] 퇴장(reverse)은 페이지 넘김 전에 다 재생되길 기다리므로
+      // 진입보다 짧게 잡아 전체 체감 시간을 다른 탭 전환과 비슷하게 맞춤.
+      reverseDuration: const Duration(milliseconds: 200),
     );
     TabNavCoordinator.instance.currentTab.addListener(_onCurrentTabChanged);
     TabNavCoordinator.instance.isTransitioning.addListener(
       _onTabTransitionChanged,
+    );
+    // [백엔드 수정] 풀탭이 페이지 넘김 뒤로 갑자기 가려지지 않고 먼저 다
+    // 접힌 뒤 넘김이 시작되도록 등록 - 앞/뒤 넘김 모두 같은 리듬으로 통일.
+    TabNavCoordinator.instance.registerExitTransition(
+      DiaryTab.news,
+      () => _pullTabReveal.reverse(),
     );
 
     // 화면 초기화 시 데이터 호출 시작. 진입 시 페이지 넘김은 이제 이
@@ -177,6 +186,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     TabNavCoordinator.instance.isTransitioning.removeListener(
       _onTabTransitionChanged,
     );
+    TabNavCoordinator.instance.registerExitTransition(DiaryTab.news, null);
     _slide.dispose();
     _heartWipe.dispose();
     _glassReveal.dispose();
@@ -184,6 +194,8 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     super.dispose();
   }
 
+  // [백엔드 수정] 실제 트리거는 registerExitTransition(initState)이라 이미
+  // reverse() 끝난 뒤 호출됨 - 등록 안 된 경로 대비 폴백(중복 호출 무해).
   void _onCurrentTabChanged() {
     if (TabNavCoordinator.instance.currentTab.value != DiaryTab.news) {
       _pullTabReveal.reverse();

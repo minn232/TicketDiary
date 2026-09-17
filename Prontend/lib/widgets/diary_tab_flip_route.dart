@@ -119,6 +119,10 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   static const double _revealStart = 0.84;
   static const double _revealEnd = 0.98;
 
+  /// 앞으로 넘김 시작 직후, 맨 위 속지의 대기 상태 코너 들림 때문에 생기는
+  /// 쐐기 모양 틈을 가려주는 구간의 끝(t 기준). build()의 설명 참고.
+  static const double _earlyCoverEnd = 0.25;
+
   bool get _holding => widget.holdSignal?.value ?? false;
 
   void _onHoldSignalChanged() {
@@ -318,9 +322,32 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
         // 화면(실제 링 포함)을 보여주도록 임계값을 다르게 둡니다.
         final doneThreshold =
             widget.forward ? DiaryTabFlipTransition.lastLeafEnd : 1.0;
-        if (t < doneThreshold) return _buildScene(context, t, child!);
-        if (!_holding) return child!;
-
+        // [백엔드 수정] 예전엔 앞으로 넘김 내내 고정 배경(+코사인 페이드)을
+        // 덮어 소식 탭 풀탭 노출을 막았는데, 실기기 확인 결과 이전 라우트는
+        // 전환 시작 즉시 사라져 커버가 불필요했고 오히려 리프와 다른
+        // 리듬으로 움직여 뒤로 넘김보다 뚝 끊겨 보이는 원인이었음 - 제거.
+        if (t < doneThreshold) {
+          final scene = _buildScene(context, t, child!);
+          // [백엔드 수정] 맨 위 속지(leaf 0)는 대기 상태(p=0)에서 cornerLead가
+          // 최댓값이라 프레임 상단 바깥(상태바 영역)에 쐐기 모양 틈이 아주
+          // 짧게 생김 - t<_earlyCoverEnd 구간만 배경판으로 메움. 페이드를
+          // 줬더니 틈이 가장 뚜렷한 구간 초반에 이미 옅어져 있어(실사용
+          // 재보고로 발견) 페이드 없이 완전 불투명 유지 후 한번에 걷어냄.
+          if (widget.forward && t < _earlyCoverEnd) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                // [DiaryPageFrame.backgroundColor] 기본값과 같은 색.
+                const ColoredBox(color: Color(0xFF5C4033)),
+                scene,
+              ],
+            );
+          }
+          return scene;
+        }
+        if (!_holding) {
+          return child!;
+        }
         // 목적지(소식 탭) 로딩이 아직 안 끝났습니다: 정상 전환은 끝났지만
         // 목적지를 드러내지 않고, lastLeafStart 시점(마지막 속지가 아직
         // 시작 전이라 화면 전체를 평평하게 덮고 있는 상태)에서 정지한
@@ -476,6 +503,10 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
             // 이 분기를 씁니다 — 뒤로 넘김의 정상 분기(아래)는 reveal
             // 페이드로 child가 미리 살짝 비치기 시작하는데, 대기 중엔
             // 항상 완전히 가려둬야 하기 때문입니다.
+            //
+            // (leaves/child가 프레임 밖 - 소식 탭 풀탭 등 - 을 덮지는
+            // 않지만, 이전 라우트가 전환 시작 직후 곧바로 사라지므로 실제로
+            // 비쳐 보이는 일은 없습니다 - build()의 설명 참고.)
             return Stack(
               fit: StackFit.expand,
               clipBehavior: Clip.none,

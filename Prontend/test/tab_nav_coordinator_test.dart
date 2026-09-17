@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -230,6 +232,104 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.byKey(sharedDiaryKey), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '퇴장 연출이 등록돼 있으면 그게 끝날 때까지 실제 탭 전환(라우트 푸시)을 미룬다',
+    (tester) async {
+      // 소식 탭의 풀탭이 접히는 연출처럼, 화면이 자신의 퇴장 애니메이션을
+      // 등록해두면 그게 끝나기 전까지는 currentTab도, 실제 라우트 전환도
+      // 시작되면 안 됩니다 - 사용자가 접히는 모습을 먼저 보게 하기 위함.
+      final navigatorKey = GlobalKey<NavigatorState>();
+
+      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+        return MaterialPageRoute<void>(
+          settings: RouteSettings(name: to.toString()),
+          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
+        );
+      }
+
+      final coordinator = TabNavCoordinator.init(
+        navigatorKey: navigatorKey,
+        routeBuilder: routeFor,
+        initialTab: DiaryTab.news,
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: Center(child: Text('news'))),
+      ));
+
+      final exitCompleter = Completer<void>();
+      coordinator.registerExitTransition(
+        DiaryTab.news,
+        () => exitCompleter.future,
+      );
+
+      coordinator.requestTab(DiaryTab.summary);
+      await tester.pump();
+
+      // 퇴장 연출이 아직 안 끝났으므로, 입력은 잠겼지만(isTransitioning)
+      // currentTab도 그대로고 목적지 라우트도 아직 안 만들어집니다.
+      expect(coordinator.isTransitioning.value, isTrue);
+      expect(coordinator.currentTab.value, DiaryTab.news);
+      expect(find.text(DiaryTab.summary.toString()), findsNothing);
+
+      // 조금 더 지나도(퇴장 연출이 안 끝났다면) 여전히 그대로.
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(coordinator.currentTab.value, DiaryTab.news);
+      expect(find.text(DiaryTab.summary.toString()), findsNothing);
+
+      // 퇴장 연출이 끝나야 비로소 실제 전환이 시작됩니다.
+      exitCompleter.complete();
+      await tester.pumpAndSettle();
+
+      expect(coordinator.currentTab.value, DiaryTab.summary);
+      expect(coordinator.isTransitioning.value, isFalse);
+      expect(find.text(DiaryTab.summary.toString()), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '퇴장 연출이 안전 타임아웃(500ms)보다 오래 걸리면 기다리지 않고 전환을 진행한다',
+    (tester) async {
+      final navigatorKey = GlobalKey<NavigatorState>();
+
+      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+        return MaterialPageRoute<void>(
+          settings: RouteSettings(name: to.toString()),
+          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
+        );
+      }
+
+      final coordinator = TabNavCoordinator.init(
+        navigatorKey: navigatorKey,
+        routeBuilder: routeFor,
+        initialTab: DiaryTab.news,
+      );
+
+      await tester.pumpWidget(MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: Center(child: Text('news'))),
+      ));
+
+      // 절대 안 끝나는(응답 없는) 퇴장 연출.
+      coordinator.registerExitTransition(
+        DiaryTab.news,
+        () => Completer<void>().future,
+      );
+
+      coordinator.requestTab(DiaryTab.summary);
+      await tester.pump();
+      expect(coordinator.currentTab.value, DiaryTab.news);
+
+      // 안전 타임아웃을 넘기면 기다림을 포기하고 진행해야 합니다.
+      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+
+      expect(coordinator.currentTab.value, DiaryTab.summary);
+      expect(coordinator.isTransitioning.value, isFalse);
+      expect(find.text(DiaryTab.summary.toString()), findsOneWidget);
     },
   );
 }

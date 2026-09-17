@@ -70,6 +70,25 @@ class TabNavCoordinator {
   /// 마지막 것만 남습니다(중간 탭들은 건너뜀).
   DiaryTab? _queuedTab;
 
+  /// [registerExitTransition] 참고.
+  DiaryTab? _exitTransitionTab;
+  Future<void> Function()? _exitTransitionRunner;
+
+  /// 탭을 떠나기 전에 먼저 재생할 자기 연출(예: 소식 탭 풀탭 접힘)을
+  /// 등록합니다. 등록돼 있으면 이 탭을 떠날 때 [runner]가 끝난 뒤에야
+  /// 라우트 전환이 시작됩니다. `runner: null`로 해제(dispose에서 필수).
+  void registerExitTransition(DiaryTab tab, Future<void> Function()? runner) {
+    if (runner == null) {
+      if (_exitTransitionTab == tab) {
+        _exitTransitionTab = null;
+        _exitTransitionRunner = null;
+      }
+      return;
+    }
+    _exitTransitionTab = tab;
+    _exitTransitionRunner = runner;
+  }
+
   void requestTab(DiaryTab tab) {
     if (tab == currentTab.value) {
       // 지금 보여주고 있거나(유휴) 이미 향하고 있는(전환 중) 탭을 다시
@@ -85,13 +104,28 @@ class TabNavCoordinator {
     _start(tab);
   }
 
-  void _start(DiaryTab tab) {
-    final navigator = navigatorKey.currentState;
-    if (navigator == null) return;
+  void _start(DiaryTab tab) async {
+    if (navigatorKey.currentState == null) return;
     final from = currentTab.value;
-    currentTab.value = tab;
+    // 퇴장 연출 대기 중에도 잠가둬야 다른 탭 연타가 허공을 짚지 않고
+    // _queuedTab으로 쌓입니다.
     isTransitioning.value = true;
     _queuedTab = null;
+
+    // [백엔드 수정] 퇴장 연출이 등록돼 있으면 페이지 넘김 전에 먼저 재생.
+    // 응답 없이 멈추지 않도록 안전 타임아웃을 둠.
+    if (_exitTransitionTab == from && _exitTransitionRunner != null) {
+      final runner = _exitTransitionRunner!;
+      try {
+        await runner().timeout(const Duration(milliseconds: 500));
+      } catch (_) {
+        // 타임아웃/예외여도 전환 자체는 막지 않고 계속 진행.
+      }
+    }
+
+    final navigator = navigatorKey.currentState;
+    if (navigator == null) return;
+    currentTab.value = tab;
 
     final route = routeBuilder(from, tab);
     // (r) => false: 스택에 남은 라우트를 전부 제거하고 이 라우트 하나만
