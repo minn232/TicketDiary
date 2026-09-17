@@ -45,6 +45,12 @@ const double kConcertAfterTextWrapHorizontalGap = 3;
 const double kConcertAfterTextWrapTopGap = 3;
 const double kConcertAfterTextWrapBottomGap = -10;
 
+// [백엔드 수정]
+// 메모지는 핀치 줌 상한(3.2배)으로도 캔버스 폭을 못 넘는데 원본 해상도로
+// 디코드하던 게 낭비였음(페이지 열 때 렉 원인) - memCacheWidth/cacheWidth
+// 상한값. 포스터 더블탭 확대 미리보기는 이 상한 없이 별도 이미지를 씀.
+const int kConcertAfterMemoThumbnailWidth = 520;
+
 ColorFilter _saturationFilter(double amount) {
   final inv = 1 - amount;
   final r = .213 * inv;
@@ -1098,13 +1104,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     () => List<String>.from(_defaultScrapZOrder),
   );
 
-  // 제스처 시작 시점 스냅샷.
-  double _startScale = 1;
-  double _startRot = 0;
-  Offset _startOffset = Offset.zero;
-  Offset _startFocal = Offset.zero;
-
-
   // 새 공연 후 페이지가 처음 생성될 때 적용되는 고정 기본 프리셋입니다.
   // 한 번 저장된 기본 프리셋은 특정 공연 페이지를 다시 편집해도 갱신하지 않습니다.
   static const String _fixedDefaultPresetPrefsKey =
@@ -1596,6 +1595,13 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   }
 
   /// 메모지의 이동·회전·확대 제스처. 실제 변환 경계는 텍스트 배치에도 사용합니다.
+  ///
+  // [백엔드 수정]
+  // 드래그 중 setState를 캔버스 전체가 아니라 _DraggableMemo 자신에게만
+  // 걸도록 분리 - 예전엔 메모 하나를 끌 때마다 포스터/사진/봉투/자유메모
+  // 전체가 매 프레임 다시 빌드돼(자유메모 줄바꿈 재계산 포함) 조작 시 심한
+  // 렉의 원인이었음. RepaintBoundary는 Transform 안쪽에 둬서 매 프레임
+  // 바뀌는 offset/rotation/scale이 안쪽 페인팅을 다시 실행하지 않게 함.
   Widget _memo(
     String key, {
     required double baseW,
@@ -1616,42 +1622,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
             child: IntrinsicWidth(child: child),
           )
         : SizedBox(key: _keyFor(key), width: baseW, child: child);
-    Widget gestured;
-    if (_edit) {
-      gestured = GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: key == 'envelope' ? _openLetter : null,
-        onScaleStart: (d) {
-          _bringFront(key);
-          _startScale = t.scale;
-          _startRot = t.rotation;
-          _startOffset = t.offset;
-          _startFocal = d.focalPoint;
-          // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
-          // 경계 클램프 계산에 필요합니다.
-          _measureMemoForGesture(key, t);
-        },
-        onScaleUpdate: (d) => setState(() {
-          final dragDelta = d.focalPoint - _startFocal;
-          final rawOffset = _startOffset + dragDelta;
-          final rawScale = _startScale * d.scale;
-          final rawRotation = _startRot + d.rotation;
-          _applyMemoTransform(
-            t,
-            canvasW: canvasW,
-            canvasH: canvasH,
-            titleSafeBottom: titleSafeBottom,
-            rawOffset: rawOffset,
-            rawScale: rawScale,
-            rawRotation: rawRotation,
-          );
-          _persistLayout();
-        }),
-        child: content,
-      );
-    } else {
-      gestured = content;
-    }
 
     // key가 없으면 _z 재정렬 시 Stack이 인덱스 기준으로 엘리먼트를 재사용해
     // (1) 진행 중인 드래그 제스처가 다른 메모지로 옮겨가고,
@@ -1661,12 +1631,29 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
       key: ValueKey('memo_$key'),
       left: 0,
       top: 0,
-      child: Transform.translate(
-        offset: t.offset,
-        child: Transform.rotate(
-          angle: t.rotation,
-          child: Transform.scale(scale: t.scale, child: gestured),
-        ),
+      child: _DraggableMemo(
+        transform: t,
+        edit: _edit,
+        onTap: key == 'envelope' ? _openLetter : null,
+        onGestureStart: () {
+          _bringFront(key);
+          // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
+          // 경계 클램프 계산에 필요합니다.
+          _measureMemoForGesture(key, t);
+        },
+        onGestureUpdate: (rawOffset, rawScale, rawRotation) {
+          _applyMemoTransform(
+            t,
+            canvasW: canvasW,
+            canvasH: canvasH,
+            titleSafeBottom: titleSafeBottom,
+            rawOffset: rawOffset,
+            rawScale: rawScale,
+            rawRotation: rawRotation,
+          );
+        },
+        onGestureEnd: () => setState(_persistLayout),
+        child: RepaintBoundary(child: content),
       ),
     );
   }
@@ -1719,6 +1706,87 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   }
 }
 
+/// 메모지 하나의 이동·회전·확대 제스처와 변환(Transform)을 전담합니다.
+///
+// [백엔드 수정] _ScrapbookCanvasState에서 분리(자세한 이유는 [_memo] 참고).
+// [transform]은 부모와 공유하는 가변 객체라 드래그 중에도 항상 최신값을
+// 유지하고, 장애물 재계산 등은 [onGestureEnd]에서 부모가 한 번만 수행합니다.
+class _DraggableMemo extends StatefulWidget {
+  final _MemoTransform transform;
+  final bool edit;
+  final VoidCallback? onTap;
+  final VoidCallback onGestureStart;
+  final void Function(Offset rawOffset, double rawScale, double rawRotation)
+  onGestureUpdate;
+  final VoidCallback onGestureEnd;
+  final Widget child;
+
+  const _DraggableMemo({
+    required this.transform,
+    required this.edit,
+    required this.onGestureStart,
+    required this.onGestureUpdate,
+    required this.onGestureEnd,
+    this.onTap,
+    required this.child,
+  });
+
+  @override
+  State<_DraggableMemo> createState() => _DraggableMemoState();
+}
+
+class _DraggableMemoState extends State<_DraggableMemo> {
+  double _startScale = 1;
+  double _startRot = 0;
+  Offset _startOffset = Offset.zero;
+  Offset _startFocal = Offset.zero;
+
+  void _handleScaleStart(ScaleStartDetails d) {
+    widget.onGestureStart();
+    final t = widget.transform;
+    _startScale = t.scale;
+    _startRot = t.rotation;
+    _startOffset = t.offset;
+    _startFocal = d.focalPoint;
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails d) {
+    final dragDelta = d.focalPoint - _startFocal;
+    setState(() {
+      widget.onGestureUpdate(
+        _startOffset + dragDelta,
+        _startScale * d.scale,
+        _startRot + d.rotation,
+      );
+    });
+  }
+
+  void _handleScaleEnd(ScaleEndDetails d) => widget.onGestureEnd();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.transform;
+    Widget gestured = widget.child;
+    if (widget.edit) {
+      gestured = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        onScaleStart: _handleScaleStart,
+        onScaleUpdate: _handleScaleUpdate,
+        onScaleEnd: _handleScaleEnd,
+        child: gestured,
+      );
+    }
+    return Transform.translate(
+      offset: t.offset,
+      child: Transform.rotate(
+        angle: t.rotation,
+        child: Transform.scale(scale: t.scale, child: gestured),
+      ),
+    );
+  }
+}
+
 int _stableSeed(String value) {
   var hash = 0x811C9DC5;
   for (final unit in value.codeUnits) {
@@ -1755,10 +1823,15 @@ Future<PosterMood> _extractPosterMood(String posterKey) {
   return pending;
 }
 
+// [백엔드 수정]
+// 색상 분석은 36x36 샘플만 쓰는데 원본 해상도 그대로 디코드+toByteData하면
+// 고해상도 포스터에서 페이지 여는 순간 렉의 원인이 됨 - ResizeImage로 작게
+// 디코드해도 샘플 정확도엔 영향 없음(표시용 이미지는 별도 provider라 무관).
 Future<PosterMood> _analyzePosterMood(String posterKey) async {
-  final provider = _isNetworkUrl(posterKey)
+  final baseProvider = _isNetworkUrl(posterKey)
       ? NetworkImage(posterKey)
       : FileImage(File(posterKey)) as ImageProvider;
+  final provider = ResizeImage(baseProvider, width: 120);
   final stream = provider.resolve(const ImageConfiguration());
   final completer = Completer<ui.Image>();
   late final ImageStreamListener listener;
@@ -2201,43 +2274,58 @@ class _PosterMemo extends StatelessWidget {
     );
   }
 
+  Widget _buildImg(BuildContext context, String? url, {int? cacheWidth}) {
+    if (url == null || url.isEmpty) {
+      return Container(
+        color: Colors.white.withValues(alpha: 0.08),
+        alignment: Alignment.center,
+        child: Text(
+          'POSTER',
+          style: _articleText(
+            context,
+            size: 13,
+            weight: FontWeight.w900,
+            color: Colors.black.withValues(alpha: 0.5),
+          ),
+        ),
+      );
+    }
+    if (_isNetworkUrl(url)) {
+      // [백엔드 수정]
+      // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
+      return AppNetworkImage(
+        url,
+        fit: BoxFit.cover,
+        memCacheWidth: cacheWidth,
+        errorBuilder: (c) =>
+            Container(color: Colors.white.withValues(alpha: 0.08)),
+      );
+    }
+    return Image.file(File(url), fit: BoxFit.cover, cacheWidth: cacheWidth);
+  }
+
   @override
   Widget build(BuildContext context) {
     final url = imageUrl;
-    final Widget img = (url == null || url.isEmpty)
-        ? Container(
-            color: Colors.white.withValues(alpha: 0.08),
-            alignment: Alignment.center,
-            child: Text(
-              'POSTER',
-              style: _articleText(
-                context,
-                size: 13,
-                weight: FontWeight.w900,
-                color: Colors.black.withValues(alpha: 0.5),
-              ),
-            ),
-          )
-        : (_isNetworkUrl(url)
-              // [백엔드 수정]
-              // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
-              ? AppNetworkImage(
-                  url,
-                  fit: BoxFit.cover,
-                  errorBuilder: (c) =>
-                      Container(color: Colors.white.withValues(alpha: 0.08)),
-                )
-              : Image.file(File(url), fit: BoxFit.cover));
+    // [백엔드 수정]
+    // 캔버스에 놓인 우표 크기 썸네일은 memCacheWidth로 작게 디코드하고,
+    // 더블탭 확대 미리보기(_showPosterPreview)는 캡 없는 별도 이미지를 새로
+    // 만들어 화질을 유지합니다.
+    final thumbCacheWidth =
+        (kConcertAfterMemoThumbnailWidth * MediaQuery.devicePixelRatioOf(context))
+            .round();
+    final thumbImg = _buildImg(context, url, cacheWidth: thumbCacheWidth);
 
     return GestureDetector(
-      onDoubleTap: () => _showPosterPreview(context, img),
+      onDoubleTap: () =>
+          _showPosterPreview(context, _buildImg(context, url)),
       child: _PostagePosterFrame(
         paperColor: paperColor,
         child: AspectRatio(
           aspectRatio: 3 / 4,
           child: SizedBox(
             width: double.infinity,
-            child: _PaperImageEffect(child: img),
+            child: _PaperImageEffect(child: thumbImg),
           ),
         ),
       ),
@@ -2424,17 +2512,28 @@ class _PolaroidMemo extends StatelessWidget {
                 onLongPress: edit
                     ? (onDelete == null ? null : () => onDelete!(url!))
                     : null,
-                // [백엔드 수정]
-                // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
+                // [백엔드 수정] Image.network -> AppNetworkImage(디스크 캐싱)
+                // + memCacheWidth/cacheWidth로 원본 해상도 디코드 방지.
                 child: _PaperImageEffect(
                   child: _isNetworkUrl(url!)
                       ? AppNetworkImage(
                           url!,
                           fit: BoxFit.cover,
+                          memCacheWidth:
+                              (kConcertAfterMemoThumbnailWidth *
+                                      MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
                           errorBuilder: (c) =>
                               const ColoredBox(color: Color(0x22000000)),
                         )
-                      : Image.file(File(url!), fit: BoxFit.cover),
+                      : Image.file(
+                          File(url!),
+                          fit: BoxFit.cover,
+                          cacheWidth:
+                              (kConcertAfterMemoThumbnailWidth *
+                                      MediaQuery.devicePixelRatioOf(context))
+                                  .round(),
+                        ),
                 ),
               )
             : GestureDetector(
