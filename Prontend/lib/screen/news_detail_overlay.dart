@@ -601,7 +601,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
               // 보여주고, 탭하면 전체 단계 목록을 봄. 없으면(구버전 크롤링
               // 데이터 등) 기존처럼 단일 날짜 캘린더로 폴백.
               value: nextTicketingPhase != null
-                  ? '${nextTicketingPhase.phase} ${_phaseDDayLabel(nextTicketingPhase.date)}'
+                  ? '${nextTicketingPhase.phase}\n${_phaseDDayLabel(nextTicketingPhase.date)}'
                   : news.ticketingText ?? '미정',
               onTap: ticketingPhases != null && ticketingPhases.isNotEmpty
                   ? () => _showTicketingPhases(context, ticketingPhases)
@@ -1050,7 +1050,11 @@ class _InfoTile extends StatelessWidget {
             Text(
               value,
               textAlign: TextAlign.center,
-              maxLines: 2,
+              // [백엔드 수정]
+              // 티켓팅 타일 값이 "단계\nD-day" 2줄 고정이라, 단계 이름
+              // 자체가 좁은 화면에서 한 줄 더 넘어가도(3줄) D-day가 안
+              // 잘리도록 2 -> 3으로 늘림. 다른 타일은 짧은 텍스트라 영향 없음.
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: context.sp(12),

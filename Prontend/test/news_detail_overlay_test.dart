@@ -116,8 +116,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    // 이미 지난 "선예매"가 아니라 다가올 "일반예매"가 요약으로 뜸.
-    expect(find.textContaining('일반예매 D-5'), findsOneWidget);
+    // 이미 지난 "선예매"가 아니라 다가올 "일반예매"가 요약으로 뜸(단계/D-day 2줄).
+    expect(find.text('일반예매\nD-5'), findsOneWidget);
 
     await tester.tap(find.text('티켓팅 날짜'));
     await tester.pumpAndSettle();
