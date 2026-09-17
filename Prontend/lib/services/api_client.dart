@@ -1,5 +1,7 @@
 import 'package:dio/dio.dart';
 
+import 'connectivity_status.dart';
+
 /// 서버 API 기본 주소.
 ///
 /// 지금은 로컬 개발 백엔드를 가리키는 자리표시자입니다. 실제 배포 전에는
@@ -146,16 +148,25 @@ class ApiClient {
   }) async {
     try {
       final response = await request();
+      ConnectivityStatus.instance.isOffline.value = false;
       return extract(response.data);
     } on DioException catch (e) {
+      // [백엔드 수정] 응답 자체를 못 받았으면(연결 실패/타임아웃) 오프라인으로 간주.
+      if (e.response == null) {
+        ConnectivityStatus.instance.isOffline.value = true;
+      }
       final statusCode = e.response?.statusCode ?? -1;
       if (statusCode == 401 && allowAuthRetry && onUnauthorized != null) {
         final newToken = await onUnauthorized!();
         if (newToken != null) {
           try {
             final retryResponse = await request();
+            ConnectivityStatus.instance.isOffline.value = false;
             return extract(retryResponse.data);
           } on DioException catch (retryError) {
+            if (retryError.response == null) {
+              ConnectivityStatus.instance.isOffline.value = true;
+            }
             throw _toApiException(retryError);
           }
         }

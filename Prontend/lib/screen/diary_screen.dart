@@ -12,10 +12,12 @@ import 'package:ticketdiary/models/ticket_scan.dart';
 import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
+import 'package:ticketdiary/services/ticket_cache_store.dart';
 import 'package:ticketdiary/services/ticket_refresh_bus.dart';
 import 'package:ticketdiary/services/ticket_scan_service.dart';
 import 'package:ticketdiary/services/ticket_service.dart';
 import 'package:ticketdiary/services/torn_ticket_store.dart';
+import 'package:ticketdiary/widgets/offline_banner.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/landscape_upcoming_ticket_panel.dart';
@@ -328,6 +330,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// [_tickets]를 직접 갱신하므로 매번 다시 불러올 필요가 없습니다).
   static bool _backendTicketsLoaded = false;
 
+  // [백엔드 수정]
+  // [_tickets]가 서버 응답이 아니라 [TicketCacheStore] 로컬 캐시로 채워져
+  // 있는지(오프라인 등). 서버 조회가 한 번이라도 성공하면 다시 false.
+  static bool _usingCachedTickets = false;
+
   /// 마지막으로 [_tickets]를 채운 로그인 유저의 id. 로그아웃/계정 전환으로
   /// 유저가 바뀌면 이전 유저의 서버 기원 티켓을 화면에서 지우고 새 유저
   /// 것으로 다시 불러오기 위해 씁니다([_onAuthChangedStatic] 참고).
@@ -403,8 +410,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   ///   `is_first_day`/`is_last_day`/`concert`)을 그대로 받아
   ///   [TicketData.fromBackend]로 변환합니다. 보내는 값은 없습니다(인증
   ///   헤더만 필요).
-  /// - 실패(오프라인 등)하면 조용히 무시합니다 — 로컬 예시 티켓만으로도
-  ///   화면은 정상적으로 뜨고, 다음에 다이어리 탭을 다시 열면 재시도합니다.
+  /// - 실패(오프라인 등)하면 [TicketCacheStore]에 마지막으로 저장해둔 목록을
+  ///   대신 읽기 전용으로 보여주고, 다음에 다이어리 탭을 다시 열면 재시도합니다.
   Future<void> _loadTicketsFromBackend() async {
     if (_backendTicketsLoaded) return;
     _backendTicketsLoaded = true;
@@ -418,11 +425,34 @@ class _DiaryScreenState extends State<DiaryScreen> {
         final fetchedIds = tickets.map((t) => t.id).toSet();
         _tickets.removeWhere((t) => fetchedIds.contains(t.id));
         _tickets.addAll(tickets.map(TicketData.fromBackend));
+        _usingCachedTickets = false;
       });
       _loadedForUserId = AuthService.instance.userId;
+      unawaited(
+        TicketCacheStore.instance.save(
+          tickets,
+          userId: AuthService.instance.userId,
+        ),
+      );
     } catch (_) {
       _backendTicketsLoaded = false;
+      await _loadTicketsFromCache();
     }
+  }
+
+  // [백엔드 수정]
+  // 서버 조회 실패 시 [TicketCacheStore] 캐시로 폴백(읽기 전용). 이번
+  // 세션에 이미 실제 서버 응답을 받았으면(캐시보다 최신) 건드리지 않음.
+  Future<void> _loadTicketsFromCache() async {
+    if (_tickets.any((t) => t.info?.ticketId != null)) return;
+    final cached = await TicketCacheStore.instance.load(
+      userId: AuthService.instance.userId,
+    );
+    if (cached == null || cached.isEmpty || !mounted) return;
+    setState(() {
+      _tickets.addAll(cached.map(TicketData.fromBackend));
+      _usingCachedTickets = true;
+    });
   }
 
   /// 공연 시간이 이미 지난 "공연 전" 티켓인지 확인합니다.
@@ -997,6 +1027,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       children: [
         _buildDiaryPageFrameWithFlip(_currentPageIndex, nextPageIndex),
         _buildTransitionSpotlightOverlay(),
+        OfflineBanner(forceVisible: _usingCachedTickets),
         // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
         // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
         _buildDebugTestTicketTab(),

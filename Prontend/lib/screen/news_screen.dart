@@ -160,7 +160,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // 화면 초기화 시 데이터 호출 시작. 진입 시 페이지 넘김은 이제 이
     // 로딩을 기다리지 않고 곧바로 이 화면을 드러내며, 로딩 중에는 아래
     // 소식 본문 위에 백색 유리 글레어를 씌웠다가 로딩이 끝나면 걷어냅니다.
-    _newsFuture = _loadNewsWithCache();
+    // [백엔드 수정] 소식 탭 캐싱 비활성화(정확도 우선, 코드는 보존) - 직접 호출로 대체.
+    // _newsFuture = _loadNewsWithCache();
+    _newsFuture = _loadNews();
     _armGlassReveal(_newsFuture);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -283,7 +285,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       markReady(_newsFuture);
     });
 
-    _fetchAndCacheNews()
+    // [백엔드 수정] 소식 탭 캐싱을 껐으므로(위 initState 참고) 여기도 동일하게 직접 호출.
+    // _fetchAndCacheNews()
+    _loadNews()
         .then((items) => markReady(Future.value(items)))
         .catchError((Object e) => markReady(Future.error(e)));
   }
@@ -648,7 +652,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
           const SizedBox(height: 14),
           OutlinedButton(
             onPressed: () {
-              setState(() => _newsFuture = _fetchAndCacheNews());
+              // [백엔드 수정] 소식 탭 캐싱을 껐으므로(initState 참고) 여기도 직접 호출.
+              // setState(() => _newsFuture = _fetchAndCacheNews());
+              setState(() => _newsFuture = _loadNews());
               _armGlassReveal(_newsFuture);
             },
             style: OutlinedButton.styleFrom(
