@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api_client.dart';
+import 'connectivity_status.dart';
 
 /// 로그인 성공(게스트/카카오/마이그레이션) 후 서버가 내려주는 토큰 세트.
 @immutable
@@ -140,10 +141,11 @@ class AuthService extends ChangeNotifier {
   /// 앱 시작 시 1회 호출: 저장된 토큰을 불러오고, 없으면 게스트로 로그인합니다.
   /// 스플래시 화면의 데이터 로딩 단계에서 다른 로딩과 함께 await 하면 됩니다.
   ///
-  /// 백엔드가 꺼져 있거나 기기가 오프라인이어도(아직 서버 연동 전이라 흔히
-  /// 있을 수 있는 상황) 이 메서드는 예외를 던지지 않습니다 — 로그인에
-  /// 실패한 채로(=[isLoggedIn] false) 앱 나머지 기능은 정상적으로 뜨도록,
-  /// [AppSettingsStore.load]와 같은 방식으로 실패를 조용히 흡수합니다.
+  /// 백엔드가 꺼져 있거나 기기가 오프라인이어도 이 메서드는 예외를 던지지
+  /// 않습니다. 저장된 세션이 있으면 검증 없이 그대로 유지하고(오프라인에
+  /// 게스트로 강등되던 버그 수정, [ConnectivityStatus] 참고), 없으면
+  /// 로그인 실패한 채로(=[isLoggedIn] false) 넘어갑니다 — 둘 다
+  /// [AppSettingsStore.load]와 같은 방식으로 조용히 흡수합니다.
   Future<void> ensureSession() async {
     if (_loaded) return;
     _loaded = true;
@@ -164,10 +166,17 @@ class AuthService extends ChangeNotifier {
         try {
           await refreshCurrentUser();
         } catch (_) {
-          await _loginAsGuest();
+          // [백엔드 수정]
+          // 오프라인이면 저장된 세션을 그대로 두고 진행 - 무조건 게스트로
+          // 강등시키면 오프라인일 때마다 카카오 로그인이 풀리는 버그였음.
+          if (!ConnectivityStatus.instance.isOffline.value) {
+            await _loginAsGuest();
+          }
         }
       }
     } catch (_) {
+      // [백엔드 수정] 오프라인이면 토큰을 지우지 않고 둠(다음 온라인 시 재검증).
+      if (ConnectivityStatus.instance.isOffline.value) return;
       // 저장소 읽기 자체가 실패했을 수 있으니, 남아있을 수 있는 값을 지우고
       // 게스트 로그인을 한 번 더 시도해봅니다. 그래도 실패하면(오프라인 등)
       // 로그인 안 된 상태로 계속 진행합니다.

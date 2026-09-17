@@ -763,6 +763,15 @@ class _TicketingPhasesDialog extends StatelessWidget {
         child: Row(
           children: [
             Text(
+              _phaseDDayLabel(date),
+              style: TextStyle(
+                fontSize: context.sp(12),
+                fontWeight: FontWeight.w900,
+                color: const Color(0xFF3DBE6B),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
               phase.phase,
               style: TextStyle(
                 fontSize: context.sp(14),
@@ -776,15 +785,6 @@ class _TicketingPhasesDialog extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(13),
                 color: Colors.black.withValues(alpha: 0.55),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              _phaseDDayLabel(date),
-              style: TextStyle(
-                fontSize: context.sp(12),
-                fontWeight: FontWeight.w900,
-                color: const Color(0xFF3DBE6B),
               ),
             ),
           ],
