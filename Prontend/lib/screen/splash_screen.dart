@@ -538,11 +538,18 @@ class _SplashScreenState extends State<SplashScreen>
           ),
           if (dustT > 0.0 && dustT < 1.0)
             Positioned.fill(
-              child: CustomPaint(
-                painter: _DustBurstPainter(
-                  progress: dustT,
-                  bookW: bookW,
-                  bookH: bookH,
+              // [백엔드 수정]
+              // 가로모드 2페이지 스프레드에서 책은 centeringOffset만큼 옆으로
+              // 옮겨가는데 먼지는 안 따라가 화면 가운데에 그대로 남아있던
+              // 문제 - 책과 같은 offset을 그대로 적용.
+              child: Transform.translate(
+                offset: centeringOffset / sceneScale,
+                child: CustomPaint(
+                  painter: _DustBurstPainter(
+                    progress: dustT,
+                    bookW: bookW,
+                    bookH: bookH,
+                  ),
                 ),
               ),
             ),
