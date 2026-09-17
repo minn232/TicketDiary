@@ -73,13 +73,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   final Map<String, Rect> _rects = {};
   SharedPreferences? _prefs;
   Timer? _saveTimer;
-  Timer? _deleteTimer;
-  Offset? _pressOrigin;
   bool _deleteMenuOpen = false;
-  double _startScale = 1;
-  double _startRotation = 0;
-  Offset _startOffset = Offset.zero;
-  Offset _startFocal = Offset.zero;
 
   bool containsTextAt(Offset globalPosition) {
     final render = _sheet.currentContext?.findRenderObject() as RenderBox?;
@@ -304,7 +298,6 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
 
   @override
   void dispose() {
-    _deleteTimer?.cancel();
     _saveTimer?.cancel();
     _saveLocal();
     for (final box in _boxes) {
@@ -442,130 +435,195 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
                 Positioned.fromRect(
                   key: ValueKey('after_text_${box.id}'),
                   rect: _rects[box.id]!,
-                  child: Transform.translate(
-                    offset: box.offset,
-                    child: Transform.rotate(
-                      angle: box.rotation,
-                      child: Transform.scale(
-                        scale: box.scale,
-                        child: IgnorePointer(
-                          ignoring: !widget.editMode,
-                          child: Listener(
-                            onPointerDown: (event) {
-                              _deleteTimer?.cancel();
-                              _pressOrigin = event.position;
-                              _deleteTimer = Timer(
-                                const Duration(milliseconds: 500),
-                                () => _showDelete(box),
-                              );
-                            },
-                            onPointerMove: (event) {
-                              if (_pressOrigin != null &&
-                                  (event.position - _pressOrigin!).distance >
-                                      18) {
-                                _deleteTimer?.cancel();
-                              }
-                            },
-                            onPointerUp: (_) => _deleteTimer?.cancel(),
-                            onPointerCancel: (_) => _deleteTimer?.cancel(),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onDoubleTap: () => _edit(box),
-                              onScaleStart: (d) {
-                                _startScale = box.scale;
-                                _startRotation = box.rotation;
-                                _startOffset = box.offset;
-                                _startFocal = d.focalPoint;
-                              },
-                              onScaleUpdate: _active == box.id
-                                  ? null
-                                  : (d) => setState(() {
-                                      box.scale = (_startScale * d.scale)
-                                          .clamp(.6, 2.4)
-                                          .toDouble();
-                                      box.rotation =
-                                          _startRotation + d.rotation;
-                                      final rect = _rects[box.id]!;
-                                      box.offset = _clampTextOffset(
-                                        box,
-                                        rect,
-                                        _startOffset +
-                                            (d.focalPoint - _startFocal),
-                                      );
-                                      _saveLocal();
-                                    }),
-                              child: DecoratedBox(
-                                decoration: widget.editMode
-                                    ? BoxDecoration(
-                                        border: Border.all(
-                                          color: Colors.black.withValues(
-                                            alpha: .45,
-                                          ),
-                                          width: 1,
-                                        ),
-                                        color: Colors.white.withValues(
-                                          alpha: .12,
-                                        ),
-                                      )
-                                    : const BoxDecoration(),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(_boxPadding),
-                                  child: _active == box.id
-                                      ? EditableText(
-                                          key: ValueKey(
-                                            'after_editor_${box.id}',
-                                          ),
-                                          controller: box.controller,
-                                          focusNode: box.focus,
-                                          style: style,
-                                          strutStyle: StrutStyle.fromTextStyle(
-                                            style,
-                                            forceStrutHeight: true,
-                                          ),
-                                          textScaler: MediaQuery.textScalerOf(
-                                            context,
-                                          ),
-                                          cursorColor: Colors.black,
-                                          backgroundCursorColor: Colors.black26,
-                                          selectionColor: Colors.black
-                                              .withValues(alpha: .18),
-                                          maxLines: null,
-                                          keyboardType: TextInputType.multiline,
-                                          scrollPhysics:
-                                              const NeverScrollableScrollPhysics(),
-                                          scrollPadding: EdgeInsets.zero,
-                                          cursorHeight:
-                                              _WrappedTextPainter.lineHeight(
-                                                style,
-                                                MediaQuery.textScalerOf(
-                                                  context,
-                                                ),
-                                              ),
-                                          onTapOutside: (_) =>
-                                              box.focus.unfocus(),
-                                        )
-                                      : _WrappedText(
-                                          text: box.controller.text.isEmpty
-                                              ? ''
-                                              : box.controller.text,
-                                          hint: '더블탭하여 입력',
-                                          style: style,
-                                          obstacles: _localObstacles(
-                                            _rects[box.id]!,
-                                            box,
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                  child: _DraggableTextBox(
+                    box: box,
+                    editMode: widget.editMode,
+                    isEditingText: _active == box.id,
+                    style: style,
+                    obstacles: _localObstacles(_rects[box.id]!, box),
+                    clampOffset: (requested) =>
+                        _clampTextOffset(box, _rects[box.id]!, requested),
+                    onDoubleTapEdit: () => _edit(box),
+                    onLongPressDelete: () => _showDelete(box),
+                    onGestureEnd: _saveLocal,
                   ),
                 ),
               ...widget.memos,
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 자유메모 텍스트 박스 하나의 이동·회전·확대 제스처와 삭제용 롱프레스를
+/// 전담합니다.
+///
+// [백엔드 수정] ConcertAfterTextCanvasState에서 분리 - 예전엔 텍스트 박스
+// 하나를 끌 때도 setState가 부모 전체에 걸려서, 존재하는 모든 자유메모에
+// 대해 장애물 회피 줄바꿈 계산(_place)이 매 프레임 다시 돌았습니다(포스터/
+// 사진 메모 드래그 렉과 같은 원인, [_DraggableMemo] 참고). box.anchor는
+// 드래그로 변하지 않아 이 박스의 rect 배치 자체는 드래그 중 안 바뀌므로,
+// 부모를 다시 부를 필요 없이 이 박스의 Transform만 로컬로 갱신합니다.
+class _DraggableTextBox extends StatefulWidget {
+  final _TextBox box;
+  final bool editMode;
+  final bool isEditingText;
+  final TextStyle style;
+  final List<Rect> obstacles;
+  final Offset Function(Offset requested) clampOffset;
+  final VoidCallback onDoubleTapEdit;
+  final VoidCallback onLongPressDelete;
+  final VoidCallback onGestureEnd;
+
+  const _DraggableTextBox({
+    required this.box,
+    required this.editMode,
+    required this.isEditingText,
+    required this.style,
+    required this.obstacles,
+    required this.clampOffset,
+    required this.onDoubleTapEdit,
+    required this.onLongPressDelete,
+    required this.onGestureEnd,
+  });
+
+  @override
+  State<_DraggableTextBox> createState() => _DraggableTextBoxState();
+}
+
+class _DraggableTextBoxState extends State<_DraggableTextBox> {
+  Timer? _deleteTimer;
+  Offset? _pressOrigin;
+  double _startScale = 1;
+  double _startRotation = 0;
+  Offset _startOffset = Offset.zero;
+  Offset _startFocal = Offset.zero;
+
+  @override
+  void dispose() {
+    _deleteTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _deleteTimer?.cancel();
+    _pressOrigin = event.position;
+    _deleteTimer = Timer(
+      const Duration(milliseconds: 500),
+      widget.onLongPressDelete,
+    );
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (_pressOrigin != null &&
+        (event.position - _pressOrigin!).distance > 18) {
+      _deleteTimer?.cancel();
+    }
+  }
+
+  void _handleScaleStart(ScaleStartDetails d) {
+    final box = widget.box;
+    _startScale = box.scale;
+    _startRotation = box.rotation;
+    _startOffset = box.offset;
+    _startFocal = d.focalPoint;
+  }
+
+  void _handleScaleUpdate(ScaleUpdateDetails d) {
+    final box = widget.box;
+    setState(() {
+      box.scale = (_startScale * d.scale).clamp(.6, 2.4).toDouble();
+      box.rotation = _startRotation + d.rotation;
+      box.offset = widget.clampOffset(
+        _startOffset + (d.focalPoint - _startFocal),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final box = widget.box;
+    final style = widget.style;
+    return Transform.translate(
+      offset: box.offset,
+      child: Transform.rotate(
+        angle: box.rotation,
+        child: Transform.scale(
+          scale: box.scale,
+          child: IgnorePointer(
+            ignoring: !widget.editMode,
+            child: Listener(
+              onPointerDown: _handlePointerDown,
+              onPointerMove: _handlePointerMove,
+              onPointerUp: (_) => _deleteTimer?.cancel(),
+              onPointerCancel: (_) => _deleteTimer?.cancel(),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onDoubleTap: widget.onDoubleTapEdit,
+                onScaleStart: widget.isEditingText ? null : _handleScaleStart,
+                onScaleUpdate: widget.isEditingText
+                    ? null
+                    : _handleScaleUpdate,
+                onScaleEnd: widget.isEditingText
+                    ? null
+                    : (_) => widget.onGestureEnd(),
+                child: RepaintBoundary(
+                  child: DecoratedBox(
+                    decoration: widget.editMode
+                        ? BoxDecoration(
+                            border: Border.all(
+                              color: Colors.black.withValues(alpha: .45),
+                              width: 1,
+                            ),
+                            color: Colors.white.withValues(alpha: .12),
+                          )
+                        : const BoxDecoration(),
+                    child: Padding(
+                      padding: const EdgeInsets.all(
+                        ConcertAfterTextCanvasState._boxPadding,
+                      ),
+                      child: widget.isEditingText
+                          ? EditableText(
+                              key: ValueKey('after_editor_${box.id}'),
+                              controller: box.controller,
+                              focusNode: box.focus,
+                              style: style,
+                              strutStyle: StrutStyle.fromTextStyle(
+                                style,
+                                forceStrutHeight: true,
+                              ),
+                              textScaler: MediaQuery.textScalerOf(context),
+                              cursorColor: Colors.black,
+                              backgroundCursorColor: Colors.black26,
+                              selectionColor: Colors.black.withValues(
+                                alpha: .18,
+                              ),
+                              maxLines: null,
+                              keyboardType: TextInputType.multiline,
+                              scrollPhysics:
+                                  const NeverScrollableScrollPhysics(),
+                              scrollPadding: EdgeInsets.zero,
+                              cursorHeight: _WrappedTextPainter.lineHeight(
+                                style,
+                                MediaQuery.textScalerOf(context),
+                              ),
+                              onTapOutside: (_) => box.focus.unfocus(),
+                            )
+                          : _WrappedText(
+                              text: box.controller.text.isEmpty
+                                  ? ''
+                                  : box.controller.text,
+                              hint: '더블탭하여 입력',
+                              style: style,
+                              obstacles: widget.obstacles,
+                            ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
