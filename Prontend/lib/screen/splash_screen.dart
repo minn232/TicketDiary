@@ -412,9 +412,16 @@ class _SplashScreenState extends State<SplashScreen>
                 }()
               : 0.0;
 
+          // [백엔드 수정] DiaryPageFrame.indexTabTopReserve 참고 - 1페이지
+          // 모드만 실제 프레임이 이만큼 밀려 배치되므로, 세로 예산과
+          // 중앙정렬 오프셋도 똑같이 반영(2페이지는 여백 자체가 없음).
+          final topReserve =
+              usesTwoPage ? 0.0 : DiaryPageFrame.indexTabTopReserve;
+          final screenHForBook = screenH - topReserve;
+
           final centeringOffset = Offset(
             (safePadding.left - safePadding.right) / 2 + spreadOffsetX,
-            (safePadding.top - safePadding.bottom) / 2,
+            (safePadding.top - safePadding.bottom) / 2 + topReserve / 2,
           );
 
           // 속지가 실제 다이어리와 같은 비율이 되도록 크기를 잡습니다.
@@ -425,7 +432,7 @@ class _SplashScreenState extends State<SplashScreen>
           // 크기(실제 DiaryPageFrame과 정확히 일치)에는 영향이 없습니다.
           final bookWidth =
               _bookSizeBoost *
-              math.min(screenW * 0.52, screenH * 0.6 / _pageRatio);
+              math.min(screenW * 0.52, screenHForBook * 0.6 / _pageRatio);
           final bookHeight = bookWidth * _pageRatio;
 
           // 마지막에 페이지가 실제 다이어리 화면과 같은 크기가 되는 배율.
@@ -435,7 +442,8 @@ class _SplashScreenState extends State<SplashScreen>
           // 써야 합니다. 예전엔 math.max에 1.04배까지 더해서 일부러 화면을
           // 살짝 넘치게 채웠는데, 그 결과 애니메이션 끝의 페이지가 실제
           // 다이어리 페이지보다 커 보이는 문제가 있었습니다.
-          final fillScale = math.min(screenW / bookWidth, screenH / bookHeight);
+          final fillScale =
+              math.min(screenW / bookWidth, screenHForBook / bookHeight);
 
           // 실제 DiaryPageFrame이 이 화면에서 스스로 계산할 scale/marginEachSide와
           // 정확히 같은 수식(diary_page_frame.dart의 계산과 동일 - frameWidth는

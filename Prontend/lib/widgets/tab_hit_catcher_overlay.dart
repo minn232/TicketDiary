@@ -37,38 +37,54 @@ class TabHitCatcherOverlay extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, outerConstraints) {
               final availableWidth = outerConstraints.maxWidth;
-              return Center(
-                child: AspectRatio(
-                  aspectRatio: DiaryPageFrame.diaryAspectRatio,
-                  child: LayoutBuilder(
-                    builder: (context, innerConstraints) {
-                      final frameWidth = innerConstraints.maxWidth;
-                      final scale = (frameWidth / kReferenceFrameWidth)
-                          .clamp(kMinTextScale, kMaxTextScale);
-                      final marginEachSide =
-                          math.max(0.0, (availableWidth - frameWidth) / 2);
-                      return Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          for (final layout in diaryTabLayoutSpecs)
-                            DiaryPageFrame.buildScaledSideTab(
-                              DiarySideTabSpec(
-                                right: layout.right,
-                                top: layout.top,
-                                // 보이지 않아도 됩니다 — PressableScale이
-                                // HitTestBehavior.opaque라 이 자리 전체가
-                                // (자식이 그리는 게 없어도) 눌림을 받습니다.
-                                child: const SizedBox(),
-                                onTap: () => coordinator.requestTab(layout.tab),
-                              ),
-                              scale,
-                              marginEachSide,
-                            ),
-                        ],
-                      );
-                    },
+              // [백엔드 수정] DiaryPageFrame.indexTabTopReserve 참고 - 실제
+              // 프레임도 이만큼 밀려 배치되므로 여기서도 똑같이 반영합니다.
+              return Stack(
+                children: [
+                  Positioned(
+                    top: DiaryPageFrame.indexTabTopReserve,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: DiaryPageFrame.diaryAspectRatio,
+                        child: LayoutBuilder(
+                          builder: (context, innerConstraints) {
+                            final frameWidth = innerConstraints.maxWidth;
+                            final scale = (frameWidth / kReferenceFrameWidth)
+                                .clamp(kMinTextScale, kMaxTextScale);
+                            final marginEachSide = math.max(
+                              0.0,
+                              (availableWidth - frameWidth) / 2,
+                            );
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                for (final layout in diaryTabLayoutSpecs)
+                                  DiaryPageFrame.buildScaledSideTab(
+                                    DiarySideTabSpec(
+                                      right: layout.right,
+                                      top: layout.top,
+                                      // 보이지 않아도 됩니다 —
+                                      // PressableScale이 HitTestBehavior.
+                                      // opaque라 이 자리 전체가(자식이
+                                      // 그리는 게 없어도) 눌림을 받습니다.
+                                      child: const SizedBox(),
+                                      onTap: () =>
+                                          coordinator.requestTab(layout.tab),
+                                    ),
+                                    scale,
+                                    marginEachSide,
+                                  ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               );
             },
           ),

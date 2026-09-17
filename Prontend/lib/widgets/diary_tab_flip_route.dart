@@ -439,23 +439,21 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
               pageWidth: twoPageLayout.metrics.pageWidth,
             );
           } else {
-            if (availableWidth / availableHeight > aspectRatio) {
-              frameHeight = availableHeight;
+            // [백엔드 수정] DiaryPageFrame.indexTabTopReserve만큼 먼저 뗀
+            // 나머지 공간에서 AspectRatio+Center로 배치 - DiaryPageFrame.
+            // build()와 같은 계산이어야 리프와 실제 프레임 위치가 안 어긋남.
+            final reservedHeight =
+                availableHeight - DiaryPageFrame.indexTabTopReserve;
+            if (availableWidth / reservedHeight > aspectRatio) {
+              frameHeight = reservedHeight;
               frameWidth = frameHeight * aspectRatio;
             } else {
               frameWidth = availableWidth;
               frameHeight = frameWidth / aspectRatio;
             }
             marginEachSide = math.max(0.0, (availableWidth - frameWidth) / 2);
-            // DiaryPageFrame.build()는 AspectRatio를 Center로 감싸서
-            // 가로뿐 아니라 세로도 중앙 정렬합니다(diaryAspectRatio가
-            // 화면비보다 좁은 대부분의 폰에서는 frameHeight <
-            // availableHeight라 위아래 여백이 생김). 여기서 top을 0으로
-            // 고정하면 그 여백만큼 실제 다이어리 페이지 위치보다 위로
-            // 밀려 보이므로, 같은 공식으로 세로 마진도 계산해 맞춰야
-            // 합니다 — 기기별 화면비 차이로 이 여백 크기가 달라, "몇몇
-            // 기기에서만" 어긋나 보이던 원인입니다.
-            marginTop = math.max(0.0, (availableHeight - frameHeight) / 2);
+            marginTop = DiaryPageFrame.indexTabTopReserve +
+                math.max(0.0, (reservedHeight - frameHeight) / 2);
             metrics = DiaryPageFrame.computeRingMetrics(
               frameWidth: frameWidth,
               frameHeight: frameHeight,

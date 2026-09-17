@@ -20,6 +20,12 @@ class DiaryPageFrame extends StatelessWidget {
   /// 화면 너비로 고정되므로 세로 길이만 늘어나 비율이 달라집니다).
   static const double diaryAspectRatio = (5 / 8) / 1.1;
 
+  /// [백엔드 수정]
+  /// 프레임 위쪽에 항상 비워두는 여백(스케일 전 px) - frameAbovePage(풀탭 등)가
+  /// 태블릿류(위아래 여백이 원래 0인 기기)에서 상태바와 겹치지 않도록 확보.
+  /// [diary_tab_flip_route.dart]/[tab_hit_catcher_overlay.dart]도 같은 값을 써야 함.
+  static const double indexTabTopReserve = 56;
+
   /// 바인더 링 기본 배치값들. [DiaryPageFlipper]가 다음/이전 페이지 미리보기에
   /// 얹는 정적 링([BinderRingColumn])도 이 값들을 그대로 참조해서, 실제
   /// 프레임이 그리는 링과 완전히 같은 자리에 겹치도록 맞춥니다.
@@ -569,7 +575,10 @@ class DiaryPageFrame extends StatelessWidget {
         // 2페이지 모드 지원을 위해 기존 인라인 코드를 함수로 추출.
         // allottedWidth: 단일 페이지 모드=availableWidth 전체, 2페이지
         // 모드=페이지 한 장 폭.
-        Widget buildPageContent(double allottedWidth) {
+        Widget buildPageContent(
+          double allottedWidth, {
+          bool includeFrameAbovePageInline = true,
+        }) {
           return AspectRatio(
             aspectRatio: aspectRatio,
             // 안쪽 LayoutBuilder: 프레임의 실제 렌더링 폭(allottedWidth와
@@ -602,7 +611,12 @@ class DiaryPageFrame extends StatelessWidget {
                 return DiaryFrameScale(
                   scale: scale,
                   marginEachSide: marginEachSide,
-                  child: _buildFrameStack(activeTabs, scale, marginEachSide),
+                  child: _buildFrameStack(
+                    activeTabs,
+                    scale,
+                    marginEachSide,
+                    includeFrameAbovePage: includeFrameAbovePageInline,
+                  ),
                 );
               },
             ),
@@ -695,7 +709,66 @@ class DiaryPageFrame extends StatelessWidget {
           }
         }
 
-        return Center(child: buildPageContent(availableWidth));
+        // [백엔드 수정]
+        // indexTabTopReserve만큼 위 여백을 떼고 나머지 공간에 프레임 배치.
+        // scaleOverride가 있으면(스플래시 미리보기) 이미 최종 크기로 계산돼
+        // 들어온 값이라 여기서 또 빼면 이중 축소되므로 reserve를 0으로 둠.
+        final effectiveTopReserve =
+            scaleOverride == null ? indexTabTopReserve : 0.0;
+        final reservedHeight = availableHeight - effectiveTopReserve;
+        double frameWidth;
+        double frameHeight;
+        if (availableWidth / reservedHeight > aspectRatio) {
+          frameHeight = reservedHeight;
+          frameWidth = frameHeight * aspectRatio;
+        } else {
+          frameWidth = availableWidth;
+          frameHeight = frameWidth / aspectRatio;
+        }
+        final outerScale =
+            scaleOverride ??
+            (frameWidth / kReferenceFrameWidth).clamp(
+              kMinTextScale,
+              kMaxTextScale,
+            );
+        final outerMarginEachSide =
+            marginEachSideOverride ??
+            math.max(0.0, (availableWidth - frameWidth) / 2);
+        final frameTop =
+            effectiveTopReserve +
+            math.max(0.0, (reservedHeight - frameHeight) / 2);
+
+        // frameAbovePage(풀탭 등)는 여기 바깥쪽 Stack에서 직접 그립니다 -
+        // _buildFrameStack 내부는 AspectRatio로 타이트하게 제약돼 있어 top이
+        // 음수인 자식은 hitTestChildren이 안 불려 안 눌렸습니다(태블릿에서 발견).
+        return Stack(
+          children: [
+            Positioned(
+              top: effectiveTopReserve,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Center(
+                child: buildPageContent(
+                  availableWidth,
+                  includeFrameAbovePageInline: false,
+                ),
+              ),
+            ),
+            if (frameAbovePage != null)
+              Positioned(
+                top: frameTop - frameAbovePageTopOverflow,
+                left: outerMarginEachSide,
+                width: frameWidth,
+                height: frameHeight + frameAbovePageTopOverflow,
+                child: DiaryFrameScale(
+                  scale: outerScale,
+                  marginEachSide: outerMarginEachSide,
+                  child: frameAbovePage!,
+                ),
+              ),
+          ],
+        );
       },
     );
 
@@ -731,8 +804,9 @@ class DiaryPageFrame extends StatelessWidget {
   Widget _buildFrameStack(
     List<DiarySideTabSpec> activeTabs,
     double scale,
-    double marginEachSide,
-  ) {
+    double marginEachSide, {
+    bool includeFrameAbovePage = true,
+  }) {
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -833,7 +907,11 @@ class DiaryPageFrame extends StatelessWidget {
 
         /// 5.5. 페이지 위 자유 레이어. 소식 탭의 검색 풀탭처럼 페이지 규격과
         /// 별개로 충분한 터치 영역이 필요한 요소를 올립니다.
-        if (frameAbovePage != null)
+        // [백엔드 수정] includeFrameAbovePage=false(단일 페이지 모드)면 여기서
+        // 안 그리고 build()의 바깥쪽 Stack에서 대신 그립니다 - 이 Stack은
+        // AspectRatio로 타이트하게 제약돼 top이 음수인 자식이 안 눌리는
+        // 문제가 있었습니다(태블릿에서 발견). 2페이지 모드는 미적용(범위 밖).
+        if (frameAbovePage != null && includeFrameAbovePage)
           Positioned(
             top: -frameAbovePageTopOverflow,
             left: 0,
