@@ -139,4 +139,22 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('알림함'), findsNothing);
   });
+
+  // [백엔드 수정]
+  // 뒤로가기 키가 기본 팝(페이드)으로 바로 닫혀서 X버튼/드래그(슬라이드다운)와
+  // 다르게 보이던 것을 PopScope로 통일한 회귀 테스트.
+  testWidgets('뒤로가기를 눌러도 X버튼/드래그와 같은 방식으로 닫힌다', (tester) async {
+    final service = _FakeNotificationsService([
+      _item(id: '1', title: '공연 하루 전이에요', isRead: false),
+    ]);
+
+    await _openOverlay(tester, service);
+    expect(find.text('알림함'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('알림함'), findsNothing);
+  });
 }

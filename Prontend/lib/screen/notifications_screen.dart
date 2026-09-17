@@ -187,50 +187,61 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     return DiaryFrameScale(
       scale: widget.frameScale,
       marginEachSide: 0,
-      child: AnimatedBuilder(
-        animation: _t,
-        builder: (context, child) {
-          final t = _t.value;
-          return Stack(
-            children: [
-              // 패널 위쪽에 드러나는 배경을 어둡게 - 탭하면 닫힘.
-              Positioned.fill(
-                child: GestureDetector(
-                  onTap: _close,
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.45 * t),
-                  ),
-                ),
-              ),
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: FractionallySizedBox(
-                  heightFactor: 0.9,
-                  child: FractionalTranslation(
-                    translation: Offset(0, 1 - t),
-                    child: child,
-                  ),
-                ),
-              ),
-            ],
-          );
+      // [백엔드 수정]
+      // 뒤로가기 키가 기본 팝 전환(페이드)으로 바로 닫혀서 X버튼/드래그로
+      // 닫을 때(슬라이드다운)와 안 맞던 것 - PopScope로 가로채 _close()를
+      // 타도록 통일.
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          _close();
         },
-        child: _NotificationsPanel(
-          onHandleDragStart: _onHandleDragStart,
-          onHandleDragUpdate: _onHandleDragUpdate,
-          onHandleDragEnd: _onHandleDragEnd,
-          onClose: _close,
-          onRefresh: _load,
-          items: _items,
-          errorMessage: _errorMessage,
-          isRead: _isRead,
-          onTapItem: _markRead,
-          onDismissItem: _delete,
-          formatDateTime: _formatDateTime,
-          paperColor: _paperColor,
-          cardColor: _cardColor,
-          unreadAccent: _unreadAccent,
-          deleteAccent: _deleteAccent,
+        child: AnimatedBuilder(
+          animation: _t,
+          builder: (context, child) {
+            final t = _t.value;
+            return Stack(
+              children: [
+                // 패널 위쪽에 드러나는 배경을 어둡게 - 탭하면 닫힘.
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: _close,
+                    child: Container(
+                      color: Colors.black.withValues(alpha: 0.45 * t),
+                    ),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: FractionallySizedBox(
+                    heightFactor: 0.9,
+                    child: FractionalTranslation(
+                      translation: Offset(0, 1 - t),
+                      child: child,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+          child: _NotificationsPanel(
+            onHandleDragStart: _onHandleDragStart,
+            onHandleDragUpdate: _onHandleDragUpdate,
+            onHandleDragEnd: _onHandleDragEnd,
+            onClose: _close,
+            onRefresh: _load,
+            items: _items,
+            errorMessage: _errorMessage,
+            isRead: _isRead,
+            onTapItem: _markRead,
+            onDismissItem: _delete,
+            formatDateTime: _formatDateTime,
+            paperColor: _paperColor,
+            cardColor: _cardColor,
+            unreadAccent: _unreadAccent,
+            deleteAccent: _deleteAccent,
+          ),
         ),
       ),
     );
