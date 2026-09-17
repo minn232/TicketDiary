@@ -16,6 +16,7 @@ from app.models.artist_normalization import (
 )
 from app.models.artist_blocklist import BlockedArtistName
 from app.models.music_link_cache import MusicLinkCache
+from app.models.llm_batch_state import LlmNightBatchState
 
 __all__ = [
     "User", "UserRole",
@@ -34,4 +35,5 @@ __all__ = [
     "CanonicalArtist", "ArtistAlias", "ArtistNormalizationStatus", "ArtistGroupMembership",
     "BlockedArtistName",
     "MusicLinkCache",
+    "LlmNightBatchState",
 ]

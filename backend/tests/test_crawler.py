@@ -520,6 +520,7 @@ async def test_crawl_and_save_skips_temporarily_disabled_site():
     }
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -603,6 +604,7 @@ async def test_crawl_and_save_nol_ticket_uses_interpark_crawler():
     mock_concert.ticketing_links = None
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -637,6 +639,7 @@ async def test_crawl_and_save_interpark_updates_concert():
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -670,6 +673,7 @@ async def test_crawl_and_save_unsupported_site_skips():
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_links = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -695,6 +699,7 @@ async def test_crawl_and_save_none_ticketing_site_and_no_links_skips():
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_links = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -723,6 +728,7 @@ async def test_crawl_and_save_none_ticketing_site_uses_ticketing_links():
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/12345"}
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -784,6 +790,7 @@ async def test_crawl_and_save_skips_when_concert_ended():
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = datetime(2020, 1, 1, tzinfo=timezone.utc)  # 이미 지난 공연
 
     mock_db = AsyncMock()
@@ -815,6 +822,7 @@ async def test_crawl_and_save_skips_within_cooldown():
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = "https://s3.example.com/crawls/placeholder.png"
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = datetime.now(timezone.utc) - timedelta(hours=1)  # 24시간 이내
 
@@ -849,6 +857,7 @@ async def test_crawl_and_save_retries_after_cooldown_when_still_no_ticketing_dat
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = "https://s3.example.com/crawls/placeholder.png"
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = datetime.now(timezone.utc) - timedelta(hours=25)  # 쿨다운(24h) 지남
 
@@ -881,6 +890,7 @@ async def test_crawl_and_save_gives_up_after_max_attempts():
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = datetime.now(timezone.utc) - timedelta(hours=25)  # 쿨다운 지남
     mock_concert.crawl_attempt_count = _MAX_CRAWL_ATTEMPTS  # 이미 상한 도달
@@ -912,6 +922,7 @@ async def test_crawl_and_save_crawler_returns_none_skips_upload():
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -1016,6 +1027,7 @@ async def test_crawl_and_save_ticketlink_falls_back_to_kopis():
     mock_concert.ticketing_links = None
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -1048,6 +1060,7 @@ async def test_crawl_and_save_ticketlink_no_kopis_id_skips():
     mock_concert.ticketing_links = None
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 
@@ -1077,6 +1090,7 @@ async def test_crawl_and_save_melon_bot_block_skips():
     mock_concert.name = "공연명"
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
     mock_concert.end_date = None
     mock_concert.crawl_attempted_at = None
 

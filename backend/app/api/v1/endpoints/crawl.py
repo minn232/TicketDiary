@@ -17,6 +17,7 @@ from app.services.artist_matching import get_known_artist_names, merge_crawl_art
 from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization
 from app.services.kopis import _create_news_feeds_for_concert
 from app.services.lineup import upsert_concert_lineup
+from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
 from app.services.notification import schedule_ticketing_day_notifications
 from app.services.ticket import (
     backfill_delivery_date_from_concert,
@@ -53,6 +54,17 @@ async def receive_crawl_result(
     concert = result.scalar_one_or_none()
     if concert is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
+    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
+
+    # 이 콜백이 도착했다는 사실 자체를 기록 - 아래 개별 필드가 하나도 안 채워져도(스크린샷에서
+    # 못 찾은 경우) LLM이 이 공연을 이미 처리했다는 건 남아야 재전송 배치가 다시 안 보낸다.
+    # updated가 비어도 유실되지 않도록 독립적으로 커밋
+    concert.crawl_result_received_at = datetime.now(timezone.utc)
+    await db.commit()
 
     updated: list[str] = []
 
@@ -217,6 +229,11 @@ async def receive_artist_extraction_result(
     concert = result.scalar_one_or_none()
     if concert is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
+    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
 
     known_artist_names: set[str] | None = None
     if body.artist_name or body.lineup:

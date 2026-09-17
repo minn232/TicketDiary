@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.artist_similarity import ArtistSimilarity
 from app.models.concert import Concert
-from app.models.social import ArtistFollow
+from app.models.social import ArtistFollow, ConcertFollow
 from app.models.ticket import Ticket
 
 
@@ -105,3 +106,62 @@ async def _attach_profile_images(db: AsyncSession, entries: list[dict]) -> None:
 
     for entry in entries:
         entry["profile_image_url"] = photo_by_name_lower.get(entry["artist_name"].lower())
+
+
+# 찜 공연 추천 - 아티스트 추천과 달리 팔로우/티켓 이력이 없는 완전 신규 유저도 바로 볼 수
+# 있어야 해서(검색창을 처음 열었을 때부터 뭔가 보여주려는 목적), Last.fm 유사도 같은
+# 개인화 신호 대신 "이 앱에서 얼마나 많이 찜/티켓 등록됐는지"(인기도)로 순위를 매김.
+# 이미 자기가 찜했거나 티켓 등록한 공연은 추천에서 제외(볼 필요 없는 걸 또 보여줄 필요 없음)
+async def get_concert_recommendations(db: AsyncSession, user_id: UUID, limit: int = 30) -> list[Concert]:
+    now = datetime.now(timezone.utc)
+
+    own_follow_result = await db.execute(
+        select(ConcertFollow.concerts).where(ConcertFollow.user_id == user_id)
+    )
+    own_concerts = own_follow_result.scalar_one_or_none() or []
+    excluded_ids = {c.get("concert_id") for c in own_concerts if c.get("concert_id")}
+
+    own_ticket_result = await db.execute(select(Ticket.concert_id).where(Ticket.user_id == user_id))
+    excluded_ids.update(str(cid) for cid in own_ticket_result.scalars().all() if cid)
+
+    # 찜 집계는 JSONB 배열이라 관계형 GROUP BY가 안 되므로 파이썬에서 직접 카운트.
+    # (jsonb_array_length > 0 조건으로 빈 배열인 유저는 미리 걸러 스캔량을 줄임 -
+    # _build_follow_index/kopis.py와 동일한 패턴)
+    follow_rows = await db.execute(
+        select(ConcertFollow.concerts).where(func.jsonb_array_length(ConcertFollow.concerts) > 0)
+    )
+    scores: dict[str, int] = defaultdict(int)
+    for concerts in follow_rows.scalars().all():
+        for entry in concerts or []:
+            concert_id = entry.get("concert_id")
+            if concert_id:
+                scores[concert_id] += 1
+
+    # 티켓 등록 수는 관계형 컬럼(concert_id FK)이라 SQL에서 바로 집계
+    ticket_count_result = await db.execute(
+        select(Ticket.concert_id, func.count()).where(Ticket.concert_id.isnot(None)).group_by(Ticket.concert_id)
+    )
+    for concert_id, count in ticket_count_result.all():
+        scores[str(concert_id)] += count
+
+    candidate_ids = [cid for cid in scores if cid not in excluded_ids]
+    if not candidate_ids:
+        return []
+
+    ranked_ids = sorted(candidate_ids, key=lambda cid: scores[cid], reverse=True)
+
+    # 상위 후보를 넉넉히(limit의 3배) 조회 - 그중 이미 종료된 공연을 걸러내고도 limit을 채우기 위함
+    top_ids: list[UUID] = []
+    for cid in ranked_ids[: limit * 3]:
+        try:
+            top_ids.append(UUID(cid))
+        except ValueError:
+            continue
+
+    concert_result = await db.execute(
+        select(Concert).where(Concert.id.in_(top_ids), Concert.end_date > now)
+    )
+    concerts_by_id = {str(c.id): c for c in concert_result.scalars().all()}
+
+    ordered = [concerts_by_id[cid] for cid in ranked_ids if cid in concerts_by_id]
+    return ordered[:limit]

@@ -649,8 +649,13 @@ async def delete_artist_route(canonical_id: UUID, db: AsyncSession = Depends(get
 # 스크립트(scripts/yes24_melon_local_crawl.py)가 이 목록을 받아 각자 네트워크로 직접
 # 크롤링하고, 결과는 아래 업로드 엔드포인트로 되돌려줌(get_yes24_melon_crawl_targets 참고)
 @router.get("/crawl-targets/yes24-melon", response_model=AdminCrawlTargetsResponse)
-async def list_yes24_melon_crawl_targets(db: AsyncSession = Depends(get_db)):
-    concerts = await get_yes24_melon_crawl_targets(db)
+async def list_yes24_melon_crawl_targets(
+    exclude_already_crawled: bool = Query(
+        False, description="crawl_screenshot_url이 이미 있는(로컬 크롤링은 끝났고 LLM 분석만 밀린) 건 제외"
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    concerts = await get_yes24_melon_crawl_targets(db, exclude_already_crawled=exclude_already_crawled)
     items = []
     for concert in concerts:
         links = concert.ticketing_links or {}

@@ -18,6 +18,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert, EventType
 from app.models.social import ConcertFollow
 from app.services.kopis import refresh_ticketing_links
+from app.services.llm_batch_state import mark_llm_sent
 from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
 
@@ -770,6 +771,14 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         if concert.ticketing_date is not None:
             return
 
+        # LLM이 이미 지금 스크린샷을 분석해서 결과를 줬는데 ticketing_date를 못 찾은 경우 -
+        # _upload_screenshot의 업로드 키가 concert_id당 고정(타임스탬프 없음)이라 재크롤링해도
+        # URL이 그대로라서 pod dedup에 걸려 재분석 자체가 안 됨. 재크롤링해봤자 소용없으므로
+        # 포기. 페스티벌 라인업 재확인(_check_festival_lineup)은 이 함수를 안 쓰고 타임스탬프
+        # URL을 쓰는 별도 경로라 무관 - 새 스크린샷이 생기면 그쪽에서 이 값을 다시 None으로 리셋함
+        if concert.crawl_result_received_at is not None:
+            return
+
         # 공연이 이미 끝났으면 더 이상 의미 없음
         if concert.end_date is not None and concert.end_date <= now:
             return
@@ -816,28 +825,39 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
 # 으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(데이터센터 아닌 네트워크)에서 직접 돌리기로
 # 함(YES24/MELON은 AWS 서버 IP에서 차단 확정). 이 함수는 대상 목록만 뽑고, 실제 크롤링은
 # scripts/yes24_melon_local_crawl.py가 로컬에서 수행 후 save_manual_crawl_screenshot으로 반영
-async def get_yes24_melon_crawl_targets(db: AsyncSession) -> list[Concert]:
+#
+# 대상 조건이 ticketing_date IS NULL이라, 스크린샷은 이미 로컬에서 성공적으로 올렸어도(=
+# crawl_screenshot_url은 채워짐) 그걸 읽어 ticketing_date를 뽑는 LLM 분석 배치가 아직 안
+# 돌았으면 계속 대상에 남는다. LLM 분석이 밀리는 동안(RunPod 자리 문제 등) 이미 스크린샷을
+# 올린 건까지 매번 다시 크롤링 대상으로 잡혀 로컬 스크립트를 반복 실행하면 매크로 탐지
+# 위험이 커지므로, exclude_already_crawled=True면 crawl_screenshot_url이 이미 있는 건
+# (=로컬 크롤링은 끝났고 LLM 분석만 밀린 건) 제외하고 진짜 신규만 남긴다
+async def get_yes24_melon_crawl_targets(
+    db: AsyncSession, exclude_already_crawled: bool = False
+) -> list[Concert]:
     now = datetime.now(timezone.utc)
-    result = await db.execute(
-        select(Concert).where(
-            Concert.end_date > now,
-            Concert.ticketing_date.is_(None),
-            ~Concert.ticketing_links.has_key("INTERPARK"),
-            or_(
-                Concert.ticketing_links.has_key("YES24"),
-                Concert.ticketing_links.has_key("MELON"),
-                Concert.ticketing_links.has_key("MELONTICKET"),
-            ),
-            # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
-            # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
-            # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
-            # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
-            or_(
-                Concert.crawl_attempted_at.is_(None),
-                Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
-            ),
-        )
-    )
+    conditions = [
+        Concert.end_date > now,
+        Concert.ticketing_date.is_(None),
+        ~Concert.ticketing_links.has_key("INTERPARK"),
+        or_(
+            Concert.ticketing_links.has_key("YES24"),
+            Concert.ticketing_links.has_key("MELON"),
+            Concert.ticketing_links.has_key("MELONTICKET"),
+        ),
+        # 방금 이 로컬 크롤링으로 성공한(=crawl_attempted_at이 막 찍힌) 콘서트가 스크립트를
+        # 다시 돌리자마자 또 대상으로 잡혀서 중복으로 재크롤링되지 않게 - crawl_and_save의
+        # 재시도 쿨다운(_CRAWL_RETRY_COOLDOWN)과 동일한 값 재사용. 실패한 건(크기초과 등으로
+        # 업로드 자체가 안 된 것)은 attempted_at이 안 찍히므로 계속 대상에 남아 즉시 재시도됨
+        or_(
+            Concert.crawl_attempted_at.is_(None),
+            Concert.crawl_attempted_at < now - _CRAWL_RETRY_COOLDOWN,
+        ),
+    ]
+    if exclude_already_crawled:
+        conditions.append(Concert.crawl_screenshot_url.is_(None))
+
+    result = await db.execute(select(Concert).where(*conditions))
     return list(result.scalars().all())
 
 
@@ -885,6 +905,10 @@ async def send_screenshots_to_llm() -> None:
                 # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
                 Concert.admin_reviewed_at.is_(None),
                 Concert.ai_reviewed_at.is_(None),
+                # 이미 지금 스크린샷으로 LLM 콜백을 받은 건 재전송 안 함(ticketing_date 유무와
+                # 무관 - 못 찾았어도 이미 처리는 된 것). 새 스크린샷이 생기면(_check_festival_lineup
+                # 등) 그쪽에서 이 값을 None으로 리셋하므로 여기 다시 걸림
+                Concert.crawl_result_received_at.is_(None),
             )
         )
         concerts = list(result.scalars().all())
@@ -911,6 +935,8 @@ async def send_screenshots_to_llm() -> None:
             )
             response.raise_for_status()
         logger.info(f"LLM팀 스크린샷 전송 완료: {len(concerts)}건")
+        # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
+        await mark_llm_sent(len(concerts))
     except Exception as e:
         logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
 
@@ -1001,6 +1027,8 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         await db.commit()
 
     logger.info(f"LLM팀 포스터 전송 완료: {len(concerts)}건")
+    # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
+    await mark_llm_sent(len(concerts))
     return len(concerts)
 
 
@@ -1036,6 +1064,7 @@ async def retry_pending_crawls() -> None:
             select(Concert.id).where(
                 Concert.id.in_([UUID(cid) for cid in followed_ids]),
                 Concert.ticketing_date.is_(None),
+                Concert.crawl_result_received_at.is_(None),
                 Concert.end_date > now,
             )
         )
@@ -1126,6 +1155,10 @@ async def _check_festival_lineup(concert_id) -> None:
         concert.crawl_screenshot_url = url
         concert.lineup_snapshot_hash = text_hash
         concert.lineup_snapshot_img_srcs = img_srcs
+        # 새 스크린샷이라 이전 분석 결과는 더 이상 유효하지 않음 - 리셋 안 하면
+        # send_screenshots_to_llm의 crawl_result_received_at IS NULL 필터에 걸려 이 새
+        # 스크린샷이 영영 재전송 대상에서 빠지게 됨
+        concert.crawl_result_received_at = None
         await db.commit()
         logger.info(f"페스티벌 라인업 변경 감지, 스크린샷 갱신: {concert.name} → {url}")
 
