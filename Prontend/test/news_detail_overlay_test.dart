@@ -116,15 +116,61 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    // 이미 지난 "선예매"가 아니라 다가올 "일반예매"가 요약으로 뜸(단계/D-day 2줄).
-    expect(find.text('일반예매\nD-5'), findsOneWidget);
+    // 이미 지난 "선예매"가 아니라 다가올 "일반예매"가 요약으로 뜸(단계/D-day
+    // 각각 밑줄이 자기 줄 폭에 맞게 그려지도록 별도 Text로 렌더링됨).
+    expect(find.text('일반예매'), findsOneWidget);
+    expect(find.text('D-5'), findsOneWidget);
 
     await tester.tap(find.text('티켓팅 날짜'));
     await tester.pumpAndSettle();
 
-    // 전체 단계(선예매/일반예매)가 목록으로 보임.
+    // 전체 단계(선예매/일반예매)가 목록으로 보임 - "일반예매"는 타일 요약(뒤)과
+    // 다이얼로그 목록(앞) 둘 다에 남아있어 2개.
     expect(find.text('선예매'), findsOneWidget);
-    expect(find.text('일반예매'), findsOneWidget);
+    expect(find.text('일반예매'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
+  });
+
+  // [백엔드 수정]
+  // 공연장 이름에 옛 이름 괄호가 붙으면("예스24 라이브홀 (구. 악스코리아)")
+  // 괄호 앞에서 줄바꿈해서 두 줄 다 각자 폭에 맞는 밑줄이 그려지는지 확인.
+  testWidgets('공연장에 옛 이름 괄호가 있으면 그 앞에서 줄바꿈된다', (tester) async {
+    final news = NewsModel(
+      artist: '아티스트',
+      concert: '테스트 공연 [서울]',
+      imageUrl: '',
+      description: '',
+      venue: '예스24 라이브홀 (구. 악스코리아)',
+      periodText: '2026.09.04 ~ 09.06',
+      concertDate: DateTime(2026, 9, 4),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (ctx) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => NewsDetailOverlay.show(
+                  ctx,
+                  startRect: const Rect.fromLTWH(20, 20, 120, 160),
+                  collapsedCard: const SizedBox(),
+                  news: news,
+                  frameScale: 1.0,
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    expect(find.text('예스24 라이브홀'), findsOneWidget);
+    expect(find.text('(구. 악스코리아)'), findsOneWidget);
   });
 }

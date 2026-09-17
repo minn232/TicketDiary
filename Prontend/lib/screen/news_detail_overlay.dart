@@ -580,7 +580,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
               label: '공연장',
               value: (news.venue == null || news.venue!.isEmpty)
                   ? '미정'
-                  : news.venue!,
+                  : _splitVenueLine(news.venue!),
               onTap: (news.venue != null && news.venue!.isNotEmpty)
                   ? () => showVenueMapPicker(context, news.venue!)
                   : null,
@@ -603,6 +603,8 @@ class _ExpandedNewsDetail extends StatelessWidget {
               value: nextTicketingPhase != null
                   ? '${nextTicketingPhase.phase}\n${_phaseDDayLabel(nextTicketingPhase.date)}'
                   : news.ticketingText ?? '미정',
+              // [백엔드 수정] D-day 줄에만 밑줄(단계명 줄은 밑줄 없음).
+              underlineLastLineOnly: true,
               onTap: ticketingPhases != null && ticketingPhases.isNotEmpty
                   ? () => _showTicketingPhases(context, ticketingPhases)
                   : (news.ticketingDate != null
@@ -667,6 +669,16 @@ String _phaseDDayLabel(DateTime? date) {
   if (diff > 0) return 'D-$diff';
   if (diff == 0) return 'D-DAY';
   return '예매 중';
+}
+
+// [백엔드 수정]
+// 공연장 타일에서 "예스24 라이브홀 (구. 악스코리아)"처럼 옛 이름이 괄호로
+// 붙은 경우 그 앞에서 줄바꿈 - 안 그러면 자동 줄바꿈된 두 번째 줄에만
+// 밑줄이 들어가고(가장 넓은 줄 기준이라 너무 길어 보임) 첫 줄엔 안 들어감.
+String _splitVenueLine(String venue) {
+  final match = RegExp(r'^(.*\S)\s+(\([^()]*\))$').firstMatch(venue);
+  if (match == null) return venue;
+  return '${match.group(1)}\n${match.group(2)}';
 }
 
 // [백엔드 수정]
@@ -996,9 +1008,16 @@ class _CalendarDialog extends StatelessWidget {
 class _InfoTile extends StatelessWidget {
   final Widget icon;
   final String label;
+
+  /// 줄바꿈은 `\n`으로 직접 넘깁니다(예: "예스24 라이브홀\n(구. 악스코리아)") -
+  /// 각 줄을 별도 Text로 그려서 줄마다 자기 폭에 맞는 밑줄을 그을 수 있게 합니다.
   final String value;
   final double scale;
   final VoidCallback? onTap;
+
+  /// true면 마지막 줄에만 밑줄(예: "팬클럽 선예매\nD-67"에서 D-67만).
+  /// false(기본)면 [onTap]이 있을 때 모든 줄에 밑줄.
+  final bool underlineLastLineOnly;
 
   const _InfoTile({
     required this.icon,
@@ -1006,11 +1025,13 @@ class _InfoTile extends StatelessWidget {
     required this.value,
     required this.scale,
     this.onTap,
+    this.underlineLastLineOnly = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final k = scale;
+    final lines = value.split('\n');
     return GestureDetector(
       onTap: onTap,
       behavior: onTap != null
@@ -1048,29 +1069,17 @@ class _InfoTile extends StatelessWidget {
             ),
             SizedBox(height: 4 * k),
             // [백엔드 수정]
-            // TextDecoration.underline 대신 밑줄을 직접 그림 - 숫자/띄어쓰기
-            // 경계에서 밑줄이 폰트 글리프 단위로 끊겨 보이던 문제(커스텀
-            // 폰트가 숫자를 대체 폰트로 그리면서 생긴 이음매) 회피.
-            Container(
-              decoration: onTap != null
-                  ? BoxDecoration(
-                      border: Border(
-                        bottom: BorderSide(
-                          color: Colors.black.withValues(alpha: 0.8),
-                          width: 1,
-                        ),
-                      ),
-                    )
-                  : null,
-              child: Text(
-                value,
-                textAlign: TextAlign.center,
-                // [백엔드 수정]
-                // 티켓팅 타일 값이 "단계\nD-day" 2줄 고정이라, 단계 이름
-                // 자체가 좁은 화면에서 한 줄 더 넘어가도(3줄) D-day가 안
-                // 잘리도록 2 -> 3으로 늘림. 다른 타일은 짧은 텍스트라 영향 없음.
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
+            // `\n`으로 나뉜 줄마다 따로 그려서, 줄 하나하나가 자기 폭에 맞는
+            // 밑줄을 가짐(TextDecoration.underline은 숫자/띄어쓰기 경계에서
+            // 폰트 대체로 끊겨 보이고, 여러 줄 전체를 한 Text로 감싸면 밑줄이
+            // 가장 넓은 줄 기준으로 늘어나 다른 줄엔 너무 길어 보였음).
+            for (final (i, line) in lines.indexed) ...[
+              if (i > 0) SizedBox(height: 2 * k),
+              _InfoTileLine(
+                text: line,
+                underline:
+                    onTap != null &&
+                    (!underlineLastLineOnly || i == lines.length - 1),
                 style: TextStyle(
                   fontSize: context.sp(12),
                   fontWeight: FontWeight.w800,
@@ -1078,9 +1087,46 @@ class _InfoTile extends StatelessWidget {
                   height: 1.25,
                 ),
               ),
-            ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// [_InfoTile] 값의 줄 하나. [underline]이면 이 줄 자신의 폭에 맞춰서만
+/// 밑줄을 긋습니다(다른 줄과 폭을 공유하지 않음).
+class _InfoTileLine extends StatelessWidget {
+  final String text;
+  final bool underline;
+  final TextStyle style;
+
+  const _InfoTileLine({
+    required this.text,
+    required this.underline,
+    required this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: underline
+          ? BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: Colors.black.withValues(alpha: 0.8),
+                  width: 1,
+                ),
+              ),
+            )
+          : null,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: style,
       ),
     );
   }
