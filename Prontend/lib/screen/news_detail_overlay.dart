@@ -556,7 +556,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
               scale: k,
               icon: _CalendarDayIcon(day: day, scale: k),
               label: '공연 기간',
-              value: news.periodText ?? '미정',
+              value: _splitPeriodLine(news.periodText ?? '미정'),
               onTap: news.concertDate != null
                   ? () => _showCalendar(
                       context,
@@ -672,13 +672,24 @@ String _phaseDDayLabel(DateTime? date) {
 }
 
 // [백엔드 수정]
-// 공연장 타일에서 "예스24 라이브홀 (구. 악스코리아)"처럼 옛 이름이 괄호로
-// 붙은 경우 그 앞에서 줄바꿈 - 안 그러면 자동 줄바꿈된 두 번째 줄에만
-// 밑줄이 들어가고(가장 넓은 줄 기준이라 너무 길어 보임) 첫 줄엔 안 들어감.
+// 공연장 타일에서 옛 이름 괄호("...홀 (구. 악스코리아)") 앞에서 줄바꿈 - 안
+// 그러면 자동 줄바꿈된 텍스트가 밑줄이 타일 전체 폭으로 늘어나 보임
+// (_InfoTileLine 참고). 첫 " (" 위치로 나눠서 중첩 괄호도 바깥쪽이 통째로 묶임.
 String _splitVenueLine(String venue) {
-  final match = RegExp(r'^(.*\S)\s+(\([^()]*\))$').firstMatch(venue);
-  if (match == null) return venue;
-  return '${match.group(1)}\n${match.group(2)}';
+  final idx = venue.indexOf(' (');
+  if (idx == -1 || !venue.endsWith(')')) return venue;
+  return '${venue.substring(0, idx)}\n${venue.substring(idx + 1)}';
+}
+
+// [백엔드 수정]
+// 공연 기간이 여러 날("2026.10.03 ~ 2026.10.04")이면 자동 줄바꿈에 맡길 때
+// 위와 같은 이유로 밑줄이 타일 전체 폭으로 늘어나 보여서, "~" 뒤에서
+// 명시적으로 줄바꿈합니다.
+String _splitPeriodLine(String period) {
+  const sep = ' ~ ';
+  final idx = period.indexOf(sep);
+  if (idx == -1) return period;
+  return '${period.substring(0, idx)} ~\n${period.substring(idx + sep.length)}';
 }
 
 // [백엔드 수정]

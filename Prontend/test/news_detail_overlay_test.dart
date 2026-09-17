@@ -173,4 +173,90 @@ void main() {
     expect(find.text('예스24 라이브홀'), findsOneWidget);
     expect(find.text('(구. 악스코리아)'), findsOneWidget);
   });
+
+  // [백엔드 수정]
+  // 공연 기간이 여러 날("2026.10.03 ~ 2026.10.04")이면 "~" 뒤에서 줄바꿈해서
+  // 두 줄 다 각자 폭에 맞는 밑줄이 그려지는지 확인.
+  testWidgets('공연 기간이 여러 날이면 물결표 뒤에서 줄바꿈된다', (tester) async {
+    final news = NewsModel(
+      artist: '아티스트',
+      concert: '테스트 공연 [페스티벌]',
+      imageUrl: '',
+      description: '',
+      venue: '서울 공연장',
+      periodText: '2026.10.03 ~ 2026.10.04',
+      concertDate: DateTime(2026, 10, 3),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (ctx) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => NewsDetailOverlay.show(
+                  ctx,
+                  startRect: const Rect.fromLTWH(20, 20, 120, 160),
+                  collapsedCard: const SizedBox(),
+                  news: news,
+                  frameScale: 1.0,
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    expect(find.text('2026.10.03 ~'), findsOneWidget);
+    expect(find.text('2026.10.04'), findsOneWidget);
+  });
+
+  // [백엔드 수정]
+  // 괄호가 중첩("파라다이스시티 (컬처파크 (야외))")돼도 바깥쪽 괄호 앞에서
+  // 통째로 줄바꿈되는지 확인 - 예전 정규식은 중첩 괄호에서 매칭 자체가 안 됐음.
+  testWidgets('공연장 옛 이름 괄호가 중첩돼도 바깥 괄호 앞에서 줄바꿈된다', (tester) async {
+    final news = NewsModel(
+      artist: '아티스트',
+      concert: '테스트 공연 [페스티벌]',
+      imageUrl: '',
+      description: '',
+      venue: '파라다이스시티 (컬처파크 (야외))',
+      periodText: '2026.10.03 ~ 2026.10.04',
+      concertDate: DateTime(2026, 10, 3),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (ctx) => Scaffold(
+            body: Center(
+              child: ElevatedButton(
+                onPressed: () => NewsDetailOverlay.show(
+                  ctx,
+                  startRect: const Rect.fromLTWH(20, 20, 120, 160),
+                  collapsedCard: const SizedBox(),
+                  news: news,
+                  frameScale: 1.0,
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    expect(find.text('파라다이스시티'), findsOneWidget);
+    expect(find.text('(컬처파크 (야외))'), findsOneWidget);
+  });
 }
