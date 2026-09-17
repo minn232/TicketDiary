@@ -1426,55 +1426,69 @@ class _DiaryScreenState extends State<DiaryScreen> {
         child: buildUpcomingTicketLandscapePanel(),
       ),
       // 잎에 다이어리 탭까지 포함하려면 오버레이가 페이지 박스보다 넓은
-      // 프레임 전체를 차지해야 합니다. 회전축(pivotX)은 페이지 종이의
-      // 왼쪽 모서리(= 30 - 가로 10% 확대로 늘어난 절반) 위치입니다.
+      // 프레임 전체를 차지해야 합니다. 회전축(pivotX)은 세로모드 기준
+      // 페이지 종이 왼쪽 모서리(= 30 - 가로 10% 확대로 늘어난 절반) 위치,
+      // 가로모드 2페이지는 아래에서 따로 계산합니다.
       overlayMainPageFullFrame: true,
       // 페이지 넘김과 같은 속도로 바인더 링이 오른쪽부터 사라졌다가
       // 넘김이 끝나면 다시 나타나게 합니다.
       overlayFlipProgress: _flipAnimating,
       overlayMainPage: LayoutBuilder(
-        builder: (context, constraints) => DiaryPageFlipper(
-          key: ValueKey('flipper_$_currentPageIndex'),
-          pivotX: 30 - (constraints.maxWidth - 75) * 0.05,
-          // 오른쪽 45(=pageRight)는 프레임에 고정된 소식/결산/설정 탭
-          // 자리라, 스와이프 제스처가 그 탭들의 탭(누름) 이벤트를 가로채지
-          // 않도록 제외합니다.
-          dragExclusionRight: 45,
-          flipProgressNotifier: _flipAnimating,
-          activeTab: _buildActiveTab(diaryTab),
-          frontPage: _buildFlipLeaf(pageIndex),
-          // 다음 페이지가 없으면(nextPageIndex==null) frontPage와 같은
-          // 티켓을 같은 GlobalKey로 다시 그리지 않도록 빈 페이지를
-          // 넣습니다. 이 상태에서는 onFlipForward도 null이라 실제로
-          // 넘어가 보이지도 않습니다.
-          backPage: nextPageIndex == null
-              ? const SizedBox.shrink()
-              : _buildFlipLeaf(nextPageIndex),
-          // 첫 페이지가 아니면 오른쪽 스와이프로 이전 페이지로 돌아갑니다.
-          // prevPage(이전 페이지)와 frontPage(현재 페이지)는 서로 다른 티켓
-          // 목록이라 GlobalKey가 겹치지 않고, backPage와는 DiaryPageFlipper가
-          // 넘김 방향별로 한쪽만 트리에 올리므로 동시에 마운트되지 않습니다.
-          prevPage: prevPageIndex == null
-              ? null
-              : _buildFlipLeaf(prevPageIndex),
-          onFlipForward: _currentPageIndex < _totalPages - 1
-              ? () {
-                  final now = DateTime.now();
-                  if (now.difference(_lastFlipTime) < _flipCooldown) return;
-                  _lastFlipTime = now;
-                  setState(() => _currentPageIndex++);
-                }
-              : null,
-          onFlipBackward: prevPageIndex == null
-              ? null
-              : () {
-                  final now = DateTime.now();
-                  if (now.difference(_lastFlipTime) < _flipCooldown) return;
-                  _lastFlipTime = now;
-                  setState(() => _currentPageIndex--);
-                },
-          flipUpward: false,
-        ),
+        builder: (context, constraints) {
+          // [백엔드 수정]
+          // 가로모드 2페이지는 회전축이 스파인 접합부(spineCenterX)와 안
+          // 맞아 살짝 왼쪽으로 어긋나 보였음 - resolveTwoPageLayout 공유로 맞춤.
+          final screenWidth = MediaQuery.sizeOf(context).width;
+          final twoPageLayout = DiaryPageFrame.resolveTwoPageLayout(
+            pageHeight: constraints.maxHeight,
+          );
+          final usesTwoPage = twoPageLayout.spreadWidth <= screenWidth;
+          final pivotX = usesTwoPage
+              ? twoPageLayout.spineCenterX - twoPageLayout.rightPageLeft
+              : 30 - (constraints.maxWidth - 75) * 0.05;
+          return DiaryPageFlipper(
+            key: ValueKey('flipper_$_currentPageIndex'),
+            pivotX: pivotX,
+            // 오른쪽 45(=pageRight)는 프레임에 고정된 소식/결산/설정 탭
+            // 자리라, 스와이프 제스처가 그 탭들의 탭(누름) 이벤트를 가로채지
+            // 않도록 제외합니다.
+            dragExclusionRight: 45,
+            flipProgressNotifier: _flipAnimating,
+            activeTab: _buildActiveTab(diaryTab),
+            frontPage: _buildFlipLeaf(pageIndex),
+            // 다음 페이지가 없으면(nextPageIndex==null) frontPage와 같은
+            // 티켓을 같은 GlobalKey로 다시 그리지 않도록 빈 페이지를
+            // 넣습니다. 이 상태에서는 onFlipForward도 null이라 실제로
+            // 넘어가 보이지도 않습니다.
+            backPage: nextPageIndex == null
+                ? const SizedBox.shrink()
+                : _buildFlipLeaf(nextPageIndex),
+            // 첫 페이지가 아니면 오른쪽 스와이프로 이전 페이지로 돌아갑니다.
+            // prevPage(이전 페이지)와 frontPage(현재 페이지)는 서로 다른 티켓
+            // 목록이라 GlobalKey가 겹치지 않고, backPage와는 DiaryPageFlipper가
+            // 넘김 방향별로 한쪽만 트리에 올리므로 동시에 마운트되지 않습니다.
+            prevPage: prevPageIndex == null
+                ? null
+                : _buildFlipLeaf(prevPageIndex),
+            onFlipForward: _currentPageIndex < _totalPages - 1
+                ? () {
+                    final now = DateTime.now();
+                    if (now.difference(_lastFlipTime) < _flipCooldown) return;
+                    _lastFlipTime = now;
+                    setState(() => _currentPageIndex++);
+                  }
+                : null,
+            onFlipBackward: prevPageIndex == null
+                ? null
+                : () {
+                    final now = DateTime.now();
+                    if (now.difference(_lastFlipTime) < _flipCooldown) return;
+                    _lastFlipTime = now;
+                    setState(() => _currentPageIndex--);
+                  },
+            flipUpward: false,
+          );
+        },
       ),
       child: const SizedBox.shrink(),
     );
