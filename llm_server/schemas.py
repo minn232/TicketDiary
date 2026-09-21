@@ -49,11 +49,18 @@ class CrawlResultCallback(BaseModel):
     ticketing_phases: list[dict] | None = None  # [{"phase": "선예매", "date": "..."|None}, ...]
     delivery_date: str | None = None  # YYYY-MM-DD
     artist_name: list[str] | None = None
+    artist_name_ko: list[str | None] | None = None  # artist_name과 같은 길이·순서
     food_allowed: str | None = None  # "가능"/"불가능"/"일부허용"
 
 
 class ArtistResultCallback(BaseModel):
     artist_name: list[str]
+    # 외국 아티스트명을 "한국에서 흔히 부르는" 한글 발음으로 옮긴 표기
+    # (예: "Isaiah J. Thompson" -> "아이재아 제이 톰슨"). korean_reading.py가 만든다.
+    # artist_name과 길이·순서가 정확히 대응하고, 이미 한글이거나 옮기지 못한 자리는 None -
+    # 원문 표기를 대체하는 게 아니라 함께 보여주고 검색에 같이 걸기 위한 부가 필드다.
+    # 한글 표기가 하나도 없으면 필드 자체가 빠진다.
+    artist_name_ko: list[str | None] | None = None
     # 포스터를 보고 판단한 단독/페스티벌 분류.
     # 백엔드 app/models/concert.py EventType과 값을 정확히 맞출 것("SOLO"/"FESTIVAL"/"UNKNOWN")
     event_type: str | None = None
