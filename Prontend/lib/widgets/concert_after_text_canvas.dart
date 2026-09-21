@@ -492,8 +492,10 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
                                         _startOffset +
                                             (d.focalPoint - _startFocal),
                                       );
-                                      _saveLocal();
                                     }),
+                              onScaleEnd: _active == box.id
+                                  ? null
+                                  : (_) => _saveLocal(),
                               child: DecoratedBox(
                                 decoration: widget.editMode
                                     ? BoxDecoration(
@@ -602,6 +604,8 @@ class _WrappedText extends StatelessWidget {
     );
   }
 }
+
+final Map<String, double> _wrappedTextWidthCache = <String, double>{};
 
 class _WrappedTextPainter extends CustomPainter {
   final String text;
@@ -744,6 +748,10 @@ class _WrappedTextPainter extends CustomPainter {
     TextStyle style,
     TextScaler textScaler,
   ) {
+    final cacheKey =
+        'text=$value|family=${style.fontFamily}|size=${style.fontSize}|height=${style.height}|scale=${textScaler.scale(1)}';
+    final cached = _wrappedTextWidthCache[cacheKey];
+    if (cached != null) return cached;
     final painter = TextPainter(
       text: TextSpan(text: value, style: style),
       textDirection: TextDirection.ltr,
@@ -752,6 +760,10 @@ class _WrappedTextPainter extends CustomPainter {
     )..layout();
     final width = painter.width;
     painter.dispose();
+    if (_wrappedTextWidthCache.length > 900) {
+      _wrappedTextWidthCache.remove(_wrappedTextWidthCache.keys.first);
+    }
+    _wrappedTextWidthCache[cacheKey] = width;
     return width;
   }
 

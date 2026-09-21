@@ -797,16 +797,11 @@ class DiaryPageFrame extends StatelessWidget {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        if (pageTextureEnabled)
-                          const ScrapbookPaperTextureOverlay(
-                            opacity: .95,
-                            seed: 110,
-                          ),
                         child,
                         if (pageTextureEnabled)
                           const ScrapbookPaperTextureOverlay(
-                            opacity: .65,
-                            seed: 111,
+                            opacity: .75,
+                            seed: 110,
                           ),
                       ],
                     ),

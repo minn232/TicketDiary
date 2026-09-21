@@ -211,7 +211,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
   /// 비율에 맞춰 직접 확대/이동하며 자르게 한 뒤 업로드합니다.
   Future<void> _addPhoto(int index, double slotAspectRatio) async {
     if (!_ensureEditable() || _uploadingPhotoIndex != null) return;
-    if (index < 0 || index >= 3) return;
+    if (index < 0) return;
 
     final XFile? picked = await _imagePicker.pickImage(
       source: ImageSource.gallery,
@@ -267,55 +267,6 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
   }
 
   // [백엔드 수정]
-  // 사진을 꾹 눌러서 삭제할 수 있는 기능.
-  // 확인 팝업 후 서버에서 삭제.
-  Future<void> _confirmDeletePhoto(String url) async {
-    if (!_ensureEditable() || _uploadingPhotoIndex != null) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('사진 삭제'),
-        content: const Text('이 사진을 삭제할까요? 되돌릴 수 없어요.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('삭제', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    final List<String> nextUrls = [
-      ...(_ticketInfo?.concertPhotoUrls ?? const <String>[]),
-    ]..remove(url);
-
-    try {
-      final updated = await _ticketService.updateTicket(
-        _ticketId!,
-        concertPhotoUrls: nextUrls,
-      );
-      if (!mounted) return;
-      setState(() {
-        _ticketInfo = _ticketInfo?.copyWith(
-          concertPhotoUrls: updated.concertPhotoUrls ?? nextUrls,
-        );
-      });
-      if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
-      _showSnack('사진을 삭제했어요.');
-    } on TicketNotFoundException {
-      _showSnack('티켓을 찾을 수 없어요.');
-    } on ApiException catch (e) {
-      _showSnack('사진 삭제에 실패했어요: ${e.message}');
-    } catch (_) {
-      _showSnack('사진 삭제 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -330,7 +281,6 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       photoUrls: photoUrls,
       uploadingPhotoIndex: _uploadingPhotoIndex,
       onAddPhoto: _uploadingPhotoIndex == null ? _addPhoto : null,
-      onDeletePhoto: _uploadingPhotoIndex == null ? _confirmDeletePhoto : null,
       setlistTicketId: _ticketId,
       concertId: _ticketInfo?.concertId,
       initialTimetableLoad: _preloadedTimetable,
@@ -826,6 +776,7 @@ class _MemoTransform {
   double scale = 1;
   double rotation = 0;
   bool placed = false; // 기본 위치가 한 번 설정됐는지.
+  bool deleted = false;
 
   /// 드래그/확대 시작 시점에 측정해두는 메모지의 실제(배율 1) 크기.
   /// 경계 클램프 계산에 씁니다([_clampToCanvas] 참고).
@@ -837,6 +788,7 @@ class _MemoTransform {
     'scale': scale,
     'rotation': rotation,
     'placed': placed,
+    'deleted': deleted,
   };
 
   void applyJson(Map<String, dynamic> json) {
@@ -847,6 +799,7 @@ class _MemoTransform {
     scale = ((json['scale'] as num?)?.toDouble() ?? 1).clamp(.4, 3.2);
     rotation = (json['rotation'] as num?)?.toDouble() ?? 0;
     placed = json['placed'] as bool? ?? false;
+    deleted = json['deleted'] as bool? ?? false;
   }
 }
 
@@ -918,18 +871,19 @@ double _clampMemoScaleToCanvas(
       .toDouble();
 }
 
-const List<String> _defaultScrapZOrder = [
-  'poster',
-  'envelope',
-  'polaroid',
-  'photo_2',
-  'photo_3',
-];
+const List<String> _defaultScrapZOrder = ['poster', 'envelope'];
+
+String _photoMemoKey(int index) => 'photo_$index';
+bool _isPhotoMemoKey(String key) => RegExp(r'^photo_\d+$').hasMatch(key);
+int? _photoIndexFromKey(String key) {
+  if (!_isPhotoMemoKey(key)) return null;
+  return int.tryParse(key.substring('photo_'.length));
+}
 
 /// ticketId(또는 로컬 키)별 메모 배치/앞뒤 순서. 세션 동안만 유지(앱 재시작 시 초기화).
 final Map<String, Map<String, _MemoTransform>> _scrapStore = {};
 final Map<String, List<String>> _scrapZStore = {};
-
+final Map<String, Map<int, double>> _scrapPhotoRatioStore = {};
 
 class _ScrapbookCanvas extends StatefulWidget {
   final String layoutKey;
@@ -940,7 +894,6 @@ class _ScrapbookCanvas extends StatefulWidget {
   final List<String> photoUrls;
   final int? uploadingPhotoIndex;
   final Future<void> Function(int, double)? onAddPhoto;
-  final Future<void> Function(String)? onDeletePhoto;
   final String? setlistTicketId;
   final String? concertId;
   final Future<timetable_model.TimeTableResponse>? initialTimetableLoad;
@@ -955,7 +908,6 @@ class _ScrapbookCanvas extends StatefulWidget {
     required this.photoUrls,
     required this.uploadingPhotoIndex,
     required this.onAddPhoto,
-    required this.onDeletePhoto,
     required this.setlistTicketId,
     required this.concertId,
     required this.initialTimetableLoad,
@@ -1010,18 +962,30 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   }
 
   void _loadEnvelopeAccent() {
-    _posterAccent = null;
     _posterMood = null;
     final key = widget.ticketInfo?.posterImageUrl;
+    final cachedMood = key == null ? null : _posterMoodValueCache[key];
+    _posterMood = cachedMood;
+    _posterAccent = cachedMood?.accent ?? _fallbackPosterAccentColor(key);
     if (key == null || key.isEmpty) return;
+    if (cachedMood != null) return;
+    // 처음 열리는 동안 포스터 분석 결과를 곧바로 setState로 반영하면
+    // 페이지 색이 애니메이션 도중 바뀌어 보인다. 분석은 저장만 해두고,
+    // 같은 포스터를 다음에 열 때 시작 색으로 사용한다.
     unawaited(
-      _extractPosterMood(key)
+      (() async {
+            await Future<void>.delayed(const Duration(milliseconds: 450));
+            if (!mounted || widget.ticketInfo?.posterImageUrl != key) {
+              return null;
+            }
+            return _extractPosterMood(key);
+          })()
           .then((mood) {
-            if (!mounted || widget.ticketInfo?.posterImageUrl != key) return;
-            setState(() {
-              _posterAccent = mood.accent;
-              _posterMood = mood;
-            });
+            if (mood == null ||
+                !mounted ||
+                widget.ticketInfo?.posterImageUrl != key) {
+              return;
+            }
           })
           .catchError((_) {}),
     );
@@ -1032,6 +996,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   bool _layoutLoaded = false;
   Future<void> _layoutWrite = Future.value();
   bool _edit = false;
+  String? _activeMemoKey;
   Timer? _pageLongPressTimer;
   Offset? _pageLongPressDownPosition;
   late final Map<String, _MemoTransform> _t = _scrapStore.putIfAbsent(
@@ -1046,13 +1011,18 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     widget.layoutKey,
     () => List<String>.from(_defaultScrapZOrder),
   );
+  late final Map<int, double> _photoAspectRatios = _scrapPhotoRatioStore
+      .putIfAbsent(widget.layoutKey, () => {});
 
   // 제스처 시작 시점 스냅샷.
   double _startScale = 1;
   double _startRot = 0;
   Offset _startOffset = Offset.zero;
   Offset _startFocal = Offset.zero;
-
+  final ValueNotifier<int> _idleMemoFrame = ValueNotifier<int>(0);
+  final ValueNotifier<int> _memoFrame = ValueNotifier<int>(0);
+  bool _activeMemoOverDeleteZone = false;
+  OverlayEntry? _deleteOverlayEntry;
 
   // 새 공연 후 페이지가 처음 생성될 때 적용되는 고정 기본 프리셋입니다.
   // 한 번 저장된 기본 프리셋은 특정 공연 페이지를 다시 편집해도 갱신하지 않습니다.
@@ -1104,6 +1074,22 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         ..addAll(order);
       _normalizeZOrder();
     }
+    final ratios = decoded['photoAspectRatios'] as Map<String, dynamic>?;
+    if (ratios != null) {
+      _photoAspectRatios
+        ..clear()
+        ..addEntries(
+          ratios.entries
+              .map(
+                (entry) => MapEntry(
+                  int.tryParse(entry.key),
+                  (entry.value as num?)?.toDouble(),
+                ),
+              )
+              .where((entry) => entry.key != null && entry.value != null)
+              .map((entry) => MapEntry(entry.key!, entry.value!)),
+        );
+    }
   }
 
   void _persistLayout() {
@@ -1113,6 +1099,10 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         for (final entry in _t.entries) entry.key: entry.value.toJson(),
       },
       'zOrder': _z,
+      'photoAspectRatios': {
+        for (final entry in _photoAspectRatios.entries)
+          entry.key.toString(): entry.value,
+      },
     });
     _layoutWrite = _layoutWrite
         .then((_) async {
@@ -1132,6 +1122,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
 
   @override
   void dispose() {
+    _memoFrame.dispose();
+    _idleMemoFrame.dispose();
+    _removeDeleteOverlay();
     _cancelPageLongPress();
     _setlistServiceSelection.dispose();
     super.dispose();
@@ -1164,21 +1157,39 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   void _toggleMode() {
     setState(() {
       _edit = !_edit;
+      if (!_edit) {
+        _activeMemoKey = null;
+        _activeMemoOverDeleteZone = false;
+      }
       FocusManager.instance.primaryFocus?.unfocus();
     });
+    _syncDeleteOverlay();
+  }
+
+  void _toggleMemoEditing(String key) {
+    if (!_edit) return;
+    setState(() {
+      _activeMemoKey = _activeMemoKey == key ? null : key;
+      _activeMemoOverDeleteZone = false;
+      if (_activeMemoKey != null) _bringFront(key, updateState: false);
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
+    _syncDeleteOverlay();
   }
 
   void _normalizeZOrder() {
     var changed = false;
-    for (final key in _defaultScrapZOrder) {
+    final validKeys = <String>{
+      ..._defaultScrapZOrder,
+      for (var i = 0; i < widget.photoUrls.length; i++) _photoMemoKey(i),
+    };
+    for (final key in validKeys) {
       if (!_z.contains(key)) {
         _z.add(key);
         changed = true;
       }
     }
-    final stale = _z
-        .where((key) => !_defaultScrapZOrder.contains(key))
-        .toList();
+    final stale = _z.where((key) => !validKeys.contains(key)).toList();
     if (stale.isNotEmpty) {
       _z.removeWhere(stale.contains);
       changed = true;
@@ -1186,15 +1197,135 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     if (changed) _scrapZStore[widget.layoutKey] = _z;
   }
 
-  void _bringFront(String k) {
+  void _bringFront(String k, {bool updateState = true}) {
     _normalizeZOrder();
     if (_z.isNotEmpty && _z.last == k) return;
-    setState(() {
+    void apply() {
       _z.remove(k);
       _z.add(k);
       _scrapZStore[widget.layoutKey] = _z;
       _persistLayout();
+    }
+
+    if (updateState) {
+      setState(apply);
+    } else {
+      apply();
+    }
+  }
+
+  bool _isMemoDeleted(String key) => _t[key]?.deleted ?? false;
+
+  List<String> _deletedMemoKeys() {
+    final visibleKeys = <String>{
+      ..._defaultScrapZOrder,
+      for (var i = 0; i < widget.photoUrls.length; i++) _photoMemoKey(i),
+    };
+    return [
+      for (final key in _z)
+        if (visibleKeys.contains(key) && _isMemoDeleted(key)) key,
+      for (final key in visibleKeys)
+        if (!_z.contains(key) && _isMemoDeleted(key)) key,
+    ];
+  }
+
+  String _memoLabel(String key) {
+    if (key == 'poster') return '포스터';
+    if (key == 'envelope') return '편지봉투';
+    final photoIndex = _photoIndexFromKey(key);
+    if (photoIndex != null) return '사진 ${photoIndex + 1}';
+    return '메모';
+  }
+
+  IconData _memoIcon(String key) {
+    if (key == 'poster') return Icons.local_post_office_outlined;
+    if (key == 'envelope') return Icons.mail_outline_rounded;
+    if (_isPhotoMemoKey(key)) return Icons.photo_outlined;
+    return Icons.sticky_note_2_outlined;
+  }
+
+  void _restoreMemo(String key) {
+    final t = _tf(key);
+    setState(() {
+      t.deleted = false;
+      t.placed = false;
+      _activeMemoKey = null;
+      _activeMemoOverDeleteZone = false;
+      if (!_z.contains(key)) _z.add(key);
     });
+    _persistLayout();
+    _syncDeleteOverlay();
+  }
+
+  Future<void> _showRestoreMemoSheet() async {
+    final deletedKeys = _deletedMemoKeys();
+    if (deletedKeys.isEmpty) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _RestoreMemoSheet(
+        items: [
+          for (final key in deletedKeys)
+            _RestoreMemoItem(
+              keyName: key,
+              label: _memoLabel(key),
+              icon: _memoIcon(key),
+            ),
+        ],
+      ),
+    );
+    if (selected == null || !mounted) return;
+    _restoreMemo(selected);
+  }
+
+  Rect _screenDeleteZoneRect() {
+    final media = MediaQuery.of(context);
+    final bottomPadding = media.padding.bottom;
+    final height = context.rs(56);
+    return Rect.fromLTWH(
+      context.rs(18),
+      media.size.height - bottomPadding - height - context.rs(8),
+      media.size.width - context.rs(36),
+      height,
+    );
+  }
+
+  void _deleteActiveMemo() {
+    final key = _activeMemoKey;
+    if (key == null) return;
+    final t = _tf(key);
+    setState(() {
+      t.deleted = true;
+      _activeMemoKey = null;
+      _activeMemoOverDeleteZone = false;
+    });
+    _persistLayout();
+    _syncDeleteOverlay();
+  }
+
+  void _syncDeleteOverlay() {
+    if (!_edit || _activeMemoKey == null) {
+      _removeDeleteOverlay();
+      return;
+    }
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    if (_deleteOverlayEntry == null) {
+      _deleteOverlayEntry = OverlayEntry(
+        builder: (context) => _ScreenDeleteDropZone(
+          rect: _screenDeleteZoneRect(),
+          active: _activeMemoOverDeleteZone,
+        ),
+      );
+      overlay.insert(_deleteOverlayEntry!);
+    } else {
+      _deleteOverlayEntry!.markNeedsBuild();
+    }
+  }
+
+  void _removeDeleteOverlay() {
+    _deleteOverlayEntry?.remove();
+    _deleteOverlayEntry = null;
   }
 
   double _titleSafeBottom(double width) {
@@ -1213,6 +1344,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   void _placeDefaults(double w, double h, double titleSafeBottom) {
     void def(String k, double dx, double dy, double rot) {
       final t = _tf(k);
+      if (t.deleted) return;
       if (!t.placed) {
         t.offset = Offset(dx, dy);
         t.rotation = rot;
@@ -1221,10 +1353,14 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     }
 
     def('poster', w * 0.05, titleSafeBottom + 12, 0);
-    def('polaroid', w * 0.54, titleSafeBottom + 12, 0);
     def('envelope', w * 0.32, h * 0.34, 0);
-    def('photo_2', w * 0.06, h * 0.58, 0);
-    def('photo_3', w * 0.55, h * 0.64, 0);
+    for (var i = 0; i < widget.photoUrls.length; i++) {
+      final col = i % 3;
+      final row = i ~/ 3;
+      final dx = w * (.08 + col * .28);
+      final dy = titleSafeBottom + context.rs(22) + row * h * .16;
+      def(_photoMemoKey(i), dx, dy, 0);
+    }
   }
 
   bool _letterOpen = false;
@@ -1307,35 +1443,53 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
 
   static const double _widgetDefaultSizeBoost = 1.5;
 
-  double _memoBaseWidth(String key, double width) =>
-      _widgetDefaultSizeBoost *
-      switch (key) {
-        'poster' => width * .21,
-        'polaroid' => width * .266,
-        'photo_2' => width * .266 * 4 / 3,
-        'photo_3' => width * .266,
-        'envelope' => width * .288,
-        _ => width * .26,
-      };
+  double _memoBaseWidth(String key, double width) {
+    if (_isPhotoMemoKey(key)) {
+      final ratio = _memoAspectRatio(key);
+      final baseHeight = width * .266;
+      return _widgetDefaultSizeBoost * baseHeight * ratio;
+    }
+    return _widgetDefaultSizeBoost *
+        switch (key) {
+          'poster' => width * .21,
+          'envelope' => width * .288,
+          _ => width * .26,
+        };
+  }
 
-  double _photoAspectRatio(int index) => switch (index) {
-    0 => 1,
-    1 => 4 / 3,
-    _ => 3 / 4,
-  };
+  double _photoAspectRatio(int index) => _photoAspectRatios[index] ?? 1;
 
   double _memoAspectRatio(String key) => switch (key) {
     'poster' => 3 / 4,
     'envelope' => 1.55,
-    'photo_2' => 4 / 3,
-    'photo_3' => 3 / 4,
-    'polaroid' => 1,
+    _ when _isPhotoMemoKey(key) => _photoAspectRatio(
+      _photoIndexFromKey(key) ?? 0,
+    ),
     _ => 1,
   };
 
   Size _memoFallbackSize(String key, double width) {
     final fallbackW = _memoBaseWidth(key, width);
     return Size(fallbackW, fallbackW / _memoAspectRatio(key));
+  }
+
+  Future<void> _showAddPhotoMenu() async {
+    if (widget.onAddPhoto == null) return;
+    final ratio = await showModalBottomSheet<double>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _PhotoRatioSheet(),
+    );
+    if (ratio == null || !mounted) return;
+    final index = widget.photoUrls.length;
+    setState(() {
+      _photoAspectRatios[index] = ratio;
+      final key = _photoMemoKey(index);
+      _tf(key).deleted = false;
+      if (!_z.contains(key)) _z.add(key);
+    });
+    _persistLayout();
+    await widget.onAddPhoto!(index, ratio);
   }
 
   @override
@@ -1350,67 +1504,90 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         _clampPlacedMemos(w, h, titleSafeBottom);
 
         final items = <String, Widget>{
-          'poster': _memo(
-            'poster',
-            baseW: _memoBaseWidth('poster', w),
-            canvasW: w,
-            canvasH: h,
-            titleSafeBottom: titleSafeBottom,
-            child: _editableWidgetTone(
-              edit: _edit,
-              child: _PosterMemo(
-                imageUrl: widget.ticketInfo?.posterImageUrl,
-                paperColor: _envelopeColor,
-              ),
-            ),
-          ),
-          for (var index = 0; index < 3; index++)
-            (index == 0 ? 'polaroid' : 'photo_${index + 1}'): _memo(
-              index == 0 ? 'polaroid' : 'photo_${index + 1}',
-              baseW: _memoBaseWidth(
-                index == 0 ? 'polaroid' : 'photo_${index + 1}',
-                w,
-              ),
+          if (!_isMemoDeleted('poster'))
+            'poster': _memo(
+              'poster',
+              baseW: _memoBaseWidth('poster', w),
               canvasW: w,
               canvasH: h,
               titleSafeBottom: titleSafeBottom,
               child: _editableWidgetTone(
                 edit: _edit,
-                child: _PolaroidMemo(
-                  aspectRatio: _photoAspectRatio(index),
-                  url: index < widget.photoUrls.length
-                      ? widget.photoUrls[index]
-                      : null,
-                  edit: _edit,
-                  uploading: widget.uploadingPhotoIndex == index,
-                  onAdd: widget.onAddPhoto == null
-                      ? null
-                      : (ratio) => widget.onAddPhoto!(index, ratio),
-                  onDelete: widget.onDeletePhoto,
+                child: _PosterMemo(
+                  imageUrl: widget.ticketInfo?.posterImageUrl,
+                  paperColor: _envelopeColor,
                 ),
               ),
             ),
-          'envelope': _memo(
-            'envelope',
-            baseW: _memoBaseWidth('envelope', w),
-            canvasW: w,
-            canvasH: h,
-            titleSafeBottom: titleSafeBottom,
-            child: Opacity(
-              opacity: _letterOpen ? 0 : 1,
-              child: _editableWidgetTone(
-                edit: _edit,
-                child: ConcertEnvelope(
-                  onTap: _openLetter,
-                  idleFlutter: !_edit && !_letterOpen,
-                  showBodyShadow: _edit,
-                  color: _envelopeColor,
+          for (var index = 0; index < widget.photoUrls.length; index++)
+            if (!_isMemoDeleted(_photoMemoKey(index)))
+              _photoMemoKey(index): _memo(
+                _photoMemoKey(index),
+                baseW: _memoBaseWidth(_photoMemoKey(index), w),
+                canvasW: w,
+                canvasH: h,
+                titleSafeBottom: titleSafeBottom,
+                child: _editableWidgetTone(
+                  edit: _edit,
+                  child: _PolaroidMemo(
+                    aspectRatio: _photoAspectRatio(index),
+                    url: widget.photoUrls[index],
+                    edit: _edit,
+                    uploading: widget.uploadingPhotoIndex == index,
+                    onAdd: null,
+                  ),
                 ),
+              ),
+          if (!_isMemoDeleted('envelope'))
+            'envelope': _memo(
+              'envelope',
+              baseW: _memoBaseWidth('envelope', w),
+              canvasW: w,
+              canvasH: h,
+              titleSafeBottom: titleSafeBottom,
+              child: Opacity(
+                opacity: _letterOpen ? 0 : 1,
+                child: _editableWidgetTone(
+                  edit: _edit,
+                  child: ConcertEnvelope(
+                    onTap: _openLetter,
+                    idleFlutter: !_edit && !_letterOpen,
+                    showBodyShadow: _edit,
+                    color: _envelopeColor,
+                  ),
+                ),
+              ),
+            ),
+        };
+
+        final backgroundOverlays = [
+          _AfterDecorativeBoxes(
+            seedKey:
+                '${widget.layoutKey}_${widget.ticketInfo?.posterImageUrl ?? ''}',
+            posterKey: widget.ticketInfo?.posterImageUrl,
+            contentTop: titleSafeBottom,
+            width: w,
+            height: h,
+          ),
+        ];
+        final memoWidgets = [
+          Positioned(
+            top: 16,
+            left: 20,
+            right: 20,
+            child: IgnorePointer(
+              child: Text(
+                widget.concertTitle,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: _handTitle(context),
               ),
             ),
           ),
-        };
-
+          for (final k in _z)
+            if (items[k] != null) items[k]!,
+        ];
         return ClipRect(
           child: Listener(
             behavior: HitTestBehavior.opaque,
@@ -1422,46 +1599,43 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
               children: [
                 PosterMoodScope(
                   mood: _posterMood,
-                  child: ConcertAfterTextCanvas(
-                    key: _textCanvasKey,
-                    storageKey: widget.layoutKey,
-                    initialReview: widget.reviewText ?? '',
-                    width: w,
-                    minHeight: h,
-                    minContentTop: titleSafeBottom,
-                    editMode: _edit,
-                    obstacles: _obstacles(w, titleSafeBottom),
-                    backgroundOverlays: [
-                      _AfterDecorativeBoxes(
-                        seedKey:
-                            '${widget.layoutKey}_${widget.ticketInfo?.posterImageUrl ?? ''}',
-                        posterKey: widget.ticketInfo?.posterImageUrl,
-                        contentTop: titleSafeBottom,
-                        width: w,
-                        height: h,
-                      ),
-                    ],
-                    onReviewChanged: widget.onReviewChanged,
-                    memos: [
-                      Positioned(
-                        top: 16,
-                        left: 20,
-                        right: 20,
-                        child: IgnorePointer(
-                          child: Text(
-                            widget.concertTitle,
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: _handTitle(context),
-                          ),
-                        ),
-                      ),
-                      for (final k in _z)
-                        if (items[k] != null) items[k]!,
-                    ],
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: _memoFrame,
+                    builder: (context, value, child) => ConcertAfterTextCanvas(
+                      key: _textCanvasKey,
+                      storageKey: widget.layoutKey,
+                      initialReview: widget.reviewText ?? '',
+                      width: w,
+                      minHeight: h,
+                      minContentTop: titleSafeBottom,
+                      editMode: _edit && _activeMemoKey == null,
+                      obstacles: _obstacles(w, titleSafeBottom),
+                      backgroundOverlays: backgroundOverlays,
+                      onReviewChanged: widget.onReviewChanged,
+                      memos: memoWidgets,
+                    ),
                   ),
                 ),
+                ValueListenableBuilder<int>(
+                  valueListenable: _memoFrame,
+                  builder: (context, value, child) => _activeMemoDimOverlay(),
+                ),
+                _editModeBorder(context),
+                if (_edit && _deletedMemoKeys().isNotEmpty)
+                  Positioned(
+                    top: context.rs(8),
+                    left: context.rs(10),
+                    child: _RestoreMemoButton(onTap: _showRestoreMemoSheet),
+                  ),
+                if (_edit && widget.onAddPhoto != null)
+                  Positioned(
+                    top: context.rs(8),
+                    right: context.rs(10),
+                    child: _AddPhotoButton(
+                      busy: widget.uploadingPhotoIndex != null,
+                      onTap: _showAddPhotoMenu,
+                    ),
+                  ),
                 // 편집/잠금 상태 배지(제목과 겹치지 않게 하단 가운데에).
                 Positioned(
                   bottom: context.rs(8),
@@ -1479,6 +1653,56 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     );
   }
 
+  Rect? _activeMemoBounds() {
+    final key = _activeMemoKey;
+    if (key == null) return null;
+    final t = _t[key];
+    if (t == null) return null;
+    final size = t.measuredSize == Size.zero ? null : t.measuredSize;
+    if (size == null) return null;
+    return MatrixUtils.transformRect(
+      Matrix4.identity()
+        ..translateByDouble(
+          t.offset.dx + size.width / 2,
+          t.offset.dy + size.height / 2,
+          0,
+          1,
+        )
+        ..rotateZ(t.rotation)
+        ..scaleByDouble(t.scale, t.scale, 1, 1)
+        ..translateByDouble(-size.width / 2, -size.height / 2, 0, 1),
+      Offset.zero & size,
+    );
+  }
+
+  Widget _editModeBorder(BuildContext context) {
+    if (!_edit) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: const Color(0xFFE53935).withValues(alpha: .9),
+            width: context.rs(2.2),
+          ),
+          borderRadius: BorderRadius.circular(context.rs(10)),
+        ),
+      ),
+    );
+  }
+
+  Widget _activeMemoDimOverlay() {
+    final activeBounds = _activeMemoBounds();
+    if (!_edit || _activeMemoKey == null || activeBounds == null) {
+      return const SizedBox.shrink();
+    }
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: _ActiveMemoDimPainter(activeBounds),
+        size: Size.infinite,
+      ),
+    );
+  }
+
   void _clampPlacedMemos(
     double canvasW,
     double canvasH,
@@ -1486,6 +1710,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   ) {
     for (final key in _z) {
       final t = _tf(key);
+      if (t.deleted) continue;
       final size = t.measuredSize == Size.zero
           ? _memoFallbackSize(key, canvasW)
           : t.measuredSize;
@@ -1514,36 +1739,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     if (box != null && box.hasSize) t.measuredSize = box.size;
   }
 
-  void _applyMemoTransform(
-    _MemoTransform t, {
-    required double canvasW,
-    required double canvasH,
-    required double titleSafeBottom,
-    required Offset rawOffset,
-    required double rawScale,
-    required double rawRotation,
-  }) {
-    final newScale = _clampMemoScaleToCanvas(
-      rawScale,
-      rawRotation,
-      t.measuredSize,
-      canvasW,
-      canvasH,
-      minTop: titleSafeBottom,
-    );
-    t.scale = newScale;
-    t.rotation = rawRotation;
-    t.offset = _clampToCanvas(
-      rawOffset,
-      newScale,
-      rawRotation,
-      t.measuredSize,
-      canvasW,
-      canvasH,
-      minTop: titleSafeBottom,
-    );
-  }
-
   /// 메모지의 이동·회전·확대 제스처. 실제 변환 경계는 텍스트 배치에도 사용합니다.
   Widget _memo(
     String key, {
@@ -1567,36 +1762,91 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         : SizedBox(key: _keyFor(key), width: baseW, child: child);
     Widget gestured;
     if (_edit) {
+      final memoEditing = _activeMemoKey == key;
       gestured = GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: key == 'envelope' ? _openLetter : null,
-        onScaleStart: (d) {
-          _bringFront(key);
-          _startScale = t.scale;
-          _startRot = t.rotation;
-          _startOffset = t.offset;
-          _startFocal = d.focalPoint;
-          // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
-          // 경계 클램프 계산에 필요합니다.
-          _measureMemoForGesture(key, t);
-        },
-        onScaleUpdate: (d) => setState(() {
-          final dragDelta = d.focalPoint - _startFocal;
-          final rawOffset = _startOffset + dragDelta;
-          final rawScale = _startScale * d.scale;
-          final rawRotation = _startRot + d.rotation;
-          _applyMemoTransform(
-            t,
-            canvasW: canvasW,
-            canvasH: canvasH,
-            titleSafeBottom: titleSafeBottom,
-            rawOffset: rawOffset,
-            rawScale: rawScale,
-            rawRotation: rawRotation,
-          );
-          _persistLayout();
-        }),
-        child: content,
+        onTap: key == 'envelope' && (_activeMemoKey == null || memoEditing)
+            ? _openLetter
+            : null,
+        onLongPress: () => _toggleMemoEditing(key),
+        onScaleStart: memoEditing
+            ? (d) {
+                _bringFront(key);
+                _startScale = t.scale;
+                _startRot = t.rotation;
+                _startOffset = t.offset;
+                _startFocal = d.focalPoint;
+                // 드래그 시작 시점의 실제(배율 1) 렌더 크기를 측정해둡니다 —
+                // 경계 클램프 계산에 필요합니다.
+                _measureMemoForGesture(key, t);
+              }
+            : null,
+        onScaleUpdate: memoEditing
+            ? (d) {
+                final dragDelta = d.focalPoint - _startFocal;
+                final rawOffset = _startOffset + dragDelta;
+                final rawScale = _startScale * d.scale;
+                final rawRotation = _startRot + d.rotation;
+                final newScale = _clampMemoScaleToCanvas(
+                  rawScale,
+                  rawRotation,
+                  t.measuredSize,
+                  canvasW,
+                  canvasH,
+                  minTop: titleSafeBottom,
+                );
+                t.scale = newScale;
+                t.rotation = rawRotation;
+                final clamped = _clampToCanvas(
+                  rawOffset,
+                  newScale,
+                  rawRotation,
+                  t.measuredSize,
+                  canvasW,
+                  canvasH + context.rs(96),
+                  minTop: titleSafeBottom,
+                );
+                t.offset = Offset(clamped.dx, clamped.dy);
+                final overDelete = _screenDeleteZoneRect().contains(
+                  d.focalPoint,
+                );
+                if (_activeMemoOverDeleteZone != overDelete) {
+                  _activeMemoOverDeleteZone = overDelete;
+                  _deleteOverlayEntry?.markNeedsBuild();
+                }
+                _memoFrame.value++;
+              }
+            : null,
+        onScaleEnd: memoEditing
+            ? (_) {
+                if (_activeMemoOverDeleteZone) {
+                  _deleteActiveMemo();
+                  return;
+                }
+                setState(() {
+                  _activeMemoOverDeleteZone = false;
+                });
+                _deleteOverlayEntry?.markNeedsBuild();
+                _persistLayout();
+              }
+            : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          foregroundDecoration: memoEditing
+              ? BoxDecoration(
+                  border: Border.all(
+                    color: const Color(0xFFE53935).withValues(alpha: .95),
+                    width: 2,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                )
+              : null,
+          child: IgnorePointer(
+            ignoring: _activeMemoKey != null && !memoEditing,
+            child: content,
+          ),
+        ),
       );
     } else {
       gestured = content;
@@ -1610,11 +1860,15 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
       key: ValueKey('memo_$key'),
       left: 0,
       top: 0,
-      child: Transform.translate(
-        offset: t.offset,
-        child: Transform.rotate(
-          angle: t.rotation,
-          child: Transform.scale(scale: t.scale, child: gestured),
+      child: ValueListenableBuilder<int>(
+        valueListenable: _activeMemoKey == key ? _memoFrame : _idleMemoFrame,
+        child: RepaintBoundary(child: gestured),
+        builder: (context, value, stableChild) => Transform.translate(
+          offset: t.offset,
+          child: Transform.rotate(
+            angle: t.rotation,
+            child: Transform.scale(scale: t.scale, child: stableChild),
+          ),
         ),
       ),
     );
@@ -1625,6 +1879,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     var needsMeasure = false;
     for (final key in _z) {
       final t = _tf(key);
+      if (t.deleted) continue;
       final box = _keyFor(key).currentContext?.findRenderObject() as RenderBox?;
       final measured = box != null && box.hasSize
           ? box.size
@@ -1691,17 +1946,88 @@ Color _fallbackPosterAccentColor(String? posterKey) {
 Future<Color> _extractPosterAccentColor(String posterKey) async =>
     (await _extractPosterMood(posterKey)).accent;
 
+String _posterMoodPrefsKey(String posterKey) =>
+    'concert_after_poster_mood_${_stableSeed(posterKey)}';
+
+Map<String, Object> _posterMoodToJson(PosterMood mood) => {
+  'accent': mood.accent.toARGB32(),
+  'saturation': mood.saturation,
+  'brightness': mood.brightness,
+  'contrast': mood.contrast,
+  'detail': mood.detail,
+};
+
+PosterMood? _posterMoodFromJson(Object? value) {
+  if (value is! Map<String, dynamic>) return null;
+  final accent = value['accent'];
+  final saturation = value['saturation'];
+  final brightness = value['brightness'];
+  final contrast = value['contrast'];
+  final detail = value['detail'];
+  if (accent is! num ||
+      saturation is! num ||
+      brightness is! num ||
+      contrast is! num ||
+      detail is! num) {
+    return null;
+  }
+  return PosterMood(
+    Color(accent.toInt()),
+    saturation.toDouble(),
+    brightness.toDouble(),
+    contrast.toDouble(),
+    detail.toDouble(),
+  );
+}
+
+Future<PosterMood?> _loadPosterMoodFromPrefs(String posterKey) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_posterMoodPrefsKey(posterKey));
+    if (raw == null || raw.isEmpty) return null;
+    return _posterMoodFromJson(jsonDecode(raw));
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _savePosterMoodToPrefs(String posterKey, PosterMood mood) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _posterMoodPrefsKey(posterKey),
+      jsonEncode(_posterMoodToJson(mood)),
+    );
+  } catch (_) {}
+}
+
 // 동일 포스터는 페이지/네모상자에서 한 번만 분석한다. 최근 12개만 보관한다.
 final _posterMoodCache = <String, Future<PosterMood>>{};
+final _posterMoodValueCache = <String, PosterMood>{};
 Future<PosterMood> _extractPosterMood(String posterKey) {
+  final value = _posterMoodValueCache[posterKey];
+  if (value != null) return Future.value(value);
   final cached = _posterMoodCache[posterKey];
   if (cached != null) return cached;
   if (_posterMoodCache.length >= 12) {
-    _posterMoodCache.remove(_posterMoodCache.keys.first);
+    final oldest = _posterMoodCache.keys.first;
+    _posterMoodCache.remove(oldest);
+    _posterMoodValueCache.remove(oldest);
   }
-  final pending = _analyzePosterMood(posterKey);
+  final pending = _loadOrAnalyzePosterMood(posterKey).then((mood) {
+    _posterMoodValueCache[posterKey] = mood;
+    return mood;
+  });
   _posterMoodCache[posterKey] = pending;
   return pending;
+}
+
+Future<PosterMood> _loadOrAnalyzePosterMood(String posterKey) async {
+  final saved = await _loadPosterMoodFromPrefs(posterKey);
+  if (saved != null) return saved;
+  final analyzed = await _analyzePosterMood(posterKey);
+  unawaited(_savePosterMoodToPrefs(posterKey, analyzed));
+  return analyzed;
 }
 
 Future<PosterMood> _analyzePosterMood(String posterKey) async {
@@ -2054,6 +2380,87 @@ class _SubtleBoxNoisePainter extends CustomPainter {
       textureOpacity != oldDelegate.textureOpacity;
 }
 
+class _ScreenDeleteDropZone extends StatelessWidget {
+  final Rect rect;
+  final bool active;
+
+  const _ScreenDeleteDropZone({required this.rect, required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fromRect(
+      rect: rect,
+      child: IgnorePointer(
+        child: Material(
+          type: MaterialType.transparency,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color:
+                  (active ? const Color(0xFFE53935) : const Color(0xFF3E3024))
+                      .withValues(alpha: active ? .9 : .68),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: active ? .9 : .5),
+                width: active ? 2 : 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: .26),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.delete_outline, color: Colors.white, size: 20),
+                const SizedBox(width: 7),
+                Text(
+                  active ? '놓으면 삭제' : '아래로 끌어 삭제',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActiveMemoDimPainter extends CustomPainter {
+  final Rect activeBounds;
+
+  const _ActiveMemoDimPainter(this.activeBounds);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final full = Offset.zero & size;
+    final highlight = RRect.fromRectAndRadius(
+      activeBounds.inflate(8),
+      const Radius.circular(12),
+    );
+    final path = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(full)
+      ..addRRect(highlight);
+    canvas.drawPath(path, Paint()..color = Colors.black.withValues(alpha: .22));
+  }
+
+  @override
+  bool shouldRepaint(covariant _ActiveMemoDimPainter oldDelegate) =>
+      activeBounds != oldDelegate.activeBounds;
+}
+
 /// 편집/잠금 상태 배지.
 class _ModeBadge extends StatelessWidget {
   final bool edit;
@@ -2090,6 +2497,287 @@ class _ModeBadge extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AddPhotoButton extends StatelessWidget {
+  final bool busy;
+  final VoidCallback onTap;
+
+  const _AddPhotoButton({required this.busy, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: busy ? null : onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Ink(
+          width: context.rs(34),
+          height: context.rs(34),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF6E9CC).withValues(alpha: .94),
+            shape: BoxShape.circle,
+            border: Border.all(color: _kraftInk.withValues(alpha: .22)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .16),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Center(
+            child: busy
+                ? SizedBox(
+                    width: context.rs(16),
+                    height: context.rs(16),
+                    child: const CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    Icons.add_photo_alternate_outlined,
+                    size: context.rs(19),
+                    color: _kraftInk,
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RestoreMemoButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _RestoreMemoButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Ink(
+          width: context.rs(34),
+          height: context.rs(34),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF6E9CC).withValues(alpha: .94),
+            shape: BoxShape.circle,
+            border: Border.all(color: _kraftInk.withValues(alpha: .22)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .16),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Icon(
+            Icons.restore_from_trash_outlined,
+            size: context.rs(19),
+            color: _kraftInk,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RestoreMemoItem {
+  final String keyName;
+  final String label;
+  final IconData icon;
+
+  const _RestoreMemoItem({
+    required this.keyName,
+    required this.label,
+    required this.icon,
+  });
+}
+
+class _RestoreMemoSheet extends StatelessWidget {
+  final List<_RestoreMemoItem> items;
+
+  const _RestoreMemoSheet({required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          context.rs(18),
+          0,
+          context.rs(18),
+          context.rs(14),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF4F1E1),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _kraftInk.withValues(alpha: .12)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .22),
+                blurRadius: 18,
+                offset: const Offset(0, 9),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(context.rs(12)),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final item in items)
+                  Padding(
+                    padding: EdgeInsets.symmetric(vertical: context.rs(3)),
+                    child: InkWell(
+                      onTap: () => Navigator.of(context).pop(item.keyName),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Ink(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: context.rs(12),
+                          vertical: context.rs(10),
+                        ),
+                        decoration: BoxDecoration(
+                          color: concertAfterTone(
+                            hue: 39,
+                            saturation: .16,
+                            value: .88,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _kraftInk.withValues(alpha: .12),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              item.icon,
+                              color: _kraftInk.withValues(alpha: .78),
+                              size: context.rs(20),
+                            ),
+                            SizedBox(width: context.rs(10)),
+                            Expanded(
+                              child: Text(
+                                item.label,
+                                style: TextStyle(
+                                  color: _kraftInk,
+                                  fontSize: context.sp(13),
+                                  fontWeight: FontWeight.w800,
+                                  decoration: TextDecoration.none,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.add_circle_outline_rounded,
+                              color: _kraftInk.withValues(alpha: .58),
+                              size: context.rs(18),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PhotoRatioSheet extends StatelessWidget {
+  _PhotoRatioSheet();
+
+  final List<({String label, double ratio, IconData icon})> _ratios = const [
+    (label: '1:1', ratio: 1, icon: Icons.crop_square_rounded),
+    (label: '4:3', ratio: 4 / 3, icon: Icons.crop_landscape_rounded),
+    (label: '3:4', ratio: 3 / 4, icon: Icons.crop_portrait_rounded),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          context.rs(18),
+          0,
+          context.rs(18),
+          context.rs(14),
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xFFF4F1E1),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _kraftInk.withValues(alpha: .12)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: .22),
+                blurRadius: 18,
+                offset: const Offset(0, 9),
+              ),
+            ],
+          ),
+          child: Padding(
+            padding: EdgeInsets.all(context.rs(14)),
+            child: Row(
+              children: [
+                for (final item in _ratios)
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(horizontal: context.rs(4)),
+                      child: InkWell(
+                        onTap: () => Navigator.of(context).pop(item.ratio),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Ink(
+                          padding: EdgeInsets.symmetric(
+                            vertical: context.rs(12),
+                          ),
+                          decoration: BoxDecoration(
+                            color: concertAfterTone(
+                              hue: 39,
+                              saturation: .16,
+                              value: .88,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: _kraftInk.withValues(alpha: .12),
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                item.icon,
+                                color: _kraftInk.withValues(alpha: .8),
+                                size: context.rs(24),
+                              ),
+                              SizedBox(height: context.rs(5)),
+                              Text(
+                                item.label,
+                                style: TextStyle(
+                                  color: _kraftInk,
+                                  fontSize: context.sp(12),
+                                  fontWeight: FontWeight.w800,
+                                  decoration: TextDecoration.none,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2180,13 +2868,15 @@ class _PosterMemo extends StatelessWidget {
 
     return GestureDetector(
       onDoubleTap: () => _showPosterPreview(context, img),
-      child: _PostagePosterFrame(
-        paperColor: paperColor,
-        child: AspectRatio(
-          aspectRatio: 3 / 4,
-          child: SizedBox(
-            width: double.infinity,
-            child: _PaperImageEffect(child: img),
+      child: RepaintBoundary(
+        child: _PostagePosterFrame(
+          paperColor: paperColor,
+          child: AspectRatio(
+            aspectRatio: 3 / 4,
+            child: SizedBox(
+              width: double.infinity,
+              child: _PaperImageEffect(child: img),
+            ),
           ),
         ),
       ),
@@ -2216,6 +2906,8 @@ class _PostagePosterFrame extends StatelessWidget {
                 perforation: perforation,
                 paperColor: paperColor,
               ),
+              isComplex: true,
+              willChange: false,
               child: Padding(
                 padding: EdgeInsets.all(math.max(perforation * .55, padding)),
                 child: DecoratedBox(
@@ -2293,36 +2985,38 @@ class _PaperImageEffect extends StatelessWidget {
   const _PaperImageEffect({required this.child});
 
   @override
-  Widget build(BuildContext context) => ClipRect(
-    child: HanjiTexture(
-      opacity:
-          PosterMoodScope.of(context)?.textureOpacity ?? kHanjiTextureOpacity,
-      child: ColorFiltered(
-        colorFilter:
-            PosterMoodScope.of(context)?.imageFilter ??
-            const ColorFilter.matrix([
-              .361,
-              .322,
-              .033,
-              0,
-              53,
-              .096,
-              .587,
-              .033,
-              0,
-              50,
-              .096,
-              .322,
-              .298,
-              0,
-              44,
-              0,
-              0,
-              0,
-              1,
-              0,
-            ]),
-        child: child,
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: ClipRect(
+      child: HanjiTexture(
+        opacity:
+            PosterMoodScope.of(context)?.textureOpacity ?? kHanjiTextureOpacity,
+        child: ColorFiltered(
+          colorFilter:
+              PosterMoodScope.of(context)?.imageFilter ??
+              const ColorFilter.matrix([
+                .361,
+                .322,
+                .033,
+                0,
+                53,
+                .096,
+                .587,
+                .033,
+                0,
+                50,
+                .096,
+                .322,
+                .298,
+                0,
+                44,
+                0,
+                0,
+                0,
+                1,
+                0,
+              ]),
+          child: child,
+        ),
       ),
     ),
   );
@@ -2335,7 +3029,6 @@ class _PolaroidMemo extends StatelessWidget {
   final bool edit;
   final bool uploading;
   final Future<void> Function(double)? onAdd;
-  final Future<void> Function(String)? onDelete;
 
   const _PolaroidMemo({
     required this.aspectRatio,
@@ -2343,7 +3036,6 @@ class _PolaroidMemo extends StatelessWidget {
     required this.edit,
     required this.uploading,
     required this.onAdd,
-    required this.onDelete,
   });
 
   @override
@@ -2353,72 +3045,80 @@ class _PolaroidMemo extends StatelessWidget {
   }
 
   Widget _photo(BuildContext context, bool has) {
-    return Container(
-      decoration: BoxDecoration(
-        color: concertAfterTone(hue: 42),
-        boxShadow: edit
-            ? [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.2),
-                  blurRadius: 6,
-                  offset: const Offset(1, 3),
-                ),
-              ]
-            : null,
-      ),
-      child: AspectRatio(
-        aspectRatio: aspectRatio,
-        child: has
-            ? GestureDetector(
-                onLongPress: edit
-                    ? (onDelete == null ? null : () => onDelete!(url!))
-                    : null,
-                // [백엔드 수정]
-                // Image.network -> AppNetworkImage(디스크 캐싱+디코드 크기 축소).
-                child: _PaperImageEffect(
-                  child: _isNetworkUrl(url!)
-                      ? AppNetworkImage(
-                          url!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (c) =>
-                              const ColoredBox(color: Color(0x22000000)),
-                        )
-                      : Image.file(File(url!), fit: BoxFit.cover),
-                ),
-              )
-            : GestureDetector(
-                onTap: uploading ? null : () => onAdd?.call(aspectRatio),
-                child: Container(
-                  color: concertAfterTone(hue: 42),
-                  alignment: Alignment.center,
-                  child: uploading
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.topCenter,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: concertAfterTone(hue: 42),
+            boxShadow: edit
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.2),
+                      blurRadius: 6,
+                      offset: const Offset(1, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: AspectRatio(
+            aspectRatio: aspectRatio,
+            child: has
+                ? _PaperImageEffect(
+                    child: _isNetworkUrl(url!)
+                        ? AppNetworkImage(
+                            url!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (c) =>
+                                const ColoredBox(color: Color(0x22000000)),
+                          )
+                        : Image.file(File(url!), fit: BoxFit.cover),
+                  )
+                : GestureDetector(
+                    onTap: uploading ? null : () => onAdd?.call(aspectRatio),
+                    child: Container(
+                      color: concertAfterTone(hue: 42),
+                      alignment: Alignment.center,
+                      child: uploading
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
                               Icons.add_a_photo_outlined,
                               size: context.rs(22),
                               color: _kraftInk.withValues(alpha: 0.6),
                             ),
-                            SizedBox(height: context.rs(4)),
-                            Text(
-                              '사진 추가',
-                              style: _articleText(
-                                context,
-                                size: 10.5,
-                                color: _kraftInk.withValues(alpha: 0.6),
-                              ),
-                            ),
-                          ],
-                        ),
+                    ),
+                  ),
+          ),
+        ),
+        Positioned(
+          top: -context.rs(8),
+          child: Transform.rotate(
+            angle: -0.035,
+            child: HanjiTexture(
+              opacity:
+                  PosterMoodScope.of(context)?.textureOpacity ??
+                  kHanjiTextureOpacity,
+              child: Container(
+                width: context.rs(58),
+                height: context.rs(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAD8AF).withValues(alpha: .74),
+                  borderRadius: BorderRadius.circular(2),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .18),
+                    width: .7,
+                  ),
                 ),
               ),
-      ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

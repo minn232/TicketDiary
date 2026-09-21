@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'hanji_texture.dart';
+import 'paper_texture_cache.dart';
 import 'concert_after_palette.dart';
 
 const double kEnvelopeBreezeAmplitude = .2;
@@ -78,19 +79,37 @@ class _ConcertEnvelopeState extends State<ConcertEnvelope>
       child: AspectRatio(
         aspectRatio: 1.55,
         child: RepaintBoundary(
-          child: AnimatedBuilder(
-            animation: _breeze,
-            builder: (context, child) => CustomPaint(
-              painter: _EnvelopePainter(
-                widget.opening +
-                    kEnvelopeBreezeAmplitude *
-                        Curves.easeInOutSine.transform(_breeze.value),
-                widget.showBodyShadow,
-                widget.color ?? concertAfterTone(hue: 31),
-                PosterMoodScope.of(context)?.textureOpacity ??
-                    kHanjiTextureOpacity,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              RepaintBoundary(
+                child: CustomPaint(
+                  painter: _EnvelopeBodyPainter(
+                    widget.showBodyShadow,
+                    widget.color ?? concertAfterTone(hue: 31),
+                    PosterMoodScope.of(context)?.textureOpacity ??
+                        kHanjiTextureOpacity,
+                  ),
+                  isComplex: true,
+                  willChange: false,
+                ),
               ),
-            ),
+              AnimatedBuilder(
+                animation: _breeze,
+                builder: (context, child) => CustomPaint(
+                  painter: _EnvelopeFlapPainter(
+                    widget.opening +
+                        kEnvelopeBreezeAmplitude *
+                            Curves.easeInOutSine.transform(_breeze.value),
+                    widget.color ?? concertAfterTone(hue: 31),
+                    PosterMoodScope.of(context)?.textureOpacity ??
+                        kHanjiTextureOpacity,
+                  ),
+                  isComplex: true,
+                  willChange: widget.idleFlutter || widget.opening != 0,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -98,13 +117,12 @@ class _ConcertEnvelopeState extends State<ConcertEnvelope>
   );
 }
 
-class _EnvelopePainter extends CustomPainter {
-  final double opening;
+class _EnvelopeBodyPainter extends CustomPainter {
   final bool showBodyShadow;
   final Color color;
   final double textureOpacity;
-  _EnvelopePainter(
-    this.opening,
+
+  const _EnvelopeBodyPainter(
     this.showBodyShadow,
     this.color,
     this.textureOpacity,
@@ -122,7 +140,6 @@ class _EnvelopePainter extends CustomPainter {
       canvas.drawShadow(Path()..addRRect(rect), Colors.black54, 7, true);
     }
     canvas.drawRRect(rect, Paint()..color = color);
-    HanjiTexturePainter(opacity: textureOpacity).paint(canvas, size);
     final front = Path()
       ..moveTo(0, 0)
       ..lineTo(w * .5, h * .6)
@@ -130,19 +147,8 @@ class _EnvelopePainter extends CustomPainter {
       ..lineTo(w, h)
       ..lineTo(0, h)
       ..close();
-    canvas.drawPath(
-      front,
-      Paint()
-        ..shader = LinearGradient(
-          colors: [color, color],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ).createShader(Offset.zero & size),
-    );
-    canvas.save();
-    canvas.clipPath(front);
-    HanjiTexturePainter(opacity: textureOpacity).paint(canvas, size);
-    canvas.restore();
+    canvas.drawPath(front, Paint()..color = color);
+    _paintSparseEnvelopeTexture(canvas, size, front, textureOpacity);
     canvas.drawPath(
       Path()
         ..moveTo(0, h)
@@ -152,6 +158,26 @@ class _EnvelopePainter extends CustomPainter {
         ..color = const Color(0x33815A31)
         ..style = PaintingStyle.stroke,
     );
+  }
+
+  @override
+  bool shouldRepaint(covariant _EnvelopeBodyPainter oldDelegate) =>
+      showBodyShadow != oldDelegate.showBodyShadow ||
+      color != oldDelegate.color ||
+      textureOpacity != oldDelegate.textureOpacity;
+}
+
+class _EnvelopeFlapPainter extends CustomPainter {
+  final double opening;
+  final Color color;
+  final double textureOpacity;
+
+  const _EnvelopeFlapPainter(this.opening, this.color, this.textureOpacity);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
     final tip = h * .65 * math.cos(opening * math.pi);
     final flap = Path()
       ..moveTo(0, 0)
@@ -160,27 +186,61 @@ class _EnvelopePainter extends CustomPainter {
       ..quadraticBezierTo(w * .5, tip * 1.08, w * .44, tip * .96)
       ..close();
     canvas.drawShadow(flap, Colors.black45, 5 * (1 - opening), true);
-    canvas.drawPath(
-      flap,
-      Paint()
-        ..shader = LinearGradient(
-          colors: opening < .5 ? [color, color] : [color, color],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ).createShader(Offset.zero & size),
-    );
-    canvas.save();
-    canvas.clipPath(flap);
-    HanjiTexturePainter(opacity: textureOpacity).paint(canvas, size);
-    canvas.restore();
+    canvas.drawPath(flap, Paint()..color = color);
+    _paintSparseEnvelopeTexture(canvas, size, flap, textureOpacity);
   }
 
   @override
-  bool shouldRepaint(_EnvelopePainter oldDelegate) =>
-      textureOpacity != oldDelegate.textureOpacity ||
+  bool shouldRepaint(covariant _EnvelopeFlapPainter oldDelegate) =>
       opening != oldDelegate.opening ||
-      showBodyShadow != oldDelegate.showBodyShadow ||
-      color != oldDelegate.color;
+      color != oldDelegate.color ||
+      textureOpacity != oldDelegate.textureOpacity;
+}
+
+void _paintSparseEnvelopeTexture(
+  Canvas canvas,
+  Size size,
+  Path clipPath,
+  double textureOpacity,
+) {
+  if (textureOpacity <= 0) return;
+  canvas.save();
+  canvas.clipPath(clipPath);
+  PaperTextureCache.paint(
+    canvas,
+    size,
+    ('envelope-fibers', textureOpacity),
+    (textureCanvas, textureSize) =>
+        _drawEnvelopeFibers(textureCanvas, textureSize, textureOpacity),
+  );
+  canvas.restore();
+}
+
+void _drawEnvelopeFibers(Canvas canvas, Size size, double textureOpacity) {
+  final rnd = math.Random(37);
+  final paint = Paint();
+  final count = (size.width * size.height / 95).round().clamp(18, 180);
+  for (var i = 0; i < count; i++) {
+    final start = Offset(
+      rnd.nextDouble() * size.width,
+      rnd.nextDouble() * size.height,
+    );
+    final length = 1 + rnd.nextDouble() * 4;
+    final angle = rnd.nextDouble() * math.pi;
+    paint
+      ..color = (rnd.nextBool() ? Colors.white : const Color(0xFF7B654A))
+          .withValues(
+            alpha:
+                rnd.nextDouble() * .08 * textureOpacity / kHanjiTextureOpacity,
+          )
+      ..strokeWidth = .35
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      start,
+      start + Offset(math.cos(angle) * length, math.sin(angle) * length),
+      paint,
+    );
+  }
 }
 
 /// 같은 애니메이션을 역재생해 편지를 접고 봉투로 돌려보냅니다.
