@@ -186,24 +186,6 @@ class _PaperPainter extends CustomPainter {
       (textureCanvas, textureSize) =>
           _paperTexture(textureCanvas, textureSize, Paint()),
     );
-    // 장식 종이와 위젯 아래에 인쇄된 노트 줄.
-    final inset = size.width * .045;
-    final rulePaint = Paint()
-      ..color = const Color(
-        0xFF77756D,
-      ).withValues(alpha: kConcertAfterRuleAlpha)
-      ..strokeWidth = kConcertAfterRuleWidth;
-    for (
-      double y = kConcertAfterRuleSpacing;
-      y < size.height - 16;
-      y += kConcertAfterRuleSpacing
-    ) {
-      canvas.drawLine(
-        Offset(inset, y),
-        Offset(size.width - inset, y),
-        rulePaint,
-      );
-    }
   }
 
   void _paperTexture(Canvas canvas, Size size, Paint paint) {

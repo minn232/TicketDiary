@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kLongPressTimeout, kTouchSlop;
 import 'package:flutter/material.dart';
@@ -20,8 +21,9 @@ import '../services/music_service_links.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
 import 'responsive_text.dart';
-import 'concert_envelope.dart';
 import 'concert_after_palette.dart';
+import 'concert_after_editable_section.dart';
+import 'scrapbook_page_background.dart';
 import 'hanji_texture.dart';
 import 'concert_after_text_canvas.dart';
 import 'app_network_image.dart';
@@ -32,6 +34,12 @@ import 'setlist_music_service_control.dart';
 /// 무엇을 쓸지 결정합니다.
 bool _isNetworkUrl(String value) =>
     value.startsWith('http://') || value.startsWith('https://');
+
+ImageProvider _concertAfterImageProvider(String imageKey) {
+  return _isNetworkUrl(imageKey)
+      ? CachedNetworkImageProvider(imageKey)
+      : FileImage(File(imageKey)) as ImageProvider;
+}
 
 // 우표형 포스터 위젯 안에서 실제 포스터 이미지가 차지하는 폭 비율.
 const double kConcertAfterPosterImageFillRatio = .80;
@@ -83,13 +91,24 @@ Widget _editableWidgetTone({required bool edit, required Widget child}) {
   );
 }
 
-/// 한 장의 공연 후 기록 페이지. 포스터·사진·봉투와 자유 텍스트를 배치합니다.
+final Set<VoidCallback> _concertAfterFloatingControlClosers = {};
+
+void hideConcertAfterFloatingControls() {
+  for (final close in List<VoidCallback>.from(
+    _concertAfterFloatingControlClosers,
+  )) {
+    close();
+  }
+}
+
+/// 한 장의 공연 후 기록 페이지. 앞면에 포스터·사진과 자유 텍스트, 뒷면에 공연 상세를 배치합니다.
 /// 텍스트는 빈 공간을 더블탭해 추가하고, 메모지와 겹치지 않게 자동 배치됩니다.
 class ConcertAfterPageContents extends StatefulWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
   final Animation<double>? postItOpacity;
   final bool showCloseHint;
+  final GlobalKey? pageBoundaryKey;
 
   /// 사진 추가/소감 저장이 성공해 [ticketInfo]가 최신화될 때마다 호출됩니다.
   /// 호출자(다이어리 화면)가 원본 티켓 데이터를 같이 갱신해야, 이 오버레이를
@@ -103,6 +122,7 @@ class ConcertAfterPageContents extends StatefulWidget {
     this.postItOpacity,
     this.showCloseHint = true,
     this.onTicketInfoChanged,
+    this.pageBoundaryKey,
   });
 
   @override
@@ -285,11 +305,10 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       concertId: _ticketInfo?.concertId,
       initialTimetableLoad: _preloadedTimetable,
       initialSetlistLoad: _preloadedSetlist,
+      pageBoundaryKey: widget.pageBoundaryKey,
     );
 
-    return widget.postItOpacity == null
-        ? canvas
-        : FadeTransition(opacity: widget.postItOpacity!, child: canvas);
+    return canvas;
   }
 }
 
@@ -318,6 +337,9 @@ class _RealSetlistContent extends StatefulWidget {
 }
 
 class _RealSetlistContentState extends State<_RealSetlistContent> {
+  static final Map<String, ({List<SongEntry> songs, List<String> artists})>
+  _cache = {};
+
   final ConcertDetailService _service = ConcertDetailService();
   List<SongEntry>? _songs;
   List<String> _artistNames = const [];
@@ -325,6 +347,13 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   @override
   void initState() {
     super.initState();
+    final ticketId = widget.ticketId;
+    final cached = ticketId == null ? null : _cache[ticketId];
+    if (cached != null) {
+      _songs = cached.songs;
+      _artistNames = cached.artists;
+      return;
+    }
     _load();
   }
 
@@ -341,6 +370,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         _songs = res.songs;
         // [백엔드 수정] artistNames도 같이 저장(build()에서 아티스트별 그룹핑에 사용).
         _artistNames = res.artistNames;
+        _cache[ticketId] = (songs: res.songs, artists: res.artistNames);
       });
       if (res.songs.isEmpty) {
         _pollForUpdate(ticketId);
@@ -367,6 +397,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
           setState(() {
             _songs = res.songs;
             _artistNames = res.artistNames;
+            _cache[ticketId] = (songs: res.songs, artists: res.artistNames);
           });
           return;
         }
@@ -871,7 +902,7 @@ double _clampMemoScaleToCanvas(
       .toDouble();
 }
 
-const List<String> _defaultScrapZOrder = ['poster', 'envelope'];
+const List<String> _defaultScrapZOrder = ['poster'];
 
 String _photoMemoKey(int index) => 'photo_$index';
 bool _isPhotoMemoKey(String key) => RegExp(r'^photo_\d+$').hasMatch(key);
@@ -898,6 +929,7 @@ class _ScrapbookCanvas extends StatefulWidget {
   final String? concertId;
   final Future<timetable_model.TimeTableResponse>? initialTimetableLoad;
   final Future<RealSetlistResponse>? initialSetlistLoad;
+  final GlobalKey? pageBoundaryKey;
 
   const _ScrapbookCanvas({
     required this.layoutKey,
@@ -912,13 +944,186 @@ class _ScrapbookCanvas extends StatefulWidget {
     required this.concertId,
     required this.initialTimetableLoad,
     required this.initialSetlistLoad,
+    this.pageBoundaryKey,
   });
 
   @override
   State<_ScrapbookCanvas> createState() => _ScrapbookCanvasState();
 }
 
-class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
+class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _flip = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 480),
+  );
+  bool _showBack = false;
+  double _flipDirection = 1;
+  bool _swipeAllowed = false;
+  double _swipeDistance = 0;
+
+  bool get _canFlip =>
+      !_flip.isAnimating &&
+      _activeMemoKey == null &&
+      !(_textCanvasKey.currentState?.hasActiveText ?? false);
+
+  void _finishSwipe(DragEndDetails details) {
+    if (!_swipeAllowed || !_canFlip) return;
+    final velocity = details.primaryVelocity ?? 0;
+    if (_swipeDistance.abs() < 48 && velocity.abs() < 500) return;
+    _cancelPageLongPress();
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _flipDirection =
+          (_swipeDistance.abs() >= 48 ? _swipeDistance : velocity) < 0 ? 1 : -1;
+      _showBack = !_showBack;
+    });
+    _removeAddPhotoOverlay();
+    _flip.forward(from: 0).whenComplete(() {
+      if (mounted) _syncAddPhotoOverlay();
+    });
+  }
+
+  Widget _flippablePage(Widget front) {
+    return Listener(
+      onPointerDown: (_) {
+        if (_showBack) _swipeAllowed = _canFlip;
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) {
+          _swipeAllowed = _swipeAllowed && _canFlip;
+          _swipeDistance = 0;
+        },
+        onHorizontalDragUpdate: (details) {
+          _swipeDistance += details.delta.dx;
+          _cancelPageLongPress();
+        },
+        onHorizontalDragEnd: _finishSwipe,
+        onLongPress: _showBack
+            ? () {
+                if (!_flip.isAnimating) _toggleMode();
+              }
+            : null,
+        child: AnimatedBuilder(
+          animation: _flip,
+          builder: (context, _) {
+            final progress = Curves.easeInOutCubic.transform(_flip.value);
+            final secondHalf = progress >= .5;
+            final back = _flip.isAnimating
+                ? (secondHalf ? _showBack : !_showBack)
+                : _showBack;
+            final angle = _flip.isAnimating
+                ? _flipDirection *
+                      math.pi *
+                      (secondHalf ? progress - 1 : progress)
+                : 0.0;
+            return Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, .001)
+                ..rotateY(angle),
+              child: Container(
+                foregroundDecoration: _edit
+                    ? BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: const Color(0xFFE53935),
+                          width: context.rs(2.2),
+                        ),
+                      )
+                    : null,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF4F1E1),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Colors.black.withValues(alpha: .10),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: .22),
+                      blurRadius: 18,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: IgnorePointer(
+                    ignoring: _flip.isAnimating,
+                    child: IndexedStack(
+                      index: back ? 1 : 0,
+                      sizing: StackFit.expand,
+                      children: [
+                        front,
+                        PosterMoodScope(
+                          mood: _posterMood,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              const ScrapbookPageBackground(),
+                              _backPage(),
+                              const ScrapbookPaperTextureOverlay(),
+                              _modeBadge(),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _modeBadge() => Positioned(
+    bottom: context.rs(8),
+    left: 0,
+    right: 0,
+    child: IgnorePointer(
+      child: Center(child: _ModeBadge(edit: _edit)),
+    ),
+  );
+
+  Widget _backPage() {
+    final sections = _backContents();
+    return Padding(
+      padding: EdgeInsets.fromLTRB(8, 16, 8, context.rs(48)),
+      child: Column(
+        children: [
+          Text(
+            widget.concertTitle,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: _handTitle(context),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < sections.length; i++) ...[
+                  Expanded(
+                    child: SingleChildScrollView(
+                      key: PageStorageKey('after_back_section_$i'),
+                      child: sections[i],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Color? _posterAccent;
   PosterMood? _posterMood;
   // 편지 안 "실제 셋 리스트" 섹션에서만 쓰는 선택값(설정탭 기본값에서 시작).
@@ -945,6 +1150,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   void initState() {
     super.initState();
     _loadEnvelopeAccent();
+    _concertAfterFloatingControlClosers.add(_floatingControlCloser);
     unawaited(_loadSavedLayout());
   }
 
@@ -967,25 +1173,16 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     final cachedMood = key == null ? null : _posterMoodValueCache[key];
     _posterMood = cachedMood;
     _posterAccent = cachedMood?.accent ?? _fallbackPosterAccentColor(key);
-    if (key == null || key.isEmpty) return;
-    if (cachedMood != null) return;
-    // 처음 열리는 동안 포스터 분석 결과를 곧바로 setState로 반영하면
-    // 페이지 색이 애니메이션 도중 바뀌어 보인다. 분석은 저장만 해두고,
-    // 같은 포스터를 다음에 열 때 시작 색으로 사용한다.
+    if (key == null || key.isEmpty || cachedMood != null) return;
+
     unawaited(
-      (() async {
-            await Future<void>.delayed(const Duration(milliseconds: 450));
-            if (!mounted || widget.ticketInfo?.posterImageUrl != key) {
-              return null;
-            }
-            return _extractPosterMood(key);
-          })()
+      _extractPosterMood(key)
           .then((mood) {
-            if (mood == null ||
-                !mounted ||
-                widget.ticketInfo?.posterImageUrl != key) {
-              return;
-            }
+            if (!mounted || widget.ticketInfo?.posterImageUrl != key) return;
+            setState(() {
+              _posterMood = mood;
+              _posterAccent = mood.accent;
+            });
           })
           .catchError((_) {}),
     );
@@ -1023,6 +1220,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   final ValueNotifier<int> _memoFrame = ValueNotifier<int>(0);
   bool _activeMemoOverDeleteZone = false;
   OverlayEntry? _deleteOverlayEntry;
+  OverlayEntry? _addPhotoOverlayEntry;
+  late final VoidCallback _floatingControlCloser = _removeAddPhotoOverlay;
 
   // 새 공연 후 페이지가 처음 생성될 때 적용되는 고정 기본 프리셋입니다.
   // 한 번 저장된 기본 프리셋은 특정 공연 페이지를 다시 편집해도 갱신하지 않습니다.
@@ -1122,9 +1321,12 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
 
   @override
   void dispose() {
+    _flip.dispose();
     _memoFrame.dispose();
     _idleMemoFrame.dispose();
     _removeDeleteOverlay();
+    _removeAddPhotoOverlay();
+    _concertAfterFloatingControlClosers.remove(_floatingControlCloser);
     _cancelPageLongPress();
     _setlistServiceSelection.dispose();
     super.dispose();
@@ -1132,7 +1334,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
 
   void _startPageLongPress(Offset position) {
     _cancelPageLongPress();
-    if (_edit || _letterOpen) return;
+    if (_edit || _showBack || _flip.isAnimating) return;
     _pageLongPressDownPosition = position;
     _pageLongPressTimer = Timer(kLongPressTimeout, () {
       if (!mounted) return;
@@ -1146,6 +1348,18 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     final down = _pageLongPressDownPosition;
     if (down == null) return;
     if ((position - down).distance > kTouchSlop) _cancelPageLongPress();
+  }
+
+  void _handleCanvasPointerDown(PointerDownEvent event) {
+    _swipeAllowed = _canFlip;
+    if (_activeMemoKey != null) {
+      final activeBounds = _activeMemoBounds();
+      if (activeBounds == null || !activeBounds.contains(event.localPosition)) {
+        _deselectActiveMemo();
+        return;
+      }
+    }
+    _startPageLongPress(event.position);
   }
 
   void _cancelPageLongPress() {
@@ -1164,6 +1378,18 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
       FocusManager.instance.primaryFocus?.unfocus();
     });
     _syncDeleteOverlay();
+    _syncAddPhotoOverlay();
+  }
+
+  void _lockModeFromBlankSpace() {
+    if (!_edit || _activeMemoKey != null) return;
+    setState(() {
+      _edit = false;
+      _activeMemoOverDeleteZone = false;
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
+    _syncDeleteOverlay();
+    _syncAddPhotoOverlay();
   }
 
   void _toggleMemoEditing(String key) {
@@ -1173,6 +1399,15 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
       _activeMemoOverDeleteZone = false;
       if (_activeMemoKey != null) _bringFront(key, updateState: false);
       FocusManager.instance.primaryFocus?.unfocus();
+    });
+    _syncDeleteOverlay();
+  }
+
+  void _deselectActiveMemo() {
+    if (_activeMemoKey == null) return;
+    setState(() {
+      _activeMemoKey = null;
+      _activeMemoOverDeleteZone = false;
     });
     _syncDeleteOverlay();
   }
@@ -1215,68 +1450,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   }
 
   bool _isMemoDeleted(String key) => _t[key]?.deleted ?? false;
-
-  List<String> _deletedMemoKeys() {
-    final visibleKeys = <String>{
-      ..._defaultScrapZOrder,
-      for (var i = 0; i < widget.photoUrls.length; i++) _photoMemoKey(i),
-    };
-    return [
-      for (final key in _z)
-        if (visibleKeys.contains(key) && _isMemoDeleted(key)) key,
-      for (final key in visibleKeys)
-        if (!_z.contains(key) && _isMemoDeleted(key)) key,
-    ];
-  }
-
-  String _memoLabel(String key) {
-    if (key == 'poster') return '포스터';
-    if (key == 'envelope') return '편지봉투';
-    final photoIndex = _photoIndexFromKey(key);
-    if (photoIndex != null) return '사진 ${photoIndex + 1}';
-    return '메모';
-  }
-
-  IconData _memoIcon(String key) {
-    if (key == 'poster') return Icons.local_post_office_outlined;
-    if (key == 'envelope') return Icons.mail_outline_rounded;
-    if (_isPhotoMemoKey(key)) return Icons.photo_outlined;
-    return Icons.sticky_note_2_outlined;
-  }
-
-  void _restoreMemo(String key) {
-    final t = _tf(key);
-    setState(() {
-      t.deleted = false;
-      t.placed = false;
-      _activeMemoKey = null;
-      _activeMemoOverDeleteZone = false;
-      if (!_z.contains(key)) _z.add(key);
-    });
-    _persistLayout();
-    _syncDeleteOverlay();
-  }
-
-  Future<void> _showRestoreMemoSheet() async {
-    final deletedKeys = _deletedMemoKeys();
-    if (deletedKeys.isEmpty) return;
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _RestoreMemoSheet(
-        items: [
-          for (final key in deletedKeys)
-            _RestoreMemoItem(
-              keyName: key,
-              label: _memoLabel(key),
-              icon: _memoIcon(key),
-            ),
-        ],
-      ),
-    );
-    if (selected == null || !mounted) return;
-    _restoreMemo(selected);
-  }
 
   Rect _screenDeleteZoneRect() {
     final media = MediaQuery.of(context);
@@ -1328,6 +1501,58 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     _deleteOverlayEntry = null;
   }
 
+  void _syncAddPhotoOverlay() {
+    if (!_edit || _showBack || _flip.isAnimating || widget.onAddPhoto == null) {
+      _removeAddPhotoOverlay();
+      return;
+    }
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    if (_addPhotoOverlayEntry == null) {
+      _addPhotoOverlayEntry = OverlayEntry(
+        builder: (context) {
+          const buttonHeight = 38.0;
+          final resolvedButtonHeight = context.rs(buttonHeight);
+          final boundaryBox =
+              widget.pageBoundaryKey?.currentContext?.findRenderObject()
+                  as RenderBox?;
+          final ownBox = this.context.findRenderObject() as RenderBox?;
+          final pageBox = boundaryBox?.hasSize == true ? boundaryBox : ownBox;
+          final pageSize = pageBox?.hasSize == true
+              ? pageBox!.size
+              : MediaQuery.of(context).size;
+          final pageTop = pageBox?.hasSize == true
+              ? pageBox!.localToGlobal(Offset.zero).dy
+              : resolvedButtonHeight * 1.5;
+          final top = pageTop - resolvedButtonHeight * 1.5;
+          return Positioned(
+            top: top,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: SizedBox(
+                width: pageSize.width * .5,
+                child: _AddPhotoButton(
+                  height: buttonHeight,
+                  busy: widget.uploadingPhotoIndex != null,
+                  onTap: _showAddPhotoMenu,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+      overlay.insert(_addPhotoOverlayEntry!);
+    } else {
+      _addPhotoOverlayEntry!.markNeedsBuild();
+    }
+  }
+
+  void _removeAddPhotoOverlay() {
+    _addPhotoOverlayEntry?.remove();
+    _addPhotoOverlayEntry = null;
+  }
+
   double _titleSafeBottom(double width) {
     final painter = TextPainter(
       text: TextSpan(text: widget.concertTitle, style: _handTitle(context)),
@@ -1353,7 +1578,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     }
 
     def('poster', w * 0.05, titleSafeBottom + 12, 0);
-    def('envelope', w * 0.32, h * 0.34, 0);
     for (var i = 0; i < widget.photoUrls.length; i++) {
       final col = i % 3;
       final row = i ~/ 3;
@@ -1363,29 +1587,63 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     }
   }
 
-  bool _letterOpen = false;
+  Widget _editableBackSection(int index, String title, Widget child) {
+    final key = 'after_back_text_v1_${widget.layoutKey}_$index';
+    return ConcertAfterEditableSection(
+      key: ValueKey(key),
+      storageKey: key,
+      editMode: _edit,
+      title: title,
+      loadOriginal: () => _originalBackText(index),
+      child: child,
+    );
+  }
 
-  Future<void> _openLetter() async {
-    if (_letterOpen) return;
-    _cancelPageLongPress();
+  Future<String> _originalBackText(int index) async {
+    if (index == 0) {
+      return (widget.ticketInfo?.displayFields ?? <MapEntry<String, String>>[])
+          .map((field) => '${field.key}\n${field.value}')
+          .join('\n\n');
+    }
+    final service = ConcertDetailService();
+    if (index == 1) {
+      if (widget.concertId == null) return '';
+      final response =
+          await (widget.initialTimetableLoad ??
+              service.getTimetable(widget.concertId!));
+      return response.contents
+          .map(
+            (entry) => [entry.date, entry.time, entry.stage, entry.event]
+                .whereType<String>()
+                .where((value) => value.isNotEmpty)
+                .join(' · '),
+          )
+          .join('\n');
+    }
+    if (widget.setlistTicketId == null) return '';
+    // Use the latest result, including songs populated after the initial load.
+    final response = await service.getRealSetlist(widget.setlistTicketId!);
+    return response.songs
+        .map(
+          (song) => [
+            if (song.encore) '[앙코르]',
+            if (song.artist?.isNotEmpty == true) song.artist!,
+            song.name,
+          ].join(' · '),
+        )
+        .join('\n');
+  }
+
+  List<Widget> _backContents() {
     final timetableFuture = widget.initialTimetableLoad;
     final setlistFuture = widget.initialSetlistLoad;
-    final box =
-        _keyFor('envelope').currentContext?.findRenderObject() as RenderBox?;
-    if (box == null) return;
-    final source = MatrixUtils.transformRect(
-      box.getTransformTo(null),
-      Offset.zero & box.size,
-    );
-    setState(() => _letterOpen = true);
-    await showConcertLetter(
-      context: context,
-      source: source,
-      envelopeColor: _envelopeColor,
-      columns: [
-        _LetterColumn(
-          title: '공연 정보',
-          child: SingleChildScrollView(
+    return [
+      _LetterColumn(
+        title: '공연 정보',
+        child: _editableBackSection(
+          0,
+          '공연 정보',
+          SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1416,9 +1674,13 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
             ),
           ),
         ),
-        _LetterColumn(
-          title: '타임테이블',
-          child: SingleChildScrollView(
+      ),
+      _LetterColumn(
+        title: '타임테이블',
+        child: _editableBackSection(
+          1,
+          '타임테이블',
+          SingleChildScrollView(
             child: _RealTimetableNote(
               concertId: widget.concertId,
               ink: _kraftInk,
@@ -1426,19 +1688,22 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
             ),
           ),
         ),
-        _LetterColumn(
-          title: '실제 셋 리스트',
-          trailing: SetlistServiceIcon(selection: _setlistServiceSelection),
-          child: _RealSetlistContent(
+      ),
+      _LetterColumn(
+        title: '실제 셋 리스트',
+        trailing: SetlistServiceIcon(selection: _setlistServiceSelection),
+        child: _editableBackSection(
+          2,
+          '실제 셋 리스트',
+          _RealSetlistContent(
             ticketId: widget.setlistTicketId,
             ink: _kraftInk,
             initialLoad: setlistFuture,
             selection: _setlistServiceSelection,
           ),
         ),
-      ],
-    );
-    if (mounted) setState(() => _letterOpen = false);
+      ),
+    ];
   }
 
   static const double _widgetDefaultSizeBoost = 1.5;
@@ -1452,7 +1717,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
     return _widgetDefaultSizeBoost *
         switch (key) {
           'poster' => width * .21,
-          'envelope' => width * .288,
           _ => width * .26,
         };
   }
@@ -1461,7 +1725,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
 
   double _memoAspectRatio(String key) => switch (key) {
     'poster' => 3 / 4,
-    'envelope' => 1.55,
     _ when _isPhotoMemoKey(key) => _photoAspectRatio(
       _photoIndexFromKey(key) ?? 0,
     ),
@@ -1496,6 +1759,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _syncAddPhotoOverlay();
+        });
         final w = c.maxWidth;
         final h = c.maxHeight;
         final titleSafeBottom = _titleSafeBottom(w);
@@ -1538,26 +1804,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
                   ),
                 ),
               ),
-          if (!_isMemoDeleted('envelope'))
-            'envelope': _memo(
-              'envelope',
-              baseW: _memoBaseWidth('envelope', w),
-              canvasW: w,
-              canvasH: h,
-              titleSafeBottom: titleSafeBottom,
-              child: Opacity(
-                opacity: _letterOpen ? 0 : 1,
-                child: _editableWidgetTone(
-                  edit: _edit,
-                  child: ConcertEnvelope(
-                    onTap: _openLetter,
-                    idleFlutter: !_edit && !_letterOpen,
-                    showBodyShadow: _edit,
-                    color: _envelopeColor,
-                  ),
-                ),
-              ),
-            ),
         };
 
         final backgroundOverlays = [
@@ -1588,64 +1834,45 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
           for (final k in _z)
             if (items[k] != null) items[k]!,
         ];
-        return ClipRect(
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) => _startPageLongPress(event.position),
-            onPointerMove: (event) => _maybeCancelPageLongPress(event.position),
-            onPointerUp: (_) => _cancelPageLongPress(),
-            onPointerCancel: (_) => _cancelPageLongPress(),
-            child: Stack(
-              children: [
-                PosterMoodScope(
-                  mood: _posterMood,
-                  child: ValueListenableBuilder<int>(
+        return _flippablePage(
+          ClipRect(
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: _handleCanvasPointerDown,
+              onPointerMove: (event) =>
+                  _maybeCancelPageLongPress(event.position),
+              onPointerUp: (_) => _cancelPageLongPress(),
+              onPointerCancel: (_) => _cancelPageLongPress(),
+              child: Stack(
+                children: [
+                  PosterMoodScope(
+                    mood: _posterMood,
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: _memoFrame,
+                      builder: (context, value, child) =>
+                          ConcertAfterTextCanvas(
+                            key: _textCanvasKey,
+                            storageKey: widget.layoutKey,
+                            initialReview: widget.reviewText ?? '',
+                            width: w,
+                            minHeight: h,
+                            minContentTop: titleSafeBottom,
+                            editMode: _edit && _activeMemoKey == null,
+                            obstacles: const <Rect>[],
+                            backgroundOverlays: backgroundOverlays,
+                            onReviewChanged: widget.onReviewChanged,
+                            onBlankLongPress: _lockModeFromBlankSpace,
+                            memos: memoWidgets,
+                          ),
+                    ),
+                  ),
+                  ValueListenableBuilder<int>(
                     valueListenable: _memoFrame,
-                    builder: (context, value, child) => ConcertAfterTextCanvas(
-                      key: _textCanvasKey,
-                      storageKey: widget.layoutKey,
-                      initialReview: widget.reviewText ?? '',
-                      width: w,
-                      minHeight: h,
-                      minContentTop: titleSafeBottom,
-                      editMode: _edit && _activeMemoKey == null,
-                      obstacles: _obstacles(w, titleSafeBottom),
-                      backgroundOverlays: backgroundOverlays,
-                      onReviewChanged: widget.onReviewChanged,
-                      memos: memoWidgets,
-                    ),
+                    builder: (context, value, child) => _activeMemoDimOverlay(),
                   ),
-                ),
-                ValueListenableBuilder<int>(
-                  valueListenable: _memoFrame,
-                  builder: (context, value, child) => _activeMemoDimOverlay(),
-                ),
-                _editModeBorder(context),
-                if (_edit && _deletedMemoKeys().isNotEmpty)
-                  Positioned(
-                    top: context.rs(8),
-                    left: context.rs(10),
-                    child: _RestoreMemoButton(onTap: _showRestoreMemoSheet),
-                  ),
-                if (_edit && widget.onAddPhoto != null)
-                  Positioned(
-                    top: context.rs(8),
-                    right: context.rs(10),
-                    child: _AddPhotoButton(
-                      busy: widget.uploadingPhotoIndex != null,
-                      onTap: _showAddPhotoMenu,
-                    ),
-                  ),
-                // 편집/잠금 상태 배지(제목과 겹치지 않게 하단 가운데에).
-                Positioned(
-                  bottom: context.rs(8),
-                  left: 0,
-                  right: 0,
-                  child: IgnorePointer(
-                    child: Center(child: _ModeBadge(edit: _edit)),
-                  ),
-                ),
-              ],
+                  _modeBadge(),
+                ],
+              ),
             ),
           ),
         );
@@ -1672,21 +1899,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         ..scaleByDouble(t.scale, t.scale, 1, 1)
         ..translateByDouble(-size.width / 2, -size.height / 2, 0, 1),
       Offset.zero & size,
-    );
-  }
-
-  Widget _editModeBorder(BuildContext context) {
-    if (!_edit) return const SizedBox.shrink();
-    return IgnorePointer(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: const Color(0xFFE53935).withValues(alpha: .9),
-            width: context.rs(2.2),
-          ),
-          borderRadius: BorderRadius.circular(context.rs(10)),
-        ),
-      ),
     );
   }
 
@@ -1765,9 +1977,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
       final memoEditing = _activeMemoKey == key;
       gestured = GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: key == 'envelope' && (_activeMemoKey == null || memoEditing)
-            ? _openLetter
-            : null,
         onLongPress: () => _toggleMemoEditing(key),
         onScaleStart: memoEditing
             ? (d) {
@@ -1872,54 +2081,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas> {
         ),
       ),
     );
-  }
-
-  List<Rect> _obstacles(double width, double titleSafeBottom) {
-    final result = <Rect>[Rect.fromLTWH(0, 0, width, titleSafeBottom)];
-    var needsMeasure = false;
-    for (final key in _z) {
-      final t = _tf(key);
-      if (t.deleted) continue;
-      final box = _keyFor(key).currentContext?.findRenderObject() as RenderBox?;
-      final measured = box != null && box.hasSize
-          ? box.size
-          : _memoFallbackSize(key, width);
-      if (t.measuredSize != measured) {
-        t.measuredSize = measured;
-        needsMeasure = true;
-      }
-      final bounds = MatrixUtils.transformRect(
-        Matrix4.identity()
-          ..translateByDouble(
-            t.offset.dx + measured.width / 2,
-            t.offset.dy + measured.height / 2,
-            0,
-            1,
-          )
-          ..rotateZ(t.rotation)
-          ..scaleByDouble(t.scale, t.scale, 1, 1)
-          ..translateByDouble(-measured.width / 2, -measured.height / 2, 0, 1),
-        Offset.zero & measured,
-      );
-      final obstacleBottom = math.max(
-        bounds.top,
-        bounds.bottom + kConcertAfterTextWrapBottomGap,
-      );
-      result.add(
-        Rect.fromLTRB(
-          bounds.left - kConcertAfterTextWrapHorizontalGap,
-          bounds.top - kConcertAfterTextWrapTopGap,
-          bounds.right + kConcertAfterTextWrapHorizontalGap,
-          obstacleBottom,
-        ),
-      );
-    }
-    if (needsMeasure) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() {});
-      });
-    }
-    return result;
   }
 }
 
@@ -2031,9 +2192,7 @@ Future<PosterMood> _loadOrAnalyzePosterMood(String posterKey) async {
 }
 
 Future<PosterMood> _analyzePosterMood(String posterKey) async {
-  final provider = _isNetworkUrl(posterKey)
-      ? NetworkImage(posterKey)
-      : FileImage(File(posterKey)) as ImageProvider;
+  final provider = _concertAfterImageProvider(posterKey);
   final stream = provider.resolve(const ImageConfiguration());
   final completer = Completer<ui.Image>();
   late final ImageStreamListener listener;
@@ -2503,10 +2662,15 @@ class _ModeBadge extends StatelessWidget {
 }
 
 class _AddPhotoButton extends StatelessWidget {
+  final double height;
   final bool busy;
   final VoidCallback onTap;
 
-  const _AddPhotoButton({required this.busy, required this.onTap});
+  const _AddPhotoButton({
+    this.height = 38,
+    required this.busy,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2514,13 +2678,13 @@ class _AddPhotoButton extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: busy ? null : onTap,
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(22),
         child: Ink(
-          width: context.rs(34),
-          height: context.rs(34),
+          height: context.rs(height),
+          padding: EdgeInsets.symmetric(horizontal: context.rs(14)),
           decoration: BoxDecoration(
             color: const Color(0xFFF6E9CC).withValues(alpha: .94),
-            shape: BoxShape.circle,
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: _kraftInk.withValues(alpha: .22)),
             boxShadow: [
               BoxShadow(
@@ -2537,154 +2701,26 @@ class _AddPhotoButton extends StatelessWidget {
                     height: context.rs(16),
                     child: const CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Icon(
-                    Icons.add_photo_alternate_outlined,
-                    size: context.rs(19),
-                    color: _kraftInk,
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RestoreMemoButton extends StatelessWidget {
-  final VoidCallback onTap;
-
-  const _RestoreMemoButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: Ink(
-          width: context.rs(34),
-          height: context.rs(34),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF6E9CC).withValues(alpha: .94),
-            shape: BoxShape.circle,
-            border: Border.all(color: _kraftInk.withValues(alpha: .22)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: .16),
-                blurRadius: 8,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Icon(
-            Icons.restore_from_trash_outlined,
-            size: context.rs(19),
-            color: _kraftInk,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RestoreMemoItem {
-  final String keyName;
-  final String label;
-  final IconData icon;
-
-  const _RestoreMemoItem({
-    required this.keyName,
-    required this.label,
-    required this.icon,
-  });
-}
-
-class _RestoreMemoSheet extends StatelessWidget {
-  final List<_RestoreMemoItem> items;
-
-  const _RestoreMemoSheet({required this.items});
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          context.rs(18),
-          0,
-          context.rs(18),
-          context.rs(14),
-        ),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: const Color(0xFFF4F1E1),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _kraftInk.withValues(alpha: .12)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: .22),
-                blurRadius: 18,
-                offset: const Offset(0, 9),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: EdgeInsets.all(context.rs(12)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final item in items)
-                  Padding(
-                    padding: EdgeInsets.symmetric(vertical: context.rs(3)),
-                    child: InkWell(
-                      onTap: () => Navigator.of(context).pop(item.keyName),
-                      borderRadius: BorderRadius.circular(12),
-                      child: Ink(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: context.rs(12),
-                          vertical: context.rs(10),
-                        ),
-                        decoration: BoxDecoration(
-                          color: concertAfterTone(
-                            hue: 39,
-                            saturation: .16,
-                            value: .88,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: _kraftInk.withValues(alpha: .12),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              item.icon,
-                              color: _kraftInk.withValues(alpha: .78),
-                              size: context.rs(20),
-                            ),
-                            SizedBox(width: context.rs(10)),
-                            Expanded(
-                              child: Text(
-                                item.label,
-                                style: TextStyle(
-                                  color: _kraftInk,
-                                  fontSize: context.sp(13),
-                                  fontWeight: FontWeight.w800,
-                                  decoration: TextDecoration.none,
-                                ),
-                              ),
-                            ),
-                            Icon(
-                              Icons.add_circle_outline_rounded,
-                              color: _kraftInk.withValues(alpha: .58),
-                              size: context.rs(18),
-                            ),
-                          ],
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.add_photo_alternate_outlined,
+                        size: context.rs(18),
+                        color: _kraftInk,
+                      ),
+                      SizedBox(width: context.rs(6)),
+                      Text(
+                        '사진 추가',
+                        style: TextStyle(
+                          color: _kraftInk,
+                          fontSize: context.sp(12),
+                          fontWeight: FontWeight.w800,
+                          decoration: TextDecoration.none,
                         ),
                       ),
-                    ),
+                    ],
                   ),
-              ],
-            ),
           ),
         ),
       ),
@@ -2978,48 +3014,40 @@ class _PostagePosterPainter extends CustomPainter {
       paperColor != oldDelegate.paperColor;
 }
 
-/// 바랜 종이 인쇄: 채도와 대비를 낮추고 검정을 들어 올린다.
-/// 원본 파일은 유지하며 포스터와 사진에 동일한 보정을 적용한다.
+/// 바랜 종이 인쇄: 무거운 픽셀 단위 색상 필터 대신 옅은 종이색 오버레이를
+/// 얹어 포스터와 사진을 살짝 누렇게 보이게 한다.
 class _PaperImageEffect extends StatelessWidget {
   final Widget child;
   const _PaperImageEffect({required this.child});
 
+  Color _paperTint(BuildContext context) {
+    final mood = PosterMoodScope.of(context);
+    if (mood == null) return const Color(0x2FE7D2A3);
+    return Color.alphaBlend(
+      mood.materialColor.withValues(alpha: .10),
+      const Color(0x29E7D2A3),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => RepaintBoundary(
-    child: ClipRect(
-      child: HanjiTexture(
-        opacity:
-            PosterMoodScope.of(context)?.textureOpacity ?? kHanjiTextureOpacity,
-        child: ColorFiltered(
-          colorFilter:
-              PosterMoodScope.of(context)?.imageFilter ??
-              const ColorFilter.matrix([
-                .361,
-                .322,
-                .033,
-                0,
-                53,
-                .096,
-                .587,
-                .033,
-                0,
-                50,
-                .096,
-                .322,
-                .298,
-                0,
-                44,
-                0,
-                0,
-                0,
-                1,
-                0,
-              ]),
-          child: child,
+  Widget build(BuildContext context) {
+    final textureOpacity =
+        PosterMoodScope.of(context)?.textureOpacity ?? kHanjiTextureOpacity;
+    return RepaintBoundary(
+      child: ClipRect(
+        child: HanjiTexture(
+          opacity: textureOpacity,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              child,
+              IgnorePointer(child: ColoredBox(color: _paperTint(context))),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 /// 사진 슬롯. 각 슬롯의 표시 비율과 업로드 크롭 비율을 함께 맞춘다.
@@ -3137,25 +3165,19 @@ class _LetterColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 20),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  color: _kraftInk,
-                ),
-              ),
-            ),
-            ?trailing,
-          ],
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w800,
+            color: _kraftInk,
+          ),
         ),
+        if (trailing != null) ...[const SizedBox(height: 6), trailing!],
         const SizedBox(height: 10),
         child,
       ],
@@ -3179,6 +3201,8 @@ class _RealTimetableNote extends StatefulWidget {
 }
 
 class _RealTimetableNoteState extends State<_RealTimetableNote> {
+  static final Map<String, List<TimetableEntry>> _cache = {};
+
   final ConcertDetailService _service = ConcertDetailService();
   List<TimetableEntry> _rows = const [];
   String _status = 'loading'; // loading | empty | error | loaded
@@ -3186,6 +3210,13 @@ class _RealTimetableNoteState extends State<_RealTimetableNote> {
   @override
   void initState() {
     super.initState();
+    final id = widget.concertId;
+    final cached = id == null ? null : _cache[id];
+    if (cached != null) {
+      _rows = cached;
+      _status = cached.isEmpty ? 'empty' : 'loaded';
+      return;
+    }
     _load();
   }
 
@@ -3207,6 +3238,7 @@ class _RealTimetableNoteState extends State<_RealTimetableNote> {
               ),
             )
             .toList();
+        _cache[id] = _rows;
         _status = _rows.isEmpty ? 'empty' : 'loaded';
       });
     } on ApiException catch (e) {

@@ -2253,22 +2253,25 @@ class _DiaryScreenState extends State<DiaryScreen> {
     Future<void> openAfter() async {
       final startRect = _globalRectOf(posterOverlayKey);
       if (startRect == null) return;
+      final frameScale =
+          DiaryFrameScale.maybeOf(context) ?? diaryScaleFromMediaQuery(context);
+      final collapsedTicket = _buildAfterConcertPosterFace(
+        title: title,
+        info: info,
+        radiusOnRight: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!context.mounted) return;
       setState(() => _overlayHiddenRegionKey = posterOverlayKey);
       await ConcertAfterOverlay.show(
         context,
         startRect: startRect,
-        collapsedTicket: _buildAfterConcertPosterFace(
-          title: title,
-          info: info,
-          radiusOnRight: true,
-        ),
+        collapsedTicket: collapsedTicket,
         concertTitle: title,
         ticketInfo: info,
         onTicketInfoChanged: onInfoChanged,
         // [백엔드 수정] 이 리스트에서 쓰이는 배율을 그대로 넘김.
-        frameScale:
-            DiaryFrameScale.maybeOf(context) ??
-            diaryScaleFromMediaQuery(context),
+        frameScale: frameScale,
       );
       if (mounted) setState(() => _overlayHiddenRegionKey = null);
     }
