@@ -325,12 +325,15 @@ class _RealSetlistContent extends StatefulWidget {
   final Color ink;
   final Future<RealSetlistResponse>? initialLoad;
   final SetlistServiceSelection selection;
+  final ValueChanged<Future<void> Function(BuildContext context)>?
+  onEditorReady;
 
   const _RealSetlistContent({
     required this.ticketId,
     this.ink = _kraftInk,
     this.initialLoad,
     required this.selection,
+    this.onEditorReady,
   });
 
   @override
@@ -348,6 +351,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   @override
   void initState() {
     super.initState();
+    widget.onEditorReady?.call(_openEditor);
     final ticketId = widget.ticketId;
     final cached = ticketId == null ? null : _cache[ticketId];
     if (cached != null) {
@@ -356,6 +360,15 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       return;
     }
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RealSetlistContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.onEditorReady != widget.onEditorReady ||
+        oldWidget.ticketId != widget.ticketId) {
+      widget.onEditorReady?.call(_openEditor);
+    }
   }
 
   Future<void> _load() async {
@@ -439,7 +452,12 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   // 계산되도록 로컬에서 임의로 합치지 않음.
   Future<void> _openEditor(BuildContext context) async {
     final ticketId = widget.ticketId;
-    if (ticketId == null) return;
+    if (ticketId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('등록된 티켓에서만 실제 셋리스트를 수정할 수 있어요.')),
+      );
+      return;
+    }
     await SetlistEditorSheet.show(
       context,
       initialSongs: _songs ?? const [],
@@ -450,26 +468,9 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         setState(() {
           _songs = res.songs;
           _artistNames = res.artistNames;
+          _cache[ticketId] = (songs: res.songs, artists: res.artistNames);
         });
       },
-    );
-  }
-
-  Widget _buildEditButton(BuildContext context) {
-    if (widget.ticketId == null) return const SizedBox.shrink();
-    return Align(
-      alignment: Alignment.centerRight,
-      child: TextButton.icon(
-        onPressed: () => _openEditor(context),
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          minimumSize: Size.zero,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          foregroundColor: widget.ink,
-        ),
-        icon: const Icon(Icons.edit_outlined, size: 14),
-        label: const Text('수정', style: TextStyle(fontSize: 11)),
-      ),
     );
   }
 
@@ -478,7 +479,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
-      children: [_buildEditButton(context), _buildBody(context)],
+      children: [_buildBody(context)],
     );
   }
 
@@ -1008,7 +1009,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   );
   bool _showBack = false;
   double _flipDirection = 1;
-  bool _swipeAllowed = false;
   double _swipeDistance = 0;
 
   bool get _canFlip =>
@@ -1017,7 +1017,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       !(_textCanvasKey.currentState?.hasActiveText ?? false);
 
   void _finishSwipe(DragEndDetails details) {
-    if (!_swipeAllowed || !_canFlip) return;
+    if (!_canFlip) return;
     final velocity = details.primaryVelocity ?? 0;
     if (_swipeDistance.abs() < 48 && velocity.abs() < 500) return;
     _cancelPageLongPress();
@@ -1029,21 +1029,19 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     });
     _removeAddPhotoOverlay();
     _flip.forward(from: 0).whenComplete(() {
-      if (mounted) _syncAddPhotoOverlay();
+      if (!mounted) return;
+      setState(() {});
+      _syncAddPhotoOverlay();
     });
   }
 
   Widget _flippablePage(Widget front) {
     final flipGestureEnabled = _canFlip;
     return Listener(
-      onPointerDown: (_) {
-        if (_showBack) _swipeAllowed = flipGestureEnabled;
-      },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onHorizontalDragStart: flipGestureEnabled
             ? (_) {
-                _swipeAllowed = _swipeAllowed && _canFlip;
                 _swipeDistance = 0;
               }
             : null,
@@ -1275,6 +1273,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   bool _activeMemoOverDeleteZone = false;
   OverlayEntry? _deleteOverlayEntry;
   OverlayEntry? _addPhotoOverlayEntry;
+  Future<void> Function(BuildContext context)? _setlistEditorLauncher;
   late final VoidCallback _floatingControlCloser = _removeAddPhotoOverlay;
 
   // 새 공연 후 페이지가 처음 생성될 때 적용되는 고정 기본 프리셋입니다.
@@ -1285,7 +1284,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   String get _layoutPrefsKey => 'concert_after_layout_v3_${widget.layoutKey}';
   String get _legacyLayoutPrefsKey =>
       'concert_after_layout_v2_${widget.layoutKey}';
-
   Future<void> _loadSavedLayout() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1405,7 +1403,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   void _handleCanvasPointerDown(PointerDownEvent event) {
-    _swipeAllowed = _canFlip;
     if (_activeMemoKey != null) {
       final activeBounds = _activeMemoBounds();
       if (activeBounds != null && !activeBounds.contains(event.localPosition)) {
@@ -1644,16 +1641,41 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     }
   }
 
-  Widget _editableBackSection(int index, String title, Widget child) {
+  Widget _editableBackSection(
+    int index,
+    String title,
+    Widget child, {
+    bool editable = true,
+    Future<void> Function(BuildContext context)? editOverride,
+  }) {
     final key = 'after_back_text_v1_${widget.layoutKey}_$index';
     return ConcertAfterEditableSection(
       key: ValueKey(key),
       storageKey: key,
       editMode: _edit,
+      editable: editable,
       title: title,
       loadOriginal: () => _originalBackText(index),
+      editOverride: editOverride,
       child: child,
     );
+  }
+
+  List<MapEntry<String, String>> _backInfoFields() {
+    final info = widget.ticketInfo;
+    final extras = info?.extraFields ?? const <String, String>{};
+    final values = <String, String>{
+      '공연장': info?.venueName ?? '',
+      '날짜': info?.formattedDate ?? '',
+      '가격': info?.price ?? '',
+      '좌석': info?.seat ?? '',
+      '아티스트': extras['아티스트'] ?? extras['artist'] ?? '',
+      '공연 유형': extras['공연 유형'] ?? extras['공연 타입'] ?? extras['유형'] ?? '',
+    };
+    return [
+      for (final key in const ['공연장', '날짜', '가격', '좌석', '아티스트', '공연 유형'])
+        MapEntry(key, values[key]?.isEmpty == true ? '-' : values[key] ?? '-'),
+    ];
   }
 
   Future<String> _originalBackText(int index) async {
@@ -1704,9 +1726,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final field
-                    in widget.ticketInfo?.displayFields ??
-                        <MapEntry<String, String>>[])
+                for (final field in _backInfoFields())
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Column(
@@ -1730,6 +1750,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
               ],
             ),
           ),
+          editable: false,
         ),
       ),
       _LetterColumn(
@@ -1744,6 +1765,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
               initialLoad: timetableFuture,
             ),
           ),
+          editable: false,
         ),
       ),
       _LetterColumn(
@@ -1757,7 +1779,14 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             ink: _kraftInk,
             initialLoad: setlistFuture,
             selection: _setlistServiceSelection,
+            onEditorReady: (launcher) {
+              _setlistEditorLauncher = launcher;
+            },
           ),
+          editOverride: (context) async {
+            final launcher = _setlistEditorLauncher;
+            if (launcher != null) await launcher(context);
+          },
         ),
       ),
     ];

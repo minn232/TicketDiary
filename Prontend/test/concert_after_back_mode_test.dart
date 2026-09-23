@@ -31,7 +31,7 @@ void main() {
       await tester.longPressAt(const Offset(280, 35));
       await tester.pumpAndSettle();
       expect(find.text('편집 모드'), findsOneWidget);
-      expect(find.text('편집'), findsNWidgets(3));
+      expect(find.text('편집'), findsOneWidget);
 
       await tester.longPressAt(const Offset(280, 35));
       await tester.pumpAndSettle();
@@ -44,6 +44,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('공연 정보'), findsNothing);
       expect(find.text('편집 모드'), findsOneWidget);
+
+      await tester.dragFrom(const Offset(450, 350), const Offset(-220, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('공연 정보'), findsOneWidget);
+      expect(find.text('편집 모드'), findsOneWidget);
+
+      await tester.dragFrom(const Offset(100, 350), const Offset(220, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('공연 정보'), findsNothing);
+      expect(find.text('편집 모드'), findsOneWidget);
+
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
     },
@@ -89,13 +100,10 @@ void main() {
 
     await tester.tap(find.text('편집').first);
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), '저장 후에도 뒷면 유지');
-    await tester.tap(find.text('저장'));
-    await tester.pumpAndSettle();
+    expect(find.text('등록된 티켓에서만 실제 셋리스트를 수정할 수 있어요.'), findsOneWidget);
 
     expect(find.text('공연 정보'), findsOneWidget);
     expect(find.text('편집 모드'), findsOneWidget);
-    expect(find.text('저장 후에도 뒷면 유지'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
   });

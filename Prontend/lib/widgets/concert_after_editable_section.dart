@@ -6,7 +6,9 @@ class ConcertAfterEditableSection extends StatefulWidget {
   final String storageKey;
   final String title;
   final bool editMode;
+  final bool editable;
   final Future<String> Function() loadOriginal;
+  final Future<void> Function(BuildContext context)? editOverride;
   final Widget child;
 
   const ConcertAfterEditableSection({
@@ -14,7 +16,9 @@ class ConcertAfterEditableSection extends StatefulWidget {
     required this.storageKey,
     required this.title,
     required this.editMode,
+    this.editable = true,
     required this.loadOriginal,
+    this.editOverride,
     required this.child,
   });
 
@@ -62,6 +66,22 @@ class _ConcertAfterEditableSectionState
 
   Future<void> _edit() async {
     if (!widget.editMode || !_ready || _opening) return;
+    final override = widget.editOverride;
+    if (override != null) {
+      setState(() => _opening = true);
+      try {
+        await override(context);
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('편집 화면을 열지 못했어요. 다시 시도해 주세요.')),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _opening = false);
+      }
+      return;
+    }
     setState(() => _opening = true);
     try {
       final original = _text ?? await widget.loadOriginal();
@@ -103,7 +123,7 @@ class _ConcertAfterEditableSectionState
             height: 1.5,
           ),
         ),
-      if (widget.editMode)
+      if (widget.editMode && widget.editable)
         TextButton.icon(
           onPressed: _ready && !_opening ? _edit : null,
           icon: const Icon(Icons.edit_outlined, size: 14),
