@@ -335,9 +335,13 @@ class _DiaryScreenState extends State<DiaryScreen> {
   // 있는지(오프라인 등). 서버 조회가 한 번이라도 성공하면 다시 false.
   static bool _usingCachedTickets = false;
 
+  /// 같은 티켓 목록 조회가 동시에 여러 번 나가면, 늦게 끝난 요청이 화면을
+  /// 다시 덮어쓸 수 있으므로 진행 중인 조회를 공유합니다.
+  static Future<void>? _backendTicketsLoadFuture;
+
   /// 마지막으로 [_tickets]를 채운 로그인 유저의 id. 로그아웃/계정 전환으로
-  /// 유저가 바뀌면 이전 유저의 서버 기원 티켓을 화면에서 지우고 새 유저
-  /// 것으로 다시 불러오기 위해 씁니다([_onAuthChangedStatic] 참고).
+  /// 유저가 바뀌면 서버 조회를 다시 실행하기 위해 씁니다
+  /// ([_onAuthChangedStatic] 참고).
   static String? _loadedForUserId;
 
   // [백엔드 수정]
@@ -359,9 +363,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   static void _onAuthChangedStatic() {
     final currentUserId = AuthService.instance.userId;
     if (currentUserId == _loadedForUserId) return;
-    _loadedForUserId = currentUserId;
-    _tickets.removeWhere((t) => t.info?.ticketId != null);
     _backendTicketsLoaded = false;
+    _backendTicketsLoadFuture = null;
     TicketRefreshBus.notify();
   }
 
@@ -386,14 +389,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 또는 위 [_onAuthChangedStatic]) 호출됩니다. 유저 id는 이미 그 시점에
   /// 바뀌어 있으므로, 여기서는 가드 없이 강제로 다시 불러옵니다.
   void _onTicketsChangedElsewhere() {
-    if (mounted) {
-      setState(() {
-        _tickets.removeWhere((t) => t.info?.ticketId != null);
-      });
-    } else {
-      _tickets.removeWhere((t) => t.info?.ticketId != null);
-    }
     _backendTicketsLoaded = false;
+    _backendTicketsLoadFuture = null;
     unawaited(_loadTicketsFromBackend());
   }
 
@@ -412,22 +409,44 @@ class _DiaryScreenState extends State<DiaryScreen> {
   ///   헤더만 필요).
   /// - 실패(오프라인 등)하면 [TicketCacheStore]에 마지막으로 저장해둔 목록을
   ///   대신 읽기 전용으로 보여주고, 다음에 다이어리 탭을 다시 열면 재시도합니다.
-  Future<void> _loadTicketsFromBackend() async {
-    if (_backendTicketsLoaded) return;
-    _backendTicketsLoaded = true;
+  bool get _hasCachedServerTickets =>
+      _tickets.any((ticket) => ticket.info?.ticketId != null);
+
+  Future<void> _loadTicketsFromBackend() {
+    if (_backendTicketsLoaded && _hasCachedServerTickets) return Future.value();
+    final inFlight = _backendTicketsLoadFuture;
+    if (inFlight != null) return inFlight;
+
+    final future = _loadTicketsFromBackendOnce();
+    _backendTicketsLoadFuture = future;
+    return future.whenComplete(() {
+      if (identical(_backendTicketsLoadFuture, future)) {
+        _backendTicketsLoadFuture = null;
+      }
+    });
+  }
+
+  Future<void> _loadTicketsFromBackendOnce() async {
     try {
+      await AuthService.instance.ensureSession();
+      if (!AuthService.instance.isLoggedIn) return;
+
       // TicketData.fromBackend가 동기적으로 TornTicketStore를 읽으므로,
       // 티켓 목록을 변환하기 전에 먼저 다 불러와둡니다.
       await TornTicketStore.instance.ensureLoaded();
       final tickets = await _ticketService.listTickets();
+      final nextTickets = tickets.map(TicketData.fromBackend).toList();
       if (!mounted) return;
       setState(() {
-        final fetchedIds = tickets.map((t) => t.id).toSet();
-        _tickets.removeWhere((t) => fetchedIds.contains(t.id));
-        _tickets.addAll(tickets.map(TicketData.fromBackend));
+        // 서버 조회에 성공했을 때만 기존 서버 티켓을 교체합니다.
+        // 핫 리로드/세션 복원 중 일시적으로 조회가 실패해도 화면의 티켓을
+        // 빈 목록으로 덮어쓰지 않게 하기 위함입니다.
+        _tickets.removeWhere((t) => t.info?.ticketId != null);
+        _tickets.addAll(nextTickets);
         _usingCachedTickets = false;
       });
       _loadedForUserId = AuthService.instance.userId;
+      _backendTicketsLoaded = true;
       unawaited(
         TicketCacheStore.instance.save(
           tickets,
@@ -1370,9 +1389,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    const ScrapbookPaperTextureOverlay(opacity: .95, seed: 110),
                     _buildPageContent(context, pageIndex, constraints),
-                    const ScrapbookPaperTextureOverlay(opacity: .65, seed: 111),
+                    const ScrapbookPaperTextureOverlay(opacity: .75, seed: 110),
                   ],
                 ),
               ),
@@ -2280,22 +2298,25 @@ class _DiaryScreenState extends State<DiaryScreen> {
     Future<void> openAfter() async {
       final startRect = _globalRectOf(posterOverlayKey);
       if (startRect == null) return;
+      final frameScale =
+          DiaryFrameScale.maybeOf(context) ?? diaryScaleFromMediaQuery(context);
+      final collapsedTicket = _buildAfterConcertPosterFace(
+        title: title,
+        info: info,
+        radiusOnRight: true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!context.mounted) return;
       setState(() => _overlayHiddenRegionKey = posterOverlayKey);
       await ConcertAfterOverlay.show(
         context,
         startRect: startRect,
-        collapsedTicket: _buildAfterConcertPosterFace(
-          title: title,
-          info: info,
-          radiusOnRight: true,
-        ),
+        collapsedTicket: collapsedTicket,
         concertTitle: title,
         ticketInfo: info,
         onTicketInfoChanged: onInfoChanged,
         // [백엔드 수정] 이 리스트에서 쓰이는 배율을 그대로 넘김.
-        frameScale:
-            DiaryFrameScale.maybeOf(context) ??
-            diaryScaleFromMediaQuery(context),
+        frameScale: frameScale,
       );
       if (mounted) setState(() => _overlayHiddenRegionKey = null);
     }

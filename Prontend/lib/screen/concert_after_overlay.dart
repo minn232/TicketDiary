@@ -178,12 +178,14 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   void _handleOutsideTap() {
     // 애니메이션 중에는 실수로 닫히지 않도록 어느 정도 진행 이후만 허용
     if (_controller.value < 0.85) return;
+    hideConcertAfterFloatingControls();
     _close();
   }
 
   Future<void> _close() async {
     if (_isClosing) return;
     _isClosing = true;
+    hideConcertAfterFloatingControls();
 
     try {
       await _controller.reverse();
@@ -311,7 +313,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   }
 }
 
-class _ExpandedConcertAfter extends StatelessWidget {
+class _ExpandedConcertAfter extends StatefulWidget {
   final Animation<double> postItOpacity;
   final String concertTitle;
   final TicketInfo? ticketInfo;
@@ -327,6 +329,13 @@ class _ExpandedConcertAfter extends StatelessWidget {
   });
 
   @override
+  State<_ExpandedConcertAfter> createState() => _ExpandedConcertAfterState();
+}
+
+class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
+  final GlobalKey _pageBoundaryKey = GlobalKey();
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
@@ -334,69 +343,15 @@ class _ExpandedConcertAfter extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 562),
-            child: Stack(
-              children: [
-                // 카드 배경(색/테두리/그림자)만 그리는 장식용 레이어.
-                // IgnorePointer로 히트테스트에서 완전히 제외해야, 이 색만
-                // 있는 자리(콘텐츠가 비어 있는 곳)를 눌렀을 때 탭이 이
-                // 레이어에 막히지 않고 아래 포스터의 "바깥 탭으로 닫기"
-                // 감지기까지 그대로 전달됩니다. 그림자가 모서리 클립에
-                // 잘리지 않도록 클립 레이어 바깥(이 자리)에 둡니다.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        // 예전 스크랩북 캔버스(2페이지)의 크래프트 색을 그대로
-                        // 카드(1페이지) 색으로 사용 — 2페이지를 없애고 메모지를
-                        // 이 위에 바로 올립니다.
-                        color: const Color(0xFFF4F1E1),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: Colors.black.withValues(alpha: 0.10),
-                          width: 1.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.22),
-                            blurRadius: 18,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                // 포스터 + 콘텐츠는 카드와 같은 둥근 모서리 밖으로 삐져
-                // 나오지 않도록 별도로 clip합니다.
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(
-                    children: [
-                      // 빈 곳 탭 = 닫기(투명). 요청9에 따라 반투명 포스터 배경은
-                      // 제거했습니다. 스크랩북 캔버스의 빈 자리를 (탭)누르면 이
-                      // 감지기까지 전달돼 오버레이가 닫히고, 캔버스 위 메모/
-                      // 롱프레스(편집·잠금 토글)는 위에서 먼저 처리됩니다.
-                      Positioned.fill(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: onOutsideTap,
-                          child: const SizedBox.expand(),
-                        ),
-                      ),
-                      // 요청2: 안쪽 여백을 없애 카드(페이지)의 실제 경계
-                      // 자체가 메모지를 놓을 수 있는 경계가 되도록 합니다.
-                      ConcertAfterPageContents(
-                        concertTitle: concertTitle,
-                        ticketInfo: ticketInfo,
-                        postItOpacity: postItOpacity,
-                        onTicketInfoChanged: onTicketInfoChanged,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            child: SizedBox.expand(
+              key: _pageBoundaryKey,
+              child: ConcertAfterPageContents(
+                concertTitle: widget.concertTitle,
+                ticketInfo: widget.ticketInfo,
+                postItOpacity: widget.postItOpacity,
+                onTicketInfoChanged: widget.onTicketInfoChanged,
+                pageBoundaryKey: _pageBoundaryKey,
+              ),
             ),
           ),
         ),

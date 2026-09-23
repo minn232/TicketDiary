@@ -53,35 +53,6 @@ class PosterMood {
     saturation: paperSaturation,
     value: paperValue,
   );
-  ColorFilter get imageFilter {
-    final s = (.38 + saturation * .32).clamp(.38, .70);
-    final c = .72 + contrast.clamp(0.0, .5) * .4;
-    final inv = 1 - s;
-    final tint = materialColor;
-    final lift = 255 * (paperValue - c * .7) * .35;
-    return ColorFilter.matrix([
-      c * (.213 * inv + s),
-      c * .715 * inv,
-      c * .072 * inv,
-      0,
-      lift + tint.r * 8,
-      c * .213 * inv,
-      c * (.715 * inv + s),
-      c * .072 * inv,
-      0,
-      lift + tint.g * 8,
-      c * .213 * inv,
-      c * .715 * inv,
-      c * (.072 * inv + s),
-      0,
-      lift + tint.b * 8,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ]);
-  }
 }
 
 class PosterMoodScope extends InheritedWidget {
