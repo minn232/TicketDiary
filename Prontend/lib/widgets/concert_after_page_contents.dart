@@ -1176,11 +1176,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
           (_swipeDistance.abs() >= 48 ? _swipeDistance : velocity) < 0 ? 1 : -1;
       _showBack = !_showBack;
     });
-    _removeAddPhotoOverlay();
     _flip.forward(from: 0).whenComplete(() {
       if (!mounted) return;
       setState(() {});
-      _syncAddPhotoOverlay();
     });
   }
 
@@ -1291,6 +1289,60 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     ),
   );
 
+  static const double _toolButtonHeight = 34;
+
+  /// 자동 배치가 비워두는 아래쪽 띠 높이 (편집 도구 줄 + 여유).
+  double get _bottomToolReserve =>
+      context.rs(8) + context.rs(_toolButtonHeight) + context.rs(6);
+
+  /// 앞면 아래쪽 줄: 편집 모드면 모드 표시 양옆에 "사진 추가"/"자동 배치".
+  /// 페이지 안쪽이라 태블릿처럼 페이지가 화면 맨 위부터 시작해도 잘리지 않음.
+  /// 메모를 잡고 있는 동안엔 화면 아래 삭제 영역과 겹치지 않게 모드 표시만.
+  Widget _frontEditBar() {
+    if (!_edit || widget.onPickPhotos == null || _activeMemoKey != null) {
+      return _modeBadge();
+    }
+    Widget tool(Widget button, Alignment alignment) => Expanded(
+      child: Align(
+        alignment: alignment,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: context.rs(140)),
+          child: button,
+        ),
+      ),
+    );
+    return Positioned(
+      bottom: context.rs(8),
+      left: context.rs(10),
+      right: context.rs(10),
+      child: Row(
+        children: [
+          tool(
+            _AddPhotoButton(
+              height: _toolButtonHeight,
+              busy: widget.uploadingPhotos || _autoLayoutRunning,
+              onTap: _addPhotos,
+            ),
+            Alignment.centerRight,
+          ),
+          SizedBox(width: context.rs(8)),
+          IgnorePointer(child: _ModeBadge(edit: _edit)),
+          SizedBox(width: context.rs(8)),
+          tool(
+            _AddPhotoButton(
+              height: _toolButtonHeight,
+              busy: _autoLayoutRunning,
+              onTap: _relayout,
+              icon: Icons.auto_awesome_mosaic_outlined,
+              label: '자동 배치',
+            ),
+            Alignment.centerLeft,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _backPage() {
     final sections = _backContents();
     return Padding(
@@ -1351,7 +1403,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   void initState() {
     super.initState();
     _loadEnvelopeAccent();
-    _concertAfterFloatingControlClosers.add(_floatingControlCloser);
     unawaited(_initLayout());
   }
 
@@ -1445,9 +1496,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   final ValueNotifier<int> _memoFrame = ValueNotifier<int>(0);
   bool _activeMemoOverDeleteZone = false;
   OverlayEntry? _deleteOverlayEntry;
-  OverlayEntry? _addPhotoOverlayEntry;
   Future<void> Function(BuildContext context)? _setlistEditorLauncher;
-  late final VoidCallback _floatingControlCloser = _removeAddPhotoOverlay;
 
   /// 서버 배치 → 없으면 기기 캐시 → 둘 다 없으면 기존 concert_photo_urls
   /// 사진을 자동 배치로 한 번 옮김.
@@ -1673,16 +1722,17 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
           pin: pinOf(_photoMemoKey(p.id)),
         ),
     ];
+    // context가 필요한 값은 기다리기(await) 전에 계산 - 도중에 페이지가 닫힐 수 있음.
+    final reserved = [
+      LayoutRect(0, 0, 1, _titleTop / w),
+      LayoutRect(0, (h - _bottomToolReserve) / w, 1, h / w),
+    ];
     setState(() => _autoLayoutRunning = true);
-    _addPhotoOverlayEntry?.markNeedsBuild();
     try {
       final weights = await LayoutConfigService.weights();
       final result = await compute(_autoLayoutTask, (
         items: items,
-        canvas: LayoutCanvas(
-          aspect: h / w,
-          reserved: [LayoutRect(0, 0, 1, _titleTop / w)],
-        ),
+        canvas: LayoutCanvas(aspect: h / w, reserved: reserved),
         seed: DateTime.now().millisecondsSinceEpoch % 100000,
         weights: weights,
       ));
@@ -1709,7 +1759,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       _persistLayout();
     } finally {
       if (mounted) setState(() => _autoLayoutRunning = false);
-      _addPhotoOverlayEntry?.markNeedsBuild();
     }
   }
 
@@ -1768,8 +1817,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     _memoFrame.dispose();
     _idleMemoFrame.dispose();
     _removeDeleteOverlay();
-    _removeAddPhotoOverlay();
-    _concertAfterFloatingControlClosers.remove(_floatingControlCloser);
     _cancelPageLongPress();
     _setlistServiceSelection.dispose();
     super.dispose();
@@ -1820,7 +1867,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       FocusManager.instance.primaryFocus?.unfocus();
     });
     _syncDeleteOverlay();
-    _syncAddPhotoOverlay();
   }
 
   void _lockModeFromBlankSpace() {
@@ -1831,7 +1877,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       FocusManager.instance.primaryFocus?.unfocus();
     });
     _syncDeleteOverlay();
-    _syncAddPhotoOverlay();
   }
 
   void _toggleMemoEditing(String key) {
@@ -1940,77 +1985,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   void _removeDeleteOverlay() {
     _deleteOverlayEntry?.remove();
     _deleteOverlayEntry = null;
-  }
-
-  void _syncAddPhotoOverlay() {
-    if (!_edit ||
-        _showBack ||
-        _flip.isAnimating ||
-        widget.onPickPhotos == null) {
-      _removeAddPhotoOverlay();
-      return;
-    }
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    if (overlay == null) return;
-    if (_addPhotoOverlayEntry == null) {
-      _addPhotoOverlayEntry = OverlayEntry(
-        builder: (context) {
-          const buttonHeight = 38.0;
-          final resolvedButtonHeight = context.rs(buttonHeight);
-          final boundaryBox =
-              widget.pageBoundaryKey?.currentContext?.findRenderObject()
-                  as RenderBox?;
-          final ownBox = this.context.findRenderObject() as RenderBox?;
-          final pageBox = boundaryBox?.hasSize == true ? boundaryBox : ownBox;
-          final pageSize = pageBox?.hasSize == true
-              ? pageBox!.size
-              : MediaQuery.of(context).size;
-          final pageTop = pageBox?.hasSize == true
-              ? pageBox!.localToGlobal(Offset.zero).dy
-              : resolvedButtonHeight * 1.5;
-          final top = pageTop - resolvedButtonHeight * 1.5;
-          return Positioned(
-            top: top,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: SizedBox(
-                width: pageSize.width * .86,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _AddPhotoButton(
-                        height: buttonHeight,
-                        busy: widget.uploadingPhotos || _autoLayoutRunning,
-                        onTap: _addPhotos,
-                      ),
-                    ),
-                    SizedBox(width: context.rs(8)),
-                    Expanded(
-                      child: _AddPhotoButton(
-                        height: buttonHeight,
-                        busy: _autoLayoutRunning,
-                        onTap: _relayout,
-                        icon: Icons.auto_awesome_mosaic_outlined,
-                        label: '자동 배치',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      );
-      overlay.insert(_addPhotoOverlayEntry!);
-    } else {
-      _addPhotoOverlayEntry!.markNeedsBuild();
-    }
-  }
-
-  void _removeAddPhotoOverlay() {
-    _addPhotoOverlayEntry?.remove();
-    _addPhotoOverlayEntry = null;
   }
 
   double _titleSafeBottom(double width) {
@@ -2248,9 +2222,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _syncAddPhotoOverlay();
-        });
         final w = c.maxWidth;
         final h = c.maxHeight;
         final titleSafeBottom = _titleSafeBottom(w);
@@ -2376,7 +2347,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                     valueListenable: _memoFrame,
                     builder: (context, value, child) => _activeMemoDimOverlay(),
                   ),
-                  _modeBadge(),
+                  _frontEditBar(),
                 ],
               ),
             ),
@@ -3282,17 +3253,17 @@ class _AddPhotoButton extends StatelessWidget {
                     height: context.rs(16),
                     child: const CircularProgressIndicator(strokeWidth: 2),
                   )
-                : Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(icon, size: context.rs(18), color: _kraftInk),
-                      SizedBox(width: context.rs(6)),
-                      // 버튼 두 개가 나란히 있어 좁은 화면에선 글자가 넘칠 수 있음.
-                      Flexible(
-                        child: Text(
+                // 모드 표시 양옆에 버튼 두 개가 있어 좁은 화면에선 폭이 모자람 → 통째로 축소.
+                : FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, size: context.rs(18), color: _kraftInk),
+                        SizedBox(width: context.rs(6)),
+                        Text(
                           label,
                           maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: _kraftInk,
                             fontSize: context.sp(12),
@@ -3300,8 +3271,8 @@ class _AddPhotoButton extends StatelessWidget {
                             decoration: TextDecoration.none,
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
           ),
         ),

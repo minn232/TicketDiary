@@ -305,4 +305,51 @@ void main() {
     );
     expect(saved.items.any((i) => i.type == PageLayoutItemType.poster), isTrue);
   });
+
+  for (final (name, size) in [
+    ('태블릿', const Size(800, 1280)),
+    ('폰', const Size(360, 640)),
+  ]) {
+    testWidgets('$name: 페이지가 화면 맨 위부터 시작해도 편집 도구가 페이지 안에 보이고 눌린다', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size * 2;
+      tester.view.devicePixelRatio = 2;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ConcertAfterPageContents(
+              concertTitle: '테스트 공연',
+              ticketInfo: TicketInfo(concertName: '테스트 공연', ticketId: 't1'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // 포스터가 없는 오른쪽 가운데 빈 곳을 꾹 눌러 편집 모드로.
+      await tester.longPressAt(Offset(size.width * .85, size.height * .6));
+      await tester.pumpAndSettle();
+
+      final screen = Offset.zero & size;
+      for (final label in ['사진 추가', '자동 배치', '편집 모드']) {
+        final rect = tester.getRect(find.text(label));
+        expect(
+          screen.contains(rect.topLeft) && screen.contains(rect.bottomRight),
+          isTrue,
+          reason: '$label $rect',
+        );
+        expect(rect.bottom, greaterThan(size.height * .8), reason: '아래쪽 줄');
+      }
+      // 실제로 눌리는지: 자동 배치 → (메모가 없으니 확인창 없이) 로딩 표시.
+      await tester.tap(find.text('자동 배치'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 300)),
+      );
+      await tester.pump(const Duration(seconds: 1));
+    });
+  }
 }

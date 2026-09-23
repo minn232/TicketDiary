@@ -246,4 +246,24 @@ void main() {
       expect(m.outOfCanvas, lessThan(1e-9));
     }
   });
+
+  test('아래쪽 편집 도구 줄 영역(폭 전체 예약)은 절대 침범하지 않음', () {
+    final r = math.Random(21);
+    for (var k = 0; k < 20; k++) {
+      final canvas = LayoutCanvas(
+        aspect: 1.55,
+        reserved: const [
+          LayoutRect(0, 0, 1, 0.12),
+          LayoutRect(0, 1.45, 1, 1.55),
+        ],
+      );
+      final m = autoLayout(
+        _randomItems(r, 1 + r.nextInt(14)),
+        canvas,
+        seed: k,
+      ).metrics;
+      expect(m.reservedIntrusion, lessThan(1e-9), reason: 'case $k $m');
+      expect(m.outOfCanvas, lessThan(1e-9), reason: 'case $k $m');
+    }
+  });
 }

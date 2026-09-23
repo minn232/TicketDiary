@@ -681,7 +681,13 @@ class _Engine {
       // 폭 전체를 가로지르는 예약 영역(제목 띠)은 감점이 아니라 위치 보정으로 막음.
       topBand = canvas.reserved
           .where((r) => r.left <= 0 && r.right >= 1 && r.top <= 0)
-          .fold(0.0, (v, r) => math.max(v, r.bottom));
+          .fold(0.0, (v, r) => math.max(v, r.bottom)),
+      // 아래쪽 편집 도구 줄처럼 폭 전체 + 바닥까지 닿는 예약 영역도 같은 방식.
+      bottomBand = canvas.reserved
+          .where(
+            (r) => r.left <= 0 && r.right >= 1 && r.bottom >= canvas.aspect,
+          )
+          .fold(canvas.aspect, (v, r) => math.min(v, r.top));
 
   final List<LayoutItem> items;
   final LayoutCanvas canvas;
@@ -689,6 +695,7 @@ class _Engine {
   final math.Random rng;
   final _Grid grid;
   final double topBand;
+  final double bottomBand;
 
   /// 크기 상한 때문에 도달 못 하는 목표는 [_sizeItems]에서 낮춤.
   double target;
@@ -924,10 +931,8 @@ class _Engine {
     final m = weights.edgeMargin;
     final hw = s.halfAabbW + m, hh = s.halfAabbH + m;
     s.cx = hw * 2 >= 1 ? 0.5 : s.cx.clamp(hw, 1 - hw);
-    final top = topBand + hh;
-    s.cy = topBand + hh * 2 >= canvas.aspect
-        ? (topBand + canvas.aspect) / 2
-        : s.cy.clamp(top, canvas.aspect - hh);
+    final top = topBand + hh, bottom = bottomBand - hh;
+    s.cy = top >= bottom ? (topBand + bottomBand) / 2 : s.cy.clamp(top, bottom);
   }
 
   // ② 초기 배치: 큰 것부터, 빈 곳 주변 후보 위치 중 점수 좋은 곳.
