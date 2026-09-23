@@ -87,6 +87,10 @@ class ConcertAfterTextCanvas extends StatefulWidget {
   State<ConcertAfterTextCanvas> createState() => ConcertAfterTextCanvasState();
 }
 
+/// 빈 메모에 보이는 안내 문구. 상자 폭도 이 문구로 재야 좁은 상자에서
+/// "더블탭하 / 여 입력"처럼 끊기지 않음.
+const String _kEmptyHint = '더블탭하여 입력';
+
 class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   static const double _boxPadding = 4;
   static const double _textLayoutSlack = 8;
@@ -433,7 +437,9 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
     const margin = 4.0;
     final maxWidth = math.max(_minBoxWidth, pageWidth - margin * 2);
     final maxHeight = math.max(_minBoxHeight, pageHeight - margin * 2);
-    final text = box.controller.text.isEmpty ? '내용 입력' : box.controller.text;
+    final text = box.controller.text.isEmpty
+        ? _kEmptyHint
+        : box.controller.text;
     final textScaler = MediaQuery.textScalerOf(context);
     final naturalWidth = _longestLineWidth(text, style, textScaler);
     final desiredWidth = (naturalWidth + _boxPadding * 2 + _textLayoutSlack)
@@ -715,7 +721,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
                                         text: box.controller.text.isEmpty
                                             ? ''
                                             : box.controller.text,
-                                        hint: '더블탭하여 입력',
+                                        hint: _kEmptyHint,
                                         style: style,
                                       ),
                               ),

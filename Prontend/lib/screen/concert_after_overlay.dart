@@ -202,7 +202,8 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final screenSize = media.size;
-    final end = _endRect(screenSize, media.padding);
+    // padding은 키보드가 뜨면 하단이 0이 돼 펼친 영역이 커짐 → 키보드와 무관한 viewPadding.
+    final end = _endRect(screenSize, media.viewPadding);
 
     // [백엔드 수정]
     // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김.
@@ -337,7 +338,11 @@ class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
 
   @override
   Widget build(BuildContext context) {
+    // maintainBottomViewPadding: 안 켜면 키보드가 뜰 때 SafeArea가 하단 여백을
+    // 키보드에 "먹힌" 걸로 치고 0으로 만들어 페이지가 커졌다 작아졌다 함
+    // (diary_page_frame.dart와 같은 원인).
     return SafeArea(
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
         child: Center(

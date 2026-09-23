@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/page_layout.dart';
+import '../main/orientation_policy.dart';
 import '../models/setlist.dart';
 import '../models/ticket_info.dart';
 import '../models/timetable.dart' as timetable_model;
@@ -870,12 +871,57 @@ TextStyle _articleText(
 const Color _kraftInk = Color(0xFF463C2E);
 
 /// 공연 제목 글꼴(기본 글꼴).
+/// 태블릿(짧은 변 600dp 이상). 글자 배율이 최대 1.8배까지 커져 제목/하단 표시가
+/// 폰보다 어색해서 태블릿에서만 따로 조정.
+bool _isTablet(BuildContext context) =>
+    MediaQuery.sizeOf(context).shortestSide >=
+    OrientationPolicy.tabletShortestSideThreshold;
+
+/// 공연 제목 글꼴(기본 글꼴). 태블릿은 페이지 대비 제목이 커 보여 0.85배.
 TextStyle _handTitle(BuildContext context) => TextStyle(
-  fontSize: context.sp(24),
+  fontSize: context.sp(_isTablet(context) ? 24 * .85 : 24),
   fontWeight: FontWeight.w800,
   color: _kraftInk,
   height: 1.15,
 );
+
+/// 두 줄로 넘어가는 제목은 띄어쓰기 중 두 줄 길이가 가장 비슷해지는 곳에서 줄바꿈
+/// ("오피셜히게단디즘 아시아 투어 in / SEOUL" → "오피셜히게단디즘 / 아시아 투어 in SEOUL").
+/// 한 줄에 들어가거나 알맞은 자리가 없으면 그대로.
+String _balancedTitle(
+  String title,
+  TextStyle style,
+  double maxWidth,
+  TextScaler textScaler,
+) {
+  if (maxWidth <= 0 || title.contains('\n')) return title;
+  double widthOf(String text) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: textScaler,
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  if (widthOf(title) <= maxWidth) return title;
+  final words = title.split(' ');
+  String? best;
+  var bestWidth = double.infinity;
+  for (var i = 1; i < words.length; i++) {
+    final first = words.sublist(0, i).join(' ');
+    final second = words.sublist(i).join(' ');
+    final wider = math.max(widthOf(first), widthOf(second));
+    if (wider <= maxWidth && wider < bestWidth) {
+      bestWidth = wider;
+      best = '$first\n$second';
+    }
+  }
+  return best ?? title;
+}
 
 /// 메모지 한 장의 세션 배치 상태. offset은 캔버스 내 절대 위치(좌상단,
 /// 회전/확대 적용 전 기준).
@@ -1175,7 +1221,14 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       _flipDirection =
           (_swipeDistance.abs() >= 48 ? _swipeDistance : velocity) < 0 ? 1 : -1;
       _showBack = !_showBack;
+      // 뒷면엔 편집 모드가 없음 - 셋리스트는 제목 옆 "편집" 버튼으로 바로 편집.
+      if (_showBack) {
+        _edit = false;
+        _activeMemoKey = null;
+        _activeMemoOverDeleteZone = false;
+      }
     });
+    _syncDeleteOverlay();
     _flip.forward(from: 0).whenComplete(() {
       if (!mounted) return;
       setState(() {});
@@ -1199,11 +1252,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
               }
             : null,
         onHorizontalDragEnd: flipGestureEnabled ? _finishSwipe : null,
-        onLongPress: _showBack
-            ? () {
-                if (!_flip.isAnimating) _toggleMode();
-              }
-            : null,
         child: AnimatedBuilder(
           animation: _flip,
           builder: (context, _) {
@@ -1264,7 +1312,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                               const ScrapbookPageBackground(),
                               _backPage(),
                               const ScrapbookPaperTextureOverlay(),
-                              _modeBadge(),
                             ],
                           ),
                         ),
@@ -1280,8 +1327,19 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     );
   }
 
+  /// 제목 영역 폭([maxWidth]) 기준으로 줄바꿈을 맞춘 표시용 제목.
+  String _titleFor(double maxWidth) => _balancedTitle(
+    widget.concertTitle,
+    _handTitle(context),
+    maxWidth,
+    MediaQuery.textScalerOf(context),
+  );
+
+  /// 하단 모드 표시 / 편집 도구 줄 높이. 태블릿은 화면 아래 제스처 바에 붙어 보여서 조금 올림.
+  double get _bottomBarInset => context.rs(_isTablet(context) ? 20 : 8);
+
   Widget _modeBadge() => Positioned(
-    bottom: context.rs(8),
+    bottom: _bottomBarInset,
     left: 0,
     right: 0,
     child: IgnorePointer(
@@ -1293,7 +1351,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
 
   /// 자동 배치가 비워두는 아래쪽 띠 높이 (편집 도구 줄 + 여유).
   double get _bottomToolReserve =>
-      context.rs(8) + context.rs(_toolButtonHeight) + context.rs(6);
+      _bottomBarInset + context.rs(_toolButtonHeight) + context.rs(6);
 
   /// 앞면 아래쪽 줄: 편집 모드면 모드 표시 양옆에 "사진 추가"/"자동 배치".
   /// 페이지 안쪽이라 태블릿처럼 페이지가 화면 맨 위부터 시작해도 잘리지 않음.
@@ -1312,7 +1370,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       ),
     );
     return Positioned(
-      bottom: context.rs(8),
+      bottom: _bottomBarInset,
       left: context.rs(10),
       right: context.rs(10),
       child: Row(
@@ -1349,12 +1407,14 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       padding: EdgeInsets.fromLTRB(8, 16, 8, context.rs(48)),
       child: Column(
         children: [
-          Text(
-            widget.concertTitle,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: _handTitle(context),
+          LayoutBuilder(
+            builder: (context, c) => Text(
+              _titleFor(c.maxWidth),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: _handTitle(context),
+            ),
           ),
           const SizedBox(height: 16),
           Expanded(
@@ -1502,6 +1562,24 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   bool _activeMemoOverDeleteZone = false;
   OverlayEntry? _deleteOverlayEntry;
   Future<void> Function(BuildContext context)? _setlistEditorLauncher;
+  bool _openingSetlistEditor = false;
+
+  Future<void> _openSetlistEditor() async {
+    final launcher = _setlistEditorLauncher;
+    if (launcher == null || _openingSetlistEditor) return;
+    setState(() => _openingSetlistEditor = true);
+    try {
+      await launcher(context);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('편집 화면을 열지 못했어요. 다시 시도해 주세요.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _openingSetlistEditor = false);
+    }
+  }
 
   /// 서버 배치 → 없으면 기기 캐시 → 둘 다 없으면 기존 concert_photo_urls
   /// 사진을 자동 배치로 한 번 옮김.
@@ -2036,13 +2114,15 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   double _titleSafeBottom(double width) {
+    final maxWidth = math.max(0.0, width - 40);
     final painter = TextPainter(
-      text: TextSpan(text: widget.concertTitle, style: _handTitle(context)),
+      text: TextSpan(text: _titleFor(maxWidth), style: _handTitle(context)),
       textAlign: TextAlign.center,
       textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
       maxLines: 2,
       ellipsis: '…',
-    )..layout(maxWidth: math.max(0, width - 40));
+    )..layout(maxWidth: maxWidth);
     final bottom = 16 + painter.height + 10;
     painter.dispose();
     return bottom;
@@ -2080,7 +2160,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     return ConcertAfterEditableSection(
       key: ValueKey(key),
       storageKey: key,
-      editMode: _edit,
+      // 뒷면은 편집 모드가 없음 (셋리스트는 제목 옆 "편집" 버튼).
+      editMode: false,
       editable: editable,
       title: title,
       loadOriginal: () => _originalBackText(index),
@@ -2198,7 +2279,22 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       ),
       _LetterColumn(
         title: '실제 셋 리스트',
-        trailing: SetlistServiceIcon(selection: _setlistServiceSelection),
+        // 칸보다 넓으면(아주 좁은 폰) 편집 버튼 + 아이콘 묶음만 살짝 축소.
+        trailing: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.setlistTicketId != null)
+                _BackEditChip(
+                  busy: _openingSetlistEditor,
+                  onTap: _openSetlistEditor,
+                ),
+              SetlistServiceIcon(selection: _setlistServiceSelection),
+            ],
+          ),
+        ),
         child: _editableBackSection(
           2,
           '실제 셋 리스트',
@@ -2211,10 +2307,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
               _setlistEditorLauncher = launcher;
             },
           ),
-          editOverride: (context) async {
-            final launcher = _setlistEditorLauncher;
-            if (launcher != null) await launcher(context);
-          },
         ),
       ),
     ];
@@ -2352,7 +2444,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             right: 20,
             child: IgnorePointer(
               child: Text(
-                widget.concertTitle,
+                _titleFor(math.max(0.0, w - 40)),
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -3670,6 +3762,36 @@ class _PolaroidMemo extends StatelessWidget {
 }
 
 /// 하나의 편지 안에서 세로로 읽는 문단.
+/// 뒷면 칸 제목 옆 편집(연필) 아이콘. 편집 모드 없이 바로 편집 화면을 엶.
+/// 옆 음악앱 아이콘([SetlistServiceIcon])과 같은 크기(16 + 여백 4)라 한 줄에서 높이가 맞음.
+class _BackEditChip extends StatelessWidget {
+  final bool busy;
+  final VoidCallback onTap;
+
+  const _BackEditChip({required this.busy, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: '셋리스트 편집',
+    child: Material(
+      color: Colors.transparent,
+      child: InkResponse(
+        onTap: busy ? null : onTap,
+        radius: 16,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          // 편집 화면이 열려 있는 동안(busy)은 흐리게.
+          child: Icon(
+            Icons.edit_outlined,
+            size: 16,
+            color: _kraftInk.withValues(alpha: busy ? .35 : .85),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class _LetterColumn extends StatelessWidget {
   final String title;
   final Widget child;
@@ -3687,15 +3809,24 @@ class _LetterColumn extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w800,
-            color: _kraftInk,
-          ),
+        // 편집 버튼 / 서비스 아이콘은 제목 바로 옆. 뒷면은 세 칸이라 폰처럼 칸이
+        // 좁으면(약 90px) 한 줄에 안 들어가서 그때만 제목 아래 줄로 같이 내려감.
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: _kraftInk,
+              ),
+            ),
+            ?trailing,
+          ],
         ),
-        if (trailing != null) ...[const SizedBox(height: 6), trailing!],
         const SizedBox(height: 10),
         child,
       ],
