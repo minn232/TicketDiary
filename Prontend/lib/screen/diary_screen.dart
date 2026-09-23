@@ -128,6 +128,7 @@ class TicketData {
         review: ticket.review,
         concertPhotoUrls: ticket.concertPhotoUrls,
         ticketingLinks: concert?.ticketingLinks,
+        pageLayout: ticket.pageLayout,
       ),
       id: ticket.id,
       // 서버(또는 게스트는 LocalTicketStore)에 저장된 torn_at이 있으면

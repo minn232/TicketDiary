@@ -118,6 +118,8 @@ class ApiClient {
     required List<int> fileBytes,
     required String filename,
     Map<String, dynamic>? fields,
+    // 같이 보낼 추가 파일 (필드명 -> (바이트, 파일명))
+    Map<String, (List<int>, String)>? extraFiles,
     bool allowAuthRetry = true,
   }) async {
     // FormData는 한 번 전송하면 재사용할 수 없으므로(401 재시도 시 재전송 필요),
@@ -125,6 +127,8 @@ class ApiClient {
     FormData buildFormData() => FormData.fromMap({
       ...?fields,
       fileField: MultipartFile.fromBytes(fileBytes, filename: filename),
+      for (final e in (extraFiles ?? const {}).entries)
+        e.key: MultipartFile.fromBytes(e.value.$1, filename: e.value.$2),
     });
 
     final options = _authOptions.copyWith(
