@@ -985,21 +985,26 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   Widget _flippablePage(Widget front) {
+    final flipGestureEnabled = _canFlip;
     return Listener(
       onPointerDown: (_) {
-        if (_showBack) _swipeAllowed = _canFlip;
+        if (_showBack) _swipeAllowed = flipGestureEnabled;
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onHorizontalDragStart: (_) {
-          _swipeAllowed = _swipeAllowed && _canFlip;
-          _swipeDistance = 0;
-        },
-        onHorizontalDragUpdate: (details) {
-          _swipeDistance += details.delta.dx;
-          _cancelPageLongPress();
-        },
-        onHorizontalDragEnd: _finishSwipe,
+        onHorizontalDragStart: flipGestureEnabled
+            ? (_) {
+                _swipeAllowed = _swipeAllowed && _canFlip;
+                _swipeDistance = 0;
+              }
+            : null,
+        onHorizontalDragUpdate: flipGestureEnabled
+            ? (details) {
+                _swipeDistance += details.delta.dx;
+                _cancelPageLongPress();
+              }
+            : null,
+        onHorizontalDragEnd: flipGestureEnabled ? _finishSwipe : null,
         onLongPress: _showBack
             ? () {
                 if (!_flip.isAnimating) _toggleMode();
@@ -1354,7 +1359,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     _swipeAllowed = _canFlip;
     if (_activeMemoKey != null) {
       final activeBounds = _activeMemoBounds();
-      if (activeBounds == null || !activeBounds.contains(event.localPosition)) {
+      if (activeBounds != null && !activeBounds.contains(event.localPosition)) {
         _deselectActiveMemo();
         return;
       }
@@ -1394,6 +1399,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
 
   void _toggleMemoEditing(String key) {
     if (!_edit) return;
+    if (_activeMemoKey != key) {
+      _measureMemoForGesture(key, _tf(key));
+    }
     setState(() {
       _activeMemoKey = _activeMemoKey == key ? null : key;
       _activeMemoOverDeleteZone = false;
@@ -1885,6 +1893,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     if (key == null) return null;
     final t = _t[key];
     if (t == null) return null;
+    if (t.measuredSize == Size.zero) _measureMemoForGesture(key, t);
     final size = t.measuredSize == Size.zero ? null : t.measuredSize;
     if (size == null) return null;
     return MatrixUtils.transformRect(

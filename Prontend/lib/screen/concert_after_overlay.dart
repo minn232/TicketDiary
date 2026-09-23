@@ -313,7 +313,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   }
 }
 
-class _ExpandedConcertAfter extends StatelessWidget {
+class _ExpandedConcertAfter extends StatefulWidget {
   final Animation<double> postItOpacity;
   final String concertTitle;
   final TicketInfo? ticketInfo;
@@ -329,8 +329,14 @@ class _ExpandedConcertAfter extends StatelessWidget {
   });
 
   @override
+  State<_ExpandedConcertAfter> createState() => _ExpandedConcertAfterState();
+}
+
+class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
+  final GlobalKey _pageBoundaryKey = GlobalKey();
+
+  @override
   Widget build(BuildContext context) {
-    final pageBoundaryKey = GlobalKey();
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
@@ -338,13 +344,13 @@ class _ExpandedConcertAfter extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 562),
             child: SizedBox.expand(
-              key: pageBoundaryKey,
+              key: _pageBoundaryKey,
               child: ConcertAfterPageContents(
-                concertTitle: concertTitle,
-                ticketInfo: ticketInfo,
-                postItOpacity: postItOpacity,
-                onTicketInfoChanged: onTicketInfoChanged,
-                pageBoundaryKey: pageBoundaryKey,
+                concertTitle: widget.concertTitle,
+                ticketInfo: widget.ticketInfo,
+                postItOpacity: widget.postItOpacity,
+                onTicketInfoChanged: widget.onTicketInfoChanged,
+                pageBoundaryKey: _pageBoundaryKey,
               ),
             ),
           ),
