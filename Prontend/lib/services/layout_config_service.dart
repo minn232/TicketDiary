@@ -6,8 +6,8 @@ import 'scrapbook_auto_layout.dart';
 // [백엔드 수정]
 // GET /app-config/layout-weights - 자동 배치 가중치를 앱 배포 없이 서버에서 조정.
 
-/// 자동 배치 가중치. 앱 실행 중 한 번만 받아오고, 실패하면 앱 기본값을 쓰되
-/// 다음 호출 때 다시 시도합니다.
+/// 자동 배치 가중치. 앱 실행 중 한 번만 받아오고, 실패하면 기본값을 쓰고
+/// 다음 호출 때 다시 시도함.
 class LayoutConfigService {
   LayoutConfigService._();
 

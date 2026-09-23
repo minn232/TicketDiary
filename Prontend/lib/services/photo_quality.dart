@@ -2,9 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 /// 사진 화질 통계 (자동 배치 크기 티어 결정용, 순수 계산).
-///
-/// 입력은 긴 변 ~128px로 줄인 RGBA 픽셀. 축소본에서 계산해야 어두운 사진의
-/// 노이즈가 선명도로 과대평가되지 않음 (설계 문서 5-2).
+/// 입력은 긴 변 ~128px로 줄인 RGBA 픽셀.
 class PhotoStats {
   const PhotoStats({
     required this.sharpness,
@@ -33,7 +31,7 @@ class PhotoStats {
   /// 4×4 격자 칸별 평균 RGB(0~1, 48개). 유사샷 판별용 색 배치.
   final List<double> colorLayout;
 
-  /// 노출 적절성 (높을수록 좋음). 콘서트 사진은 전체가 어두워서 목표 밝기를 낮게 잡음.
+  /// 노출 적절성 (높을수록 좋음, 콘서트 사진에 맞춰 목표 밝기를 낮게 잡음).
   double get exposure =>
       1 -
       (brightness - 0.38).abs() * 1.2 -
@@ -147,9 +145,8 @@ class ShotInfo {
   final PhotoStats stats;
 }
 
-/// 연사 / 유사샷 묶기. 촬영 시각이 [maxGap] 이내로 이어지고 색 배치가
-/// [maxColorDistance] 이하로 비슷하면 같은 그룹. 반환값은 입력 순서대로 그룹
-/// 번호, 혼자면 null.
+/// 연사 / 유사샷 묶기. 촬영 시각이 [maxGap] 이내, 색 배치 거리가 [maxColorDistance]
+/// 이하면 같은 그룹. 반환값은 입력 순서대로 그룹 번호, 혼자면 null.
 List<int?> groupSimilarShots(
   List<ShotInfo> shots, {
   Duration maxGap = const Duration(seconds: 15),

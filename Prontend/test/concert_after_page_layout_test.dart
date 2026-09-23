@@ -577,7 +577,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 제목 - [편집] - 음악앱 아이콘이 한 줄.
+    // 제목 - 편집 아이콘 - 음악앱 아이콘이 한 줄.
     final title = tester.getRect(find.text('실제 셋 리스트').first);
     final chip = tester.getRect(find.byTooltip('셋리스트 편집'));
     final icon = tester.getRect(find.byType(SetlistServiceIcon));

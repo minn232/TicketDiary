@@ -243,8 +243,8 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     }
   }
 
-  /// 갤러리에서 여러 장을 골라 원본 비율 그대로 업로드합니다(크롭 없음).
-  /// 배치는 캔버스가 자동 배치로 정하고, 일부만 성공해도 성공한 사진은 반환합니다.
+  /// 갤러리에서 여러 장을 골라 원본 비율 그대로(크롭 없음) 업로드.
+  /// 일부만 성공해도 성공한 사진은 반환함.
   Future<List<_AfterPhoto>> _pickAndUploadPhotos() async {
     if (!_ensureEditable() || _uploadingPhotos) return const [];
     final picked = await _imagePicker.pickMultiImage(
@@ -286,8 +286,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     return added;
   }
 
-  /// 캔버스 배치가 바뀔 때마다 호출됩니다. 드래그처럼 연속으로 바뀌는 경우를
-  /// 모아서 0.6초 뒤 한 번만 서버에 저장합니다.
+  /// 캔버스 배치가 바뀔 때마다 호출. 연속 변경은 모아서 0.6초 뒤 한 번만 서버에 저장.
   void _onLayoutChanged(PageLayout layout) {
     _ticketInfo = _ticketInfo?.copyWith(pageLayout: layout);
     _pendingLayout = layout;
@@ -311,7 +310,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       await _ticketService.updateTicket(ticketId, pageLayout: layout);
       if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
     } catch (_) {
-      // 기기 캐시에는 남아 있으므로 다음 편집 때 다시 저장됩니다.
+      // 기기 캐시에는 남아 있어 다음 편집 때 다시 저장됨.
     }
   }
 
@@ -871,13 +870,12 @@ TextStyle _articleText(
 const Color _kraftInk = Color(0xFF463C2E);
 
 /// 공연 제목 글꼴(기본 글꼴).
-/// 태블릿(짧은 변 600dp 이상). 글자 배율이 최대 1.8배까지 커져 제목/하단 표시가
-/// 폰보다 어색해서 태블릿에서만 따로 조정.
+/// 태블릿(짧은 변 600dp 이상) 여부. 제목/하단 표시를 태블릿에서만 따로 조정할 때 씀.
 bool _isTablet(BuildContext context) =>
     MediaQuery.sizeOf(context).shortestSide >=
     OrientationPolicy.tabletShortestSideThreshold;
 
-/// 공연 제목 글꼴(기본 글꼴). 태블릿은 페이지 대비 제목이 커 보여 0.85배.
+/// 공연 제목 글꼴(기본 글꼴). 태블릿은 0.85배.
 TextStyle _handTitle(BuildContext context) => TextStyle(
   fontSize: context.sp(_isTablet(context) ? 24 * .85 : 24),
   fontWeight: FontWeight.w800,
@@ -885,8 +883,7 @@ TextStyle _handTitle(BuildContext context) => TextStyle(
   height: 1.15,
 );
 
-/// 두 줄로 넘어가는 제목은 띄어쓰기 중 두 줄 길이가 가장 비슷해지는 곳에서 줄바꿈
-/// ("오피셜히게단디즘 아시아 투어 in / SEOUL" → "오피셜히게단디즘 / 아시아 투어 in SEOUL").
+/// 두 줄로 넘어가는 제목은 두 줄 길이가 가장 비슷해지는 띄어쓰기에서 줄바꿈.
 /// 한 줄에 들어가거나 알맞은 자리가 없으면 그대로.
 String _balancedTitle(
   String title,
@@ -1030,8 +1027,7 @@ double _clampMemoScaleToCanvas(
 
 const List<String> _defaultScrapZOrder = ['poster'];
 
-/// 사진 추가 / 자동 배치로 다시 배치할 때 자유메모를 초기화할지.
-/// false로 바꾸면 확인창 없이 자유메모를 그대로 둠 (배치가 메모를 피하는 건 별도 작업).
+/// 사진 추가 / 자동 배치로 다시 배치할 때 자유메모를 초기화할지 (false면 확인창 없이 그대로 둠).
 const bool _resetMemosOnRelayout = true;
 
 /// 공연후 페이지 사진 하나 (page_layout의 photo 아이템과 대응).
@@ -1094,7 +1090,7 @@ String _photoMemoKey(String id) => 'photo_$id';
 bool _isPhotoMemoKey(String key) => key.startsWith('photo_');
 String _photoIdFromKey(String key) => key.substring('photo_'.length);
 
-/// 자동 배치는 사진 수에 따라 수백 ms가 걸려 UI 스레드 밖(compute)에서 실행.
+/// 자동 배치를 UI 스레드 밖(compute)에서 실행.
 LayoutResult _autoLayoutTask(
   ({
     List<LayoutItem> items,
@@ -1221,7 +1217,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       _flipDirection =
           (_swipeDistance.abs() >= 48 ? _swipeDistance : velocity) < 0 ? 1 : -1;
       _showBack = !_showBack;
-      // 뒷면엔 편집 모드가 없음 - 셋리스트는 제목 옆 "편집" 버튼으로 바로 편집.
+      // 뒷면으로 넘기면 편집 모드 해제.
       if (_showBack) {
         _edit = false;
         _activeMemoKey = null;
@@ -1335,7 +1331,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     MediaQuery.textScalerOf(context),
   );
 
-  /// 하단 모드 표시 / 편집 도구 줄 높이. 태블릿은 화면 아래 제스처 바에 붙어 보여서 조금 올림.
+  /// 하단 모드 표시 / 편집 도구 줄 높이 (태블릿은 조금 올림).
   double get _bottomBarInset => context.rs(_isTablet(context) ? 20 : 8);
 
   Widget _modeBadge() => Positioned(
@@ -1354,8 +1350,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       _bottomBarInset + context.rs(_toolButtonHeight) + context.rs(6);
 
   /// 앞면 아래쪽 줄: 편집 모드면 모드 표시 양옆에 "사진 추가"/"자동 배치".
-  /// 페이지 안쪽이라 태블릿처럼 페이지가 화면 맨 위부터 시작해도 잘리지 않음.
-  /// 메모를 잡고 있는 동안엔 화면 아래 삭제 영역과 겹치지 않게 모드 표시만.
+  /// 메모를 잡고 있는 동안엔 모드 표시만.
   Widget _frontEditBar() {
     if (!_edit || widget.onPickPhotos == null || _activeMemoKey != null) {
       return _modeBadge();
@@ -1535,18 +1530,17 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   /// 자유메모(text) 아이템. 텍스트 캔버스가 바뀔 때마다 알려줌.
   List<PageLayoutItem> _textItems = const [];
 
-  /// 캔버스 크기를 알아야 px로 바꿀 수 있어 build에서 적용.
+  /// build에서 캔버스 크기가 정해지면 적용할 배치.
   PageLayout? _pendingApply;
   PageLayout? _lastEmitted;
 
-  /// 저장된 배치를 적용했거나 새 페이지로 확정된 뒤에만 저장 (덮어쓰기 방지).
+  /// 저장된 배치를 적용했거나 새 페이지로 확정된 뒤에만 저장.
   bool _layoutReady = false;
   bool _needsLegacyMigration = false;
   bool _autoLayoutRunning = false;
   Size _canvasSize = Size.zero;
 
-  /// 기준 배치(저장된 page_layout)의 캔버스 높이/폭. 화면 비율이 달라져도 이 기준
-  /// 좌표를 보존하고, 화면에는 [_toView]로 맞춰 보여줌 (회전해도 배치가 안 깨지게).
+  /// 기준 배치(저장된 page_layout)의 캔버스 높이/폭. 화면에는 [_toView]로 맞춰 보여줌.
   double? _refAspect;
   double _titleTop = 0;
 
@@ -1732,7 +1726,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       if (t == null || t.deleted || !t.placed) continue;
       final base = _memoBaseSize(key, w);
       final center = t.offset + Offset(base.width / 2, base.height / 2);
-      // 서버 검증 범위 안으로 (범위 밖이면 저장 자체가 거절됨).
+      // 서버 검증 범위 안으로 맞춤.
       final cx = (center.dx / w).clamp(-0.5, 1.5).toDouble();
       final cy = (center.dy / w).clamp(-0.5, 5.0).toDouble();
       final width = (base.width * t.scale / w).clamp(0.01, 1.5).toDouble();
@@ -1845,7 +1839,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
           pin: pinOf(_photoMemoKey(p.id)),
         ),
     ];
-    // context가 필요한 값은 기다리기(await) 전에 계산 - 도중에 페이지가 닫힐 수 있음.
+    // context가 필요한 값은 await 전에 계산.
     final reserved = [
       LayoutRect(0, 0, 1, _titleTop / w),
       LayoutRect(0, (h - _bottomToolReserve) / w, 1, h / w),
@@ -1859,7 +1853,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         seed: DateTime.now().millisecondsSinceEpoch % 100000,
         weights: weights,
       ));
-      // 계산하는 동안 회전 등으로 캔버스가 바뀌었으면 결과를 버림 (다시 누르면 됨).
+      // 계산하는 동안 회전 등으로 캔버스가 바뀌었으면 결과를 버림.
       if (!mounted || _canvasSize != Size(w, h)) return;
       setState(() {
         // 새 기준 = 지금 화면이라 화면 좌표가 곧 기준 좌표 (자유메모 좌표도 그대로).
@@ -2160,7 +2154,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     return ConcertAfterEditableSection(
       key: ValueKey(key),
       storageKey: key,
-      // 뒷면은 편집 모드가 없음 (셋리스트는 제목 옆 "편집" 버튼).
+      // 뒷면은 편집 모드 없음 (셋리스트는 제목 옆 편집 아이콘).
       editMode: false,
       editable: editable,
       title: title,
@@ -2279,7 +2273,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       ),
       _LetterColumn(
         title: '실제 셋 리스트',
-        // 칸보다 넓으면(아주 좁은 폰) 편집 버튼 + 아이콘 묶음만 살짝 축소.
+        // 칸보다 넓으면(아주 좁은 폰) 편집 + 음악앱 아이콘 묶음만 살짝 축소.
         trailing: FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
@@ -2339,7 +2333,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     return Size(fallbackW, fallbackW / _memoAspectRatio(key));
   }
 
-  /// 여러 장을 골라 올린 뒤, 고정된 메모는 그대로 두고 자동 배치합니다.
+  /// 여러 장을 골라 올린 뒤, 고정된 메모는 그대로 두고 자동 배치.
   /// 자유메모 초기화는 사진을 고르기 전에 묻고, 실제로 추가됐을 때만 지움.
   Future<void> _addPhotos() async {
     final pick = widget.onPickPhotos;
@@ -2551,8 +2545,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       final size = t.measuredSize == Size.zero
           ? _memoFallbackSize(key, canvasW)
           : t.measuredSize;
-      // 하한(0.4)은 손으로 핀치할 때만 - 넓은 캔버스(가로 모드)에선 저장된 크기로
-      // 보이려면 배율이 0.4보다 작아야 할 수 있음.
+      // 하한(0.4)은 손으로 핀치할 때만 적용.
       t.scale = _clampMemoScaleToCanvas(
         t.scale,
         t.rotation,
@@ -3403,7 +3396,7 @@ class _AddPhotoButton extends StatelessWidget {
                     height: context.rs(16),
                     child: const CircularProgressIndicator(strokeWidth: 2),
                   )
-                // 모드 표시 양옆에 버튼 두 개가 있어 좁은 화면에선 폭이 모자람 → 통째로 축소.
+                // 좁은 화면에선 줄 전체를 축소.
                 : FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Row(
@@ -3762,8 +3755,8 @@ class _PolaroidMemo extends StatelessWidget {
 }
 
 /// 하나의 편지 안에서 세로로 읽는 문단.
-/// 뒷면 칸 제목 옆 편집(연필) 아이콘. 편집 모드 없이 바로 편집 화면을 엶.
-/// 옆 음악앱 아이콘([SetlistServiceIcon])과 같은 크기(16 + 여백 4)라 한 줄에서 높이가 맞음.
+/// 뒷면 칸 제목 옆 편집(연필) 아이콘. 누르면 바로 편집 화면을 엶.
+/// 크기는 옆 음악앱 아이콘([SetlistServiceIcon])과 같음(16 + 여백 4).
 class _BackEditChip extends StatelessWidget {
   final bool busy;
   final VoidCallback onTap;
@@ -3809,8 +3802,7 @@ class _LetterColumn extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 편집 버튼 / 서비스 아이콘은 제목 바로 옆. 뒷면은 세 칸이라 폰처럼 칸이
-        // 좁으면(약 90px) 한 줄에 안 들어가서 그때만 제목 아래 줄로 같이 내려감.
+        // 편집 / 음악앱 아이콘은 제목 바로 옆, 칸이 좁으면 제목 아래 줄로 내려감.
         Wrap(
           spacing: 6,
           runSpacing: 4,

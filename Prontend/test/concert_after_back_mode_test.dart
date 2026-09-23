@@ -8,7 +8,7 @@ import 'package:ticketdiary/screen/concert_after_overlay.dart';
 import 'package:ticketdiary/widgets/concert_after_page_contents.dart';
 import 'package:ticketdiary/widgets/setlist_editor_sheet.dart';
 
-// 뒷면엔 편집 모드가 없음 - 셋리스트는 제목 옆 "편집" 버튼으로 바로 편집.
+// 뒷면엔 편집 모드가 없음 - 셋리스트는 제목 옆 편집 아이콘으로 바로 편집.
 void main() {
   testWidgets(
     'back long press does not enter edit mode and flip exits edit mode',
@@ -97,7 +97,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('공연 정보'), findsOneWidget);
 
-      // 편집 모드 없이 제목 옆 "편집"으로 바로.
+      // 편집 모드 없이 제목 옆 편집 아이콘으로 바로.
       await tester.tap(find.byTooltip('셋리스트 편집'));
       await tester.pumpAndSettle();
       expect(find.byType(SetlistEditorSheet), findsOneWidget);

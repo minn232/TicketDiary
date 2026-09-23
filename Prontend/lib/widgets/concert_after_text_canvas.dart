@@ -63,8 +63,7 @@ class ConcertAfterTextCanvas extends StatefulWidget {
   /// null이면 예전처럼 기기에만 저장.
   final ValueChanged<List<PageLayoutItem>>? onTextsChanged;
 
-  /// 처음 불러온(예전 기기 저장분 / 서버 후기로 만든) 메모를 알림. 저장은 하지 않고
-  /// 상위가 다음 저장 때 같이 담도록만 함 (열기만 해도 서버에 쓰지 않게).
+  /// 처음 불러온(예전 기기 저장분 / 서버 후기로 만든) 메모를 알림. 저장은 하지 않음.
   final ValueChanged<List<PageLayoutItem>>? onTextsLoaded;
   const ConcertAfterTextCanvas({
     super.key,
@@ -87,8 +86,7 @@ class ConcertAfterTextCanvas extends StatefulWidget {
   State<ConcertAfterTextCanvas> createState() => ConcertAfterTextCanvasState();
 }
 
-/// 빈 메모에 보이는 안내 문구. 상자 폭도 이 문구로 재야 좁은 상자에서
-/// "더블탭하 / 여 입력"처럼 끊기지 않음.
+/// 빈 메모에 보이는 안내 문구. 상자 폭도 이 문구 기준으로 잼.
 const String _kEmptyHint = '더블탭하여 입력';
 
 class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
@@ -167,7 +165,6 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
         );
       }
       // 배치는 있는데 메모가 없으면(메모 저장 이전 배치) 서버 후기로 채움.
-      // 유저가 메모를 다 지우면 후기도 비워지므로 지운 메모가 되살아나진 않음.
       if (_boxes.isEmpty && widget.initialReview.trim().isNotEmpty) {
         _add(_reviewBox());
         _notifyLoaded();
@@ -220,7 +217,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   _TextBox _reviewBox() =>
       _TextBox('original_review', const Offset(.06, 260), widget.initialReview);
 
-  /// 첫 배치(상자 크기 측정) 뒤에 알려야 정규화 좌표가 정확함.
+  /// 첫 배치(상자 크기 측정) 뒤에 알림.
   void _notifyLoaded() {
     final onTextsLoaded = widget.onTextsLoaded;
     if (onTextsLoaded == null) return;
@@ -343,7 +340,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   /// 내용이 있는 자유메모가 하나라도 있는지 (자동 배치 전 초기화 확인용).
   bool get hasTexts => _boxes.any((b) => !_isBlank(b));
 
-  /// 자유메모를 전부 지웁니다. 합쳐서 저장하던 후기(review)도 빈 값이 됩니다.
+  /// 자유메모를 전부 지움 (합쳐 저장하던 후기도 빈 값이 됨).
   void clearAll() {
     if (_boxes.isEmpty) return;
     final removed = [..._boxes];
@@ -418,8 +415,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
 
   @override
   void dispose() {
-    // 타이핑 후 저장 대기(0.25초) 중일 때만 마지막으로 저장 - 안 바꿨는데 닫기만
-    // 해도 page_layout 저장(서버 요청)이 나가지 않게.
+    // 타이핑 후 저장 대기(0.25초) 중일 때만 마지막으로 저장.
     if (_saveTimer?.isActive ?? false) {
       _saveTimer!.cancel();
       _saveLocal();

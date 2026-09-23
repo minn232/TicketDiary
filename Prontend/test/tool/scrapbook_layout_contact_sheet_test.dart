@@ -1,4 +1,4 @@
-// 자동 배치 결과를 PNG 한 장으로 모아 눈으로 튜닝하는 개발용 도구 (설계 문서 8-3).
+// 자동 배치 결과를 PNG 한 장으로 모아 눈으로 튜닝하는 개발용 도구.
 // LAYOUT_SHEET_OUT 환경변수가 있을 때만 실행:
 //   LAYOUT_SHEET_OUT=out.png flutter test test/tool/scrapbook_layout_contact_sheet_test.dart
 // LAYOUT_PHOTOS_DIR에 jpg/png 폴더를 주면 색 블록 대신 실제 사진으로 그림
@@ -271,8 +271,7 @@ void main() {
       for (var col = 0; col < columns.length; col++) {
         final (label, set, stack) = columns[col];
         final scores = scorePhotoSet([for (final p in set) p.stats]);
-        // 유사샷 스택 비활성화 (9/23): 유저가 직접 고르므로 비슷한 사진도 전부 보이게.
-        // 다시 켤 때는 아래 주석을 풀면 됨.
+        // 유사샷 스택 비활성화 - 다시 켤 때는 아래 주석을 풀면 됨.
         // final groups = stack
         //     ? groupSimilarShots([
         //         for (final p in set)

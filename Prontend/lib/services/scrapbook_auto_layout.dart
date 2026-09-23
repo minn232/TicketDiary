@@ -1,15 +1,11 @@
 import 'dart:math' as math;
 
-/// 공연후 페이지 자동 배치 (순수 계산 - 위젯/서버 의존 없음).
-///
-/// 좌표계: 캔버스 폭 = 1, 높이 = [LayoutCanvas.aspect](h/w), y는 아래 방향.
-/// 회전은 라디안(기존 `_MemoTransform.rotation`과 동일).
-/// 흐름: 크기 티어 결정 → 점유 맵 초기 배치 → 국소 개선(담금질) 반복.
-/// 설계: docs/PostConcert_AutoPhotoLayout_Design_2026-09-21.md 7장.
+/// 공연후 페이지 자동 배치 (순수 계산). 캔버스 폭 = 1, 높이 = [LayoutCanvas.aspect], 회전은 라디안.
+/// 흐름: 크기 티어 결정 → 점유 맵 초기 배치 → 국소 개선(담금질) → 겹침 보정.
 
 enum LayoutItemKind { poster, photo }
 
-/// 축 정렬 사각형. 캔버스 좌표 또는 아이템 내부 정규화 좌표(0~1)로 씁니다.
+/// 축 정렬 사각형. 캔버스 좌표 또는 아이템 내부 정규화 좌표(0~1)로 씀.
 class LayoutRect {
   const LayoutRect(this.left, this.top, this.right, this.bottom);
 
@@ -221,17 +217,17 @@ class LayoutWeights {
   final int fewPhotoCount;
   final double fewPhotoCapBoost;
 
-  /// 사진이 이보다 적으면 유사샷이어도 스택하지 않음 (고른 사진이 몇 장 없는데 숨기면 안 됨).
+  /// 사진이 이보다 적으면 유사샷이어도 스택하지 않음.
   final int stackMinPhotos;
   final double tierRatioMedium;
   final double tierRatioSmall;
   final double coverageMax;
   final double maxOverlap;
 
-  /// 캔버스 가장자리 여백 (가장자리에 딱 붙으면 어색함).
+  /// 캔버스 가장자리 여백.
   final double edgeMargin;
 
-  /// 한 아이템이 위 아이템들에 가려진 총 비율 한도 (여러 장에 동시에 묻히는 것 방지).
+  /// 한 아이템이 위 아이템들에 가려진 총 비율 한도.
   final double maxHidden;
 
   /// 스택 뒤 사진이 리더 크기 대비 비껴 나오는 거리.
@@ -253,7 +249,7 @@ class LayoutWeights {
   final double wSameTierAdjacent;
   final double wNearAlign;
 
-  /// 가장 가까운 아이템과 이보다 멀면 감점 (양 끝에 흩어져 따로 노는 배치 방지).
+  /// 가장 가까운 아이템과 이보다 멀면 감점.
   final double isolationGap;
   final double wIsolation;
 
@@ -788,8 +784,7 @@ class _Engine {
     double capFor(int tier) =>
         (tier == 0 ? weights.largeMaxWidth : weights.normalMaxWidth) * boost;
 
-    // 상한/하한은 3:4 세로 사진 폭 기준 값을 면적(= side²)으로 환산해서 적용.
-    // 폭 기준이면 16:9처럼 가로로 긴 사진이 면적에서 손해를 봄.
+    // 상한/하한은 3:4 세로 사진 폭 기준 값을 면적(= side²)으로 환산해서 적용,
     // 아주 긴 세로 사진(9:16)은 높이 상한으로 따로 제한.
     final ref = math.sqrt(3 / 4);
     double sideCap(int tier) => capFor(tier) / ref;
@@ -830,7 +825,7 @@ class _Engine {
     }
     final side = lo;
     if (lo > 0.99) {
-      // 상한에 막혀 목표 면적에 못 미침 → 목표를 낮추고 여백 허용 (7-2 ④).
+      // 상한에 막혀 목표 면적에 못 미침 → 목표를 낮추고 여백 허용.
       double area = fixedArea;
       for (final p in photos) {
         final w = widthFor(p, tierOf[p.id]!, side);
@@ -892,7 +887,7 @@ class _Engine {
     return states;
   }
 
-  // z: 소 < 중 < 대 < 포스터(탭해서 크게 보므로 최상위). 스택 뒤 사진은 리더 바로 아래.
+  // z: 소 < 중 < 대 < 포스터. 스택 뒤 사진은 리더 바로 아래.
   void _assignZ(List<_State> states) {
     int rank(_State s) => switch (s.item.kind) {
       LayoutItemKind.poster => 90,
@@ -1087,8 +1082,7 @@ class _Engine {
     return copies;
   }
 
-  /// ④ 마무리 보정: 담금질이 겹침 한도를 못 맞춘 쌍이 남으면(고정 아이템 때문에 빈 공간이
-  /// 조각난 경우 등) 그 쌍에서 움직일 수 있는 쪽만 밀어내거나 살짝 줄임.
+  /// ④ 마무리 보정: 겹침 한도를 넘는 쌍이 남으면 움직일 수 있는 쪽만 밀어내거나 살짝 줄임.
   void _repairOverlaps(List<_State> states) {
     final limit = weights.maxOverlap + 0.005;
     double ratio(_State a, _State b) =>
@@ -1124,7 +1118,7 @@ class _Engine {
         dy /= len;
       }
       final index = states.indexOf(move);
-      // 중심을 잇는 방향이 캔버스 끝에 막힐 수 있어 8방향 모두 시도 (반대 방향 제외).
+      // 8방향 모두 시도 (반대 방향 제외).
       final dirs =
           [
             for (var k = 0; k < 8; k++)
@@ -1234,7 +1228,7 @@ class _Engine {
     return e;
   }
 
-  /// 가장자리가 몇 px 차이로 "거의" 맞는 경우 (실수처럼 보임).
+  /// 가장자리가 몇 px 차이로 "거의" 맞는 경우.
   int _nearAlignCount(_State a, _State b) {
     const exact = 0.004, near = 0.02;
     final ea = [
