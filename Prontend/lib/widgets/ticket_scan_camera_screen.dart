@@ -32,8 +32,8 @@ class TicketScanCameraScreen extends StatefulWidget {
     TicketScanService? scanService,
     TicketAlignmentDetector Function(CameraController controller)?
     detectorFactory,
-  })  : scanService = scanService ?? BackendTicketScanService(),
-        detectorFactory = detectorFactory ?? LiveTicketAlignmentDetector.new;
+  }) : scanService = scanService ?? BackendTicketScanService(),
+       detectorFactory = detectorFactory ?? LiveTicketAlignmentDetector.new;
 
   final TicketScanService scanService;
   final TicketAlignmentDetector Function(CameraController controller)
@@ -226,7 +226,10 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               child: Text(
                 _errorMessage!,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
 
@@ -309,9 +312,9 @@ class _ScanGuideOverlay extends StatelessWidget {
   }
 
   Color get _borderColor => switch (stage) {
-        _ScanStage.positioning => Colors.white70,
-        _ScanStage.aligned || _ScanStage.capturing => const Color(0xFF38BDF8),
-      };
+    _ScanStage.positioning => Colors.white70,
+    _ScanStage.aligned || _ScanStage.capturing => const Color(0xFF38BDF8),
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -377,7 +380,7 @@ class _ScanGuideOverlay extends StatelessWidget {
                       ? null
                       : [
                           BoxShadow(
-                            color: _borderColor.withValues(alpha: 0.6),
+                            color: _borderColor.withValues(alpha: 0.42),
                             blurRadius: 16,
                             spreadRadius: 1,
                           ),
@@ -487,7 +490,8 @@ class _OutsideGuideClipper extends CustomClipper<Path> {
   @override
   Path getClip(Size size) {
     final full = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    final hole = Path()..addRRect(RRect.fromRectAndRadius(guideRect, Radius.circular(radius)));
+    final hole = Path()
+      ..addRRect(RRect.fromRectAndRadius(guideRect, Radius.circular(radius)));
     return Path.combine(PathOperation.difference, full, hole);
   }
 

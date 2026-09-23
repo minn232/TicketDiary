@@ -624,7 +624,7 @@ class _MiniSlotMouth extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
+            color: Colors.black.withValues(alpha: 0.21),
             blurRadius: 3,
             offset: const Offset(0, 1),
           ),
@@ -1047,7 +1047,7 @@ class _ReportDrawerState extends State<_ReportDrawer>
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
+            color: Colors.black.withValues(alpha: 0.154),
             blurRadius: 16,
             offset: const Offset(0, -4),
           ),
@@ -1250,7 +1250,7 @@ class _SlotMouth extends StatelessWidget {
                   borderRadius: BorderRadius.circular(999),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.15),
+                      color: Colors.black.withValues(alpha: 0.105),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),

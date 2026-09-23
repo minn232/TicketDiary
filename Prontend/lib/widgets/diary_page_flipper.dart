@@ -142,8 +142,15 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
   /// [barWidthFraction]이 0.5면 막대 폭의 절반(막대 중심이 pivotX와 같은
   /// 위치라, 그 절반만큼 이동하면 막대 왼쪽 끝과 만남) — 뒤로 넘길 때
   /// 씁니다. 1.0이면 막대 폭 전체만큼 이동합니다 — 앞으로 넘길 때 씁니다.
-  double _maxLeafTranslateX(double frameWidth, double frameHeight, {required double barWidthFraction}) {
-    final metrics = DiaryPageFrame.computeRingMetrics(frameWidth: frameWidth, frameHeight: frameHeight);
+  double _maxLeafTranslateX(
+    double frameWidth,
+    double frameHeight, {
+    required double barWidthFraction,
+  }) {
+    final metrics = DiaryPageFrame.computeRingMetrics(
+      frameWidth: frameWidth,
+      frameHeight: frameHeight,
+    );
     return metrics.barWidth * barWidthFraction;
   }
 
@@ -356,7 +363,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
                   final backward = _backController.value;
 
                   if (backward > 0 && widget.prevPage != null) {
-                    return _buildBackwardScene(backward, frameWidth, frameHeight);
+                    return _buildBackwardScene(
+                      backward,
+                      frameWidth,
+                      frameHeight,
+                    );
                   }
                   if (forward > 0) {
                     return _buildForwardScene(forward, frameWidth, frameHeight);
@@ -497,7 +508,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
 
   /// 앞으로 넘김: 다음 페이지가 바닥에 깔리고, 현재 페이지 잎이 책등을
   /// 축으로 휘어지며 넘어갑니다. 90도(0.5)를 넘어가면 잎을 숨깁니다.
-  Widget _buildForwardScene(double progress, double frameWidth, double frameHeight) {
+  Widget _buildForwardScene(
+    double progress,
+    double frameWidth,
+    double frameHeight,
+  ) {
     final angle = progress * math.pi;
     // 곡률은 들리기 시작할 때 0에서 커졌다가 수직(90도)에 가까워지면
     // 다시 펴집니다(사라지기 직전 형태가 튀지 않도록).
@@ -511,7 +526,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
     // 도달합니다(진행도 끝에서 최대, 막대 폭의 절반만큼 이동). 다만 이동
     // 자체는 bendPhase가 절반(0.5)을 넘어서야(=페이지가 절반 이상
     // 넘어갔을 때) 시작합니다 — 그 전까지는 제자리에서 휘어지기만 합니다.
-    final maxTranslateX = _maxLeafTranslateX(frameWidth, frameHeight, barWidthFraction: 0.5);
+    final maxTranslateX = _maxLeafTranslateX(
+      frameWidth,
+      frameHeight,
+      barWidthFraction: 0.5,
+    );
     final translatePhase = ((bendPhase - 0.5) / 0.5).clamp(0.0, 1.0);
     final translateX = -maxTranslateX * translatePhase;
 
@@ -546,7 +565,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
 
   /// 뒤로 넘김: 현재 페이지가 바닥에 깔리고, 이전 페이지 잎이 책등에
   /// 세워진 상태(90도)에서 휘어지며 현재 페이지 위로 눕습니다(0도).
-  Widget _buildBackwardScene(double progress, double frameWidth, double frameHeight) {
+  Widget _buildBackwardScene(
+    double progress,
+    double frameWidth,
+    double frameHeight,
+  ) {
     final angle = (1.0 - progress) * math.pi / 2;
     // 시작(세워진 상태)엔 곧게, 눕는 도중 가장 휘고, 다 누우면 펴집니다.
     final bend = _maxBend * math.sin(math.pi * progress.clamp(0.0, 1.0));
@@ -562,8 +585,15 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
     // 애니메이션이 끝나는 지점이 정지 상태와 똑같이(이동 없음, 페이지
     // 왼쪽 끝 = 막대 정가운데 = pivotX) 되어야 그 다음 정지 상태(새
     // 페이지)로 이어질 때 튀지 않습니다.
-    final maxTranslateX = _maxLeafTranslateX(frameWidth, frameHeight, barWidthFraction: 0.5);
-    final translatePhase = (1.0 - 2.0 * progress.clamp(0.0, 1.0)).clamp(0.0, 1.0);
+    final maxTranslateX = _maxLeafTranslateX(
+      frameWidth,
+      frameHeight,
+      barWidthFraction: 0.5,
+    );
+    final translatePhase = (1.0 - 2.0 * progress.clamp(0.0, 1.0)).clamp(
+      0.0,
+      1.0,
+    );
     final translateX = -maxTranslateX * translatePhase;
 
     // 앞으로 넘김과 같은 이유로 ClipRect 없이, 잎이 페이지 영역 밖으로
@@ -610,7 +640,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
           decoration: BoxDecoration(
             borderRadius: DiaryPageFrame.defaultPageBorderRadius,
             boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(5, 5)),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.21),
+                blurRadius: 10,
+                offset: const Offset(5, 5),
+              ),
             ],
           ),
         ),
@@ -702,7 +736,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
               // Stack 없이 바로 Transform의 자식으로 두면 ParentDataWidget
               // 오류가 납니다. 이 안쪽 Stack도 여백 밖으로 튀어나가는 탭이
               // 잘리지 않도록 Clip.none이 필요합니다.
-              child: Stack(fit: StackFit.expand, clipBehavior: Clip.none, children: [tab]),
+              child: Stack(
+                fit: StackFit.expand,
+                clipBehavior: Clip.none,
+                children: [tab],
+              ),
             ),
           ),
         ),
@@ -855,11 +893,7 @@ class BentLeafPainter extends CustomPainter {
       indices: indices,
     );
 
-    canvas.drawVertices(
-      vertices,
-      BlendMode.modulate,
-      Paint()..shader = shader,
-    );
+    canvas.drawVertices(vertices, BlendMode.modulate, Paint()..shader = shader);
   }
 
   @override

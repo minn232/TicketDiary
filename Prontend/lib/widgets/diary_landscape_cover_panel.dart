@@ -28,13 +28,11 @@ class DiaryLandscapeCoverPanel extends StatelessWidget {
         // 실제 페이지가 오른쪽만 둥근 것과 대칭으로, 이 패널은 왼쪽만
         // 둥글게 해서 스파인(가운데)을 사이에 두고 마주보는 페이지처럼
         // 보이게 합니다.
-        borderRadius: const BorderRadius.horizontal(
-          left: Radius.circular(15),
-        ),
+        borderRadius: const BorderRadius.horizontal(left: Radius.circular(15)),
         border: Border.all(color: Colors.black.withValues(alpha: 0.15)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
+            color: Colors.black.withValues(alpha: 0.14),
             blurRadius: 8,
             offset: const Offset(-4, 4),
           ),

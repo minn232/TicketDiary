@@ -109,7 +109,7 @@ class LandscapeUpcomingTicketPanel extends StatelessWidget {
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
+              color: Colors.black.withValues(alpha: 0.21),
               blurRadius: 16,
               offset: const Offset(4, 8),
             ),
@@ -159,7 +159,7 @@ class LandscapeUpcomingTicketPanel extends StatelessWidget {
           borderRadius: BorderRadius.circular(context.rs(10)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.35),
+              color: Colors.black.withValues(alpha: 0.245),
               blurRadius: 8,
               offset: const Offset(2, 4),
             ),
@@ -215,7 +215,7 @@ class LandscapeUpcomingTicketPanel extends StatelessWidget {
       color: Colors.white,
       shape: const CircleBorder(),
       elevation: 3,
-      shadowColor: Colors.black.withValues(alpha: 0.4),
+      shadowColor: Colors.black.withValues(alpha: 0.28),
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: () => showVenueMapPicker(context, venue),
@@ -260,7 +260,7 @@ class LandscapeUpcomingTicketPanel extends StatelessWidget {
           color: _infoStickerColor,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
+              color: Colors.black.withValues(alpha: 0.21),
               blurRadius: 6,
               offset: const Offset(2, 3),
             ),

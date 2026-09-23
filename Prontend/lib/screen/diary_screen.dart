@@ -1074,9 +1074,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
             borderRadius: const BorderRadius.horizontal(
               right: Radius.circular(8),
             ),
-            boxShadow: const [
+            boxShadow: [
               BoxShadow(
-                color: Colors.black26,
+                color: Colors.black.withValues(alpha: 0.18),
                 blurRadius: 4,
                 offset: Offset(2, 2),
               ),
@@ -1847,7 +1847,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withValues(alpha: 0.035),
             blurRadius: 5,
             offset: const Offset(2, 2),
           ),

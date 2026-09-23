@@ -61,7 +61,7 @@ class _SparkleHighlightState extends State<SparkleHighlight>
                     boxShadow: [
                       BoxShadow(
                         color: _glowColor.withValues(
-                          alpha: 0.25 + glow * 0.35,
+                          alpha: 0.7 * (0.25 + glow * 0.35),
                         ),
                         blurRadius: 8 + glow * 14,
                         spreadRadius: glow * 3,

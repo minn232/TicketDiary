@@ -101,7 +101,7 @@ class _SwipeablePageStackState extends State<SwipeablePageStack>
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(
-                              alpha: 0.08 * (i - _currentPageIndex + 1),
+                              alpha: 0.7 * (0.08 * (i - _currentPageIndex + 1)),
                             ),
                             blurRadius: 8,
                             offset: Offset(0, 2 * (i - _currentPageIndex + 1)),
@@ -124,5 +124,3 @@ class _SwipeablePageStackState extends State<SwipeablePageStack>
     );
   }
 }
-
-

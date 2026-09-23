@@ -451,7 +451,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
+                        color: Colors.black.withValues(alpha: 0.126),
                         blurRadius: 18,
                         offset: const Offset(0, 10),
                       ),
@@ -1056,7 +1056,7 @@ class _InfoTile extends StatelessWidget {
           border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
+              color: Colors.black.withValues(alpha: 0.042),
               blurRadius: 6,
               offset: const Offset(0, 3),
             ),
