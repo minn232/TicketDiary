@@ -969,6 +969,7 @@ double _clampMemoScaleToCanvas(
   double canvasW,
   double canvasH, {
   double minTop = 0,
+  double minScale = 0.4,
 }) {
   if (size == Size.zero || canvasW <= 0 || canvasH <= minTop) return scale;
   final cosA = math.cos(rotation).abs();
@@ -977,9 +978,8 @@ double _clampMemoScaleToCanvas(
   final unitAabbH = size.width * sinA + size.height * cosA;
   final maxScaleW = unitAabbW <= 0 ? scale : canvasW / unitAabbW;
   final maxScaleH = unitAabbH <= 0 ? scale : (canvasH - minTop) / unitAabbH;
-  return scale
-      .clamp(0.4, math.min(3.2, math.min(maxScaleW, maxScaleH)))
-      .toDouble();
+  final maxScale = math.min(3.2, math.min(maxScaleW, maxScaleH));
+  return scale.clamp(math.min(minScale, maxScale), maxScale).toDouble();
 }
 
 const List<String> _defaultScrapZOrder = ['poster'];
@@ -1421,6 +1421,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       _photos = [];
       _textItems = const [];
       _hasAppliedLayout = false;
+      _refAspect = null;
       _textCanvasKey = GlobalKey();
       _layoutReady = false;
       _lastEmitted = null;
@@ -1483,6 +1484,10 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   bool _needsLegacyMigration = false;
   bool _autoLayoutRunning = false;
   Size _canvasSize = Size.zero;
+
+  /// 기준 배치(저장된 page_layout)의 캔버스 높이/폭. 화면 비율이 달라져도 이 기준
+  /// 좌표를 보존하고, 화면에는 [_toView]로 맞춰 보여줌 (회전해도 배치가 안 깨지게).
+  double? _refAspect;
   double _titleTop = 0;
 
   String get _cacheKey => 'concert_after_page_layout_v1_${widget.layoutKey}';
@@ -1546,6 +1551,39 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     return Size(bw, bw / _memoAspectRatio(key));
   }
 
+  /// 기준 배치 → 지금 화면 배율. 지금 캔버스가 기준보다 납작하면(태블릿 가로 모드 등)
+  /// 제목 아래 영역 기준으로 통째로 축소해 가운데 정렬, 아니면 그대로.
+  double get _viewScale {
+    final w = _canvasSize.width;
+    if (w <= 0) return 1;
+    final top = _titleTop / w;
+    final now = _canvasSize.height / w - top;
+    final ref = (_refAspect ?? _canvasSize.height / w) - top;
+    return ref <= 0 || now >= ref ? 1 : (now / ref).clamp(0.2, 1.0).toDouble();
+  }
+
+  PageLayoutItem _toView(PageLayoutItem item) {
+    final s = _viewScale;
+    if (s == 1) return item;
+    final top = _titleTop / _canvasSize.width;
+    return item.copyWith(
+      cx: 0.5 + (item.cx - 0.5) * s,
+      cy: top + (item.cy - top) * s,
+      w: item.w * s,
+    );
+  }
+
+  PageLayoutItem _toRef(PageLayoutItem item) {
+    final s = _viewScale;
+    if (s == 1) return item;
+    final top = _titleTop / _canvasSize.width;
+    return item.copyWith(
+      cx: 0.5 + (item.cx - 0.5) / s,
+      cy: top + (item.cy - top) / s,
+      w: item.w / s,
+    );
+  }
+
   /// 정규화 좌표(중심, 폭) → 메모지 변환(좌상단 px, 배율).
   void _applyNormalized(
     String key,
@@ -1565,7 +1603,11 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   void _applyLayout(PageLayout layout, double w) {
-    final items = [...layout.items]..sort((a, b) => a.z.compareTo(b.z));
+    _refAspect = layout.canvasAspect;
+    final items = [
+      for (final item in [...layout.items]..sort((a, b) => a.z.compareTo(b.z)))
+        _toView(item),
+    ];
     _photos = [
       for (final item in items)
         if (item.type == PageLayoutItemType.photo) ?_AfterPhoto.fromItem(item),
@@ -1649,9 +1691,12 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       }
     }
     items.addAll(_textItems);
+    _refAspect ??= _canvasSize.height / w;
     return PageLayout(
-      canvasAspect: _canvasSize.height / w,
-      items: [for (var i = 0; i < items.length; i++) items[i].copyWith(z: i)],
+      canvasAspect: _refAspect!,
+      items: [
+        for (var i = 0; i < items.length; i++) _toRef(items[i]).copyWith(z: i),
+      ],
     );
   }
 
@@ -1736,8 +1781,11 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         seed: DateTime.now().millisecondsSinceEpoch % 100000,
         weights: weights,
       ));
-      if (!mounted) return;
+      // 계산하는 동안 회전 등으로 캔버스가 바뀌었으면 결과를 버림 (다시 누르면 됨).
+      if (!mounted || _canvasSize != Size(w, h)) return;
       setState(() {
+        // 새 기준 = 지금 화면이라 화면 좌표가 곧 기준 좌표 (자유메모 좌표도 그대로).
+        _refAspect = h / w;
         for (final p in result.placements) {
           _applyNormalized(
             p.id,
@@ -2182,7 +2230,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     }
     return _widgetDefaultSizeBoost *
         switch (key) {
-          'poster' => width * .21,
+          'poster' => width * .25,
           _ => width * .26,
         };
   }
@@ -2225,6 +2273,13 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         final w = c.maxWidth;
         final h = c.maxHeight;
         final titleSafeBottom = _titleSafeBottom(w);
+        if (_layoutReady &&
+            _pendingApply == null &&
+            !_autoLayoutRunning &&
+            _canvasSize.width > 0 &&
+            (_canvasSize.width - w).abs() > 0.5) {
+          _pendingApply = _buildLayout();
+        }
         _canvasSize = Size(w, h);
         _titleTop = titleSafeBottom;
         final pending = _pendingApply;
@@ -2404,6 +2459,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       final size = t.measuredSize == Size.zero
           ? _memoFallbackSize(key, canvasW)
           : t.measuredSize;
+      // 하한(0.4)은 손으로 핀치할 때만 - 넓은 캔버스(가로 모드)에선 저장된 크기로
+      // 보이려면 배율이 0.4보다 작아야 할 수 있음.
       t.scale = _clampMemoScaleToCanvas(
         t.scale,
         t.rotation,
@@ -2411,6 +2468,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         canvasW,
         canvasH,
         minTop: titleSafeBottom,
+        minScale: 0,
       );
       t.offset = _clampToCanvas(
         t.offset,

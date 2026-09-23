@@ -187,7 +187,7 @@ void main() {
           ticketId: 't1',
           review: '정말 좋았다',
           pageLayout: PageLayout(
-            canvasAspect: 1.55,
+            canvasAspect: 1.25,
             items: [pinnedPhoto('a', 0.3, 0.5), photo('b', 0.7, 0.9)],
           ),
         ),
@@ -352,4 +352,107 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
     });
   }
+
+  testWidgets('세로 → 가로 → 세로로 돌려도 배치가 그대로 돌아오고 저장값도 안 바뀐다', (tester) async {
+    const portrait = Size(800, 1280), landscape = Size(1280, 800);
+    tester.view.physicalSize = portrait * 2;
+    tester.view.devicePixelRatio = 2;
+    addTearDown(tester.view.reset);
+    const layout = PageLayout(
+      canvasAspect: 1.6,
+      items: [
+        PageLayoutItem(
+          id: 'poster',
+          type: PageLayoutItemType.poster,
+          cx: 0.3,
+          cy: 0.4,
+          w: 0.35,
+          rot: 0.03,
+        ),
+        PageLayoutItem(
+          id: 'a',
+          type: PageLayoutItemType.photo,
+          ref: 'https://example.com/a.jpg',
+          cx: 0.7,
+          cy: 0.6,
+          w: 0.3,
+          rot: -0.05,
+          photo: PageLayoutPhoto(w: 1024, h: 768),
+        ),
+        PageLayoutItem(
+          id: 'b',
+          type: PageLayoutItemType.photo,
+          ref: 'https://example.com/b.jpg',
+          cx: 0.4,
+          cy: 1.2,
+          w: 0.4,
+          rot: 0.02,
+          photo: PageLayoutPhoto(w: 768, h: 1024),
+        ),
+        PageLayoutItem(
+          id: 'text_m1',
+          type: PageLayoutItemType.text,
+          ref: 'm1',
+          text: '최고',
+          cx: 0.5,
+          cy: 1.45,
+          w: 0.3,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ConcertAfterPageContents(
+            concertTitle: '테스트 공연',
+            ticketInfo: TicketInfo(concertName: '테스트 공연', pageLayout: layout),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Rect photoRect(String id) => tester.getRect(
+      find.byWidgetPredicate(
+        (w) => w is AppNetworkImage && w.url.endsWith('/$id.jpg'),
+      ),
+    );
+    final before = {
+      for (final id in ['a', 'b']) id: photoRect(id),
+    };
+
+    // 가로: 전부 화면 안에 들어오게 축소돼 보여야 함.
+    tester.view.physicalSize = landscape * 2;
+    await tester.pumpAndSettle();
+    final screen = Offset.zero & landscape;
+    for (final id in ['a', 'b']) {
+      final r = photoRect(id);
+      expect(screen.contains(r.center), isTrue, reason: '$id $r');
+    }
+    expect(find.text('최고'), findsOneWidget);
+
+    // 다시 세로: 원래 자리로.
+    tester.view.physicalSize = portrait * 2;
+    await tester.pumpAndSettle();
+    for (final id in ['a', 'b']) {
+      final r = photoRect(id);
+      expect((r.center - before[id]!.center).distance, lessThan(1), reason: id);
+      expect((r.width - before[id]!.width).abs(), lessThan(1), reason: id);
+    }
+
+    // 저장을 한 번 일으켜서 저장값(기준 좌표)이 원본과 같은지.
+    await tester.longPressAt(const Offset(760, 200));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.push_pin_outlined).first);
+    await tester.pumpAndSettle();
+    final saved = await cachedLayout('local_after_테스트 공연');
+    expect(saved!.canvasAspect, 1.6);
+    for (final orig in layout.items) {
+      final got = saved.items.singleWhere((i) => i.id == orig.id);
+      final tol = orig.type == PageLayoutItemType.text ? 0.01 : 1e-6;
+      expect(got.cx, closeTo(orig.cx, tol), reason: orig.id);
+      expect(got.cy, closeTo(orig.cy, tol), reason: orig.id);
+      expect(got.w, closeTo(orig.w, tol), reason: orig.id);
+    }
+  });
 }
