@@ -26,6 +26,7 @@ import '../services/upload_service.dart';
 import 'responsive_text.dart';
 import 'concert_after_palette.dart';
 import 'concert_after_editable_section.dart';
+import 'concert_after_share_sheet.dart';
 import 'scrapbook_page_background.dart';
 import 'hanji_texture.dart';
 import 'concert_after_text_canvas.dart';
@@ -1170,7 +1171,14 @@ class _ScrapbookCanvas extends StatefulWidget {
   final Future<RealSetlistResponse>? initialSetlistLoad;
   final GlobalKey? pageBoundaryKey;
 
+  /// 공유 이미지용 읽기 전용 페이지 (편집 UI/제스처/저장 없음).
+  final bool exportMode;
+
+  /// [exportMode]에서 뒷면을 그릴지.
+  final bool exportBack;
+
   const _ScrapbookCanvas({
+    super.key,
     required this.layoutKey,
     required this.concertTitle,
     required this.ticketInfo,
@@ -1186,6 +1194,8 @@ class _ScrapbookCanvas extends StatefulWidget {
     required this.initialTimetableLoad,
     required this.initialSetlistLoad,
     this.pageBoundaryKey,
+    this.exportMode = false,
+    this.exportBack = false,
   });
 
   @override
@@ -1194,11 +1204,9 @@ class _ScrapbookCanvas extends StatefulWidget {
 
 class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _flip = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 480),
-  );
-  bool _showBack = false;
+  // 공유용 페이지는 build에서 안 써서 initState에서 생성.
+  late final AnimationController _flip;
+  late bool _showBack = widget.exportBack;
   double _flipDirection = 1;
   double _swipeDistance = 0;
 
@@ -1232,6 +1240,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   Widget _flippablePage(Widget front) {
+    if (widget.exportMode) return _pageSheet(front, back: _showBack);
     final flipGestureEnabled = _canFlip;
     return Listener(
       child: GestureDetector(
@@ -1266,58 +1275,63 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
               transform: Matrix4.identity()
                 ..setEntry(3, 2, .001)
                 ..rotateY(angle),
-              child: Container(
-                foregroundDecoration: _edit
-                    ? BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: const Color(0xFFE53935),
-                          width: context.rs(2.2),
-                        ),
-                      )
-                    : null,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF4F1E1),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: Colors.black.withValues(alpha: .10),
-                    width: 1.5,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: .22),
-                      blurRadius: 18,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: IgnorePointer(
-                    ignoring: _flip.isAnimating,
-                    child: IndexedStack(
-                      index: back ? 1 : 0,
-                      sizing: StackFit.expand,
-                      children: [
-                        front,
-                        PosterMoodScope(
-                          mood: _posterMood,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              const ScrapbookPageBackground(),
-                              _backPage(),
-                              const ScrapbookPaperTextureOverlay(),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              child: _pageSheet(front, back: back),
             );
           },
+        ),
+      ),
+    );
+  }
+
+  /// 페이지 종이(테두리/그림자) 안에 앞면 또는 뒷면.
+  Widget _pageSheet(Widget front, {required bool back}) {
+    return Container(
+      foregroundDecoration: _edit
+          ? BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: const Color(0xFFE53935),
+                width: context.rs(2.2),
+              ),
+            )
+          : null,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F1E1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: Colors.black.withValues(alpha: .10),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: .22),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: IgnorePointer(
+          ignoring: widget.exportMode || _flip.isAnimating,
+          child: IndexedStack(
+            index: back ? 1 : 0,
+            sizing: StackFit.expand,
+            children: [
+              front,
+              PosterMoodScope(
+                mood: _posterMood,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const ScrapbookPageBackground(),
+                    _backPage(),
+                    const ScrapbookPaperTextureOverlay(),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1334,14 +1348,29 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   /// 하단 모드 표시 / 편집 도구 줄 높이 (태블릿은 조금 올림).
   double get _bottomBarInset => context.rs(_isTablet(context) ? 20 : 8);
 
-  Widget _modeBadge() => Positioned(
-    bottom: _bottomBarInset,
-    left: 0,
-    right: 0,
-    child: IgnorePointer(
-      child: Center(child: _ModeBadge(edit: _edit)),
-    ),
-  );
+  /// 하단 모드 표시. 잠금 모드면 오른쪽에 공유 버튼.
+  Widget _modeBadge() {
+    final badge = IgnorePointer(child: _ModeBadge(edit: _edit));
+    return Positioned(
+      bottom: _bottomBarInset,
+      left: 0,
+      right: 0,
+      child: _edit
+          ? Center(child: badge)
+          : Row(
+              children: [
+                const Spacer(),
+                badge,
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _ShareButton(onTap: _openShareSheet),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
 
   static const double _toolButtonHeight = 34;
 
@@ -1352,6 +1381,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   /// 앞면 아래쪽 줄: 편집 모드면 모드 표시 양옆에 "사진 추가"/"자동 배치".
   /// 메모를 잡고 있는 동안엔 모드 표시만.
   Widget _frontEditBar() {
+    if (widget.exportMode) return const SizedBox.shrink();
     if (!_edit || widget.onPickPhotos == null || _activeMemoKey != null) {
       return _modeBadge();
     }
@@ -1457,6 +1487,10 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   @override
   void initState() {
     super.initState();
+    _flip = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+    );
     _loadEnvelopeAccent();
     unawaited(_initLayout());
   }
@@ -1573,6 +1607,65 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     } finally {
       if (mounted) setState(() => _openingSetlistEditor = false);
     }
+  }
+
+  /// 지금 배치를 읽기 전용 페이지로 다시 그려 공유 시트에 넘김.
+  /// 기준보다 납작하게 보이는 중이면(태블릿 가로) 기준 비율 높이로.
+  void _openShareSheet() {
+    final w = _canvasSize.width;
+    if (w <= 0) return;
+    final layout = _buildLayout();
+    final pageSize = Size(
+      w,
+      math.max(_canvasSize.height, w * layout.canvasAspect),
+    );
+    final info = widget.ticketInfo;
+    final posterUrl = info?.posterImageUrl;
+    showConcertAfterShareSheet(
+      context,
+      pageSize: pageSize,
+      frameScale: DiaryFrameScale.maybeWidgetOf(context),
+      images: [
+        if (posterUrl != null && posterUrl.isNotEmpty)
+          _concertAfterImageProvider(posterUrl),
+        for (final p in _photos) _concertAfterImageProvider(p.url),
+      ],
+      pending: [?widget.initialTimetableLoad, ?widget.initialSetlistLoad],
+      title: widget.concertTitle,
+      infoText: [
+        if (info != null && info.date != null) info.formattedDate,
+        if (info != null && info.venueName.isNotEmpty) info.venueName,
+      ].join(' · '),
+      fileStem: 'ticketdiary_${widget.setlistTicketId ?? 'page'}',
+      pageBuilder: ({required bool back, required bool hideMemos}) =>
+          _ScrapbookCanvas(
+            key: ValueKey('share_${back}_$hideMemos'),
+            layoutKey: widget.layoutKey,
+            concertTitle: widget.concertTitle,
+            ticketInfo: widget.ticketInfo,
+            reviewText: hideMemos ? '' : widget.reviewText,
+            onReviewChanged: (_) async {},
+            pageLayout: hideMemos
+                ? PageLayout(
+                    canvasAspect: layout.canvasAspect,
+                    items: [
+                      for (final item in layout.items)
+                        if (item.type != PageLayoutItemType.text) item,
+                    ],
+                  )
+                : layout,
+            legacyPhotoUrls: const [],
+            uploadingPhotos: false,
+            onPickPhotos: null,
+            onLayoutChanged: null,
+            setlistTicketId: widget.setlistTicketId,
+            concertId: widget.concertId,
+            initialTimetableLoad: widget.initialTimetableLoad,
+            initialSetlistLoad: widget.initialSetlistLoad,
+            exportMode: true,
+            exportBack: back,
+          ),
+    );
   }
 
   /// 서버 배치 → 없으면 기기 캐시 → 둘 다 없으면 기존 concert_photo_urls
@@ -1779,7 +1872,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   void _persistLayout() {
-    if (!_layoutReady || _canvasSize.width <= 0) return;
+    if (widget.exportMode || !_layoutReady || _canvasSize.width <= 0) return;
     final layout = _buildLayout();
     _lastEmitted = layout;
     widget.onLayoutChanged?.call(layout);
@@ -2274,21 +2367,23 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       _LetterColumn(
         title: '실제 셋 리스트',
         // 칸보다 넓으면(아주 좁은 폰) 편집 + 음악앱 아이콘 묶음만 살짝 축소.
-        trailing: FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.centerLeft,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.setlistTicketId != null)
-                _BackEditChip(
-                  busy: _openingSetlistEditor,
-                  onTap: _openSetlistEditor,
+        trailing: widget.exportMode
+            ? null
+            : FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.setlistTicketId != null)
+                      _BackEditChip(
+                        busy: _openingSetlistEditor,
+                        onTap: _openSetlistEditor,
+                      ),
+                    SetlistServiceIcon(selection: _setlistServiceSelection),
+                  ],
                 ),
-              SetlistServiceIcon(selection: _setlistServiceSelection),
-            ],
-          ),
-        ),
+              ),
         child: _editableBackSection(
           2,
           '실제 셋 리스트',
@@ -2397,6 +2492,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                 child: _PosterMemo(
                   imageUrl: widget.ticketInfo?.posterImageUrl,
                   paperColor: _envelopeColor,
+                  instant: widget.exportMode,
                 ),
               ),
             ),
@@ -2416,6 +2512,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                     edit: _edit,
                     uploading: false,
                     onAdd: null,
+                    instant: widget.exportMode,
                   ),
                 ),
               ),
@@ -3304,6 +3401,44 @@ class _ModeBadge extends StatelessWidget {
   }
 }
 
+/// 잠금 모드 하단 표시 옆 공유 버튼.
+class _ShareButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _ShareButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    // 잠금 표시 높이 이하로 (줄 높이 유지).
+    final size = context.rs(20);
+    return Semantics(
+      button: true,
+      label: '공유하기',
+      child: GestureDetector(
+        key: const ValueKey('after_share_button'),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        // 누르는 영역만 가로로 넓힘.
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: context.rs(6)),
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: _kraftInk.withValues(alpha: 0.85),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.ios_share,
+              size: context.rs(12),
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 편집 모드에서 포스터/사진 모서리에 붙는 고정 표시. 누르면 고정/해제.
 /// 고정된 메모는 "자동 배치"나 사진 추가로 다시 배치해도 그 자리에 남음.
 class _PinBadge extends StatelessWidget {
@@ -3427,7 +3562,12 @@ class _AddPhotoButton extends StatelessWidget {
 class _PosterMemo extends StatelessWidget {
   final String? imageUrl;
   final Color paperColor;
-  const _PosterMemo({required this.imageUrl, required this.paperColor});
+  final bool instant;
+  const _PosterMemo({
+    required this.imageUrl,
+    required this.paperColor,
+    this.instant = false,
+  });
 
   void _showPosterPreview(BuildContext context, Widget poster) {
     showGeneralDialog<void>(
@@ -3500,6 +3640,7 @@ class _PosterMemo extends StatelessWidget {
               ? AppNetworkImage(
                   url,
                   fit: BoxFit.cover,
+                  instant: instant,
                   errorBuilder: (c) =>
                       Container(color: Colors.white.withValues(alpha: 0.08)),
                 )
@@ -3660,6 +3801,7 @@ class _PolaroidMemo extends StatelessWidget {
   final bool edit;
   final bool uploading;
   final Future<void> Function(double)? onAdd;
+  final bool instant;
 
   const _PolaroidMemo({
     required this.aspectRatio,
@@ -3667,6 +3809,7 @@ class _PolaroidMemo extends StatelessWidget {
     required this.edit,
     required this.uploading,
     required this.onAdd,
+    this.instant = false,
   });
 
   @override
@@ -3701,6 +3844,7 @@ class _PolaroidMemo extends StatelessWidget {
                         ? AppNetworkImage(
                             url!,
                             fit: BoxFit.cover,
+                            instant: instant,
                             errorBuilder: (c) =>
                                 const ColoredBox(color: Color(0x22000000)),
                           )

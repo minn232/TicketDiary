@@ -1,8 +1,14 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CAMERA"/>
     <!-- debug/profile 매니페스트에는 자동으로 있지만 release엔 없어서,
          API 통신(dio)이 release 빌드에서만 전부 실패하지 않도록 명시합니다. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 공연후 페이지 갤러리 저장(gal), Android 10 이하용 (카메라 플러그인의 28을 덮어씀). -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"
+        tools:replace="android:maxSdkVersion"/>
     <application
         android:label="ticketdiary"
         android:name="${applicationName}"
@@ -38,6 +44,19 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- 카카오톡 공유 카드의 "앱에서 보기" (kakao + 네이티브 앱 키).
+                 TicketDiaryAndroid 키와 대표(Default) 키 둘 다 받음. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="kakao66ebd719ee4ce10d2f97764064e0351b"
+                    android:host="kakaolink"/>
+                <data
+                    android:scheme="kakao642846bcfbdf7506894415adebe24272"
+                    android:host="kakaolink"/>
+            </intent-filter>
             <!-- 아래 두 프로퍼티: 설정 > 앱 > 화면 비율의 "전체 화면" 옵션과
                  display 레벨 ignoreOrientationRequest(둘 다 큰 화면에서 앱의
                  방향 요청을 무시하는 시스템 정책)를 이 앱만 opt-out. 단
@@ -57,6 +76,16 @@
             android:name="com.yalantis.ucrop.UCropActivity"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+        <!-- 인스타/X/카카오톡으로 넘기는 공유 이미지용. -->
+        <provider
+            android:name=".StoryFileProvider"
+            android:authorities="${applicationId}.story_provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/story_provider_paths"/>
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -80,5 +109,8 @@
         <package android:name="com.yes24.ticket"/>
         <package android:name="kr.co.ticketlink.cne"/>
         <package android:name="com.iloen.melonticket"/>
+        <!-- 공연후 페이지 공유: 설치된 앱 아이콘만 보여주고 바로 열기. -->
+        <package android:name="com.instagram.android"/>
+        <package android:name="com.twitter.android"/>
     </queries>
 </manifest>

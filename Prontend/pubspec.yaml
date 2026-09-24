@@ -60,6 +60,10 @@ dependencies:
   # [백엔드 수정]
   # 네트워크 이미지 디스크 캐싱(포스터/썸네일이 앱 재시작마다 다시 안 받게).
   cached_network_image: ^3.4.1
+  share_plus: ^13.3.0
+  gal: ^2.3.3
+  kakao_flutter_sdk_share: ^2.0.1
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -86,6 +90,7 @@ flutter:
     - assets/images/summary/
     - assets/images/vendors/
     - assets/images/streaming/
+    - assets/images/share/
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
