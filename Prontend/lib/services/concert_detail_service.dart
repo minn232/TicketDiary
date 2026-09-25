@@ -6,7 +6,8 @@ import 'api_client.dart';
 /// 타임테이블은 티켓 기준 라우트가 없어 그대로 `/concerts/{concertId}/timetable`.
 /// 셋리스트(실제/예상)는 `/tickets/{ticketId}/...`로 옮김.
 class ConcertDetailService {
-  ConcertDetailService({ApiClient? client}) : _client = client ?? ApiClient.instance;
+  ConcertDetailService({ApiClient? client})
+    : _client = client ?? ApiClient.instance;
 
   final ApiClient _client;
 
@@ -63,6 +64,47 @@ class ConcertDetailService {
     final json = await _client.patch(
       '/tickets/$ticketId/setlist/pre',
       body: {'songs': songs.map((s) => s.toJson()).toList()},
+    );
+    return PreSetlistResponse.fromJson(json);
+  }
+
+  // [백엔드 수정] 예상 셋리 앵커(아티스트 확정) 신규.
+  /// 공연 아티스트 이름으로 후보 검색(`GET /tickets/{ticketId}/setlist/pre/artist-candidates`).
+  Future<List<ArtistCandidate>> searchArtistCandidates(
+    String ticketId,
+    String artist,
+  ) async {
+    final json = await _client.getList(
+      '/tickets/$ticketId/setlist/pre/artist-candidates?artist=${Uri.encodeQueryComponent(artist)}',
+    );
+    return json
+        .map((e) => ArtistCandidate.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 곡 제목으로 앵커 후보 검색(`GET /tickets/{ticketId}/setlist/pre/anchor-candidates`).
+  Future<List<ArtistAnchorCandidate>> searchAnchorCandidates(
+    String ticketId,
+    String song,
+  ) async {
+    final json = await _client.getList(
+      '/tickets/$ticketId/setlist/pre/anchor-candidates?song=${Uri.encodeQueryComponent(song)}',
+    );
+    return json
+        .map((e) => ArtistAnchorCandidate.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 고른 후보의 아티스트로 확정하고 대표곡으로 다시 채운 예상 셋리 반환
+  /// (`POST /tickets/{ticketId}/setlist/pre/anchor`).
+  Future<PreSetlistResponse> anchorPreSetlistArtist(
+    String ticketId, {
+    required String artist,
+    required String itunesArtistId,
+  }) async {
+    final json = await _client.post(
+      '/tickets/$ticketId/setlist/pre/anchor',
+      body: {'artist': artist, 'itunes_artist_id': itunesArtistId},
     );
     return PreSetlistResponse.fromJson(json);
   }

@@ -11,6 +11,7 @@ import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
 import '../services/music_service_links.dart';
+import 'artist_anchor_sheet.dart';
 import 'fullscreen_poster.dart';
 import 'poster_background.dart';
 import 'pressable_scale.dart';
@@ -361,6 +362,31 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     );
   }
 
+  // [백엔드 수정] 대표곡 앵커 신규 - 고른 아티스트로 확정 후 서버 응답 반영.
+  Future<void> _openAnchorSheet(String artist) async {
+    final ticketId = widget.ticketInfo?.ticketId;
+    if (ticketId == null) return;
+    await ArtistAnchorSheet.show(
+      context,
+      artist: artist,
+      onSearchArtists: () => _service.searchArtistCandidates(ticketId, artist),
+      onSearchSongs: (song) => _service.searchAnchorCandidates(ticketId, song),
+      onPick: (itunesArtistId) async {
+        final res = await _service.anchorPreSetlistArtist(
+          ticketId,
+          artist: artist,
+          itunesArtistId: itunesArtistId,
+        );
+        if (!mounted) return;
+        setState(() {
+          _fetchedSetlist = res.songs;
+          _fetchedArtistNames = res.artistNames;
+          _presetlistStatus = _FetchStatus.loaded;
+        });
+      },
+    );
+  }
+
   /// 상태별로 보여줄 안내 위젯. [loaded]는 호출부에서 별도로 처리하므로
   /// 여기선 다루지 않습니다.
   Widget _statusText(_FetchStatus status, int? errorCode) {
@@ -434,13 +460,54 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     final fallbackArtist = _fetchedArtistNames.length == 1
         ? _fetchedArtistNames.first
         : null;
-    return _fetchedSetlist.isEmpty
-        ? const _UndecidedText()
-        : _SetlistNumbered(
-            setlist: _fetchedSetlist,
-            selection: _musicServiceSelection,
-            fallbackArtist: fallbackArtist,
-          );
+    // [백엔드 수정] 대표곡 앵커 진입점 - ticketId 있을 때만.
+    final canAnchor = widget.ticketInfo?.ticketId != null;
+    final isFestival = _fetchedArtistNames.length > 1;
+    if (!isFestival) {
+      if (_fetchedSetlist.isEmpty) {
+        return fallbackArtist != null && canAnchor
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _UndecidedText(),
+                  SizedBox(height: context.rs(6)),
+                  _AnchorLink(onTap: () => _openAnchorSheet(fallbackArtist)),
+                ],
+              )
+            : const _UndecidedText();
+      }
+      final list = _SetlistNumbered(
+        setlist: _fetchedSetlist,
+        selection: _musicServiceSelection,
+        fallbackArtist: fallbackArtist,
+      );
+      if (!_fetchedSetlist.every((s) => s.isRepresentative)) return list;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _RepresentativeNote(
+            onFix: fallbackArtist != null && canAnchor
+                ? () => _openAnchorSheet(fallbackArtist)
+                : null,
+          ),
+          SizedBox(height: context.rs(8)),
+          list,
+        ],
+      );
+    }
+    // 페스티벌: 곡이 없는 아티스트도 아코디언에 넣어 앵커할 수 있게 함.
+    final withSongs = {for (final s in _fetchedSetlist) s.artist};
+    final missingArtists = [
+      for (final name in _fetchedArtistNames)
+        if (!withSongs.contains(name)) name,
+    ];
+    if (_fetchedSetlist.isEmpty && !canAnchor) return const _UndecidedText();
+    return _SetlistNumbered(
+      setlist: _fetchedSetlist,
+      selection: _musicServiceSelection,
+      missingArtists: canAnchor ? missingArtists : const [],
+      onAnchor: canAnchor ? _openAnchorSheet : null,
+    );
   }
 
   @override
@@ -527,9 +594,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                             ),
                             SizedBox(width: context.rs(6)),
                           ],
-                          SetlistServiceIcon(
-                            selection: _musicServiceSelection,
-                          ),
+                          SetlistServiceIcon(selection: _musicServiceSelection),
                         ],
                       ),
                       child: _buildSetlistBody(hasConcertId),
@@ -877,11 +942,16 @@ class _SetlistNumbered extends StatefulWidget {
   final ValueListenable<MusicService> selection;
   // 단독 공연에서 song.artist가 비어있는 곡의 검색 폴백(있으면).
   final String? fallbackArtist;
+  // [백엔드 수정] 페스티벌에서 곡이 없는 아티스트(앵커 대상)와 앵커 진입 콜백.
+  final List<String> missingArtists;
+  final void Function(String artist)? onAnchor;
 
   const _SetlistNumbered({
     required this.setlist,
     required this.selection,
     this.fallbackArtist,
+    this.missingArtists = const [],
+    this.onAnchor,
   });
 
   @override
@@ -904,6 +974,9 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
     for (final song in widget.setlist) {
       groups.putIfAbsent(song.artist, () => []).add(song);
     }
+    for (final artist in widget.missingArtists) {
+      groups.putIfAbsent(artist, () => []);
+    }
     return groups.entries.toList();
   }
 
@@ -917,6 +990,7 @@ class _SetlistNumberedState extends State<_SetlistNumbered> {
             ? _SetlistGroupedByArtist(
                 groups: groups,
                 selection: widget.selection,
+                onAnchor: widget.onAnchor,
               )
             : _FlatNumberedSongs(
                 songs: widget.setlist,
@@ -1010,10 +1084,12 @@ class _FlatNumberedSongs extends StatelessWidget {
 class _SetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
   final ValueListenable<MusicService> selection;
+  final void Function(String artist)? onAnchor;
 
   const _SetlistGroupedByArtist({
     required this.groups,
     required this.selection,
+    this.onAnchor,
   });
 
   @override
@@ -1051,6 +1127,12 @@ class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
     });
   }
 
+  VoidCallback? _anchorFor(String? artist) {
+    final onAnchor = widget.onAnchor;
+    if (artist == null || onAnchor == null) return null;
+    return () => onAnchor(artist);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -1068,6 +1150,7 @@ class _SetlistGroupedByArtistState extends State<_SetlistGroupedByArtist> {
               expanded: g == _expandedIndex,
               onTap: () => _toggle(g),
               selection: widget.selection,
+              onAnchor: _anchorFor(widget.groups[g].key),
             ),
           ),
       ],
@@ -1084,6 +1167,8 @@ class _ArtistAccordionSection extends StatelessWidget {
   final bool expanded;
   final VoidCallback onTap;
   final ValueListenable<MusicService> selection;
+  // [백엔드 수정] 곡이 없거나 대표곡일 때 앵커 진입(없으면 버튼 숨김).
+  final VoidCallback? onAnchor;
 
   const _ArtistAccordionSection({
     required this.artistName,
@@ -1091,10 +1176,13 @@ class _ArtistAccordionSection extends StatelessWidget {
     required this.expanded,
     required this.onTap,
     required this.selection,
+    this.onAnchor,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isRepresentative =
+        songs.isNotEmpty && songs.every((s) => s.isRepresentative);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1119,6 +1207,7 @@ class _ArtistAccordionSection extends StatelessWidget {
                     style: _serif(context, size: 14.5, weight: FontWeight.w900),
                   ),
                 ),
+                if (isRepresentative) const _RepresentativeTag(),
               ],
             ),
           ),
@@ -1132,11 +1221,25 @@ class _ArtistAccordionSection extends StatelessWidget {
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: _buildSongRows(
-                songs,
-                gap: context.rs(8),
-                selection: selection,
-              ),
+              children: [
+                if (songs.isEmpty) ...[
+                  const _UndecidedText(),
+                  if (onAnchor != null) ...[
+                    SizedBox(height: context.rs(6)),
+                    _AnchorLink(onTap: onAnchor!),
+                  ],
+                ] else ...[
+                  if (isRepresentative) ...[
+                    _RepresentativeNote(onFix: onAnchor),
+                    SizedBox(height: context.rs(8)),
+                  ],
+                  ..._buildSongRows(
+                    songs,
+                    gap: context.rs(8),
+                    selection: selection,
+                  ),
+                ],
+              ],
             ),
           ),
       ],
@@ -1185,6 +1288,97 @@ class _SongRow extends StatelessWidget {
               _keepWords(song.name),
               style: _serif(context, size: 14.5, weight: FontWeight.w500),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// [백엔드 수정] 대표곡 표시/앵커 진입 위젯 신규.
+/// 페스티벌 아코디언에서 대표곡으로 채워진 아티스트 이름 옆 태그.
+class _RepresentativeTag extends StatelessWidget {
+  const _RepresentativeTag();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: context.rs(5), vertical: 1),
+      decoration: BoxDecoration(
+        border: Border.all(color: _ink.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(3),
+      ),
+      child: Text(
+        '대표곡',
+        style: _serif(
+          context,
+          size: 10.5,
+          weight: FontWeight.w700,
+          color: _ink.withValues(alpha: 0.6),
+        ),
+      ),
+    );
+  }
+}
+
+/// 대표곡 목록 위 안내 문구 + (있으면) 다른 아티스트로 바로잡기 링크.
+class _RepresentativeNote extends StatelessWidget {
+  final VoidCallback? onFix;
+
+  const _RepresentativeNote({this.onFix});
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _serif(
+      context,
+      size: 11.5,
+      weight: FontWeight.w600,
+      color: _ink.withValues(alpha: 0.55),
+    );
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: context.rs(6),
+      children: [
+        Text('지난 셋리가 없어 대표곡을 보여줘요', style: style),
+        if (onFix != null)
+          GestureDetector(
+            onTap: onFix,
+            child: Text(
+              '다른 아티스트예요?',
+              style: style.copyWith(
+                decoration: TextDecoration.underline,
+                color: _ink.withValues(alpha: 0.8),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 예상 셋리가 없는 아티스트의 앵커 진입 링크.
+class _AnchorLink extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _AnchorLink({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.search, size: context.rs(14), color: _ink),
+          SizedBox(width: context.rs(3)),
+          Text(
+            '대표곡 찾기',
+            style: _serif(
+              context,
+              size: 12.5,
+              weight: FontWeight.w700,
+            ).copyWith(decoration: TextDecoration.underline),
           ),
         ],
       ),

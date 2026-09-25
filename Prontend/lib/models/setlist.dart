@@ -11,13 +11,24 @@ class SongEntry {
   /// 단독 공연이면 null.
   final String? artist;
 
-  const SongEntry({required this.name, this.encore = false, this.artist});
+  // [백엔드 수정] source 추가 - 'representative'면 대표곡.
+  final String? source;
+
+  const SongEntry({
+    required this.name,
+    this.encore = false,
+    this.artist,
+    this.source,
+  });
+
+  bool get isRepresentative => source == 'representative';
 
   factory SongEntry.fromJson(Map<String, dynamic> json) {
     return SongEntry(
       name: json['name'] as String,
       encore: json['encore'] as bool? ?? false,
       artist: json['artist'] as String?,
+      source: json['source'] as String?,
     );
   }
 
@@ -26,6 +37,7 @@ class SongEntry {
     'name': name,
     'encore': encore,
     'artist': artist,
+    'source': source,
   };
 }
 
@@ -76,7 +88,8 @@ class RealSetlistResponse {
 /// 백엔드 `PreSetlistResponse`와 대응.
 @immutable
 class PreSetlistResponse {
-  final String id;
+  // [백엔드 수정] 예상 셋리가 아직 없으면 null(빈 songs + artistNames만 옴).
+  final String? id;
   final String concertId;
   final String? setlistfmId;
   final List<SongEntry> songs;
@@ -100,7 +113,7 @@ class PreSetlistResponse {
 
   factory PreSetlistResponse.fromJson(Map<String, dynamic> json) {
     return PreSetlistResponse(
-      id: json['id'] as String,
+      id: json['id'] as String?,
       concertId: json['concert_id'] as String,
       setlistfmId: json['setlistfm_id'] as String?,
       songs: (json['songs'] as List<dynamic>? ?? const [])
@@ -111,6 +124,68 @@ class PreSetlistResponse {
       artistNames: (json['artist_names'] as List<dynamic>? ?? const [])
           .map((e) => e as String)
           .toList(),
+    );
+  }
+}
+
+// [백엔드 수정] 예상 셋리 앵커 후보(공연 아티스트 이름으로 찾은 iTunes 아티스트) 신규.
+/// `GET /tickets/{ticketId}/setlist/pre/artist-candidates` 응답 한 건.
+/// 동명이인은 [genre]/[topSongs]로 구분.
+@immutable
+class ArtistCandidate {
+  final String itunesArtistId;
+  final String artistName;
+  final String? genre;
+  final List<String> topSongs;
+  final String? artworkUrl;
+
+  const ArtistCandidate({
+    required this.itunesArtistId,
+    required this.artistName,
+    this.genre,
+    this.topSongs = const [],
+    this.artworkUrl,
+  });
+
+  factory ArtistCandidate.fromJson(Map<String, dynamic> json) {
+    return ArtistCandidate(
+      itunesArtistId: json['itunes_artist_id'] as String,
+      artistName: json['artist_name'] as String,
+      genre: json['genre'] as String?,
+      topSongs: (json['top_songs'] as List<dynamic>? ?? const [])
+          .map((e) => e as String)
+          .toList(),
+      artworkUrl: json['artwork_url'] as String?,
+    );
+  }
+}
+
+// [백엔드 수정] 예상 셋리 앵커 후보(iTunes 곡 검색 결과) 신규.
+/// `GET /tickets/{ticketId}/setlist/pre/anchor-candidates` 응답 한 건.
+/// 고르면 이 곡의 아티스트([itunesArtistId])로 확정됨.
+@immutable
+class ArtistAnchorCandidate {
+  final String itunesArtistId;
+  final String artistName;
+  final String trackName;
+  final String? albumName;
+  final String? artworkUrl;
+
+  const ArtistAnchorCandidate({
+    required this.itunesArtistId,
+    required this.artistName,
+    required this.trackName,
+    this.albumName,
+    this.artworkUrl,
+  });
+
+  factory ArtistAnchorCandidate.fromJson(Map<String, dynamic> json) {
+    return ArtistAnchorCandidate(
+      itunesArtistId: json['itunes_artist_id'] as String,
+      artistName: json['artist_name'] as String,
+      trackName: json['track_name'] as String,
+      albumName: json['album_name'] as String?,
+      artworkUrl: json['artwork_url'] as String?,
     );
   }
 }
