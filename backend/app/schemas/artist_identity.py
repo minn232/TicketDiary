@@ -22,6 +22,8 @@ class IdentityCandidate(BaseModel):
     type: str | None = None
     disambiguation: str | None = None
     begin_year: str | None = None
+    # 동명이인을 알아보게 붙이는 곡 몇 개(인기순)
+    top_songs: list[str] = []
     is_current: bool = False
 
 

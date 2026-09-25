@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -69,7 +70,7 @@ def canonical_summary(canonical: CanonicalArtist | None) -> dict | None:
 
 
 # 연결 수정 후보 - 우리 DB에 이미 있는 같은 이름(별칭/표시명 포함, 사진 있음)을 먼저, 그다음
-# MusicBrainz 검색 결과 중 DB에 없는 것 - 동명이인 구분용으로 국가/유형/설명/활동 시작 연도를 붙임
+# MusicBrainz 검색 결과 중 DB에 없는 것 - 동명이인 구분용으로 국가/유형/설명/활동 시작 연도/곡 몇 개를 붙임
 async def identity_candidates(db: AsyncSession, concert_id: UUID, artist: str) -> dict:
     await _concert_with_artist(db, concert_id, artist)
     current, no_artist = await resolve_concert_artist(db, concert_id, artist)
@@ -122,6 +123,15 @@ async def identity_candidates(db: AsyncSession, concert_id: UUID, artist: str) -
                 "begin_year": r["begin_year"],
                 "is_current": False,
             })
+
+    from app.services.representative_songs import candidate_top_songs  # 순환 임포트 방지용 지연 임포트
+
+    itunes_ids = {c.id: c.itunes_artist_id for c in db_rows}
+    songs = await asyncio.gather(*(
+        candidate_top_songs(c["mbid"], itunes_ids.get(c["canonical_id"])) for c in candidates
+    ))
+    for candidate, top_songs in zip(candidates, songs):
+        candidate["top_songs"] = top_songs
     return {"artist": artist, "current": canonical_summary(current), "no_artist": no_artist, "candidates": candidates}
 
 

@@ -10,7 +10,7 @@ from app.main import app
 from app.models.artist_identity import ArtistIdentityChange, ConcertArtistLink
 from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.services.artist_identity import resolve_concert_artist
-from app.services.representative_songs import representative_songs_for_artist
+from app.services.representative_songs import candidate_top_songs, representative_songs_for_artist
 from app.services.setlist import search_with_artist_fallbacks
 from conftest import _get_token
 from test_admin import _admin_headers, _admin_settings
@@ -81,7 +81,10 @@ async def test_candidates_merge_db_namesakes_and_musicbrainz():
         {"mbid": f"mbid-new-{artist}", "name": artist, "country": "JP", "type": "Group",
          "disambiguation": None, "begin_year": "2015"},
     ])
-    with patch(f"{_SERVICE}.search_artist_detailed", new=mb):
+    songs = AsyncMock(side_effect=lambda mbid, itunes_artist_id=None: [f"{mbid}-곡"])
+    with patch(f"{_SERVICE}.search_artist_detailed", new=mb), patch(
+        "app.services.representative_songs.candidate_top_songs", new=songs
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res = await ac.get(
                 f"/api/v1/tickets/{ticket_id}/artist-identity/candidates",
@@ -99,6 +102,51 @@ async def test_candidates_merge_db_namesakes_and_musicbrainz():
     assert by_mbid[f"mbid-other-{artist}"]["disambiguation"] == "trot singer"
     assert by_mbid[f"mbid-new-{artist}"]["canonical_id"] is None
     assert len(data["candidates"]) == 3
+    # 후보마다 알아볼 곡을 붙임
+    assert by_mbid[f"mbid-new-{artist}"]["top_songs"] == [f"mbid-new-{artist}-곡"]
+
+
+# 후보 곡 - Last.fm(mbid) 인기순이 먼저, 없으면 Apple Music 링크로 iTunes 곡 목록
+
+_SONGS = "app.services.representative_songs"
+
+
+@pytest.mark.asyncio
+async def test_candidate_top_songs_prefers_lastfm_by_mbid():
+    mbid = f"mbid-lf-{uuid.uuid4().hex[:6]}"
+    lastfm = AsyncMock(return_value=("", [("Smooth", 900), ("Smooth (Live)", 800), ("가져가", 700), ("셋째", 600)]))
+    apple = AsyncMock()
+    with patch(f"{_SONGS}.fetch_top_tracks", new=lastfm), patch(f"{_SONGS}.fetch_apple_music_artist_id", new=apple):
+        songs = await candidate_top_songs(mbid)
+
+    assert songs == ["Smooth", "가져가"]
+    lastfm.assert_awaited_once_with(mbid=mbid, limit=10)
+    apple.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_candidate_top_songs_falls_back_to_itunes_via_apple_link():
+    mbid = f"mbid-it-{uuid.uuid4().hex[:6]}"
+    catalog = AsyncMock(return_value=["첫곡", "둘째곡", "셋째곡"])
+    with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(return_value=("", []))), patch(
+        f"{_SONGS}.fetch_apple_music_artist_id", new=AsyncMock(return_value="123")
+    ), patch(f"{_SONGS}.fetch_itunes_artist_songs", new=catalog):
+        songs = await candidate_top_songs(mbid)
+
+    assert songs == ["첫곡", "둘째곡"]
+    catalog.assert_awaited_once_with("123")
+
+
+@pytest.mark.asyncio
+async def test_candidate_top_songs_uses_known_itunes_id_without_musicbrainz():
+    apple = AsyncMock()
+    with patch(f"{_SONGS}.fetch_apple_music_artist_id", new=apple), patch(
+        f"{_SONGS}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["곡"])
+    ):
+        songs = await candidate_top_songs(None, f"it-{uuid.uuid4().hex[:6]}")
+
+    assert songs == ["곡"]
+    apple.assert_not_awaited()
 
 
 # 변경은 이 공연에만

@@ -214,6 +214,33 @@ async def _lastfm_top_tracks(artist: str, mbid: str | None) -> list[tuple[str, i
     return tracks if _artist_matches(artist, resolved_name, None, None) else []
 
 
+_CANDIDATE_SONGS_CACHE_TTL = timedelta(days=1)
+_candidate_songs_cache: dict[str, tuple[datetime, list[str]]] = {}
+
+
+# 연결 수정 후보를 알아보게 붙이는 곡 몇 개 - 이름 검색 없이 mbid로만(동명이인 섞임 방지). Last.fm
+# 인기순이 먼저, Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록
+async def candidate_top_songs(mbid: str | None, itunes_artist_id: str | None = None, limit: int = 2) -> list[str]:
+    key = mbid or f"itunes:{itunes_artist_id}"
+    if not mbid and not itunes_artist_id:
+        return []
+    cached = _candidate_songs_cache.get(key)
+    if cached and datetime.now(timezone.utc) - cached[0] < _CANDIDATE_SONGS_CACHE_TTL:
+        return cached[1]
+
+    songs: list[str] = []
+    if mbid:
+        _, tracks = await fetch_top_tracks(mbid=mbid, limit=10)
+        songs = _dedupe_titles([name for name, _ in tracks])[:limit]
+    if not songs:
+        if not itunes_artist_id and mbid:
+            itunes_artist_id = await fetch_apple_music_artist_id(mbid)
+        if itunes_artist_id:
+            songs = (await fetch_itunes_artist_songs(itunes_artist_id))[:limit]
+    _candidate_songs_cache[key] = (datetime.now(timezone.utc), songs)
+    return songs
+
+
 # 확정된 iTunes 아티스트가 없으면 MusicBrainz의 Apple Music 링크로 찾아서 canonical에 저장
 async def _resolve_itunes_artist_id(db: AsyncSession, canonical: CanonicalArtist | None) -> str | None:
     if canonical is None:
