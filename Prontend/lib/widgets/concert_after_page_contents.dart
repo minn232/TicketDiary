@@ -30,6 +30,7 @@ import 'concert_after_share_sheet.dart';
 import 'scrapbook_page_background.dart';
 import 'hanji_texture.dart';
 import 'concert_after_text_canvas.dart';
+import 'concert_before_page_contents.dart';
 import 'app_network_image.dart';
 import 'setlist_editor_sheet.dart';
 import 'setlist_music_service_control.dart';
@@ -120,6 +121,13 @@ class ConcertAfterPageContents extends StatefulWidget {
   /// 닫은 뒤에도 앱 재시작 없이 바로 최신 내용이 보입니다.
   final ValueChanged<TicketInfo>? onTicketInfoChanged;
 
+  // [백엔드 수정] 뒷면 "공연 전 신문" 썸네일용 호수/열기 콜백 신규.
+  final int issueNumber;
+
+  /// null이면 썸네일만 보이고 눌리지 않음.
+  final Future<void> Function(Rect startRect, Widget collapsed)?
+  onOpenBeforePage;
+
   const ConcertAfterPageContents({
     super.key,
     required this.concertTitle,
@@ -128,6 +136,8 @@ class ConcertAfterPageContents extends StatefulWidget {
     this.showCloseHint = true,
     this.onTicketInfoChanged,
     this.pageBoundaryKey,
+    this.issueNumber = 1,
+    this.onOpenBeforePage,
   });
 
   @override
@@ -335,6 +345,8 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       initialTimetableLoad: _preloadedTimetable,
       initialSetlistLoad: _preloadedSetlist,
       pageBoundaryKey: widget.pageBoundaryKey,
+      issueNumber: widget.issueNumber,
+      onOpenBeforePage: widget.onOpenBeforePage,
     );
 
     return canvas;
@@ -1170,6 +1182,9 @@ class _ScrapbookCanvas extends StatefulWidget {
   final Future<timetable_model.TimeTableResponse>? initialTimetableLoad;
   final Future<RealSetlistResponse>? initialSetlistLoad;
   final GlobalKey? pageBoundaryKey;
+  final int issueNumber;
+  final Future<void> Function(Rect startRect, Widget collapsed)?
+  onOpenBeforePage;
 
   /// 공유 이미지용 읽기 전용 페이지 (편집 UI/제스처/저장 없음).
   final bool exportMode;
@@ -1194,6 +1209,8 @@ class _ScrapbookCanvas extends StatefulWidget {
     required this.initialTimetableLoad,
     required this.initialSetlistLoad,
     this.pageBoundaryKey,
+    this.issueNumber = 1,
+    this.onOpenBeforePage,
     this.exportMode = false,
     this.exportBack = false,
   });
@@ -1662,6 +1679,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             concertId: widget.concertId,
             initialTimetableLoad: widget.initialTimetableLoad,
             initialSetlistLoad: widget.initialSetlistLoad,
+            issueNumber: widget.issueNumber,
             exportMode: true,
             exportBack: back,
           ),
@@ -2309,6 +2327,32 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         .join('\n');
   }
 
+  final GlobalKey _beforePageThumbKey = GlobalKey();
+
+  bool get _canOpenBeforePage =>
+      !widget.exportMode && widget.onOpenBeforePage != null;
+
+  // 뒷면 잉크(갈색)와, 크림 종이보다 한 톤 진한 바탕.
+  Widget _beforePageThumbnail() => ConcertBeforeThumbnail(
+    concertTitle: widget.concertTitle,
+    issueNumber: widget.issueNumber,
+    date: widget.ticketInfo?.date,
+    posterUrl: widget.ticketInfo?.posterImageUrl,
+    ink: _kraftInk,
+    paper: _kraftInk.withValues(alpha: 0.06),
+  );
+
+  Future<void> _openBeforePage() async {
+    final open = widget.onOpenBeforePage;
+    final box =
+        _beforePageThumbKey.currentContext?.findRenderObject() as RenderBox?;
+    if (open == null || box == null || !box.hasSize) return;
+    await open(
+      box.localToGlobal(Offset.zero) & box.size,
+      _beforePageThumbnail(),
+    );
+  }
+
   List<Widget> _backContents() {
     final timetableFuture = widget.initialTimetableLoad;
     final setlistFuture = widget.initialSetlistLoad;
@@ -2343,6 +2387,44 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                       ],
                     ),
                   ),
+                // [백엔드 수정] "공연 전 신문" 썸네일 신규.
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '공연 전 신문',
+                        style: TextStyle(fontSize: 11, color: _kraftInk),
+                      ),
+                      const SizedBox(height: 5),
+                      GestureDetector(
+                        key: _beforePageThumbKey,
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _canOpenBeforePage ? _openBeforePage : null,
+                        child: _beforePageThumbnail(),
+                      ),
+                      if (_canOpenBeforePage)
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _openBeforePage,
+                          child: const Padding(
+                            padding: EdgeInsets.only(top: 5),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                '펼쳐보기 ›',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: _kraftInk,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),

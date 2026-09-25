@@ -41,6 +41,9 @@ class ConcertBeforeOverlay extends StatefulWidget {
   /// 이 티켓이 몇 번째로 등록됐는지(신문 "제 N 호"). 다이어리에서 계산해 넘김.
   final int issueNumber;
 
+  // [백엔드 수정] 읽기 전용 모드 신규(편집 UI 숨김).
+  final bool readOnly;
+
   const ConcertBeforeOverlay({
     super.key,
     required this.startRect,
@@ -49,6 +52,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
     required this.frameScale,
     this.ticketInfo,
     this.issueNumber = 1,
+    this.readOnly = false,
   });
 
   /// 다이어리 위에 오버레이를 띄우는 헬퍼.
@@ -60,6 +64,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
     required double frameScale,
     TicketInfo? ticketInfo,
     int issueNumber = 1,
+    bool readOnly = false,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -75,6 +80,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
           frameScale: frameScale,
           ticketInfo: ticketInfo,
           issueNumber: issueNumber,
+          readOnly: readOnly,
         );
       },
     );
@@ -243,6 +249,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
               concertTitle: widget.concertTitle,
               ticketInfo: widget.ticketInfo,
               issueNumber: widget.issueNumber,
+              readOnly: widget.readOnly,
               onOutsideTap: _handleOutsideTap,
             ),
           ),
@@ -329,6 +336,7 @@ class _ExpandedConcertBefore extends StatelessWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
   final int issueNumber;
+  final bool readOnly;
   final VoidCallback onOutsideTap;
 
   const _ExpandedConcertBefore({
@@ -336,6 +344,7 @@ class _ExpandedConcertBefore extends StatelessWidget {
     required this.concertTitle,
     required this.onOutsideTap,
     required this.issueNumber,
+    this.readOnly = false,
     this.ticketInfo,
   });
 
@@ -400,6 +409,7 @@ class _ExpandedConcertBefore extends StatelessWidget {
                           ticketInfo: ticketInfo,
                           postItOpacity: postItOpacity,
                           issueNumber: issueNumber,
+                          readOnly: readOnly,
                         ),
                       ),
                     ],

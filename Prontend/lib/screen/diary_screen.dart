@@ -1340,6 +1340,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   posterOverlayKey: GlobalKey(),
                   vibrate: !_transitionSpotlightIds.contains(ticket.id),
                   initiallyRevealed: ticket.tornRevealed,
+                  issueNumber: _issueNumberForIndex(
+                    _tickets.indexWhere((t) => t.id == ticket.id),
+                  ),
                 ),
               )
             : _buildTicketPocket(
@@ -1775,6 +1778,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
             // 뜯긴 상태로 보여주고, 처음 뜯는 순간에는 티켓 데이터에 기록해서
             // 이후에도 계속 뜯긴 채로 유지되게 합니다.
             initiallyRevealed: ticket.tornRevealed,
+            issueNumber: _issueNumberForIndex(
+              _tickets.indexWhere((t) => t.id == ticket.id),
+            ),
             onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
               setState(() => ticket.tornRevealed = true);
@@ -2293,6 +2299,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     bool initiallyRevealed = false,
     VoidCallback? onTorn,
     ValueChanged<TicketInfo>? onInfoChanged,
+    // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 전달.
+    int issueNumber = 1,
   }) {
     // 입장 티켓을 뜯은 뒤에는, 티켓 어디를 눌러도 "공연 후" 페이지가 뜹니다.
     // (예전의 뜯긴 왼쪽 = "공연전" 바로가기/공연 전 페이지 진입은 제거.)
@@ -2318,6 +2326,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         onTicketInfoChanged: onInfoChanged,
         // [백엔드 수정] 이 리스트에서 쓰이는 배율을 그대로 넘김.
         frameScale: frameScale,
+        issueNumber: issueNumber,
       );
       if (mounted) setState(() => _overlayHiddenRegionKey = null);
     }

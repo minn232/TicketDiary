@@ -12,6 +12,7 @@ import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
 import '../services/music_service_links.dart';
 import 'artist_anchor_sheet.dart';
+import 'frozen_fit_scroll_view.dart';
 import 'fullscreen_poster.dart';
 import 'poster_background.dart';
 import 'pressable_scale.dart';
@@ -41,6 +42,9 @@ class ConcertBeforePageContents extends StatelessWidget {
   /// 넘겨줍니다. 단독 스크린 등 순번을 모르면 1로 둡니다.
   final int issueNumber;
 
+  // [백엔드 수정] 읽기 전용 모드 신규(예상 셋리 편집/대표곡 찾기 숨김).
+  final bool readOnly;
+
   const ConcertBeforePageContents({
     super.key,
     required this.concertTitle,
@@ -48,6 +52,7 @@ class ConcertBeforePageContents extends StatelessWidget {
     this.postItOpacity,
     this.showCloseHint = true,
     this.issueNumber = 1,
+    this.readOnly = false,
   });
 
   @override
@@ -56,6 +61,7 @@ class ConcertBeforePageContents extends StatelessWidget {
       concertTitle: concertTitle,
       ticketInfo: ticketInfo,
       issueNumber: issueNumber,
+      readOnly: readOnly,
     );
 
     final content = Column(
@@ -172,11 +178,13 @@ class _ConcertBeforeBody extends StatefulWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
   final int issueNumber;
+  final bool readOnly;
 
   const _ConcertBeforeBody({
     required this.concertTitle,
     this.ticketInfo,
     required this.issueNumber,
+    this.readOnly = false,
   });
 
   @override
@@ -461,7 +469,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         ? _fetchedArtistNames.first
         : null;
     // [백엔드 수정] 대표곡 앵커 진입점 - ticketId 있을 때만.
-    final canAnchor = widget.ticketInfo?.ticketId != null;
+    final canAnchor = widget.ticketInfo?.ticketId != null && !widget.readOnly;
     final isFestival = _fetchedArtistNames.length > 1;
     if (!isFestival) {
       if (_fetchedSetlist.isEmpty) {
@@ -584,7 +592,8 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (widget.ticketInfo?.ticketId != null) ...[
+                          if (widget.ticketInfo?.ticketId != null &&
+                              !widget.readOnly) ...[
                             IconButton(
                               onPressed: () => _openPreSetlistEditor(context),
                               icon: const Icon(Icons.edit_outlined, size: 16),
@@ -608,15 +617,8 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       ],
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return FittedBox(
-          fit: BoxFit.scaleDown,
-          alignment: Alignment.topCenter,
-          child: SizedBox(width: constraints.maxWidth, child: page),
-        );
-      },
-    );
+    // [백엔드 수정] FittedBox → FrozenFitScrollView(아코디언 펼치면 축소 대신 스크롤).
+    return FrozenFitScrollView(child: page);
   }
 }
 
@@ -1213,33 +1215,35 @@ class _ArtistAccordionSection extends StatelessWidget {
           ),
         ),
         if (expanded)
-          Padding(
-            padding: EdgeInsets.only(
-              left: context.rs(24),
-              top: 2,
-              bottom: context.rs(10),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (songs.isEmpty) ...[
-                  const _UndecidedText(),
-                  if (onAnchor != null) ...[
-                    SizedBox(height: context.rs(6)),
-                    _AnchorLink(onTap: onAnchor!),
+          FrozenFitSection(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: context.rs(24),
+                top: 2,
+                bottom: context.rs(10),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (songs.isEmpty) ...[
+                    const _UndecidedText(),
+                    if (onAnchor != null) ...[
+                      SizedBox(height: context.rs(6)),
+                      _AnchorLink(onTap: onAnchor!),
+                    ],
+                  ] else ...[
+                    if (isRepresentative) ...[
+                      _RepresentativeNote(onFix: onAnchor),
+                      SizedBox(height: context.rs(8)),
+                    ],
+                    ..._buildSongRows(
+                      songs,
+                      gap: context.rs(8),
+                      selection: selection,
+                    ),
                   ],
-                ] else ...[
-                  if (isRepresentative) ...[
-                    _RepresentativeNote(onFix: onAnchor),
-                    SizedBox(height: context.rs(8)),
-                  ],
-                  ..._buildSongRows(
-                    songs,
-                    gap: context.rs(8),
-                    selection: selection,
-                  ),
                 ],
-              ],
+              ),
             ),
           ),
       ],
@@ -1384,6 +1388,200 @@ class _AnchorLink extends StatelessWidget {
       ),
     );
   }
+}
+
+// [백엔드 수정] 공연 후 뒷면 "공연 전 신문" 썸네일 신규.
+/// 공연 전 신문 1면(제호, 제목, 포스터, 번호 목록)을 줄인 썸네일.
+class ConcertBeforeThumbnail extends StatelessWidget {
+  final String concertTitle;
+  final int issueNumber;
+  final DateTime? date;
+  final String? posterUrl;
+
+  /// 놓이는 종이에 맞출 잉크/바탕색(기본은 공연 전 신문 지면 색).
+  final Color ink;
+  final Color paper;
+
+  const ConcertBeforeThumbnail({
+    super.key,
+    required this.concertTitle,
+    required this.issueNumber,
+    this.date,
+    this.posterUrl,
+    this.ink = _ink,
+    this.paper = _newsprint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final small = _serif(context, size: 6.5, color: ink);
+    Widget line(double widthFactor, double height, double alpha) =>
+        FractionallySizedBox(
+          widthFactor: widthFactor,
+          alignment: Alignment.centerLeft,
+          child: Container(
+            height: height,
+            color: ink.withValues(alpha: alpha),
+          ),
+        );
+    // 번호 목록 줄 길이.
+    const songWidths = [0.9, 0.7, 1.0, 0.55, 0.85, 0.65, 0.95, 0.6, 0.8];
+    final d = date;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        context.rs(8),
+        context.rs(6),
+        context.rs(8),
+        context.rs(8),
+      ),
+      decoration: BoxDecoration(
+        color: paper,
+        border: Border.all(color: ink.withValues(alpha: 0.2), width: 0.8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(height: 0.8, color: ink),
+          SizedBox(height: context.rs(3)),
+          // 좁으면 날짜부터 말줄임.
+          Row(
+            children: [
+              Flexible(
+                flex: 0,
+                child: Text(
+                  '제 $issueNumber 호',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.clip,
+                  style: small,
+                ),
+              ),
+              if (d != null)
+                Expanded(
+                  child: Text(
+                    '${d.year}. ${d.month}. ${d.day}.',
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: small,
+                  ),
+                ),
+            ],
+          ),
+          SizedBox(height: context.rs(3)),
+          LayoutBuilder(
+            builder: (context, c) {
+              final style = _serif(
+                context,
+                size: 9,
+                weight: FontWeight.w900,
+                color: ink,
+                height: 1.2,
+              );
+              return Text(
+                _balancedTwoLines(concertTitle, style, c.maxWidth),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              );
+            },
+          ),
+          SizedBox(height: context.rs(5)),
+          // 제목 아래 이중 괘선
+          Container(height: 1.4, color: ink),
+          SizedBox(height: context.rs(1.5)),
+          Container(height: 0.5, color: ink),
+          SizedBox(height: context.rs(7)),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  flex: 5,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: AspectRatio(
+                      aspectRatio: 3 / 4,
+                      child: ColorFiltered(
+                        // 대비 낮춘 세피아 흑백.
+                        colorFilter: const ColorFilter.matrix([
+                          0.31, 0.60, 0.15, 0, 30, //
+                          0.27, 0.54, 0.13, 0, 28, //
+                          0.21, 0.42, 0.10, 0, 24, //
+                          0, 0, 0, 1, 0, //
+                        ]),
+                        child: _posterImage(posterUrl),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: context.rs(5)),
+                Container(width: 0.6, color: ink.withValues(alpha: 0.35)),
+                SizedBox(width: context.rs(5)),
+                Expanded(
+                  flex: 4,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      // 칸 제목 자리
+                      line(0.75, context.rs(3.5), 0.75),
+                      for (var n = 0; n < songWidths.length; n++)
+                        Row(
+                          children: [
+                            SizedBox(
+                              width: context.rs(7),
+                              child: Text(
+                                '${n + 1}',
+                                style: _serif(
+                                  context,
+                                  size: 5.5,
+                                  weight: FontWeight.w900,
+                                  color: ink.withValues(alpha: 0.7),
+                                ),
+                              ),
+                            ),
+                            Expanded(child: line(songWidths[n], 1.2, 0.3)),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 넘치면 두 줄 폭이 비슷해지는 띄어쓰기에서 줄바꿈.
+String _balancedTwoLines(String text, TextStyle style, double maxWidth) {
+  double widthOf(String t) => (TextPainter(
+    text: TextSpan(text: t, style: style),
+    textDirection: TextDirection.ltr,
+    maxLines: 1,
+  )..layout()).width;
+
+  if (widthOf(text) <= maxWidth) return _keepWords(text);
+  final words = text.split(' ');
+  String? best;
+  var bestWidest = double.infinity;
+  for (var k = 1; k < words.length; k++) {
+    final first = words.take(k).join(' ');
+    final second = words.skip(k).join(' ');
+    final widest = math.max(widthOf(first), widthOf(second));
+    if (widest < bestWidest) {
+      bestWidest = widest;
+      best = '${_keepWords(first)}\n${_keepWords(second)}';
+    }
+  }
+  return best ?? _keepWords(text);
 }
 
 /// 백엔드에 아직 데이터가 없을 때(타임테이블/셋리스트) 보여주는 안내 텍스트.
