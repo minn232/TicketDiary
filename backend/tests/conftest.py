@@ -111,6 +111,14 @@ def _stub_setlistfm_merged_mbid_lookup():
         yield
 
 
+# 예상 셋리 대표곡의 자동 확정이 iTunes 아티스트 검색을 실제로 호출하지 않게 기본은 "후보 없음".
+# 자동 확정 자체는 test_representative_songs.py에서 다시 patch
+@pytest.fixture(autouse=True)
+def _stub_itunes_artist_search_for_auto_anchor():
+    with patch("app.services.representative_songs.search_itunes_artists", new=AsyncMock(return_value=[])):
+        yield
+
+
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처
 @pytest_asyncio.fixture
 async def get_auth_token():

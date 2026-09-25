@@ -417,7 +417,9 @@ async def test_ticket_registration_skips_pre_setlist_when_no_artist():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
 
-    assert pre_res.status_code == 404
+    # row가 없으면 404 대신 빈 응답(id 없음)
+    assert pre_res.status_code == 200
+    assert pre_res.json()["id"] is None and pre_res.json()["songs"] == []
 
 
 # Setlist.fm에 그 아티스트 데이터가 없어도(404) 티켓 등록은 실패하지 않고
@@ -438,7 +440,9 @@ async def test_ticket_registration_succeeds_when_setlistfm_has_no_data():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
 
-    assert pre_res.status_code == 404
+    # row가 없으면 404 대신 빈 응답(id 없음)
+    assert pre_res.status_code == 200
+    assert pre_res.json()["id"] is None and pre_res.json()["songs"] == []
 
 
 # 예상 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist/pre)
@@ -470,7 +474,8 @@ async def test_get_pre_setlist_success():
 
 # 예상 셋리스트 없는 공연 조회 시 404 테스트
 @pytest.mark.asyncio
-async def test_get_pre_setlist_not_found_404():
+async def test_get_pre_setlist_without_row_returns_artist_names():
+    # row가 없어도 앵커 대상을 알 수 있게 artist_names만 채운 빈 응답
     concert_id = await _create_concert("PF_PRE_GET_002")
     token = await _get_token()
 
@@ -480,7 +485,10 @@ async def test_get_pre_setlist_not_found_404():
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json()["id"] is None
+    assert response.json()["songs"] == []
+    assert response.json()["artist_names"] == ["테스트아티스트"]
 
 
 # show_predicted_setlist는 더 이상 조회/생성을 막는 스위치가 아니라(프론트가
@@ -586,3 +594,22 @@ async def test_generate_pre_setlist_finds_by_mbid_when_name_search_empty():
     assert response.status_code == 201
     assert [song["name"] for song in response.json()["songs"]] == ["곡A", "곡B"]
 
+
+
+# 자동 생성된 예상 셋리가 없던 공연도 유저가 직접 채울 수 있는지(row 신규 생성)
+@pytest.mark.asyncio
+async def test_edit_pre_setlist_creates_row_when_missing():
+    concert_id = await _create_concert("PF_PRE_EDIT_NEW_001")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.patch(
+            f"/api/v1/concerts/{concert_id}/setlist/pre",
+            json={"songs": [{"name": "직접넣은곡", "encore": False}]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["id"] is not None
+    assert response.json()["is_user_edited"] is True
+    assert [s["name"] for s in response.json()["songs"]] == ["직접넣은곡"]

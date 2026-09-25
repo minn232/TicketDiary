@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -140,6 +141,21 @@ async def fetch_wikidata_qid(mbid: str, client: httpx.AsyncClient | None = None)
         return await _fetch(client)
     async with httpx.AsyncClient(timeout=10.0) as c:
         return await _fetch(c)
+
+
+_APPLE_ARTIST_ID_RE = re.compile(r"(?:music|itunes)\.apple\.com/.*?/artist/(?:[^/]+/)?(?:id)?(\d+)")
+
+
+# canonical mbid에 MusicBrainz가 걸어둔 Apple Music 링크에서 iTunes 아티스트 ID를 뽑음 - mbid
+# 앵커라 이름 검색과 달리 동명이인 위험 없음. 링크가 없거나 조회 실패 시 None
+async def fetch_apple_music_artist_id(mbid: str) -> str | None:
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        data = await _get_with_retry(c, f"/artist/{mbid}", {"inc": "url-rels", "fmt": "json"}, f"apple link mbid={mbid}")
+    for rel in data.get("relations", []):
+        match = _APPLE_ARTIST_ID_RE.search((rel.get("url") or {}).get("resource", ""))
+        if match:
+            return match.group(1)
+    return None
 
 
 # 병합돼 없어진 옛 mbid는 MusicBrainz가 병합 후 항목으로 301 리다이렉트해서, 따라간 응답의 id가

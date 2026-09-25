@@ -1,10 +1,10 @@
 import logging
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
@@ -12,6 +12,11 @@ from app.models.concert import Concert
 from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry
 from app.services.lineup import get_lineup_artists_for_date
+from app.services.representative_songs import (
+    representative_songs_for_artist,
+    search_itunes_artists,
+    set_itunes_anchor,
+)
 from app.services.setlist import search_with_artist_fallbacks
 from app.services.setlistfm import search_setlists_by_artist
 
@@ -35,13 +40,24 @@ async def get_pre_setlist(
 ) -> PreSetlist | dict:
     result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
     pre_setlist = result.scalar_one_or_none()
-    if pre_setlist is None:
-        raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
 
     # artist_names 응답에 채우려고 concert를 항상 조회(이전엔 explicit_date가
     # 있으면 조회 자체를 생략했음).
     concert = await _get_concert(db, concert_id)
     artist_names = concert.artist_name or []
+
+    # row가 없어도 404 대신 artist_names만 채운 빈 응답 - 프론트가 어느 아티스트를 곡으로
+    # 확정(앵커)할지 알아야 해서(get_real_setlist와 같은 패턴)
+    if pre_setlist is None:
+        return {
+            "id": None,
+            "concert_id": concert_id,
+            "setlistfm_id": None,
+            "songs": [],
+            "is_user_edited": False,
+            "edited_user_nickname": None,
+            "artist_names": artist_names,
+        }
 
     performance_date = explicit_date
     if performance_date is None:
@@ -78,14 +94,17 @@ async def get_pre_setlist(
     return pre_setlist
 
 
-# 유저가 직접 곡 목록 수정
+# 유저가 직접 곡 목록 수정 - 자동 생성된 게 없던 공연(과거 셋리/대표곡 없음)도 유저가 직접
+# 채울 수 있게 row가 없으면 새로 만듦
 async def update_pre_setlist(
     db: AsyncSession, concert_id: UUID, songs: list[SongEntry], nickname: str | None
 ) -> PreSetlist:
+    await _get_concert(db, concert_id)
     result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
     pre_setlist = result.scalar_one_or_none()
     if pre_setlist is None:
-        raise HTTPException(status_code=404, detail="예상 셋리스트를 찾을 수 없습니다.")
+        pre_setlist = PreSetlist(concert_id=concert_id, songs=[])
+        db.add(pre_setlist)
 
     pre_setlist.songs = [s.model_dump() for s in songs]
     pre_setlist.is_user_edited = True
@@ -130,10 +149,9 @@ async def _top_songs_for_artist(db: AsyncSession, artist_name: str, n: int) -> l
     ]
 
 
-# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트
-# 전체를 순회해 각자 top_n(기본 20곡)씩 뽑아 artist 태그를 붙여 합침. 비용은 Setlist.fm
-# 검색/집계에서 다 발생하고 top_n은 자르는 것뿐이라 넉넉히 저장해도 API 호출은 안 늘어남.
-# 단독 공연은 기존과 동일(artist 태그 없음).
+# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트별
+# top_n(기본 20곡)에 artist 태그를 붙여 합침(단독은 태그 없음). 과거 셋리가 없는 아티스트는
+# 대표곡(source="representative")으로 대신 채움
 async def generate_pre_setlist(
     db: AsyncSession, concert_id: UUID, top_n: int = 20
 ) -> PreSetlist:
@@ -148,6 +166,8 @@ async def generate_pre_setlist(
     all_songs: list[dict] = []
     for artist in artists:
         songs = await _top_songs_for_artist(db, artist, top_n)
+        if not songs:
+            songs = await representative_songs_for_artist(db, artist, top_n)
         if is_festival:
             for song in songs:
                 song["artist"] = artist
@@ -186,3 +206,49 @@ async def generate_pre_setlist_background(concert_id: UUID) -> None:
             logger.info(f"예상 셋리스트 자동 생성 스킵 (concert_id={concert_id}): {e.detail}")
         except Exception as e:
             logger.warning(f"예상 셋리스트 자동 생성 실패 (concert_id={concert_id}): {e}")
+
+
+# 공연의 아티스트 이름으로 앵커 후보 검색(유저가 이 중에서 고름)
+async def search_anchor_artist_candidates(db: AsyncSession, concert_id: UUID, artist: str) -> list[dict]:
+    concert = await _get_concert(db, concert_id)
+    if artist not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+    return await search_itunes_artists(artist)
+
+
+# 유저가 고른 iTunes 아티스트로 확정하고 이 공연 예상 셋리를 바로 다시 만들어 반환 - 유저가 직접
+# 수정한 예상 셋리는 덮어쓰지 않음(확정값만 저장), 같은 아티스트의 다른 예정 공연은 백그라운드로
+async def apply_itunes_anchor(
+    db: AsyncSession, concert_id: UUID, artist: str, itunes_artist_id: str, explicit_date: date | None = None
+) -> PreSetlist | dict:
+    concert = await _get_concert(db, concert_id)
+    if artist not in (concert.artist_name or []):
+        raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
+
+    await set_itunes_anchor(db, artist, itunes_artist_id)
+
+    result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
+    existing = result.scalar_one_or_none()
+    if existing is None or not existing.is_user_edited:
+        await generate_pre_setlist(db, concert_id)
+    return await get_pre_setlist(db, concert_id, explicit_date)
+
+
+# 앵커 확정 후 같은 아티스트가 나오는 다른 예정 공연들의 예상 셋리 재생성(유저 수정본 제외)
+async def regenerate_pre_setlists_for_artist(artist: str, exclude_concert_id: UUID) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Concert.id)
+            .outerjoin(PreSetlist, PreSetlist.concert_id == Concert.id)
+            .where(
+                Concert.artist_name.any(artist),
+                Concert.start_date >= datetime.now(timezone.utc),
+                Concert.id != exclude_concert_id,
+                or_(PreSetlist.id.is_(None), PreSetlist.is_user_edited.is_(False)),
+            )
+        )
+        concert_ids = result.scalars().all()
+
+    for concert_id in concert_ids:
+        await generate_pre_setlist_background(concert_id)
+

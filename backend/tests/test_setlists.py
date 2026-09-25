@@ -163,8 +163,8 @@ async def test_search_setlists_success():
     assert candidate["venue_name"] == "테스트공연장"
     assert candidate["city_name"] == "서울"
     assert candidate["song_count"] == 3  # 본 공연 2곡 + 앙코르 1곡
-    assert candidate["songs"][0] == {"name": "노래1", "encore": False, "artist": None}
-    assert candidate["songs"][2] == {"name": "앙코르곡", "encore": True, "artist": None}
+    assert candidate["songs"][0] == {"name": "노래1", "encore": False, "artist": None, "source": None}
+    assert candidate["songs"][2] == {"name": "앙코르곡", "encore": True, "artist": None, "source": None}
 
 
 # Setlist.fm 결과 없음 404 테스트
@@ -253,8 +253,8 @@ async def test_fetch_real_setlist_success():
     assert data["concert_id"] == concert_id
     assert data["is_user_edited"] is False
     assert len(data["songs"]) == 3
-    assert data["songs"][0] == {"name": "노래1", "encore": False, "artist": None}
-    assert data["songs"][2] == {"name": "앙코르곡", "encore": True, "artist": None}
+    assert data["songs"][0] == {"name": "노래1", "encore": False, "artist": None, "source": None}
+    assert data["songs"][2] == {"name": "앙코르곡", "encore": True, "artist": None, "source": None}
 
 
 # 동일 공연에 다른 setlistfm_id로 재저장 시 upsert 테스트

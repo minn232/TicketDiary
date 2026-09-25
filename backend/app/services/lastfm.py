@@ -223,6 +223,35 @@ async def fetch_top_tags(artist_name: str) -> list[str]:
     return [t["name"] for t in tags_sorted if t.get("name")]
 
 
+# Last.fm artist.getTopTracks 호출 - mbid 또는 이름 중 하나로 조회해 (Last.fm이 인식한
+# 아티스트명, [(곡명, 청취자 수)]) 반환. 실패/결과없음/API 키 없음이면 ("", [])
+async def fetch_top_tracks(
+    *, artist_name: str | None = None, mbid: str | None = None, limit: int = 50
+) -> tuple[str, list[tuple[str, int]]]:
+    if not settings.LASTFM_API_KEY:
+        return "", []
+
+    lookup = {"mbid": mbid} if mbid else {"artist": artist_name, "autocorrect": 1}
+    params = {
+        "method": "artist.gettoptracks",
+        **lookup,
+        "api_key": settings.LASTFM_API_KEY,
+        "limit": limit,
+        "format": "json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(settings.LASTFM_BASE_URL, params=params)
+        payload = response.json() if response.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"Last.fm 인기곡 조회 실패 ({mbid or artist_name}): {e}")
+        return "", []
+
+    top = payload.get("toptracks") or {}
+    tracks = [(t["name"], int(t.get("listeners", 0))) for t in top.get("track", []) if t.get("name")]
+    return (top.get("@attr") or {}).get("artist", ""), tracks
+
+
 # 아티스트 한 명의 Last.fm 태그를 가져와 화이트리스트로 정규화한 장르를 캐싱.
 # 태그 자체를 못 받아오면(API 키 없음/호출 실패/Last.fm에 없는 이름) 실패로 기록해 쿨다운
 # 재시도가 걸리게 하고 조용히 리턴 - 안 그러면 매 배치/이벤트마다 똑같이 재시도됨.
