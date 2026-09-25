@@ -326,8 +326,9 @@ async def test_auto_anchor_failure_does_not_break_generation():
 
 
 @pytest.mark.asyncio
-async def test_auto_anchor_skipped_for_band_member():
-    # 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 동명이인이 잡힘(실사례: NELL 이재경) - 유저가 고르게 둠
+async def test_band_member_skips_auto_anchor_and_lastfm():
+    # 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes/Last.fm 모두 동명이인이 잡힘(실사례: NELL
+    # 이재경/김종완) - 유저가 고르게 둠
     async with AsyncSessionLocal() as db:
         member = CanonicalArtist(mbid="mbid-member-a", canonical_name="밴드멤버가수A")
         band = CanonicalArtist(mbid="mbid-band-a", canonical_name="어떤밴드A")
@@ -337,36 +338,56 @@ async def test_auto_anchor_skipped_for_band_member():
         await db.commit()
 
     candidates = AsyncMock(return_value=[_candidate("921", True)])
+    lastfm = AsyncMock(return_value=("", _tracks(6, top_listeners=5000)))
     with patch(f"{_SERVICE}.search_itunes_artists", new=candidates), patch(
         f"{_SERVICE}.fetch_apple_music_artist_id", new=AsyncMock(return_value=None)
-    ), _lastfm("", []):
+    ), patch(f"{_SERVICE}.fetch_top_tracks", new=lastfm):
         async with AsyncSessionLocal() as db:
             assert await representative_songs_for_artist(db, "밴드멤버가수A", 20) == []
 
     candidates.assert_not_awaited()
+    lastfm.assert_not_awaited()
     assert (await _get_canonical("밴드멤버가수A")).itunes_artist_id is None
 
 
 @pytest.mark.asyncio
-async def test_none_anchor_skips_itunes_but_keeps_lastfm():
-    # "해당 iTunes 아티스트 없음"으로 확정된 아티스트는 MusicBrainz 링크/자동 확정을 다시 시도 안 함
+async def test_band_member_uses_user_confirmed_itunes():
+    # 밴드 멤버라도 유저가 직접 고른 iTunes 아티스트는 씀
+    async with AsyncSessionLocal() as db:
+        member = CanonicalArtist(mbid="mbid-member-b", canonical_name="밴드멤버가수B", itunes_artist_id="941")
+        band = CanonicalArtist(mbid="mbid-band-b", canonical_name="어떤밴드B")
+        db.add_all([member, band])
+        await db.flush()
+        db.add(ArtistGroupMembership(member_canonical_id=member.id, group_canonical_id=band.id))
+        await db.commit()
+
+    with patch(f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["솔로곡"])):
+        async with AsyncSessionLocal() as db:
+            songs = await representative_songs_for_artist(db, "밴드멤버가수B", 20)
+
+    assert [s["name"] for s in songs] == ["솔로곡"]
+
+
+@pytest.mark.asyncio
+async def test_none_anchor_disables_representative_songs():
+    # "대표곡 해당 없음"으로 확정된 아티스트는 iTunes/Last.fm 모두 안 씀(Last.fm도 동명이인이 잡혀서
+    # 확정한 경우가 있음 - 실사례: 김정훈)
     async with AsyncSessionLocal() as db:
         db.add(CanonicalArtist(mbid="mbid-none-a", canonical_name="없음확정가수A", anchor_confirmed_by="none"))
         await db.commit()
 
     apple = AsyncMock(return_value="931")
     candidates = AsyncMock(return_value=[_candidate("932", True)])
+    lastfm = AsyncMock(return_value=("", _tracks(6, top_listeners=5000)))
     with patch(f"{_SERVICE}.fetch_apple_music_artist_id", new=apple), patch(
         f"{_SERVICE}.search_itunes_artists", new=candidates
-    ), _lastfm("", _tracks(6, top_listeners=80)):
+    ), patch(f"{_SERVICE}.fetch_top_tracks", new=lastfm):
         async with AsyncSessionLocal() as db:
-            songs = await representative_songs_for_artist(db, "없음확정가수A", 20)
+            assert await representative_songs_for_artist(db, "없음확정가수A", 20) == []
 
     apple.assert_not_awaited()
     candidates.assert_not_awaited()
-    assert [s["name"] for s in songs] == [f"곡{i}" for i in range(6)]
-    canonical = await _get_canonical("없음확정가수A")
-    assert canonical.itunes_artist_id is None and canonical.anchor_confirmed_by == "none"
+    lastfm.assert_not_awaited()
 
 
 # 예상 셋리 생성에 연결 - 과거 셋리가 없으면 대표곡으로 채움

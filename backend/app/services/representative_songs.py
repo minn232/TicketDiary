@@ -17,7 +17,7 @@ from app.services.setlistfm import _artist_matches
 logger = logging.getLogger(__name__)
 
 REPRESENTATIVE_SOURCE = "representative"
-# anchor_confirmed_by 값 - "해당하는 iTunes 아티스트 없음"으로 확정(자동 확정도 다시 시도 안 함)
+# anchor_confirmed_by 값 - "대표곡 해당 없음"으로 확정(iTunes/Last.fm 모두 안 쓰고 자동 확정도 다시 안 함)
 NO_ITUNES_ANCHOR = "none"
 
 # 검색/곡 순서는 us 스토어(kr은 검색이 0건, us 순서는 인기순에 가까움), 표시 제목은 kr 스토어
@@ -237,11 +237,8 @@ async def _is_band_member(db: AsyncSession, canonical: CanonicalArtist | None) -
 
 
 # iTunes에 이름이 정확히 같은 아티스트가 1명뿐이면 그 사람으로 자동 확정(동명이인이 여럿이면
-# 유저가 고르게 둠). 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 동명이인이 잡히므로(실사례: NELL
-# 이재경) 자동 확정 안 함 - 틀리면 유저가 화면의 "다른 아티스트예요?"로 다시 고름
-async def _auto_anchor(db: AsyncSession, artist: str, canonical: CanonicalArtist | None) -> str | None:
-    if await _is_band_member(db, canonical):
-        return None
+# 유저가 고르게 둠) - 틀리면 유저가 화면의 "다른 아티스트예요?"로 다시 고름
+async def _auto_anchor(db: AsyncSession, artist: str) -> str | None:
     try:
         candidates = await search_itunes_artists(artist)
     except (HTTPException, httpx.HTTPError, ValueError) as e:
@@ -258,12 +255,17 @@ async def _auto_anchor(db: AsyncSession, artist: str, canonical: CanonicalArtist
 # 있으면 그 곡 목록(Last.fm 청취자 순), 없으면 Last.fm 인기곡(품질 기준 통과 시만)
 async def representative_songs_for_artist(db: AsyncSession, artist: str, n: int) -> list[dict]:
     canonical = await find_canonical_by_alias(db, artist)
-    mbid = canonical.mbid if canonical is not None else None
     if canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR:
-        itunes_artist_id = None
-    else:
-        itunes_artist_id = await _resolve_itunes_artist_id(db, canonical) or await _auto_anchor(db, artist, canonical)
-    lastfm_tracks = await _lastfm_top_tracks(artist, mbid)
+        return []
+    mbid = canonical.mbid if canonical is not None else None
+
+    # 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes 자동 확정/Last.fm 모두 동명이인이 잡힘
+    # (실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로 확정된 iTunes만 씀
+    is_member = await _is_band_member(db, canonical)
+    itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
+    if itunes_artist_id is None and not is_member:
+        itunes_artist_id = await _auto_anchor(db, artist)
+    lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
 
     titles: list[str] = []
     if itunes_artist_id:
