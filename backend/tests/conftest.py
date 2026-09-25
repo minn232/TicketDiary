@@ -101,6 +101,16 @@ def _stub_admin_musicbrainz_link():
         yield
 
 
+# Setlist.fm 후보 mbid가 우리 canonical과 다르면 MusicBrainz로 병합 여부를 조회함 - 기본은 "병합
+# 아님"(받은 mbid 그대로)으로 막고 캐시도 비움. 병합 케이스는 test_setlistfm.py에서 다시 patch
+@pytest.fixture(autouse=True)
+def _stub_setlistfm_merged_mbid_lookup():
+    from app.services.setlistfm import _current_mbid_cache
+    _current_mbid_cache.clear()
+    with patch("app.services.setlistfm.fetch_current_mbid", new=AsyncMock(side_effect=lambda m: m)):
+        yield
+
+
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처
 @pytest_asyncio.fixture
 async def get_auth_token():

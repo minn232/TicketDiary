@@ -6,6 +6,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.services.lineup import upsert_concert_lineup
 from conftest import _get_token, kopis_mock
 
@@ -233,7 +234,7 @@ async def test_generate_pre_setlist_api_502():
 def _setlistfm_artist_mock_multi(by_artist: dict[str, dict]):
     async def _get(url, headers=None, params=None):
         mock_response = MagicMock()
-        artist = (params or {}).get("artistName")
+        artist = (params or {}).get("artistName") or (params or {}).get("artistMbid")
         data = by_artist.get(artist)
         if data is None:
             mock_response.status_code = 404
@@ -525,3 +526,63 @@ async def test_generate_pre_setlist_not_forbidden_when_setting_off():
             )
 
     assert res.status_code == 201
+
+
+# canonical mbid가 있으면 이름이 같아도 mbid가 다른 아티스트(본명이 같은 다른 사람) 셋리는 안 씀
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_filters_same_name_other_mbid():
+    artist = "동명이인가수P"
+    concert_id = await _create_concert("PF_PRE_MBID_001", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(mbid="mbid-pre-ours", canonical_name=artist))
+        await db.commit()
+
+    other = _make_artist_setlists([["남의곡A", "남의곡B"]], artist=artist)
+    for s in other["setlist"]:
+        s["artist"]["mbid"] = "mbid-pre-other"
+    with _setlistfm_artist_mock(other):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
+    assert response.status_code == 404
+
+    ours = _make_artist_setlists([["본인곡A", "본인곡B"]], artist=artist)
+    for s in ours["setlist"]:
+        s["artist"]["mbid"] = "mbid-pre-ours"
+    with _setlistfm_artist_mock(ours):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
+    assert response.status_code == 201
+    assert [song["name"] for song in response.json()["songs"]] == ["본인곡A", "본인곡B"]
+
+
+# 한글 표기로는 Setlist.fm 0건인 해외 아티스트(실사례: 오피셜히게단디즘)도 canonical mbid로 찾아지는지
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_finds_by_mbid_when_name_search_empty():
+    artist = "한글표기해외가수P"
+    concert_id = await _create_concert("PF_PRE_BYMBID_001", artist=artist)
+    token = await _get_token()
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-pre-bymbid", canonical_name="Overseas Artist P")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=artist, source="wikidata"))
+        await db.commit()
+
+    data = _make_artist_setlists([["곡A", "곡B"]], artist="Overseas Artist P")
+    for s in data["setlist"]:
+        s["artist"]["mbid"] = "mbid-pre-bymbid"
+    # 이름(한글 표기)으로는 404, mbid로만 결과가 나옴
+    with _setlistfm_artist_mock_multi({"mbid-pre-bymbid": data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 201
+    assert [song["name"] for song in response.json()["songs"]] == ["곡A", "곡B"]
+

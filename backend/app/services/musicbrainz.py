@@ -69,6 +69,8 @@ async def _get_with_retry(client: httpx.AsyncClient, path: str, params: dict, lo
             if response.status_code == 200:
                 return response.json()
             last_error = Exception(f"HTTP {response.status_code}")
+            if response.status_code == 404:
+                break  # 없는 항목이라 재시도해도 같음(백오프 대기만 늘어남)
         except httpx.HTTPError as e:
             last_error = e
 
@@ -138,6 +140,14 @@ async def fetch_wikidata_qid(mbid: str, client: httpx.AsyncClient | None = None)
         return await _fetch(client)
     async with httpx.AsyncClient(timeout=10.0) as c:
         return await _fetch(c)
+
+
+# 병합돼 없어진 옛 mbid는 MusicBrainz가 병합 후 항목으로 301 리다이렉트해서, 따라간 응답의 id가
+# 현재 mbid임(실사례: Setlist.fm은 혁오를 옛 mbid로 들고 있음). 조회 실패 시 None
+async def fetch_current_mbid(mbid: str) -> str | None:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+        data = await _get_with_retry(c, f"/artist/{mbid}", {"fmt": "json"}, f"current mbid mbid={mbid}")
+    return data.get("id")
 
 
 # canonical의 mbid로 MusicBrainz가 걸어둔 Spotify 아티스트 링크를 찾는다(fetch_wikidata_qid와

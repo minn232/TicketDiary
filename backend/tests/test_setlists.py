@@ -12,7 +12,11 @@ from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.services.lineup import upsert_concert_lineup
-from app.services.setlist import retry_real_setlist_generation, check_real_setlist_on_view
+from app.services.setlist import (
+    check_real_setlist_on_view,
+    retry_real_setlist_generation,
+    search_with_artist_fallbacks,
+)
 from conftest import _get_token, kopis_mock
 
 
@@ -324,7 +328,7 @@ async def test_fetch_real_setlist_api_502():
 def _setlistfm_search_mock_multi(by_artist: dict[str, dict]):
     async def _get(url, headers=None, params=None):
         mock_response = MagicMock()
-        artist = (params or {}).get("artistName")
+        artist = (params or {}).get("artistName") or (params or {}).get("artistMbid")
         data = by_artist.get(artist)
         if data is None:
             mock_response.status_code = 404
@@ -1017,6 +1021,7 @@ async def test_generate_real_setlist_falls_back_to_known_alias():
 
     # 원어 표기는 mock에 아예 등록 안 해서 404(0건), 별칭으로만 결과가 나오게 함
     search_data = _make_setlistfm_search("SF_ALIAS_001", artist=alias_name)
+    search_data["setlist"][0]["artist"]["mbid"] = "mbid-alias-test"
     with _setlistfm_search_mock_multi({alias_name: search_data}):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
@@ -1024,6 +1029,107 @@ async def test_generate_real_setlist_falls_back_to_known_alias():
     performance_date = date.fromisoformat(get_res.json()["performance_date"])
     row = await _get_real_setlist_row(concert_id, performance_date)
     assert row is not None
+    assert len(row.songs) == 3
+
+
+# canonical mbid가 있으면 이름이 같아도 mbid가 다른 아티스트(본명이 같은 다른 사람) 셋리는 안 씀
+@pytest.mark.asyncio
+async def test_generate_real_setlist_filters_same_name_other_mbid():
+    artist = "동명이인가수R"
+    concert_id = await _create_concert("PF_SL_MBID_001", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(mbid="mbid-real-ours", canonical_name=artist))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    search_data = _make_setlistfm_search("SF_MBID_OTHER", artist=artist)
+    search_data["setlist"][0]["artist"]["mbid"] = "mbid-real-other"
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert row.songs == []
+
+
+# 검색 순서: canonical mbid → 원래 표기 → 별칭, 결과가 나오면 거기서 멈춤
+@pytest.mark.asyncio
+async def test_search_with_artist_fallbacks_order():
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-order-test", canonical_name="순서테스트가수")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text="ORDER TEST", source="musicbrainz"))
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text="ORDER TEST 2", source="musicbrainz"))
+        await db.commit()
+
+    calls = []
+
+    async def _search(query, artist_mbid, by_mbid):
+        calls.append((query, artist_mbid, by_mbid))
+        return [{"hit": query}] if query == "ORDER TEST" else []
+
+    async with AsyncSessionLocal() as db:
+        results = await search_with_artist_fallbacks(db, "순서테스트가수", _search)
+
+    assert results == [{"hit": "ORDER TEST"}]
+    assert calls == [
+        ("순서테스트가수", "mbid-order-test", True),
+        ("순서테스트가수", "mbid-order-test", False),
+        ("ORDER TEST", "mbid-order-test", False),
+    ]
+
+
+# canonical이 없으면 mbid 검색 없이 원래 표기로만 한 번 검색
+@pytest.mark.asyncio
+async def test_search_with_artist_fallbacks_without_canonical():
+    calls = []
+
+    async def _search(query, artist_mbid, by_mbid):
+        calls.append((query, artist_mbid, by_mbid))
+        return []
+
+    async with AsyncSessionLocal() as db:
+        results = await search_with_artist_fallbacks(db, "정규화안된가수", _search)
+
+    assert results == []
+    assert calls == [("정규화안된가수", None, False)]
+
+
+# 한글 표기로는 Setlist.fm 0건인 해외 아티스트도 canonical mbid로 실제 셋리가 채워지는지
+@pytest.mark.asyncio
+async def test_generate_real_setlist_finds_by_mbid_when_name_search_empty():
+    artist = "한글표기해외가수R"
+    concert_id = await _create_concert("PF_SL_BYMBID_001", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(mbid="mbid-real-bymbid", canonical_name=artist))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+    ticket_id = ticket_res.json()["id"]
+
+    search_data = _make_setlistfm_search("SF_BYMBID_001", artist="Overseas Artist R")
+    search_data["setlist"][0]["artist"]["mbid"] = "mbid-real-bymbid"
+    with _setlistfm_search_mock_multi({"mbid-real-bymbid": search_data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            get_res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers=headers)
+
+    performance_date = date.fromisoformat(get_res.json()["performance_date"])
+    row = await _get_real_setlist_row(concert_id, performance_date)
+    assert row is not None
+    assert row.setlistfm_id == "SF_BYMBID_001"
     assert len(row.songs) == 3
 
 

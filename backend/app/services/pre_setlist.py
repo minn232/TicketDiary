@@ -12,6 +12,7 @@ from app.models.concert import Concert
 from app.models.setlist import PreSetlist
 from app.schemas.setlist import SongEntry
 from app.services.lineup import get_lineup_artists_for_date
+from app.services.setlist import search_with_artist_fallbacks
 from app.services.setlistfm import search_setlists_by_artist
 
 logger = logging.getLogger(__name__)
@@ -98,8 +99,11 @@ async def update_pre_setlist(
 # 한 아티스트의 과거 공연 데이터를 집계해 상위 n곡을 뽑음(앙코르 여부는 과반수 기준).
 # Setlist.fm에 데이터가 없으면(404) 빈 리스트 - 호출부가 "이 아티스트만 스킵"할 수 있게
 # 예외를 던지지 않음(페스티벌에서 아티스트 하나 데이터 없다고 전체를 실패시키면 안 됨).
-async def _top_songs_for_artist(artist_name: str, n: int) -> list[dict]:
-    raw_setlists = await search_setlists_by_artist(artist_name, pages=3)
+async def _top_songs_for_artist(db: AsyncSession, artist_name: str, n: int) -> list[dict]:
+    async def _search(query: str, artist_mbid: str | None, by_mbid: bool) -> list[dict]:
+        return await search_setlists_by_artist(query, pages=3, artist_mbid=artist_mbid, by_mbid=by_mbid)
+
+    raw_setlists = await search_with_artist_fallbacks(db, artist_name, _search)
     if not raw_setlists:
         return []
 
@@ -143,7 +147,7 @@ async def generate_pre_setlist(
 
     all_songs: list[dict] = []
     for artist in artists:
-        songs = await _top_songs_for_artist(artist, top_n)
+        songs = await _top_songs_for_artist(db, artist, top_n)
         if is_festival:
             for song in songs:
                 song["artist"] = artist

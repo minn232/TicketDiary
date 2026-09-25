@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -82,37 +83,49 @@ async def get_real_setlist(
     return real_setlist
 
 
-# Setlist.fm 검색을 원래 표기로 먼저 시도하고, 결과가 없으면 우리 DB에 이미 저장된
-# MusicBrainz 별칭들로 순서대로 재시도. 실사례: 콘서트에는 "ずっと真夜中でいいのに。"로
-# 저장돼 있는데 Setlist.fm은 로마자 표기 "ZUTOMAYO"로만 검색되는 아티스트가 있어서,
-# 원어 그대로는 0건이지만 실제로는 셋리스트가 존재하는 채로 방치되는 문제가 있었음.
+# Setlist.fm 검색 한 번 - (검색어, 우리 canonical mbid, mbid로 검색할지)를 받아 결과 목록 반환
+SetlistSearch = Callable[[str, str | None, bool], Awaitable[list[dict]]]
+
+
+# mbid → 원래 표기 → DB 별칭 순으로 검색해 처음 나온 결과 반환(실제/예상 셋리 공용). mbid는 한글
+# 표기로 0건인 해외 아티스트용, 표기 검색은 MusicBrainz 병합 전 옛 mbid가 남은 아티스트(혁오)용,
+# 별칭은 로마자로만 찾아지는 경우(ZUTOMAYO)용. 모든 검색에 mbid를 넘겨 동명이인은 걸러냄
+async def search_with_artist_fallbacks(db: AsyncSession, artist: str, search: SetlistSearch) -> list[dict]:
+    canonical = await find_canonical_by_alias(db, artist)
+    artist_mbid = canonical.mbid if canonical is not None else None
+
+    queries: list[tuple[str, bool]] = []
+    if artist_mbid:
+        queries.append((artist, True))
+    queries.append((artist, False))
+    if canonical is not None:
+        alias_result = await db.execute(
+            select(ArtistAlias.alias_text).where(ArtistAlias.canonical_artist_id == canonical.id)
+        )
+        tried = {artist.strip().lower()}
+        for (alias_text,) in alias_result.all():
+            normalized = (alias_text or "").strip().lower()
+            if normalized and normalized not in tried:
+                tried.add(normalized)
+                queries.append((alias_text, False))
+
+    for i, (query, by_mbid) in enumerate(queries):
+        if i > 0:
+            # 너무 촘촘하면 Setlist.fm 레이트리밋(429)에 걸림(실측 확인)
+            await asyncio.sleep(0.5)
+        results = await search(query, artist_mbid, by_mbid)
+        if results:
+            return results
+    return []
+
+
 async def _search_setlists_with_alias_fallback(
     db: AsyncSession, artist: str, performance_date: date
 ) -> list[dict]:
-    candidates = await search_setlists(artist, performance_date)
-    if candidates:
-        return candidates
+    async def _search(query: str, artist_mbid: str | None, by_mbid: bool) -> list[dict]:
+        return await search_setlists(query, performance_date, artist_mbid, by_mbid=by_mbid)
 
-    canonical = await find_canonical_by_alias(db, artist)
-    if canonical is None:
-        return []
-
-    alias_result = await db.execute(
-        select(ArtistAlias.alias_text).where(ArtistAlias.canonical_artist_id == canonical.id)
-    )
-    tried = {artist.strip().lower()}
-    for (alias_text,) in alias_result.all():
-        normalized = alias_text.strip().lower()
-        if not alias_text or normalized in tried:
-            continue
-        tried.add(normalized)
-        # 아티스트 루프 간 간격(0.5초)과 동일하게 맞춤 - 너무 촘촘하면 Setlist.fm
-        # 레이트리밋(429)에 걸릴 수 있음(실측 확인)
-        await asyncio.sleep(0.5)
-        candidates = await search_setlists(alias_text, performance_date)
-        if candidates:
-            return candidates
-    return []
+    return await search_with_artist_fallbacks(db, artist, _search)
 
 
 # concert의 아티스트, 공연일 기반 Setlist.fm 검색 -> 후보 목록 반환
