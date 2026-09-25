@@ -1132,6 +1132,12 @@ async def _process_one(
         name_status, name_winner = decide_match(candidates, name)
         if i == 0:
             status = name_status
+        # 괄호 밖/안 이름은 짧거나 읽는 소리("GR2N! (그린)")라 엉뚱한 1순위가 잡힘(그린→Green Cacao
+        # 실측) - 결과 이름이 검색한 이름과 정확히 같을 때만 인정
+        if i > 0 and name_winner is not None and (
+            not _compact(name) or _compact(name_winner.name) != _compact(name)
+        ):
+            continue
         if name_status == "matched":
             status, winner = name_status, name_winner
             break

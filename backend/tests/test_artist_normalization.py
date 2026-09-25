@@ -1605,3 +1605,23 @@ async def test_parenthetical_disambiguation_not_searched():
     assert stats["unconfirmed"] == 1
     assert [c.args[0] for c in search.await_args_list] == [raw, raw.split(" (")[0]]
 
+
+@pytest.mark.asyncio
+async def test_parenthetical_alternate_match_requires_exact_name():
+    # 괄호 안 "그린"(GR2N!의 읽는 소리)으로 검색하면 Green Cacao가 1순위로 잡힘 - 이름이 다르면 거절
+    await _clear_pending_queue()
+    suffix = uuid.uuid4().hex[:6]
+    raw = f"GR2N{suffix}! (그린)"
+
+    async def fake_search(name, client=None):
+        return [_general_candidate(f"Green Cacao {suffix}", score=100)] if name == "그린" else []
+
+    with _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=AsyncMock(side_effect=fake_search)
+    ):
+        concert_id = await _concert_with_artists([raw])
+        stats = await normalize_specific_artists(concert_id, [raw])
+
+    assert stats["matched"] == 0
+    assert await _artist_names(concert_id) == [raw]
+
