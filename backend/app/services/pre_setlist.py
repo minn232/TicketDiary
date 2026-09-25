@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
-from app.models.setlist import PreSetlist
+from app.models.setlist import PreSetlist, RealSetlist
 from app.schemas.setlist import SongEntry
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.representative_songs import (
@@ -118,11 +118,13 @@ async def update_pre_setlist(
 # 한 아티스트의 과거 공연 데이터를 집계해 상위 n곡을 뽑음(앙코르 여부는 과반수 기준).
 # Setlist.fm에 데이터가 없으면(404) 빈 리스트 - 호출부가 "이 아티스트만 스킵"할 수 있게
 # 예외를 던지지 않음(페스티벌에서 아티스트 하나 데이터 없다고 전체를 실패시키면 안 됨).
-async def _top_songs_for_artist(db: AsyncSession, artist_name: str, n: int) -> list[dict]:
+async def _top_songs_for_artist(
+    db: AsyncSession, artist_name: str, n: int, concert_id: UUID | None = None
+) -> list[dict]:
     async def _search(query: str, artist_mbid: str | None, by_mbid: bool) -> list[dict]:
         return await search_setlists_by_artist(query, pages=3, artist_mbid=artist_mbid, by_mbid=by_mbid)
 
-    raw_setlists = await search_with_artist_fallbacks(db, artist_name, _search)
+    raw_setlists = await search_with_artist_fallbacks(db, artist_name, _search, concert_id)
     if not raw_setlists:
         return []
 
@@ -165,9 +167,9 @@ async def generate_pre_setlist(
 
     all_songs: list[dict] = []
     for artist in artists:
-        songs = await _top_songs_for_artist(db, artist, top_n)
+        songs = await _top_songs_for_artist(db, artist, top_n, concert_id)
         if not songs:
-            songs = await representative_songs_for_artist(db, artist, top_n)
+            songs = await representative_songs_for_artist(db, artist, top_n, concert_id)
         if is_festival:
             for song in songs:
                 song["artist"] = artist
@@ -230,7 +232,7 @@ async def apply_itunes_anchor(
     if artist not in (concert.artist_name or []):
         raise HTTPException(status_code=400, detail="해당 아티스트가 이 공연에 없습니다.")
 
-    await set_itunes_anchor(db, artist, itunes_artist_id)
+    await set_itunes_anchor(db, artist, itunes_artist_id, concert_id)
 
     result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
     existing = result.scalar_one_or_none()
@@ -256,4 +258,25 @@ async def regenerate_pre_setlists_for_artist(artist: str, exclude_concert_id: UU
 
     for concert_id in concert_ids:
         await generate_pre_setlist_background(concert_id)
+
+
+# 아티스트 연결을 바꾼 뒤 - 이 공연의 예상 셋리를 새 연결로 다시 만들고(유저 수정본 제외), 자동으로
+# 채운 실제 셋리는 비워서 다음 조회 때 새 연결로 다시 채워지게 함(check_real_setlist_on_view)
+async def refresh_setlists_after_identity_change(concert_id: UUID) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
+        pre_setlist = result.scalar_one_or_none()
+        if pre_setlist is None or not pre_setlist.is_user_edited:
+            try:
+                await generate_pre_setlist(db, concert_id)
+            except HTTPException as e:
+                logger.info(f"연결 변경 후 예상 셋리 재생성 스킵 (concert_id={concert_id}): {e.detail}")
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(RealSetlist).where(RealSetlist.concert_id == concert_id, RealSetlist.is_user_edited.is_(False))
+        )
+        for real_setlist in result.scalars().all():
+            await db.delete(real_setlist)
+        await db.commit()
 

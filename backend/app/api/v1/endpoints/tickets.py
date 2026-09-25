@@ -8,12 +8,20 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, rate_limit_diary_generation, verify_llm_api_key
 from app.models.ticket import Ticket
 from app.models.user import User
+from app.schemas.artist_identity import (
+    IdentityCandidatesResponse, IdentityChangeRequest, IdentityChangeResponse,
+)
 from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.setlist import (
     RealSetlistResponse, PreSetlistResponse, SetlistFmCandidate,
     SetlistEditRequest, FetchSetlistRequest, ArtistAnchorCandidate, ArtistAnchorRequest, ArtistCandidate,
 )
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
+from app.services.artist_identity import (
+    canonical_summary,
+    change_concert_artist_identity,
+    identity_candidates,
+)
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
@@ -22,6 +30,7 @@ from app.services.pre_setlist import (
     get_pre_setlist,
     generate_pre_setlist,
     generate_pre_setlist_background,
+    refresh_setlists_after_identity_change,
     regenerate_pre_setlists_for_artist,
     search_anchor_artist_candidates,
     update_pre_setlist,
@@ -273,6 +282,40 @@ async def anchor_ticket_pre_setlist_artist(
     result = await apply_itunes_anchor(db, concert_id, body.artist, body.itunes_artist_id, explicit_date)
     background_tasks.add_task(regenerate_pre_setlists_for_artist, body.artist, concert_id)
     return result
+
+
+# 이 공연의 아티스트가 다른 사람으로 잘못 연결됐을 때 - 우리 DB/MusicBrainz 후보
+@router.get("/{ticket_id}/artist-identity/candidates", response_model=IdentityCandidatesResponse)
+async def get_ticket_artist_identity_candidates(
+    ticket_id: UUID,
+    artist: str = Query(..., min_length=1),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ticket = await get_ticket(db, current_user.id, ticket_id)
+    concert_id, _ = _ticket_concert_and_date(ticket)
+    return await identity_candidates(db, concert_id, artist)
+
+
+# 이 공연에서만 아티스트 연결을 바로 바꾸고(기록은 관리자 페이지에서 되돌릴 수 있음), 예상/실제
+# 셋리는 백그라운드로 새 연결 기준으로 다시 채움
+@router.post("/{ticket_id}/artist-identity", response_model=IdentityChangeResponse)
+async def change_ticket_artist_identity(
+    ticket_id: UUID,
+    body: IdentityChangeRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ticket = await get_ticket(db, current_user.id, ticket_id)
+    concert_id, _ = _ticket_concert_and_date(ticket)
+    target = await change_concert_artist_identity(
+        db, concert_id, body.artist,
+        canonical_id=body.canonical_id, mbid=body.mbid, no_artist=body.no_artist,
+        user_id=current_user.id, source="user",
+    )
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
+    return {"artist": body.artist, "current": canonical_summary(target), "no_artist": target is None}
 
 
 # 한줄평 기반 공연 일기 생성 요청 (diary_requested_at만 찍어두고 즉시 반환 - 실제 LLM팀 전송은

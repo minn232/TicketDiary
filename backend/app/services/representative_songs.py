@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
-from app.services.artist_normalization import find_canonical_by_alias
+from app.services.artist_identity import get_concert_link, resolve_concert_artist
 from app.services.lastfm import fetch_top_tracks
 from app.services.music_resolve import _looks_like_alt_version
 from app.services.musicbrainz import fetch_apple_music_artist_id
@@ -238,7 +239,7 @@ async def _is_band_member(db: AsyncSession, canonical: CanonicalArtist | None) -
 
 # iTunes에 이름이 정확히 같은 아티스트가 1명뿐이면 그 사람으로 자동 확정(동명이인이 여럿이면
 # 유저가 고르게 둠) - 틀리면 유저가 화면의 "다른 아티스트예요?"로 다시 고름
-async def _auto_anchor(db: AsyncSession, artist: str) -> str | None:
+async def _auto_anchor(db: AsyncSession, artist: str, concert_id: UUID | None = None) -> str | None:
     try:
         candidates = await search_itunes_artists(artist)
     except (HTTPException, httpx.HTTPError, ValueError) as e:
@@ -247,15 +248,18 @@ async def _auto_anchor(db: AsyncSession, artist: str) -> str | None:
     exact = [c for c in candidates if c["exact_match"]]
     if len(exact) != 1:
         return None
-    await _save_anchor(db, artist, exact[0]["itunes_artist_id"], confirmed_by="auto")
+    await _save_anchor(db, artist, exact[0]["itunes_artist_id"], confirmed_by="auto", concert_id=concert_id)
     return exact[0]["itunes_artist_id"]
 
 
 # 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)가
-# 있으면 그 곡 목록(Last.fm 청취자 순), 없으면 Last.fm 인기곡(품질 기준 통과 시만)
-async def representative_songs_for_artist(db: AsyncSession, artist: str, n: int) -> list[dict]:
-    canonical = await find_canonical_by_alias(db, artist)
-    if canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR:
+# 있으면 그 곡 목록(Last.fm 청취자 순), 없으면 Last.fm 인기곡(품질 기준 통과 시만) -
+# concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선
+async def representative_songs_for_artist(
+    db: AsyncSession, artist: str, n: int, concert_id: UUID | None = None
+) -> list[dict]:
+    canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
+    if no_artist or (canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR):
         return []
     mbid = canonical.mbid if canonical is not None else None
 
@@ -264,7 +268,7 @@ async def representative_songs_for_artist(db: AsyncSession, artist: str, n: int)
     is_member = await _is_band_member(db, canonical)
     itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
     if itunes_artist_id is None and not is_member:
-        itunes_artist_id = await _auto_anchor(db, artist)
+        itunes_artist_id = await _auto_anchor(db, artist, concert_id)
     lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
 
     titles: list[str] = []
@@ -278,14 +282,23 @@ async def representative_songs_for_artist(db: AsyncSession, artist: str, n: int)
 
 
 # canonical에 iTunes 아티스트 확정값 저장(itunes_artist_id=None이면 "없음"으로 확정) - canonical이
-# 없던 아티스트(MusicBrainz 미등록 등)면 새로 만듦
+# 없던 아티스트(MusicBrainz 미등록 등)면 새로 만듦 - 공연에서 "연결 없음"으로 확정된 표기였으면
+# 새로 만든 canonical을 그 공연의 연결로 둠
 async def _save_anchor(
-    db: AsyncSession, artist: str, itunes_artist_id: str | None, confirmed_by: str
+    db: AsyncSession,
+    artist: str,
+    itunes_artist_id: str | None,
+    confirmed_by: str,
+    concert_id: UUID | None = None,
 ) -> CanonicalArtist:
-    canonical = await find_canonical_by_alias(db, artist)
+    canonical, _ = await resolve_concert_artist(db, concert_id, artist)
     if canonical is None:
         canonical = CanonicalArtist(mbid=None, canonical_name=artist.strip())
         db.add(canonical)
+        await db.flush()
+        link = await get_concert_link(db, concert_id, artist)
+        if link is not None:
+            link.canonical_id = canonical.id
     canonical.itunes_artist_id = itunes_artist_id
     canonical.anchor_confirmed_by = confirmed_by
     await db.commit()
@@ -294,7 +307,9 @@ async def _save_anchor(
 
 
 # 유저가 고른 iTunes 아티스트로 확정 - 잘못 고른 경우는 추후 수정 기능에서 다룰 예정이라 바로 확정함
-async def set_itunes_anchor(db: AsyncSession, artist: str, itunes_artist_id: str) -> CanonicalArtist:
+async def set_itunes_anchor(
+    db: AsyncSession, artist: str, itunes_artist_id: str, concert_id: UUID | None = None
+) -> CanonicalArtist:
     if await fetch_itunes_artist_name(itunes_artist_id) is None:
         raise HTTPException(status_code=400, detail="iTunes 아티스트를 찾을 수 없습니다.")
-    return await _save_anchor(db, artist, itunes_artist_id, confirmed_by="user")
+    return await _save_anchor(db, artist, itunes_artist_id, confirmed_by="user", concert_id=concert_id)

@@ -14,7 +14,7 @@ from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.models.ticket import Ticket
 from app.schemas.setlist import SongEntry
-from app.services.artist_normalization import find_canonical_by_alias
+from app.services.artist_identity import resolve_concert_artist
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.setlistfm import search_setlists, get_setlist_by_id, extract_songs
 
@@ -89,9 +89,14 @@ SetlistSearch = Callable[[str, str | None, bool], Awaitable[list[dict]]]
 
 # mbid → 원래 표기 → DB 별칭 순으로 검색해 처음 나온 결과 반환(실제/예상 셋리 공용). mbid는 한글
 # 표기로 0건인 해외 아티스트용, 표기 검색은 MusicBrainz 병합 전 옛 mbid가 남은 아티스트(혁오)용,
-# 별칭은 로마자로만 찾아지는 경우(ZUTOMAYO)용. 모든 검색에 mbid를 넘겨 동명이인은 걸러냄
-async def search_with_artist_fallbacks(db: AsyncSession, artist: str, search: SetlistSearch) -> list[dict]:
-    canonical = await find_canonical_by_alias(db, artist)
+# 별칭은 로마자로만 찾아지는 경우(ZUTOMAYO)용. 모든 검색에 mbid를 넘겨 동명이인은 걸러냄 -
+# concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선하고, "없음"으로 확정된 표기는 건너뜀
+async def search_with_artist_fallbacks(
+    db: AsyncSession, artist: str, search: SetlistSearch, concert_id: UUID | None = None
+) -> list[dict]:
+    canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
+    if no_artist:
+        return []
     artist_mbid = canonical.mbid if canonical is not None else None
 
     queries: list[tuple[str, bool]] = []
@@ -120,12 +125,12 @@ async def search_with_artist_fallbacks(db: AsyncSession, artist: str, search: Se
 
 
 async def _search_setlists_with_alias_fallback(
-    db: AsyncSession, artist: str, performance_date: date
+    db: AsyncSession, artist: str, performance_date: date, concert_id: UUID | None = None
 ) -> list[dict]:
     async def _search(query: str, artist_mbid: str | None, by_mbid: bool) -> list[dict]:
         return await search_setlists(query, performance_date, artist_mbid, by_mbid=by_mbid)
 
-    return await search_with_artist_fallbacks(db, artist, _search)
+    return await search_with_artist_fallbacks(db, artist, _search, concert_id)
 
 
 # concert의 아티스트, 공연일 기반 Setlist.fm 검색 -> 후보 목록 반환
@@ -138,7 +143,7 @@ async def search_setlists_for_concert(
         raise HTTPException(status_code=400, detail="공연에 아티스트 정보가 없습니다.")
 
     performance_date = resolve_performance_date(concert, explicit_date)
-    return await _search_setlists_with_alias_fallback(db, concert.artist_name[0], performance_date)
+    return await _search_setlists_with_alias_fallback(db, concert.artist_name[0], performance_date, concert.id)
 
 
 # 유저가 직접 곡 목록 수정
@@ -237,7 +242,7 @@ async def generate_real_setlist_auto(
             # search_setlists_by_artist(pre_setlist.py 경로)의 페이지 간 sleep과 동일한 이유 -
             # 아티스트 많은 페스티벌에서 Setlist.fm에 순간적으로 요청이 몰리지 않도록 간격을 둠
             await asyncio.sleep(0.5)
-        candidates = await _search_setlists_with_alias_fallback(db, artist, performance_date)
+        candidates = await _search_setlists_with_alias_fallback(db, artist, performance_date, concert_id)
         if not candidates:
             continue  # 이 아티스트만 스킵, 나머지는 계속 진행
 
