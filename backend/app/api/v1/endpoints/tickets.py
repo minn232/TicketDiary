@@ -298,12 +298,11 @@ async def get_ticket_artist_identity_candidates(
 
 
 # 이 공연에서만 아티스트 연결을 바로 바꾸고(기록은 관리자 페이지에서 되돌릴 수 있음), 예상/실제
-# 셋리는 백그라운드로 새 연결 기준으로 다시 채움
+# 셋리를 새 연결 기준으로 다시 채운 뒤 응답 - 앱이 바로 다시 불러와서 보여주므로 기다림(앵커와 같음)
 @router.post("/{ticket_id}/artist-identity", response_model=IdentityChangeResponse)
 async def change_ticket_artist_identity(
     ticket_id: UUID,
     body: IdentityChangeRequest,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -314,7 +313,7 @@ async def change_ticket_artist_identity(
         canonical_id=body.canonical_id, mbid=body.mbid, no_artist=body.no_artist,
         user_id=current_user.id, source="user",
     )
-    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
+    await refresh_setlists_after_identity_change(concert_id)
     return {"artist": body.artist, "current": canonical_summary(target), "no_artist": target is None}
 
 
