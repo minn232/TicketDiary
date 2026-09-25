@@ -19,6 +19,7 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.models.social import NewsFeed
 from app.services.artist_normalization import (
+    _alternate_lookup_names,
     apply_canonical_replacement,
     decide_match,
     expand_follow_index_with_group_relations,
@@ -1482,3 +1483,125 @@ async def test_normalize_pending_artists_dry_run_does_not_persist_kopis_suppleme
             )
         ).scalars().all()
         assert set(texts) == {m1}  # 보강 큐잉도 dry-run이면 같이 롤백돼야 함 (m2는 안 남음)
+
+
+# 괄호 병기 표기("넬 (NELL)", "내귀에도청장치 (Wiretap in my ear)") - 괄호 밖/병기 이름으로도 찾음
+
+def test_alternate_lookup_names_parenthetical_patterns():
+    assert _alternate_lookup_names("넬 (NELL)") == ["넬", "NELL"]
+    assert _alternate_lookup_names("YB (YB)") == ["YB"]
+    # 동명이인 구분/설명은 이름이 아니라 괄호 밖만
+    assert _alternate_lookup_names("김광진 (1964년)") == ["김광진"]
+    assert _alternate_lookup_names("새소년 (음악 그룹)") == ["새소년"]
+    assert _alternate_lookup_names("김민규 (엘리스파이스, 스윗피) (KIM MIN KYU)") == ["김민규", "KIM MIN KYU"]
+    assert _alternate_lookup_names("EFFLORE (Taiwan)") == ["EFFLORE"]
+    assert _alternate_lookup_names("KOKESHI (japan)") == ["KOKESHI"]
+    assert _alternate_lookup_names("Nosaj Thing (us/kr)") == ["Nosaj Thing"]
+    assert _alternate_lookup_names("안지 Angie (Acoustic)") == ["안지 Angie"]
+    assert _alternate_lookup_names("DK (디케이)") == ["DK", "디케이"]
+    # 이름 속 괄호는 그대로
+    assert _alternate_lookup_names("(X)PIDER") == []
+    assert _alternate_lookup_names("NELL") == []
+
+
+async def _concert_with_artists(names: list[str]) -> uuid.UUID:
+    token = await _get_token()
+    concert_id = uuid.UUID(await _create_concert(f"PF_PAREN_{uuid.uuid4().hex[:6]}", "임시아티스트", token))
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        concert.artist_name = names
+        await queue_for_normalization(db, concert_id, names)
+        await db.commit()
+    return concert_id
+
+
+async def _artist_names(concert_id: uuid.UUID) -> list[str]:
+    async with AsyncSessionLocal() as db:
+        return (await db.get(Concert, concert_id)).artist_name
+
+
+@pytest.mark.asyncio
+async def test_parenthetical_name_matches_existing_alias_without_musicbrainz():
+    await _clear_pending_queue()
+    suffix = uuid.uuid4().hex[:6]
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=f"mbid-wiretap-{suffix}", canonical_name=f"Wiretap {suffix}")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=f"도청장치{suffix}", source="musicbrainz"))
+        await db.commit()
+    raw = f"도청장치{suffix} (Wiretap in my ear)"
+    concert_id = await _concert_with_artists([raw])
+
+    search = AsyncMock(return_value=[])
+    with _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=search
+    ):
+        stats = await normalize_specific_artists(concert_id, [raw])
+
+    assert stats["matched"] == 1
+    search.assert_not_awaited()
+    assert await _artist_names(concert_id) == [f"Wiretap {suffix}"]
+
+
+@pytest.mark.asyncio
+async def test_parenthetical_duplicate_merges_into_existing_name():
+    # 같은 공연에 "넬"과 "넬 (NELL)"이 같이 있으면 하나로 합쳐짐
+    await _clear_pending_queue()
+    suffix = uuid.uuid4().hex[:6]
+    base = f"넬{suffix}"
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=f"mbid-nell-{suffix}", canonical_name=f"NELL{suffix}", display_name=base)
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=base, source="musicbrainz"))
+        await db.commit()
+    raw = f"{base} (NELL)"
+    concert_id = await _concert_with_artists([base, raw])
+
+    with _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=AsyncMock(return_value=[])
+    ):
+        await normalize_specific_artists(concert_id, [raw])
+
+    assert await _artist_names(concert_id) == [base]
+
+
+@pytest.mark.asyncio
+async def test_parenthetical_inner_name_used_for_musicbrainz_search():
+    # 원래 표기/괄호 밖으로 못 찾으면 괄호 안 병기 이름으로 검색
+    await _clear_pending_queue()
+    suffix = uuid.uuid4().hex[:6]
+    inner = f"Inner Band {suffix}"
+    raw = f"안쪽밴드{suffix} ({inner})"
+    concert_id = await _concert_with_artists([raw])
+
+    async def fake_search(name, client=None):
+        return [_general_candidate(inner, score=100)] if name == inner else []
+
+    search = AsyncMock(side_effect=fake_search)
+    with _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=search
+    ):
+        stats = await normalize_specific_artists(concert_id, [raw])
+
+    assert stats["matched"] == 1
+    assert [c.args[0] for c in search.await_args_list] == [raw, f"안쪽밴드{suffix}", inner]
+    assert await _artist_names(concert_id) == [inner]
+
+
+@pytest.mark.asyncio
+async def test_parenthetical_disambiguation_not_searched():
+    await _clear_pending_queue()
+    raw = f"동명가수{uuid.uuid4().hex[:6]} (1964년)"
+    concert_id = await _concert_with_artists([raw])
+
+    search = AsyncMock(return_value=[])
+    with _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
+        "app.services.artist_normalization.search_artist", new=search
+    ):
+        stats = await normalize_specific_artists(concert_id, [raw])
+
+    assert stats["unconfirmed"] == 1
+    assert [c.args[0] for c in search.await_args_list] == [raw, raw.split(" (")[0]]
+

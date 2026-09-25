@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
@@ -1066,10 +1067,45 @@ async def _register_artist_image(db: AsyncSession, canonical: CanonicalArtist, c
         canonical.profile_image_url = image_url
 
 
+# 이름 끝에 붙은 괄호 하나("넬 (NELL)"의 " (NELL)") - "(X)PIDER"처럼 이름 속 괄호는 안 건드림
+_TRAILING_PAREN_RE = re.compile(r"\s*\(([^()]*)\)\s*$")
+# 괄호 안이 이름이 아니라 동명이인 구분/나라/설명인 경우 - 괄호 밖만 씀
+_DISAMBIGUATION_RE = re.compile(
+    r"^\d{4}년$|^(가수|음악가|음악 그룹|밴드|래퍼|그룹|DJ|작곡가|프로듀서)$"
+    r"|^(kr|jp|us|uk|korea|japan|taiwan|australia|china|usa|acoustic|band|live|trio|quartet)$",
+    re.IGNORECASE,
+)
+
+
+# "넬 (NELL)"처럼 끝에 괄호가 붙은 표기에서 추가로 찾아볼 이름들(원래 표기 다음 순서). 괄호 밖은
+# 항상, 괄호 안은 밖과 문자 체계가 다른 병기(한글↔로마자)일 때만 - "(1964년)", "(japan)",
+# "(엘리스파이스, 스윗피)" 같은 구분/나라/설명은 이름이 아님
+def _alternate_lookup_names(artist_text: str) -> list[str]:
+    base, inners = artist_text.strip(), []
+    while match := _TRAILING_PAREN_RE.search(base):
+        inners.insert(0, match.group(1).strip())
+        base = base[: match.start()].strip()
+    if not inners:
+        return []
+    names = [base] if base else []
+    for inner in inners:
+        if not inner or "," in inner or "/" in inner or _DISAMBIGUATION_RE.match(inner):
+            continue
+        if base and _contains_hangul(inner) == _contains_hangul(base):
+            continue
+        names.append(inner)
+    return [n for n in dict.fromkeys(names) if n.casefold() != artist_text.casefold()]
+
+
 async def _process_one(
     db: AsyncSession, client: httpx.AsyncClient, row: ArtistNormalizationStatus
 ) -> str:
-    canonical = await find_canonical_by_alias(db, row.artist_text)
+    lookup_names = [row.artist_text, *_alternate_lookup_names(row.artist_text)]
+    canonical = None
+    for name in lookup_names:
+        canonical = await find_canonical_by_alias(db, name)
+        if canonical is not None:
+            break
     if canonical is not None:
         if canonical.mbid is None:
             # mbid 없는 canonical은 admin이 수동 병합(예: 본명↔예명)으로 만든 것 - MusicBrainz
@@ -1086,11 +1122,19 @@ async def _process_one(
         row.status = "matched"
         return "matched"
 
-    candidates = await search_artist(row.artist_text, client=client)
     row.attempt_count += 1
     row.last_attempted_at = datetime.now(timezone.utc)
-
-    status, winner = decide_match(candidates, row.artist_text)
+    # 괄호 표기는 원래 표기로 못 찾으면 괄호 밖/병기 이름으로 이어서 검색. 끝내 못 찾으면
+    # 원래 표기의 판정(unconfirmed/ambiguous)을 남김
+    status, winner = "unconfirmed", None
+    for i, name in enumerate(lookup_names):
+        candidates = await search_artist(name, client=client)
+        name_status, name_winner = decide_match(candidates, name)
+        if i == 0:
+            status = name_status
+        if name_status == "matched":
+            status, winner = name_status, name_winner
+            break
     row.status = status
 
     if status == "matched" and winner is not None:
