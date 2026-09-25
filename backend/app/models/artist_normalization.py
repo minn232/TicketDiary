@@ -23,7 +23,8 @@ class CanonicalArtist(Base):
     # Wikidata 대표 이미지로 대체. 둘 다 없으면 NULL(화면에서 플레이스홀더 아이콘으로 대체)
     profile_image_url = Column(String, nullable=True)
     # 대표곡(Setlist.fm에 셋리가 없을 때) 카탈로그용 iTunes 아티스트 ID - 이름 검색은 동명이인
-    # 오매칭이 많아서 확정된 값만 씀. anchor_confirmed_by는 확정 출처("user" | "musicbrainz" | "auto")
+    # 오매칭이 많아서 확정된 값만 씀. anchor_confirmed_by는 확정 출처
+    # ("user" | "admin" | "musicbrainz" | "auto" | "none"=해당 iTunes 아티스트 없음)
     itunes_artist_id = Column(String, nullable=True)
     anchor_confirmed_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

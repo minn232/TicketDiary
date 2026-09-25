@@ -4,9 +4,10 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.artist_normalization import CanonicalArtist
+from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
 from app.services.artist_normalization import find_canonical_by_alias
 from app.services.lastfm import fetch_top_tracks
 from app.services.music_resolve import _looks_like_alt_version
@@ -16,6 +17,8 @@ from app.services.setlistfm import _artist_matches
 logger = logging.getLogger(__name__)
 
 REPRESENTATIVE_SOURCE = "representative"
+# anchor_confirmed_by 값 - "해당하는 iTunes 아티스트 없음"으로 확정(자동 확정도 다시 시도 안 함)
+NO_ITUNES_ANCHOR = "none"
 
 # 검색/곡 순서는 us 스토어(kr은 검색이 0건, us 순서는 인기순에 가까움), 표시 제목은 kr 스토어
 # ID 재조회로 가져옴(us는 한국 곡도 "For Lovers Who Hesitate"처럼 영문 제목, kr은 한글 원제)
@@ -224,9 +227,21 @@ async def _resolve_itunes_artist_id(db: AsyncSession, canonical: CanonicalArtist
     return itunes_artist_id
 
 
+async def _is_band_member(db: AsyncSession, canonical: CanonicalArtist | None) -> bool:
+    if canonical is None:
+        return False
+    result = await db.execute(
+        select(ArtistGroupMembership.id).where(ArtistGroupMembership.member_canonical_id == canonical.id).limit(1)
+    )
+    return result.first() is not None
+
+
 # iTunes에 이름이 정확히 같은 아티스트가 1명뿐이면 그 사람으로 자동 확정(동명이인이 여럿이면
-# 유저가 고르게 둠) - 틀리면 유저가 화면의 "다른 아티스트예요?"로 다시 고름
-async def _auto_anchor(db: AsyncSession, artist: str) -> str | None:
+# 유저가 고르게 둠). 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 동명이인이 잡히므로(실사례: NELL
+# 이재경) 자동 확정 안 함 - 틀리면 유저가 화면의 "다른 아티스트예요?"로 다시 고름
+async def _auto_anchor(db: AsyncSession, artist: str, canonical: CanonicalArtist | None) -> str | None:
+    if await _is_band_member(db, canonical):
+        return None
     try:
         candidates = await search_itunes_artists(artist)
     except (HTTPException, httpx.HTTPError, ValueError) as e:
@@ -244,7 +259,10 @@ async def _auto_anchor(db: AsyncSession, artist: str) -> str | None:
 async def representative_songs_for_artist(db: AsyncSession, artist: str, n: int) -> list[dict]:
     canonical = await find_canonical_by_alias(db, artist)
     mbid = canonical.mbid if canonical is not None else None
-    itunes_artist_id = await _resolve_itunes_artist_id(db, canonical) or await _auto_anchor(db, artist)
+    if canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR:
+        itunes_artist_id = None
+    else:
+        itunes_artist_id = await _resolve_itunes_artist_id(db, canonical) or await _auto_anchor(db, artist, canonical)
     lastfm_tracks = await _lastfm_top_tracks(artist, mbid)
 
     titles: list[str] = []
@@ -257,9 +275,11 @@ async def representative_songs_for_artist(db: AsyncSession, artist: str, n: int)
     return [{"name": title, "encore": False, "source": REPRESENTATIVE_SOURCE} for title in titles[:n]]
 
 
-# canonical에 iTunes 아티스트 확정값 저장 - canonical이 없던 아티스트(MusicBrainz 미등록 등)면
-# 새로 만듦
-async def _save_anchor(db: AsyncSession, artist: str, itunes_artist_id: str, confirmed_by: str) -> CanonicalArtist:
+# canonical에 iTunes 아티스트 확정값 저장(itunes_artist_id=None이면 "없음"으로 확정) - canonical이
+# 없던 아티스트(MusicBrainz 미등록 등)면 새로 만듦
+async def _save_anchor(
+    db: AsyncSession, artist: str, itunes_artist_id: str | None, confirmed_by: str
+) -> CanonicalArtist:
     canonical = await find_canonical_by_alias(db, artist)
     if canonical is None:
         canonical = CanonicalArtist(mbid=None, canonical_name=artist.strip())
