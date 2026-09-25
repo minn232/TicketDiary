@@ -110,6 +110,8 @@ POSTER_INFO_SCHEMA = {
         # 세로 시간축)를 거의 못 읽어서(사운드플래닛·그랜드민트 실측 정답 확보 0~1개), "grid"로 답한 배치
         # 구간은 extract_poster_info가 2차로 전체 폭 그대로 촘촘하게 다시 잘라 추출한다. 스캐폴딩이라
         # 최종 결과에는 안 들어간다.
+        # 2026-09-25: 자동 2차 추출은 없앴다(시간표 구간은 호출하는 쪽이 timetable_ranges로 준다). 지금은
+        # 추출 절차를 유도하는 스캐폴딩으로만 남아 있다.
         "timetable_layout": {"type": "string", "enum": ["grid", "list", "none"]},
         "timetable_present": {"type": "boolean"},
         "timetable": {
