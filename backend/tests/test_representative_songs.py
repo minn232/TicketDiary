@@ -9,6 +9,7 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
 from app.models.setlist import PreSetlist
+from app.services.pre_setlist import generate_pre_setlist
 from app.services.representative_songs import (
     _dedupe_titles,
     fetch_itunes_artist_songs,
@@ -515,3 +516,41 @@ async def test_anchor_rejects_artist_not_in_concert():
         )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_clears_stale_songs_when_nothing_left():
+    # 예전에 채운 대표곡이 나중에 "해당 없음"으로 바뀌어 채울 게 없어지면 기존 곡도 비움
+    concert_id = await _create_concert("PF_REP_STALE_001", artist="낡은대표곡가수")
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(canonical_name="낡은대표곡가수", anchor_confirmed_by="none"))
+        db.add(PreSetlist(concert_id=concert_id, songs=[{"name": "남의곡", "source": "representative"}]))
+        await db.commit()
+
+    with _setlistfm_not_found():
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(HTTPException) as exc:
+                await generate_pre_setlist(db, concert_id)
+    assert exc.value.status_code == 404
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))).scalar_one()
+    assert row.songs == []
+
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_keeps_user_edited_when_nothing_left():
+    concert_id = await _create_concert("PF_REP_STALE_002", artist="낡은대표곡가수B")
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(canonical_name="낡은대표곡가수B", anchor_confirmed_by="none"))
+        db.add(PreSetlist(concert_id=concert_id, songs=[{"name": "유저곡"}], is_user_edited=True))
+        await db.commit()
+
+    with _setlistfm_not_found():
+        async with AsyncSessionLocal() as db:
+            with pytest.raises(HTTPException):
+                await generate_pre_setlist(db, concert_id)
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))).scalar_one()
+    assert [s["name"] for s in row.songs] == ["유저곡"]

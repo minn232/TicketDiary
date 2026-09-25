@@ -173,12 +173,17 @@ async def generate_pre_setlist(
                 song["artist"] = artist
         all_songs.extend(songs)
 
+    result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
+    pre_setlist = result.scalar_one_or_none()
+
     if not all_songs:
+        # 예전에 채운 곡(나중에 동명이인으로 판명돼 대표곡을 끈 경우 등)이 남지 않게 비움 - 유저 수정본은 유지
+        if pre_setlist is not None and not pre_setlist.is_user_edited and pre_setlist.songs:
+            pre_setlist.songs = []
+            await db.commit()
         raise HTTPException(status_code=404, detail="해당 아티스트의 셋리스트 데이터를 찾을 수 없습니다.")
 
     # DB upsert
-    result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
-    pre_setlist = result.scalar_one_or_none()
 
     if pre_setlist is None:
         pre_setlist = PreSetlist(concert_id=concert_id, songs=all_songs)
