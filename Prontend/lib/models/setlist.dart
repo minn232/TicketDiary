@@ -57,6 +57,9 @@ class RealSetlistResponse {
   /// (placeholder 표시용).
   final List<String> artistNames;
 
+  // [백엔드 수정] 셋리가 빈 아티스트별 상태(빈 화면 문구용).
+  final List<ArtistSetlistStatus> artistStatuses;
+
   const RealSetlistResponse({
     this.id,
     required this.concertId,
@@ -65,7 +68,17 @@ class RealSetlistResponse {
     required this.isUserEdited,
     this.editedUserNickname,
     this.artistNames = const [],
+    this.artistStatuses = const [],
   });
+
+  ArtistSetlistStatus? statusFor(String? artist) {
+    for (final status in artistStatuses) {
+      if (status.artist == artist) return status;
+    }
+    return artist == null && artistStatuses.length == 1
+        ? artistStatuses.first
+        : null;
+  }
 
   factory RealSetlistResponse.fromJson(Map<String, dynamic> json) {
     return RealSetlistResponse(
@@ -80,6 +93,40 @@ class RealSetlistResponse {
       artistNames: (json['artist_names'] as List<dynamic>? ?? const [])
           .map((e) => e as String)
           .toList(),
+      artistStatuses: (json['artist_statuses'] as List<dynamic>? ?? const [])
+          .map((e) => ArtistSetlistStatus.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+// [백엔드 수정] 실제 셋리가 빈 아티스트의 상태 신규.
+/// [state]: searching(아직 안 찾아봄) / searched(찾았지만 없음) /
+/// unresolved(누구인지 확정 못함) / not_artist(아티스트 아님으로 설정됨).
+@immutable
+class ArtistSetlistStatus {
+  final String artist;
+  final String state;
+
+  /// 연결된 아티스트 이름(searching/searched만).
+  final String? name;
+
+  /// 대표곡 1곡.
+  final String? topSong;
+
+  const ArtistSetlistStatus({
+    required this.artist,
+    required this.state,
+    this.name,
+    this.topSong,
+  });
+
+  factory ArtistSetlistStatus.fromJson(Map<String, dynamic> json) {
+    return ArtistSetlistStatus(
+      artist: json['artist'] as String,
+      state: json['state'] as String,
+      name: json['name'] as String?,
+      topSong: json['top_song'] as String?,
     );
   }
 }

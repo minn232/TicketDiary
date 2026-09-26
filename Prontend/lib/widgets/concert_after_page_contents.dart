@@ -35,6 +35,7 @@ import 'app_network_image.dart';
 import 'artist_identity_sheet.dart';
 import 'underlined_text.dart';
 import 'setlist_editor_sheet.dart';
+import 'setlist_empty_message.dart';
 import 'setlist_music_service_control.dart';
 
 /// 게스트 로그인 상태에서 로컬에 저장된 사진은 절대 파일 경로 문자열이라
@@ -411,6 +412,8 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   final ConcertDetailService _service = ConcertDetailService();
   List<SongEntry>? _songs;
   List<String> _artistNames = const [];
+  // [백엔드 수정] 셋리가 빈 아티스트별 상태(빈 화면 문구용).
+  RealSetlistResponse? _response;
   bool _isUserEdited = false;
   // 연결 수정 후 서버가 다시 채우는 동안.
   bool _refilling = false;
@@ -471,6 +474,10 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
             setState(() => _apply(ticketId, res));
             return;
           }
+          // 상태만 바뀐 경우도 반영.
+          if (_statusKey(res) != _statusKey(_response)) {
+            setState(() => _apply(ticketId, res));
+          }
         } on ApiException catch (_) {
         } catch (_) {}
       }
@@ -483,6 +490,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   void _apply(String ticketId, RealSetlistResponse res) {
     _songs = res.songs;
     _artistNames = res.artistNames;
+    _response = res;
     _isUserEdited = res.isUserEdited;
     _cache[ticketId] = res;
   }
@@ -520,7 +528,12 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     );
   }
 
-  Widget _buildEmptyState({VoidCallback? onFixIdentity}) {
+  static String _statusKey(RealSetlistResponse? res) => [
+    for (final s in res?.artistStatuses ?? const <ArtistSetlistStatus>[])
+      '${s.artist}:${s.state}:${s.topSong}',
+  ].join('|');
+
+  Widget _buildEmptyState({VoidCallback? onFixIdentity, String? artist}) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -531,15 +544,10 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
             color: widget.ink.withValues(alpha: 0.4),
           ),
           const SizedBox(height: 6),
-          Text(
-            _refilling ? '셋리를 다시\n찾는 중이에요' : '아직 등록되지\n않았어요',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: context.sp(12),
-              fontWeight: FontWeight.w700,
-              color: widget.ink.withValues(alpha: 0.5),
-              height: 1.4,
-            ),
+          SetlistEmptyMessage(
+            status: _response?.statusFor(artist),
+            refilling: _refilling,
+            ink: widget.ink,
           ),
           if (onFixIdentity != null && !_refilling) ...[
             const SizedBox(height: 8),
@@ -587,7 +595,10 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     final songs = _songs ?? const <SongEntry>[];
     if (songs.isEmpty && _artistNames.length <= 1) {
       final soloArtist = _artistNames.length == 1 ? _artistNames.first : null;
-      return _buildEmptyState(onFixIdentity: _fixIdentityFor(soloArtist));
+      return _buildEmptyState(
+        onFixIdentity: _fixIdentityFor(soloArtist),
+        artist: soloArtist,
+      );
     }
 
     final songsByArtist = <String, List<SongEntry>>{};
@@ -617,7 +628,9 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       // 등록된 아티스트(정확히 1명)를 검색용 폴백으로 씀.
       final fallbackArtist = allArtists.length == 1 ? allArtists.first : null;
       final onFix = _fixIdentityFor(fallbackArtist);
-      if (songs.isEmpty) return _buildEmptyState(onFixIdentity: onFix);
+      if (songs.isEmpty) {
+        return _buildEmptyState(onFixIdentity: onFix, artist: fallbackArtist);
+      }
       return SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -655,6 +668,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         selection: widget.selection,
         fixIdentityFor: _fixIdentityFor,
         refilling: _refilling,
+        statusFor: (artist) => _response?.statusFor(artist),
       ),
     );
   }
@@ -726,6 +740,7 @@ class _RealSetlistGroupedByArtist extends StatefulWidget {
   // [백엔드 수정] 아티스트별 연결 수정 진입(null이면 링크 숨김).
   final VoidCallback? Function(String? artist) fixIdentityFor;
   final bool refilling;
+  final ArtistSetlistStatus? Function(String? artist)? statusFor;
 
   const _RealSetlistGroupedByArtist({
     required this.groups,
@@ -733,6 +748,7 @@ class _RealSetlistGroupedByArtist extends StatefulWidget {
     required this.selection,
     required this.fixIdentityFor,
     this.refilling = false,
+    this.statusFor,
   });
 
   @override
@@ -783,6 +799,7 @@ class _RealSetlistGroupedByArtistState
               selection: widget.selection,
               onFixIdentity: widget.fixIdentityFor(widget.groups[g].key),
               refilling: widget.refilling,
+              status: widget.statusFor?.call(widget.groups[g].key),
             ),
           ),
       ],
@@ -799,6 +816,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
   final ValueListenable<MusicService> selection;
   final VoidCallback? onFixIdentity;
   final bool refilling;
+  final ArtistSetlistStatus? status;
 
   const _RealSetlistArtistSection({
     required this.artistName,
@@ -809,6 +827,7 @@ class _RealSetlistArtistSection extends StatelessWidget {
     required this.selection,
     this.onFixIdentity,
     this.refilling = false,
+    this.status,
   });
 
   @override
@@ -853,13 +872,12 @@ class _RealSetlistArtistSection extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (songs.isEmpty)
-                  Text(
-                    refilling ? '다시 찾는 중이에요' : '아직 채워지지 않았어요',
-                    style: TextStyle(
-                      fontSize: context.sp(11.5),
-                      fontWeight: FontWeight.w600,
-                      color: ink.withValues(alpha: 0.5),
-                    ),
+                  SetlistEmptyMessage(
+                    status: status,
+                    refilling: refilling,
+                    ink: ink,
+                    fontSize: 11.5,
+                    alignment: WrapAlignment.start,
                   )
                 else
                   ..._buildRealSongRows(
