@@ -127,10 +127,10 @@ async def test_candidate_top_songs_prefers_lastfm_by_mbid():
 @pytest.mark.asyncio
 async def test_candidate_top_songs_falls_back_to_itunes_via_apple_link():
     mbid = f"mbid-it-{uuid.uuid4().hex[:6]}"
-    catalog = AsyncMock(return_value=["첫곡", "둘째곡", "셋째곡"])
+    catalog = AsyncMock(return_value=[("첫곡", "First"), ("둘째곡", "Second"), ("셋째곡", "Third")])
     with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(return_value=("", []))), patch(
         f"{_SONGS}.fetch_apple_music_artist_id", new=AsyncMock(return_value="123")
-    ), patch(f"{_SONGS}.fetch_itunes_artist_songs", new=catalog):
+    ), patch(f"{_SONGS}.fetch_itunes_artist_song_titles", new=catalog):
         songs = await candidate_top_songs(mbid)
 
     assert songs == ["첫곡", "둘째곡"]
@@ -141,12 +141,49 @@ async def test_candidate_top_songs_falls_back_to_itunes_via_apple_link():
 async def test_candidate_top_songs_uses_known_itunes_id_without_musicbrainz():
     apple = AsyncMock()
     with patch(f"{_SONGS}.fetch_apple_music_artist_id", new=apple), patch(
-        f"{_SONGS}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["곡"])
+        f"{_SONGS}.fetch_itunes_artist_song_titles", new=AsyncMock(return_value=[("곡", "Song")])
     ):
         songs = await candidate_top_songs(None, f"it-{uuid.uuid4().hex[:6]}")
 
     assert songs == ["곡"]
     apple.assert_not_awaited()
+
+
+# 일본어 제목은 iTunes us 제목(영문/로마자)으로 바꾸고, 바꿔도 못 읽는 곡은 뒤로
+@pytest.mark.asyncio
+async def test_candidate_top_songs_romanizes_japanese_titles_via_itunes_us():
+    mbid = f"mbid-jp-{uuid.uuid4().hex[:6]}"
+    lastfm = AsyncMock(return_value=("", [("夜に駆ける", 900), ("アイドル", 800), ("群青", 700)]))
+    catalog = AsyncMock(return_value=[("夜に駆ける", "夜に駆ける"), ("アイドル", "Idol"), ("群青", "Gunjou")])
+    with patch(f"{_SONGS}.fetch_top_tracks", new=lastfm), patch(
+        f"{_SONGS}.fetch_apple_music_artist_id", new=AsyncMock(return_value="555")
+    ), patch(f"{_SONGS}.fetch_itunes_artist_song_titles", new=catalog):
+        songs = await candidate_top_songs(mbid)
+
+    assert songs == ["Idol", "Gunjou"]
+    catalog.assert_awaited_once_with("555")
+
+
+# 한글/영문 제목만 있으면 iTunes를 추가로 부르지 않음
+@pytest.mark.asyncio
+async def test_candidate_top_songs_skips_itunes_when_titles_readable():
+    mbid = f"mbid-ko-{uuid.uuid4().hex[:6]}"
+    catalog = AsyncMock()
+    with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(return_value=("", [("Smooth", 9), ("가져가", 8)]))), patch(
+        f"{_SONGS}.fetch_itunes_artist_song_titles", new=catalog
+    ):
+        assert await candidate_top_songs(mbid) == ["Smooth", "가져가"]
+    catalog.assert_not_awaited()
+
+
+# us에도 원제뿐이면(중국어권) 원제 그대로
+@pytest.mark.asyncio
+async def test_candidate_top_songs_keeps_original_when_no_latin_title():
+    mbid = f"mbid-zh-{uuid.uuid4().hex[:6]}"
+    with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(return_value=("", [("七里香", 9), ("晴天", 8)]))), patch(
+        f"{_SONGS}.fetch_apple_music_artist_id", new=AsyncMock(return_value=None)
+    ):
+        assert await candidate_top_songs(mbid) == ["七里香", "晴天"]
 
 
 # 변경은 이 공연에만

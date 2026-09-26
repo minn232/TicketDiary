@@ -12,6 +12,7 @@ from app.models.setlist import PreSetlist
 from app.services.pre_setlist import generate_pre_setlist
 from app.services.representative_songs import (
     _dedupe_titles,
+    fetch_itunes_artist_song_titles,
     fetch_itunes_artist_songs,
     _artist_candidate_cache,
     representative_songs_for_artist,
@@ -129,6 +130,10 @@ async def test_fetch_itunes_artist_songs_us_order_kr_titles_own_tracks_only():
     kr = [_track(3, 10, "잔나비", "여름"), _track(1, 10, "잔나비", "주저하는 연인들을 위해")]
     with _itunes_mock({"us": us, "kr": kr}):
         assert await fetch_itunes_artist_songs("10") == ["주저하는 연인들을 위해", "여름"]
+        assert await fetch_itunes_artist_song_titles("10") == [
+            ("주저하는 연인들을 위해", "For Lovers Who Hesitate"),
+            ("여름", "Summer"),
+        ]
 
 
 # 아티스트 이름으로 앵커 후보 검색

@@ -82,9 +82,9 @@ async def _lookup_in_title_store(
     return tracks, artists
 
 
-# iTunes에 등록된 그 아티스트의 곡 목록(순서는 us, 제목은 kr, 다른 버전 제외, 중복 제거).
-# 피처링으로만 참여한 남의 곡도 같이 오므로 아티스트 ID가 같은 곡만 씀. 실패 시 빈 리스트
-async def fetch_itunes_artist_songs(itunes_artist_id: str) -> list[str]:
+# iTunes에 등록된 그 아티스트의 곡 목록 [(kr 제목, us 제목)](순서는 us, 다른 버전 제외, kr 제목
+# 기준 중복 제거). 피처링으로만 참여한 남의 곡도 같이 오므로 아티스트 ID가 같은 곡만 씀. 실패 시 빈 리스트
+async def fetch_itunes_artist_song_titles(itunes_artist_id: str) -> list[tuple[str, str]]:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
@@ -100,8 +100,25 @@ async def fetch_itunes_artist_songs(itunes_artist_id: str) -> list[str]:
     except (httpx.HTTPError, ValueError) as e:
         logger.warning(f"iTunes 곡 목록 조회 실패 (artist_id={itunes_artist_id}): {e}")
         return []
-    names = [(titled.get(r.get("trackId")) or r).get("trackName") for r in tracks]
-    return _dedupe_titles([name for name in names if name])
+    pairs = []
+    for r in tracks:
+        us_name = r.get("trackName")
+        kr_name = (titled.get(r.get("trackId")) or r).get("trackName")
+        if kr_name and us_name:
+            pairs.append((kr_name, us_name))
+    kept = set(_dedupe_titles([kr for kr, _ in pairs]))
+    seen: set[str] = set()
+    result = []
+    for kr, us in pairs:
+        if kr in kept and kr not in seen:
+            seen.add(kr)
+            result.append((kr, us))
+    return result
+
+
+# 곡 목록(kr 제목) - 한국 곡은 한글 원제로 보이게 kr 스토어 제목을 씀
+async def fetch_itunes_artist_songs(itunes_artist_id: str) -> list[str]:
+    return [kr for kr, _ in await fetch_itunes_artist_song_titles(itunes_artist_id)]
 
 
 # iTunes 아티스트 ID가 실제로 존재하는지 확인하고 그 이름을 반환(없으면 None)
@@ -217,9 +234,27 @@ async def _lastfm_top_tracks(artist: str, mbid: str | None) -> list[tuple[str, i
 _CANDIDATE_SONGS_CACHE_TTL = timedelta(days=1)
 _candidate_songs_cache: dict[str, tuple[datetime, list[str]]] = {}
 
+# 가나/한자 - 한국 유저가 못 읽는 경우가 많아 영문/로마자 제목으로 바꿔 보여줄 대상
+_UNREADABLE_SCRIPT = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+
+
+def _is_unreadable(title: str) -> bool:
+    return bool(_UNREADABLE_SCRIPT.search(title))
+
+
+# 못 읽는 제목은 us 스토어 제목(일본 곡은 대부분 "Idol"/"Gunjou" 같은 영문·로마자)으로 바꾸고,
+# 바꿔도 못 읽는 곡은 뒤로 미룸(중국어권은 us에도 원제뿐이라 그대로 남음)
+def _readable_first(titles: list[str], us_titles: dict[str, str]) -> list[str]:
+    shown = []
+    for title in titles:
+        us = us_titles.get(_title_key(title))
+        shown.append(us if _is_unreadable(title) and us and not _is_unreadable(us) else title)
+    return sorted(shown, key=_is_unreadable)
+
 
 # 연결 수정 후보를 알아보게 붙이는 곡 몇 개 - 이름 검색 없이 mbid로만(동명이인 섞임 방지). Last.fm
-# 인기순이 먼저, Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록
+# 인기순이 먼저, Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록.
+# 일본어/중국어 제목이 있으면 iTunes us 제목으로 바꿔서 읽을 수 있는 곡부터 보여줌
 async def candidate_top_songs(mbid: str | None, itunes_artist_id: str | None = None, limit: int = 2) -> list[str]:
     key = mbid or f"itunes:{itunes_artist_id}"
     if not mbid and not itunes_artist_id:
@@ -228,15 +263,20 @@ async def candidate_top_songs(mbid: str | None, itunes_artist_id: str | None = N
     if cached and datetime.now(timezone.utc) - cached[0] < _CANDIDATE_SONGS_CACHE_TTL:
         return cached[1]
 
-    songs: list[str] = []
+    titles: list[str] = []
     if mbid:
         _, tracks = await fetch_top_tracks(mbid=mbid, limit=10)
-        songs = _dedupe_titles([name for name, _ in tracks])[:limit]
-    if not songs:
+        titles = _dedupe_titles([name for name, _ in tracks])
+    catalog: list[tuple[str, str]] = []
+    if not titles or any(_is_unreadable(t) for t in titles[:limit]):
         if not itunes_artist_id and mbid:
             itunes_artist_id = await fetch_apple_music_artist_id(mbid)
         if itunes_artist_id:
-            songs = (await fetch_itunes_artist_songs(itunes_artist_id))[:limit]
+            catalog = await fetch_itunes_artist_song_titles(itunes_artist_id)
+    if not titles:
+        titles = [kr for kr, _ in catalog]
+    us_titles = {_title_key(kr): us for kr, us in catalog}
+    songs = _readable_first(titles, us_titles)[:limit]
     _candidate_songs_cache[key] = (datetime.now(timezone.utc), songs)
     return songs
 
