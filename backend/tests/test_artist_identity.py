@@ -482,3 +482,25 @@ async def test_real_setlist_statuses_empty_when_solo_has_songs():
         await db.commit()
 
     assert (await _get_real_setlist(ticket_id, token))["artist_statuses"] == []
+
+
+# 페스티벌 - 다른 아티스트 곡이 채워진 행이면 attempted_at이 없어도 찾아본 것으로
+@pytest.mark.asyncio
+async def test_real_setlist_statuses_festival_row_with_songs_counts_as_searched():
+    from datetime import date
+
+    from app.models.setlist import RealSetlist
+
+    a = f"페스A{uuid.uuid4().hex[:6]}"
+    b = f"페스B{uuid.uuid4().hex[:6]}"
+    await _canonical(b, mbid=f"mbid-b-{b}", alias=b)
+    concert_id = await _create_concert(f"PF_FEST_{uuid.uuid4().hex[:6]}", artist=f"{a}, {b}")
+    token = await _get_token()
+    ticket_id = await _create_ticket(concert_id, token)
+    async with AsyncSessionLocal() as db:
+        db.add(RealSetlist(concert_id=uuid.UUID(concert_id), performance_date=date(2030, 6, 1),
+                           songs=[{"name": "곡", "artist": a}]))
+        await db.commit()
+
+    statuses = (await _get_real_setlist(ticket_id, token))["artist_statuses"]
+    assert [(s["artist"], s["state"]) for s in statuses] == [(b, "searched")]

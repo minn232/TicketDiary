@@ -97,7 +97,8 @@ async def attach_artist_setlist_statuses(db: AsyncSession, concert_id: UUID, res
     else:
         with_songs = {s.get("artist") if isinstance(s, dict) else s.artist for s in songs}
         targets = [name for name in names if solo or name not in with_songs]
-    attempted = not is_dict and result.attempted_at is not None
+    # 곡이 채워진 행(페스티벌의 다른 아티스트 곡 등)은 경로에 따라 attempted_at이 비어 있어도 이미 찾아본 것
+    attempted = not is_dict and (result.attempted_at is not None or bool(songs))
 
     statuses = []
     for artist in targets:
