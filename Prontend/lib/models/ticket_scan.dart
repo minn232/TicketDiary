@@ -74,6 +74,12 @@ class ConcertResponse {
   // 예매처 바로가기 버튼용(키: YES24/INTERPARK/TICKETLINK/MELON).
   final Map<String, String>? ticketingLinks;
 
+  // [백엔드 수정] 공연 정보 표시용 이름(유저가 아티스트 연결을 바꾼 표기만 연결된 이름).
+  final List<String>? artistDisplayNames;
+
+  /// 공연 정보 '아티스트' 칸 문구.
+  String get artistLabel => (artistDisplayNames ?? artistName).join(', ');
+
   const ConcertResponse({
     required this.id,
     this.kopisId,
@@ -90,6 +96,7 @@ class ConcertResponse {
     this.ticketingDate,
     this.ticketingPhases,
     this.ticketingLinks,
+    this.artistDisplayNames,
   });
 
   factory ConcertResponse.fromJson(Map<String, dynamic> json) {
@@ -103,7 +110,9 @@ class ConcertResponse {
       venue: json['venue'] as String?,
       startDate: DateTime.parse(json['start_date'] as String),
       endDate: DateTime.parse(json['end_date'] as String),
-      genre: (json['genre'] as List<dynamic>?)?.map((e) => e as String).toList(),
+      genre: (json['genre'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
       posterUrl: json['poster_url'] as String?,
       description: json['description'] as String?,
       price: (json['price'] as List<dynamic>?)
@@ -116,8 +125,12 @@ class ConcertResponse {
       ticketingPhases: (json['ticketing_phases'] as List<dynamic>?)
           ?.map((e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
-      ticketingLinks: (json['ticketing_links'] as Map<String, dynamic>?)
-          ?.map((key, value) => MapEntry(key, value as String)),
+      ticketingLinks: (json['ticketing_links'] as Map<String, dynamic>?)?.map(
+        (key, value) => MapEntry(key, value as String),
+      ),
+      artistDisplayNames: (json['artist_display_names'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
     );
   }
 
@@ -128,6 +141,7 @@ class ConcertResponse {
     'kopis_id': kopisId,
     'name': name,
     'artist_name': artistName,
+    'artist_display_names': artistDisplayNames,
     'venue': venue,
     'start_date': startDate.toIso8601String(),
     'end_date': endDate.toIso8601String(),

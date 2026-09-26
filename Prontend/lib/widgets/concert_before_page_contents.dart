@@ -11,6 +11,7 @@ import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/concert_detail_service.dart';
 import '../services/music_service_links.dart';
+import '../services/ticket_service.dart';
 import 'artist_anchor_sheet.dart';
 import 'artist_identity_sheet.dart';
 import 'underlined_text.dart';
@@ -47,6 +48,9 @@ class ConcertBeforePageContents extends StatelessWidget {
   // [백엔드 수정] 읽기 전용 모드 신규(예상 셋리 편집/대표곡 찾기 숨김).
   final bool readOnly;
 
+  // [백엔드 수정] 아티스트 연결을 바꿔 공연 정보가 갱신됐을 때.
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
+
   const ConcertBeforePageContents({
     super.key,
     required this.concertTitle,
@@ -55,6 +59,7 @@ class ConcertBeforePageContents extends StatelessWidget {
     this.showCloseHint = true,
     this.issueNumber = 1,
     this.readOnly = false,
+    this.onTicketInfoChanged,
   });
 
   @override
@@ -64,6 +69,7 @@ class ConcertBeforePageContents extends StatelessWidget {
       ticketInfo: ticketInfo,
       issueNumber: issueNumber,
       readOnly: readOnly,
+      onTicketInfoChanged: onTicketInfoChanged,
     );
 
     final content = Column(
@@ -181,12 +187,14 @@ class _ConcertBeforeBody extends StatefulWidget {
   final TicketInfo? ticketInfo;
   final int issueNumber;
   final bool readOnly;
+  final ValueChanged<TicketInfo>? onTicketInfoChanged;
 
   const _ConcertBeforeBody({
     required this.concertTitle,
     this.ticketInfo,
     required this.issueNumber,
     this.readOnly = false,
+    this.onTicketInfoChanged,
   });
 
   @override
@@ -417,6 +425,24 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     );
   }
 
+  // [백엔드 수정] 연결을 바꾸면 공연 정보 '아티스트' 칸도 서버 기준으로 갱신.
+  TicketInfo? _infoOverride;
+
+  Future<void> _refreshArtistField(String ticketId) async {
+    try {
+      final label = (await TicketService().getTicket(
+        ticketId,
+      )).concert?.artistLabel;
+      final info = _infoOverride ?? widget.ticketInfo;
+      if (!mounted || label == null || info == null) return;
+      final updated = info.copyWith(
+        extraFields: {...info.extraFields, '아티스트': label},
+      );
+      setState(() => _infoOverride = updated);
+      widget.onTicketInfoChanged?.call(updated);
+    } catch (_) {}
+  }
+
   // [백엔드 수정] 공연별 아티스트 연결 수정 신규 - 바꾸면 서버가 셋리를 다시 채우므로
   // 새로 불러옴, "목록에 없어요"면 곡 제목 검색(앵커)으로 넘어감.
   Future<void> _openIdentitySheet(String artist) async {
@@ -433,6 +459,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
           candidate: candidate,
           noArtist: candidate == null,
         );
+        unawaited(_refreshArtistField(ticketId));
         await _loadPreSetlist(ticketId);
       },
     );
@@ -577,7 +604,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
 
   @override
   Widget build(BuildContext context) {
-    final ticketInfo = widget.ticketInfo;
+    final ticketInfo = _infoOverride ?? widget.ticketInfo;
     // 공연명은 제호로 이미 크게 나오므로 정보 표에서는 뺍니다(중복 제거).
     // 공연장(venue)은 요청5에 따라 "공연 정보" 섹션에서만 보여주고,
     // 여기(리드/포스터 캡션)에는 넣지 않습니다.

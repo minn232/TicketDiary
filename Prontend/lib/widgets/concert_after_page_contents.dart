@@ -327,7 +327,23 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     }
   }
 
-  // [백엔드 수정]
+  // [백엔드 수정] 아티스트 연결을 바꾸면 공연 정보 '아티스트' 칸도 서버 기준으로 갱신.
+  Future<void> _refreshArtistField() async {
+    final ticketId = _ticketId;
+    if (ticketId == null) return;
+    try {
+      final label = (await _ticketService.getTicket(
+        ticketId,
+      )).concert?.artistLabel;
+      final info = _ticketInfo;
+      if (!mounted || label == null || info == null) return;
+      final updated = info.copyWith(
+        extraFields: {...info.extraFields, '아티스트': label},
+      );
+      setState(() => _ticketInfo = updated);
+      widget.onTicketInfoChanged?.call(updated);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -349,6 +365,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       pageBoundaryKey: widget.pageBoundaryKey,
       issueNumber: widget.issueNumber,
       onOpenBeforePage: widget.onOpenBeforePage,
+      onArtistIdentityChanged: _refreshArtistField,
     );
 
     return canvas;
@@ -371,6 +388,8 @@ class _RealSetlistContent extends StatefulWidget {
   onEditorReady;
   // [백엔드 수정] 아티스트 연결 수정 링크 노출 여부(공유 캡처에선 숨김).
   final bool canFixIdentity;
+  // [백엔드 수정] 연결을 바꾼 뒤 공연 정보 '아티스트' 칸 갱신용.
+  final VoidCallback? onIdentityChanged;
 
   const _RealSetlistContent({
     required this.ticketId,
@@ -379,6 +398,7 @@ class _RealSetlistContent extends StatefulWidget {
     required this.selection,
     this.onEditorReady,
     this.canFixIdentity = false,
+    this.onIdentityChanged,
   });
 
   @override
@@ -488,6 +508,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
           candidate: candidate,
           noArtist: candidate == null,
         );
+        widget.onIdentityChanged?.call();
         final res = await _service.getRealSetlist(ticketId);
         if (!mounted) return;
         setState(() {
@@ -1278,6 +1299,8 @@ class _ScrapbookCanvas extends StatefulWidget {
   final int issueNumber;
   final Future<void> Function(Rect startRect, Widget collapsed)?
   onOpenBeforePage;
+  // [백엔드 수정] 실제 셋리에서 아티스트 연결을 바꿨을 때.
+  final VoidCallback? onArtistIdentityChanged;
 
   /// 공유 이미지용 읽기 전용 페이지 (편집 UI/제스처/저장 없음).
   final bool exportMode;
@@ -1304,6 +1327,7 @@ class _ScrapbookCanvas extends StatefulWidget {
     this.pageBoundaryKey,
     this.issueNumber = 1,
     this.onOpenBeforePage,
+    this.onArtistIdentityChanged,
     this.exportMode = false,
     this.exportBack = false,
   });
@@ -2568,6 +2592,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             initialLoad: setlistFuture,
             selection: _setlistServiceSelection,
             canFixIdentity: !widget.exportMode,
+            onIdentityChanged: widget.onArtistIdentityChanged,
             onEditorReady: (launcher) {
               _setlistEditorLauncher = launcher;
             },

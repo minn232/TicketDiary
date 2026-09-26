@@ -99,7 +99,8 @@ class TicketData {
 
     final artistName = concert?.artistName;
     if (artistName != null && artistName.isNotEmpty) {
-      extraFields['아티스트'] = artistName.join(', ');
+      // [백엔드 수정] 아티스트 연결을 바꾼 공연은 연결된 이름으로
+      extraFields['아티스트'] = concert!.artistLabel;
     }
     final eventType = concert?.eventType;
     if (eventType != null && eventType.isNotEmpty) {
@@ -1822,6 +1823,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     frameScale:
                         DiaryFrameScale.maybeOf(context) ??
                         diaryScaleFromMediaQuery(context),
+                    // [백엔드 수정] 아티스트 연결 수정 반영
+                    onTicketInfoChanged: (updated) =>
+                        setState(() => ticket.info = updated),
                   );
                   if (mounted) setState(() => _overlayHiddenRegionKey = null);
                 },

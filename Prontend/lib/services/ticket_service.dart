@@ -92,6 +92,12 @@ class TicketService {
         .toList();
   }
 
+  // [백엔드 수정] 아티스트 연결 수정 후 공연 정보 '아티스트' 칸 갱신용 단건 조회.
+  Future<TicketWithConcert> getTicket(String ticketId) async {
+    final json = await _client.get('/tickets/$ticketId');
+    return TicketWithConcert.fromJson(json);
+  }
+
   /// 티켓 부분 수정(`PATCH /tickets/{id}`). 값을 넘긴 필드만 갱신되고,
   /// 넘기지 않은 필드는 그대로 유지됩니다.
   ///
