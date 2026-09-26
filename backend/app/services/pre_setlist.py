@@ -1,6 +1,6 @@
 import logging
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -213,6 +213,34 @@ async def generate_pre_setlist_background(concert_id: UUID) -> None:
             logger.info(f"예상 셋리스트 자동 생성 스킵 (concert_id={concert_id}): {e.detail}")
         except Exception as e:
             logger.warning(f"예상 셋리스트 자동 생성 실패 (concert_id={concert_id}): {e}")
+
+
+# 공연 전 화면을 열었는데 예상 셋리가 비어 있으면 백그라운드로 한 번 더 생성(등록 시 생성이 서버
+# 재시작/Setlist.fm 일시 오류로 끊긴 경우 등). 없음(404)이면 공연별 6시간 쿨다운 - 행을 안 만드는
+# 구조라 메모리로 추적(재시작하면 초기화돼도 무방). 502(API 일시 실패)는 쿨다운 없이 다음 조회 때 재시도
+_PRE_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(hours=6)
+_pre_setlist_view_checked_at: dict[UUID, datetime] = {}
+
+
+async def check_pre_setlist_on_view(concert_id: UUID) -> None:
+    checked_at = _pre_setlist_view_checked_at.get(concert_id)
+    now = datetime.now(timezone.utc)
+    if checked_at is not None and now - checked_at < _PRE_SETLIST_VIEW_CHECK_COOLDOWN:
+        return
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
+            row = result.scalar_one_or_none()
+            if row is not None and (row.is_user_edited or row.songs):
+                return
+            await generate_pre_setlist(db, concert_id)
+        except HTTPException as e:
+            if e.status_code != 502:
+                _pre_setlist_view_checked_at[concert_id] = now
+            logger.info(f"조회 시점 예상 셋리스트 생성 스킵 (concert_id={concert_id}): {e.detail}")
+        except Exception as e:
+            _pre_setlist_view_checked_at[concert_id] = now
+            logger.warning(f"조회 시점 예상 셋리스트 생성 실패 (concert_id={concert_id}): {e}")
 
 
 # 공연의 아티스트 이름으로 앵커 후보 검색(유저가 이 중에서 고름)

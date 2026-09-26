@@ -10,7 +10,11 @@ from app.main import app
 from app.models.artist_identity import ArtistIdentityChange, ConcertArtistLink
 from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.services.artist_identity import resolve_concert_artist
-from app.services.representative_songs import candidate_top_songs, representative_songs_for_artist
+from app.services.representative_songs import (
+    candidate_top_songs,
+    candidate_top_songs_for,
+    representative_songs_for_artist,
+)
 from app.services.setlist import search_with_artist_fallbacks
 from conftest import _get_token
 from test_admin import _admin_headers, _admin_settings
@@ -81,9 +85,9 @@ async def test_candidates_merge_db_namesakes_and_musicbrainz():
         {"mbid": f"mbid-new-{artist}", "name": artist, "country": "JP", "type": "Group",
          "disambiguation": None, "begin_year": "2015"},
     ])
-    songs = AsyncMock(side_effect=lambda mbid, itunes_artist_id=None: [f"{mbid}-곡"])
+    songs = AsyncMock(side_effect=lambda pairs: [[f"{mbid}-곡"] for mbid, _ in pairs])
     with patch(f"{_SERVICE}.search_artist_detailed", new=mb), patch(
-        "app.services.representative_songs.candidate_top_songs", new=songs
+        "app.services.representative_songs.candidate_top_songs_for", new=songs
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res = await ac.get(
@@ -120,7 +124,7 @@ async def test_candidate_top_songs_prefers_lastfm_by_mbid():
         songs = await candidate_top_songs(mbid)
 
     assert songs == ["Smooth", "가져가"]
-    lastfm.assert_awaited_once_with(mbid=mbid, limit=10)
+    lastfm.assert_awaited_once_with(mbid=mbid, limit=10, strict_mbid=True)
     apple.assert_not_awaited()
 
 
@@ -147,6 +151,68 @@ async def test_candidate_top_songs_uses_known_itunes_id_without_musicbrainz():
 
     assert songs == ["곡"]
     apple.assert_not_awaited()
+
+
+# strict_mbid - 곡의 아티스트 mbid가 요청한 mbid와 다르면 버림(Last.fm이 다른 동명이인 페이지를 준 것)
+@pytest.mark.asyncio
+async def test_fetch_top_tracks_strict_mbid_drops_other_artist_tracks():
+    from unittest.mock import MagicMock
+
+    from app.services.lastfm import fetch_top_tracks
+
+    payload = {"toptracks": {"@attr": {"artist": "Lany"}, "track": [
+        {"name": "ILYSB", "listeners": "9", "artist": {"mbid": "mbid-other"}},
+    ]}}
+    response = MagicMock(status_code=200, json=MagicMock(return_value=payload))
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.get = AsyncMock(return_value=response)
+    with patch("app.services.lastfm.httpx.AsyncClient", return_value=client), patch(
+        "app.services.lastfm.settings.LASTFM_API_KEY", "test-key"
+    ):
+        assert await fetch_top_tracks(mbid="mbid-asked", strict_mbid=True) == ("Lany", [])
+        assert await fetch_top_tracks(mbid="mbid-asked") == ("Lany", [("ILYSB", 9)])
+
+
+# Last.fm이 동명이인을 한 페이지로 합쳐 다른 후보와 곡이 겹치면 그 후보는 iTunes만 씀(LANY/Lany 실측)
+@pytest.mark.asyncio
+async def test_candidate_top_songs_for_drops_lastfm_songs_shared_with_other_candidate():
+    real, fake, other = (f"mbid-{name}-{uuid.uuid4().hex[:6]}" for name in ("real", "fake", "other"))
+    lastfm_by_mbid = {
+        real: [],
+        fake: [("ILYSB", 9), ("Malibu Nights", 8), ("Super Far", 7)],
+        other: [("Renaissance", 5), ("People Of The Night", 4)],
+    }
+    catalog_by_id = {"it-real": [("ILYSB", "ILYSB"), ("Malibu Nights", "Malibu Nights"), ("Super Far", "Super Far")]}
+    apple_by_mbid = {real: "it-real"}
+
+    async def lastfm(*, mbid, limit, strict_mbid):
+        return "", lastfm_by_mbid[mbid]
+
+    with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(side_effect=lastfm)), patch(
+        f"{_SONGS}.fetch_apple_music_artist_id", new=AsyncMock(side_effect=lambda m: apple_by_mbid.get(m))
+    ), patch(
+        f"{_SONGS}.fetch_itunes_artist_song_titles", new=AsyncMock(side_effect=lambda i: catalog_by_id.get(i, []))
+    ):
+        songs = await candidate_top_songs_for([(real, None), (fake, None), (other, None)])
+
+    assert songs == [["ILYSB", "Malibu Nights"], [], ["Renaissance", "People Of The Night"]]
+
+
+# 곡 제목 하나 겹치는 건 우연일 수 있어 그대로 둠
+@pytest.mark.asyncio
+async def test_candidate_top_songs_for_keeps_single_title_overlap():
+    a, b = (f"mbid-{name}-{uuid.uuid4().hex[:6]}" for name in ("a", "b"))
+    lastfm_by_mbid = {a: [("Home", 9), ("A2", 8)], b: [("Home", 9), ("B2", 8)]}
+
+    async def lastfm(*, mbid, limit, strict_mbid):
+        return "", lastfm_by_mbid[mbid]
+
+    with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(side_effect=lastfm)):
+        songs = await candidate_top_songs_for([(a, None), (b, None)])
+
+    assert songs == [["Home", "A2"], ["Home", "B2"]]
 
 
 # 일본어 제목은 iTunes us 제목(영문/로마자)으로 바꾸고, 바꿔도 못 읽는 곡은 뒤로

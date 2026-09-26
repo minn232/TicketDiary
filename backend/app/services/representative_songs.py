@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -232,7 +234,18 @@ async def _lastfm_top_tracks(artist: str, mbid: str | None) -> list[tuple[str, i
 
 
 _CANDIDATE_SONGS_CACHE_TTL = timedelta(days=1)
-_candidate_songs_cache: dict[str, tuple[datetime, list[str]]] = {}
+
+
+# 후보 한 명의 곡 - 표시용(읽을 수 있는 곡 먼저) + 후보끼리 겹침을 비교할 제목 키
+@dataclass
+class _CandidateSongs:
+    songs: list[str]
+    from_lastfm: bool = False
+    lastfm_keys: set[str] = field(default_factory=set)
+    all_keys: set[str] = field(default_factory=set)
+
+
+_candidate_songs_cache: dict[tuple[str, bool], tuple[datetime, _CandidateSongs]] = {}
 
 # 가나/한자 - 한국 유저가 못 읽는 경우가 많아 영문/로마자 제목으로 바꿔 보여줄 대상
 _UNREADABLE_SCRIPT = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
@@ -252,33 +265,69 @@ def _readable_first(titles: list[str], us_titles: dict[str, str]) -> list[str]:
     return sorted(shown, key=_is_unreadable)
 
 
-# 연결 수정 후보를 알아보게 붙이는 곡 몇 개 - 이름 검색 없이 mbid로만(동명이인 섞임 방지). Last.fm
-# 인기순이 먼저, Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록.
+# 연결 수정 후보를 알아보게 붙이는 곡 - 이름 검색 없이 mbid로만(동명이인 섞임 방지). Last.fm
+# 인기순이 먼저(use_lastfm), Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록.
 # 일본어/중국어 제목이 있으면 iTunes us 제목으로 바꿔서 읽을 수 있는 곡부터 보여줌
-async def candidate_top_songs(mbid: str | None, itunes_artist_id: str | None = None, limit: int = 2) -> list[str]:
-    key = mbid or f"itunes:{itunes_artist_id}"
+async def _candidate_songs(
+    mbid: str | None, itunes_artist_id: str | None, use_lastfm: bool = True, shown: int = 2
+) -> _CandidateSongs:
     if not mbid and not itunes_artist_id:
-        return []
+        return _CandidateSongs([])
+    key = (mbid or f"itunes:{itunes_artist_id}", use_lastfm)
     cached = _candidate_songs_cache.get(key)
     if cached and datetime.now(timezone.utc) - cached[0] < _CANDIDATE_SONGS_CACHE_TTL:
         return cached[1]
 
     titles: list[str] = []
-    if mbid:
-        _, tracks = await fetch_top_tracks(mbid=mbid, limit=10)
+    if mbid and use_lastfm:
+        _, tracks = await fetch_top_tracks(mbid=mbid, limit=10, strict_mbid=True)
         titles = _dedupe_titles([name for name, _ in tracks])
+    from_lastfm = bool(titles)
     catalog: list[tuple[str, str]] = []
-    if not titles or any(_is_unreadable(t) for t in titles[:limit]):
+    if not titles or any(_is_unreadable(t) for t in titles[:shown]):
         if not itunes_artist_id and mbid:
             itunes_artist_id = await fetch_apple_music_artist_id(mbid)
         if itunes_artist_id:
             catalog = await fetch_itunes_artist_song_titles(itunes_artist_id)
+    lastfm_keys = {_title_key(t) for t in titles}
     if not titles:
         titles = [kr for kr, _ in catalog]
     us_titles = {_title_key(kr): us for kr, us in catalog}
-    songs = _readable_first(titles, us_titles)[:limit]
-    _candidate_songs_cache[key] = (datetime.now(timezone.utc), songs)
-    return songs
+    result = _CandidateSongs(
+        songs=_readable_first(titles, us_titles),
+        from_lastfm=from_lastfm,
+        lastfm_keys=lastfm_keys,
+        all_keys=lastfm_keys | {_title_key(t) for pair in catalog for t in pair},
+    )
+    _candidate_songs_cache[key] = (datetime.now(timezone.utc), result)
+    return result
+
+
+async def candidate_top_songs(mbid: str | None, itunes_artist_id: str | None = None, limit: int = 2) -> list[str]:
+    return (await _candidate_songs(mbid, itunes_artist_id, shown=limit)).songs[:limit]
+
+
+# Last.fm 곡이 다른 후보 곡과 2개 이상 겹치면 Last.fm이 동명이인을 한 페이지로 합친 것(실측: 일본
+# 가수 Aimer 페이지에 이탈리아 기타리스트 Aimer의 mbid가 붙어 있어 mbid 확인만으론 못 거름) - 그 후보는
+# Last.fm 없이(iTunes만) 다시 구함. 곡 제목 한두 개는 우연히 같을 수 있어 2개부터
+_LASTFM_OVERLAP_MIN = 2
+
+
+async def candidate_top_songs_for(pairs: list[tuple[str | None, str | None]], limit: int = 2) -> list[list[str]]:
+    results = list(await asyncio.gather(*(_candidate_songs(m, i, shown=limit) for m, i in pairs)))
+    suspicious = [
+        idx for idx, r in enumerate(results)
+        if r.from_lastfm and any(
+            len(r.lastfm_keys & other.all_keys) >= _LASTFM_OVERLAP_MIN
+            for j, other in enumerate(results) if j != idx
+        )
+    ]
+    retried = await asyncio.gather(*(
+        _candidate_songs(pairs[idx][0], pairs[idx][1], use_lastfm=False, shown=limit) for idx in suspicious
+    ))
+    for idx, r in zip(suspicious, retried):
+        results[idx] = r
+    return [r.songs[:limit] for r in results]
 
 
 # 확정된 iTunes 아티스트가 없으면 MusicBrainz의 Apple Music 링크로 찾아서 canonical에 저장

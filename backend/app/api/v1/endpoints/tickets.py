@@ -27,6 +27,7 @@ from app.services.lastfm import ensure_artist_genres_cached
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
 from app.services.pre_setlist import (
     apply_itunes_anchor,
+    check_pre_setlist_on_view,
     get_pre_setlist,
     generate_pre_setlist,
     generate_pre_setlist_background,
@@ -211,12 +212,18 @@ async def generate_ticket_real_setlist_auto(
 @router.get("/{ticket_id}/setlist/pre", response_model=PreSetlistResponse)
 async def get_ticket_pre_setlist(
     ticket_id: UUID,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, explicit_date = _ticket_concert_and_date(ticket)
-    return await get_pre_setlist(db, concert_id, explicit_date)
+    result = await get_pre_setlist(db, concert_id, explicit_date)
+    # 비어 있으면 백그라운드로 한 번 더 생성(check_pre_setlist_on_view) - 앱이 짧게 재확인함
+    songs = result["songs"] if isinstance(result, dict) else result.songs
+    if not songs:
+        background_tasks.add_task(check_pre_setlist_on_view, concert_id)
+    return result
 
 
 @router.post("/{ticket_id}/setlist/pre/generate", response_model=PreSetlistResponse, status_code=status.HTTP_201_CREATED)

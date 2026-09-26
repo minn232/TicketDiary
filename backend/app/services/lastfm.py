@@ -226,7 +226,7 @@ async def fetch_top_tags(artist_name: str) -> list[str]:
 # Last.fm artist.getTopTracks 호출 - mbid 또는 이름 중 하나로 조회해 (Last.fm이 인식한
 # 아티스트명, [(곡명, 청취자 수)]) 반환. 실패/결과없음/API 키 없음이면 ("", [])
 async def fetch_top_tracks(
-    *, artist_name: str | None = None, mbid: str | None = None, limit: int = 50
+    *, artist_name: str | None = None, mbid: str | None = None, limit: int = 50, strict_mbid: bool = False
 ) -> tuple[str, list[tuple[str, int]]]:
     if not settings.LASTFM_API_KEY:
         return "", []
@@ -248,7 +248,12 @@ async def fetch_top_tracks(
         return "", []
 
     top = payload.get("toptracks") or {}
-    tracks = [(t["name"], int(t.get("listeners", 0))) for t in top.get("track", []) if t.get("name")]
+    raw_tracks = top.get("track", [])
+    # strict_mbid: Last.fm은 같은 이름(대소문자 차이 포함)을 한 페이지로 합쳐서 다른 mbid로 물어도 그 페이지
+    # 곡을 줌(실측: 동티모르 포크 "Lany" mbid → LANY 곡) - 곡의 아티스트 mbid가 요청과 다르면 버림
+    if mbid and strict_mbid:
+        raw_tracks = [t for t in raw_tracks if (t.get("artist") or {}).get("mbid") == mbid]
+    tracks = [(t["name"], int(t.get("listeners", 0))) for t in raw_tracks if t.get("name")]
     return (top.get("@attr") or {}).get("artist", ""), tracks
 
 

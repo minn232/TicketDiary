@@ -491,6 +491,61 @@ async def test_get_pre_setlist_without_row_returns_artist_names():
     assert response.json()["artist_names"] == ["테스트아티스트"]
 
 
+# 조회 시점 생성 - 비어 있으면 생성 시도, 없음(404)이면 쿨다운, API 일시 실패(502)는 쿨다운 없이 재시도
+
+@pytest.mark.asyncio
+async def test_check_pre_setlist_on_view_generates_then_cools_down_on_404():
+    from fastapi import HTTPException
+    from app.services.pre_setlist import check_pre_setlist_on_view
+
+    concert_id = uuid.uuid4()
+    generate = AsyncMock(side_effect=HTTPException(status_code=404, detail="없음"))
+    with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
+        await check_pre_setlist_on_view(concert_id)
+        await check_pre_setlist_on_view(concert_id)
+
+    assert generate.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_check_pre_setlist_on_view_retries_after_502():
+    from fastapi import HTTPException
+    from app.services.pre_setlist import check_pre_setlist_on_view
+
+    concert_id = uuid.uuid4()
+    generate = AsyncMock(side_effect=HTTPException(status_code=502, detail="일시 실패"))
+    with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
+        await check_pre_setlist_on_view(concert_id)
+        await check_pre_setlist_on_view(concert_id)
+
+    assert generate.await_count == 2
+
+
+# 티켓 기준 조회가 비어 있으면 백그라운드 생성을 걸어둠
+@pytest.mark.asyncio
+async def test_get_ticket_pre_setlist_schedules_generation_when_empty():
+    concert_id = await _create_concert(f"PF_PRE_VIEW_{uuid.uuid4().hex[:6]}")
+    token = await _get_token()
+    check = AsyncMock()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        with _setlistfm_artist_mock(status_code=404):
+            created = await ac.post(
+                "/api/v1/tickets",
+                json={"concert_id": concert_id},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert created.status_code == 201
+        with patch("app.api.v1.endpoints.tickets.check_pre_setlist_on_view", new=check):
+            response = await ac.get(
+                f"/api/v1/tickets/{created.json()['id']}/setlist/pre",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["songs"] == []
+    check.assert_awaited_once()
+
+
 # show_predicted_setlist는 더 이상 조회/생성을 막는 스위치가 아니라(프론트가
 # 롱탭/홀드로 블러를 잠깐 풀어 보여주는 기능을 만들 수 있도록, 꺼져 있어도
 # 데이터는 그대로 내려줘야 함) 아래 두 테스트는 "꺼도 안 막힌다"로 뒤집음.

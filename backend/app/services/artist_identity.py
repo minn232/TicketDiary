@@ -124,12 +124,10 @@ async def identity_candidates(db: AsyncSession, concert_id: UUID, artist: str) -
                 "is_current": False,
             })
 
-    from app.services.representative_songs import candidate_top_songs  # 순환 임포트 방지용 지연 임포트
+    from app.services.representative_songs import candidate_top_songs_for  # 순환 임포트 방지용 지연 임포트
 
     itunes_ids = {c.id: c.itunes_artist_id for c in db_rows}
-    songs = await asyncio.gather(*(
-        candidate_top_songs(c["mbid"], itunes_ids.get(c["canonical_id"])) for c in candidates
-    ))
+    songs = await candidate_top_songs_for([(c["mbid"], itunes_ids.get(c["canonical_id"])) for c in candidates])
     for candidate, top_songs in zip(candidates, songs):
         candidate["top_songs"] = top_songs
     return {"artist": artist, "current": canonical_summary(current), "no_artist": no_artist, "candidates": candidates}
