@@ -276,6 +276,30 @@ async def test_change_applies_to_this_concert_only_and_is_logged():
     assert changes[0].source == "user"
 
 
+# 공연 정보 표시 - 연결을 바꾼 공연만 연결된 아티스트 이름으로(원본 artist_name은 그대로)
+@pytest.mark.asyncio
+async def test_ticket_responses_show_linked_artist_name_for_this_concert_only():
+    artist = f"표시가수{uuid.uuid4().hex[:6]}"
+    await _canonical(f"{artist}-전역", mbid=f"mbid-g-{artist}", alias=artist)
+    right_id = await _canonical(f"{artist}-맞는사람", mbid=f"mbid-r-{artist}")
+    concert_id, ticket_id, token = await _concert_and_ticket(artist)
+    other_concert, other_ticket, other_token = await _concert_and_ticket(artist)
+
+    with patch("app.api.v1.endpoints.tickets.refresh_setlists_after_identity_change", new=AsyncMock()):
+        assert (await _post_change(ticket_id, token, {"artist": artist, "canonical_id": str(right_id)})).status_code == 200
+
+    headers = {"Authorization": f"Bearer {token}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        detail = (await ac.get(f"/api/v1/tickets/{ticket_id}", headers=headers)).json()
+        listed = (await ac.get("/api/v1/tickets", headers=headers)).json()
+        other = (await ac.get(f"/api/v1/tickets/{other_ticket}", headers={"Authorization": f"Bearer {other_token}"})).json()
+
+    assert detail["concert"]["artist_name"] == [artist]
+    assert detail["concert"]["artist_display_names"] == [f"{artist}-맞는사람"]
+    assert next(t for t in listed if t["id"] == ticket_id)["concert"]["artist_display_names"] == [f"{artist}-맞는사람"]
+    assert other["concert"]["artist_display_names"] == [artist]
+
+
 @pytest.mark.asyncio
 async def test_change_to_musicbrainz_candidate_creates_canonical():
     artist = f"새가수{uuid.uuid4().hex[:6]}"

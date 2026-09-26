@@ -36,6 +36,25 @@ async def get_concert_link(db: AsyncSession, concert_id: UUID | None, artist: st
     return result.scalar_one_or_none()
 
 
+# 공연 정보 표시용 - 공연별 연결(유저 수정)이 있는 표기는 연결된 아티스트 이름으로 바꾼 목록을
+# artist_display_names에 붙임(원본 artist_name은 연결 키라 안 바꿈). 검색/팔로우/추천은 원본 기준 그대로
+async def attach_artist_display_names(db: AsyncSession, concerts: list[Concert | None]) -> None:
+    targets = [c for c in concerts if c is not None]
+    if not targets:
+        return
+    rows = await db.execute(
+        select(ConcertArtistLink.concert_id, ConcertArtistLink.artist_text, CanonicalArtist)
+        .join(CanonicalArtist, CanonicalArtist.id == ConcertArtistLink.canonical_id)
+        .where(ConcertArtistLink.concert_id.in_({c.id for c in targets}))
+    )
+    linked = {
+        (concert_id, text): canonical.display_name or canonical.canonical_name
+        for concert_id, text, canonical in rows.all()
+    }
+    for concert in targets:
+        concert.artist_display_names = [linked.get((concert.id, name), name) for name in concert.artist_name or []]
+
+
 # 공연 안에서 이 표기가 가리키는 canonical - 공연별 연결이 있으면 그게 우선, 없으면 전역 별칭 -
 # 두 번째 값이 True면 "연결할 아티스트 없음"으로 확정된 것(호출부는 대표곡/셋리 검색을 건너뜀)
 async def resolve_concert_artist(

@@ -42,6 +42,8 @@ class ConcertResponse(BaseModel):
     # 예매처 바로가기 버튼용. KOPIS relates에서 파싱한 사이트별 URL
     # (키: YES24/INTERPARK/TICKETLINK/MELON, site_aliases.py 참고).
     ticketing_links: dict[str, str] | None
+    # 공연 정보 표시용 이름(artist_name과 같은 순서, 유저가 연결을 바꾼 표기만 연결된 아티스트 이름)
+    artist_display_names: list[str] | None = None
 
 
 class ConcertSummary(BaseModel):
@@ -65,6 +67,7 @@ class ConcertSummary(BaseModel):
     # 티켓 목록(가로모드 "다가오는 공연" 패널 등)에서도 예매처 바로가기를
     # 쓸 수 있도록 추가 (원래 상세 조회 전용 ConcertResponse에만 있었음).
     ticketing_links: dict[str, str] | None = None
+    artist_display_names: list[str] | None = None
 
 
 class TicketScanExtracted(BaseModel):

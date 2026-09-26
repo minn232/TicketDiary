@@ -18,6 +18,7 @@ from app.schemas.setlist import (
 )
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.artist_identity import (
+    attach_artist_display_names,
     canonical_summary,
     change_concert_artist_identity,
     identity_candidates,
@@ -77,6 +78,7 @@ async def register_ticket(
         # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
         # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
         background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
+    await attach_artist_display_names(db, [ticket.concert])
     return ticket
 
 
@@ -89,7 +91,9 @@ async def list_tickets(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_sorted_tickets(db, current_user.id, limit=limit, offset=offset)
+    tickets = await get_sorted_tickets(db, current_user.id, limit=limit, offset=offset)
+    await attach_artist_display_names(db, [t.concert for t in tickets])
+    return tickets
 
 
 # 티켓 상세 조회
@@ -99,7 +103,9 @@ async def retrieve_ticket(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_ticket(db, current_user.id, ticket_id)
+    ticket = await get_ticket(db, current_user.id, ticket_id)
+    await attach_artist_display_names(db, [ticket.concert])
+    return ticket
 
 
 # 티켓 수정
@@ -110,7 +116,9 @@ async def modify_ticket(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await update_ticket(db, current_user, ticket_id, body)
+    ticket = await update_ticket(db, current_user, ticket_id, body)
+    await attach_artist_display_names(db, [ticket.concert])
+    return ticket
 
 
 # 티켓 -> (concert_id, 관람일) 추출. 관람일이 없고 공연이 여러 날짜에 걸치면 아래 setlist
