@@ -32,6 +32,8 @@ import 'hanji_texture.dart';
 import 'concert_after_text_canvas.dart';
 import 'concert_before_page_contents.dart';
 import 'app_network_image.dart';
+import 'artist_identity_sheet.dart';
+import 'underlined_text.dart';
 import 'setlist_editor_sheet.dart';
 import 'setlist_music_service_control.dart';
 
@@ -367,6 +369,8 @@ class _RealSetlistContent extends StatefulWidget {
   final SetlistServiceSelection selection;
   final ValueChanged<Future<void> Function(BuildContext context)>?
   onEditorReady;
+  // [백엔드 수정] 아티스트 연결 수정 링크 노출 여부(공유 캡처에선 숨김).
+  final bool canFixIdentity;
 
   const _RealSetlistContent({
     required this.ticketId,
@@ -374,6 +378,7 @@ class _RealSetlistContent extends StatefulWidget {
     this.initialLoad,
     required this.selection,
     this.onEditorReady,
+    this.canFixIdentity = false,
   });
 
   @override
@@ -381,12 +386,14 @@ class _RealSetlistContent extends StatefulWidget {
 }
 
 class _RealSetlistContentState extends State<_RealSetlistContent> {
-  static final Map<String, ({List<SongEntry> songs, List<String> artists})>
-  _cache = {};
+  static final Map<String, RealSetlistResponse> _cache = {};
 
   final ConcertDetailService _service = ConcertDetailService();
   List<SongEntry>? _songs;
   List<String> _artistNames = const [];
+  bool _isUserEdited = false;
+  // 연결 수정 후 서버가 다시 채우는 동안.
+  bool _refilling = false;
 
   @override
   void initState() {
@@ -395,8 +402,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     final ticketId = widget.ticketId;
     final cached = ticketId == null ? null : _cache[ticketId];
     if (cached != null) {
-      _songs = cached.songs;
-      _artistNames = cached.artists;
+      _apply(ticketId!, cached);
       return;
     }
     _load();
@@ -418,14 +424,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       final res =
           await (widget.initialLoad ?? _service.getRealSetlist(ticketId));
       if (!mounted) return;
-      setState(() {
-        // [백엔드 수정]
-        // 앙코르가 시작되는 지점에 구분선(build에서 처리).
-        _songs = res.songs;
-        // [백엔드 수정] artistNames도 같이 저장(build()에서 아티스트별 그룹핑에 사용).
-        _artistNames = res.artistNames;
-        _cache[ticketId] = (songs: res.songs, artists: res.artistNames);
-      });
+      setState(() => _apply(ticketId, res));
       if (res.songs.isEmpty) {
         _pollForUpdate(ticketId);
       }
@@ -441,26 +440,66 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   // 1초 간격으로 최대 10번(~10초)만 짧게 재확인해서 그 안에 채워지면 자동 반영.
   // 10초 넘어가도 안 채워지면 포기 - 그 이상은 실패했거나 너무 늦게 나타나 어색함.
   Future<void> _pollForUpdate(String ticketId) async {
-    for (var attempt = 0; attempt < 10; attempt++) {
-      await Future.delayed(const Duration(seconds: 1));
-      if (!mounted) return;
-      try {
-        final res = await _service.getRealSetlist(ticketId);
+    try {
+      for (var attempt = 0; attempt < 10; attempt++) {
+        await Future.delayed(const Duration(seconds: 1));
         if (!mounted) return;
-        if (res.songs.isNotEmpty) {
-          setState(() {
-            _songs = res.songs;
-            _artistNames = res.artistNames;
-            _cache[ticketId] = (songs: res.songs, artists: res.artistNames);
-          });
-          return;
-        }
-      } on ApiException catch (_) {
-      } catch (_) {}
+        try {
+          final res = await _service.getRealSetlist(ticketId);
+          if (!mounted) return;
+          if (res.songs.isNotEmpty) {
+            setState(() => _apply(ticketId, res));
+            return;
+          }
+        } on ApiException catch (_) {
+        } catch (_) {}
+      }
+    } finally {
+      if (mounted && _refilling) setState(() => _refilling = false);
     }
   }
 
-  Widget _buildEmptyState() {
+  // 앙코르 구분선/아티스트별 그룹핑은 build에서 처리.
+  void _apply(String ticketId, RealSetlistResponse res) {
+    _songs = res.songs;
+    _artistNames = res.artistNames;
+    _isUserEdited = res.isUserEdited;
+    _cache[ticketId] = res;
+  }
+
+  // [백엔드 수정] 아티스트 연결 수정 신규 - 바꾸면 서버가 자동으로 채운 실제 셋리를 지우고
+  // 다음 조회 때 새 연결로 다시 채우므로, 다시 불러온 뒤 채워질 때까지 짧게 재확인.
+  VoidCallback? _fixIdentityFor(String? artist) {
+    final ticketId = widget.ticketId;
+    if (!widget.canFixIdentity || ticketId == null || artist == null) {
+      return null;
+    }
+    // 직접 고친 셋리는 연결을 바꿔도 그대로라 숨김.
+    if (_isUserEdited) return null;
+    return () => ArtistIdentitySheet.show(
+      context,
+      artist: artist,
+      allowSongSearch: false,
+      onLoad: () => _service.getIdentityCandidates(ticketId, artist),
+      onPick: (candidate) async {
+        await _service.changeArtistIdentity(
+          ticketId,
+          artist: artist,
+          candidate: candidate,
+          noArtist: candidate == null,
+        );
+        final res = await _service.getRealSetlist(ticketId);
+        if (!mounted) return;
+        setState(() {
+          _apply(ticketId, res);
+          _refilling = res.songs.isEmpty && candidate != null;
+        });
+        if (_refilling) unawaited(_pollForUpdate(ticketId));
+      },
+    );
+  }
+
+  Widget _buildEmptyState({VoidCallback? onFixIdentity}) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -472,7 +511,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
           ),
           const SizedBox(height: 6),
           Text(
-            '아직 등록되지\n않았어요',
+            _refilling ? '셋리를 다시\n찾는 중이에요' : '아직 등록되지\n않았어요',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: context.sp(12),
@@ -481,6 +520,10 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
               height: 1.4,
             ),
           ),
+          if (onFixIdentity != null && !_refilling) ...[
+            const SizedBox(height: 8),
+            _RealFixIdentityLink(ink: widget.ink, onTap: onFixIdentity),
+          ],
         ],
       ),
     );
@@ -505,11 +548,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       onSave: (songs) async {
         final res = await _service.editRealSetlist(ticketId, songs);
         if (!mounted) return;
-        setState(() {
-          _songs = res.songs;
-          _artistNames = res.artistNames;
-          _cache[ticketId] = (songs: res.songs, artists: res.artistNames);
-        });
+        setState(() => _apply(ticketId, res));
       },
     );
   }
@@ -525,7 +564,10 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
 
   Widget _buildBody(BuildContext context) {
     final songs = _songs ?? const <SongEntry>[];
-    if (songs.isEmpty && _artistNames.length <= 1) return _buildEmptyState();
+    if (songs.isEmpty && _artistNames.length <= 1) {
+      final soloArtist = _artistNames.length == 1 ? _artistNames.first : null;
+      return _buildEmptyState(onFixIdentity: _fixIdentityFor(soloArtist));
+    }
 
     final songsByArtist = <String, List<SongEntry>>{};
     final untaggedSongs = <SongEntry>[];
@@ -550,20 +592,27 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     // 탔는데, 특정 setlist.fm ID로 저장된 단독 공연(태그 자체를 안 붙임)은 아티스트가
     // 1명뿐이어도 전부 "아티스트 미상" 그룹으로 빠지는 문제가 있었음.
     if (allArtists.length <= 1) {
-      if (songs.isEmpty) return _buildEmptyState();
       // 단독 공연은 song.artist가 비어있는 옛날 데이터가 많아서, 콘서트에
       // 등록된 아티스트(정확히 1명)를 검색용 폴백으로 씀.
       final fallbackArtist = allArtists.length == 1 ? allArtists.first : null;
+      final onFix = _fixIdentityFor(fallbackArtist);
+      if (songs.isEmpty) return _buildEmptyState(onFixIdentity: onFix);
       return SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: _buildRealSongRows(
-            context,
-            songs,
-            widget.ink,
-            selection: widget.selection,
-            fallbackArtist: fallbackArtist,
-          ),
+          children: [
+            ..._buildRealSongRows(
+              context,
+              songs,
+              widget.ink,
+              selection: widget.selection,
+              fallbackArtist: fallbackArtist,
+            ),
+            if (onFix != null) ...[
+              const SizedBox(height: 4),
+              _RealFixIdentityLink(ink: widget.ink, onTap: onFix),
+            ],
+          ],
         ),
       );
     }
@@ -583,6 +632,8 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         groups: groupList,
         ink: widget.ink,
         selection: widget.selection,
+        fixIdentityFor: _fixIdentityFor,
+        refilling: _refilling,
       ),
     );
   }
@@ -651,11 +702,16 @@ class _RealSetlistGroupedByArtist extends StatefulWidget {
   final List<MapEntry<String?, List<SongEntry>>> groups;
   final Color ink;
   final ValueListenable<MusicService> selection;
+  // [백엔드 수정] 아티스트별 연결 수정 진입(null이면 링크 숨김).
+  final VoidCallback? Function(String? artist) fixIdentityFor;
+  final bool refilling;
 
   const _RealSetlistGroupedByArtist({
     required this.groups,
     this.ink = _kraftInk,
     required this.selection,
+    required this.fixIdentityFor,
+    this.refilling = false,
   });
 
   @override
@@ -704,6 +760,8 @@ class _RealSetlistGroupedByArtistState
               onTap: () => _toggle(g),
               ink: widget.ink,
               selection: widget.selection,
+              onFixIdentity: widget.fixIdentityFor(widget.groups[g].key),
+              refilling: widget.refilling,
             ),
           ),
       ],
@@ -718,6 +776,8 @@ class _RealSetlistArtistSection extends StatelessWidget {
   final VoidCallback onTap;
   final Color ink;
   final ValueListenable<MusicService> selection;
+  final VoidCallback? onFixIdentity;
+  final bool refilling;
 
   const _RealSetlistArtistSection({
     required this.artistName,
@@ -726,6 +786,8 @@ class _RealSetlistArtistSection extends StatelessWidget {
     required this.onTap,
     this.ink = _kraftInk,
     required this.selection,
+    this.onFixIdentity,
+    this.refilling = false,
   });
 
   @override
@@ -766,26 +828,57 @@ class _RealSetlistArtistSection extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(left: 20, top: 2, bottom: 8),
             // [백엔드 수정] songs가 비면 빈 공간 대신 안내 문구 표시.
-            child: songs.isEmpty
-                ? Text(
-                    '아직 채워지지 않았어요',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (songs.isEmpty)
+                  Text(
+                    refilling ? '다시 찾는 중이에요' : '아직 채워지지 않았어요',
                     style: TextStyle(
                       fontSize: context.sp(11.5),
                       fontWeight: FontWeight.w600,
                       color: ink.withValues(alpha: 0.5),
                     ),
                   )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: _buildRealSongRows(
-                      context,
-                      songs,
-                      ink,
-                      selection: selection,
-                    ),
+                else
+                  ..._buildRealSongRows(
+                    context,
+                    songs,
+                    ink,
+                    selection: selection,
                   ),
+                if (onFixIdentity != null) ...[
+                  const SizedBox(height: 4),
+                  _RealFixIdentityLink(ink: ink, onTap: onFixIdentity!),
+                ],
+              ],
+            ),
           ),
       ],
+    );
+  }
+}
+
+// [백엔드 수정] 실제 셋리 아티스트 연결 수정 링크 신규.
+class _RealFixIdentityLink extends StatelessWidget {
+  final Color ink;
+  final VoidCallback onTap;
+
+  const _RealFixIdentityLink({required this.ink, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: UnderlinedText(
+        '다른 아티스트예요?',
+        style: TextStyle(
+          fontSize: context.sp(10.5),
+          fontWeight: FontWeight.w600,
+          color: ink.withValues(alpha: 0.6),
+        ),
+      ),
     );
   }
 }
@@ -2474,6 +2567,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             ink: _kraftInk,
             initialLoad: setlistFuture,
             selection: _setlistServiceSelection,
+            canFixIdentity: !widget.exportMode,
             onEditorReady: (launcher) {
               _setlistEditorLauncher = launcher;
             },

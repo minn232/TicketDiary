@@ -189,3 +189,72 @@ class ArtistAnchorCandidate {
     );
   }
 }
+
+// [백엔드 수정] 공연별 아티스트 연결 수정 후보 신규.
+/// `GET /tickets/{ticketId}/artist-identity/candidates` 후보 한 건.
+/// [canonicalId]가 없으면 MusicBrainz에만 있는 아티스트(고르면 [mbid]로 연결).
+@immutable
+class IdentityCandidate {
+  final String? canonicalId;
+  final String? mbid;
+  final String name;
+  final String? imageUrl;
+  final String? country;
+  final String? type;
+  final String? disambiguation;
+  final String? beginYear;
+  // 알아보기용 곡 몇 개(인기순).
+  final List<String> topSongs;
+  final bool isCurrent;
+
+  const IdentityCandidate({
+    this.canonicalId,
+    this.mbid,
+    required this.name,
+    this.imageUrl,
+    this.country,
+    this.type,
+    this.disambiguation,
+    this.beginYear,
+    this.topSongs = const [],
+    this.isCurrent = false,
+  });
+
+  factory IdentityCandidate.fromJson(Map<String, dynamic> json) {
+    return IdentityCandidate(
+      canonicalId: json['canonical_id'] as String?,
+      mbid: json['mbid'] as String?,
+      name: json['name'] as String,
+      imageUrl: json['image_url'] as String?,
+      country: json['country'] as String?,
+      type: json['type'] as String?,
+      disambiguation: json['disambiguation'] as String?,
+      beginYear: json['begin_year']?.toString(),
+      topSongs: (json['top_songs'] as List<dynamic>? ?? const [])
+          .map((e) => e as String)
+          .toList(),
+      isCurrent: json['is_current'] as bool? ?? false,
+    );
+  }
+}
+
+/// 연결 수정 후보 응답 - [noArtist]면 지금 "연결할 아티스트 없음" 상태.
+@immutable
+class IdentityCandidatesResponse {
+  final bool noArtist;
+  final List<IdentityCandidate> candidates;
+
+  const IdentityCandidatesResponse({
+    this.noArtist = false,
+    this.candidates = const [],
+  });
+
+  factory IdentityCandidatesResponse.fromJson(Map<String, dynamic> json) {
+    return IdentityCandidatesResponse(
+      noArtist: json['no_artist'] as bool? ?? false,
+      candidates: (json['candidates'] as List<dynamic>? ?? const [])
+          .map((e) => IdentityCandidate.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}

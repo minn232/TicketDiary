@@ -108,4 +108,38 @@ class ConcertDetailService {
     );
     return PreSetlistResponse.fromJson(json);
   }
+
+  // [백엔드 수정] 공연별 아티스트 연결 수정 신규.
+  /// 연결 수정 후보(`GET /tickets/{ticketId}/artist-identity/candidates`).
+  Future<IdentityCandidatesResponse> getIdentityCandidates(
+    String ticketId,
+    String artist,
+  ) async {
+    final json = await _client.get(
+      '/tickets/$ticketId/artist-identity/candidates?artist=${Uri.encodeQueryComponent(artist)}',
+    );
+    return IdentityCandidatesResponse.fromJson(json);
+  }
+
+  /// 이 공연의 [artist]를 고른 후보(또는 [noArtist]면 "없음")로 연결
+  /// (`POST /tickets/{ticketId}/artist-identity`).
+  Future<void> changeArtistIdentity(
+    String ticketId, {
+    required String artist,
+    IdentityCandidate? candidate,
+    bool noArtist = false,
+  }) async {
+    await _client.post(
+      '/tickets/$ticketId/artist-identity',
+      body: {
+        'artist': artist,
+        if (noArtist)
+          'no_artist': true
+        else if (candidate?.canonicalId != null)
+          'canonical_id': candidate!.canonicalId
+        else
+          'mbid': candidate?.mbid,
+      },
+    );
+  }
 }
