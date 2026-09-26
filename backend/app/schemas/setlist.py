@@ -25,6 +25,16 @@ class FetchSetlistRequest(BaseModel):
     setlistfm_id: str
 
 
+class ArtistSetlistStatus(BaseModel):
+    # 실제 셋리가 빈 아티스트의 상태(앱 빈 화면 문구용) - searching(아직 안 찾아봄)/searched(찾았지만
+    # 없음)/unresolved(mbid 없어 누구인지 확정 못함)/not_artist("아티스트가 아니에요"로 설정됨)
+    artist: str
+    state: str
+    name: str | None = None
+    # 누구로 찾았는지 알아보게 붙이는 대표곡 1곡(searching/searched만)
+    top_song: str | None = None
+
+
 class RealSetlistResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -39,6 +49,7 @@ class RealSetlistResponse(BaseModel):
     is_user_edited: bool
     edited_user_nickname: str | None
     artist_names: list[str] = []
+    artist_statuses: list[ArtistSetlistStatus] = []
 
 
 class SetlistFmCandidate(BaseModel):

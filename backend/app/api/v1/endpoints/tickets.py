@@ -39,6 +39,7 @@ from app.services.pre_setlist import (
 )
 from app.services.representative_songs import search_itunes_songs
 from app.services.setlist import (
+    attach_artist_setlist_statuses,
     get_real_setlist,
     search_setlists_for_concert,
     fetch_and_save_real_setlist,
@@ -149,6 +150,7 @@ async def get_ticket_real_setlist(
     if not songs:
         performance_date = result["performance_date"] if isinstance(result, dict) else result.performance_date
         background_tasks.add_task(check_real_setlist_on_view, concert_id, performance_date)
+    await attach_artist_setlist_statuses(db, concert_id, result)
     return result
 
 

@@ -83,6 +83,52 @@ async def get_real_setlist(
     return real_setlist
 
 
+# 셋리가 빈 아티스트(단독은 공연 전체, 페스티벌은 곡 없는 아티스트)의 상태를 응답에 붙임 - 앱이 누구로
+# 찾았는지 보여주게. 대표곡은 연결 수정 후보와 같은 하루 캐시라 셋리가 빈 공연에서만 외부 조회가 생김
+async def attach_artist_setlist_statuses(db: AsyncSession, concert_id: UUID, result: RealSetlist | dict) -> None:
+    from app.services.representative_songs import candidate_top_songs  # 순환 임포트 방지용 지연 임포트
+
+    is_dict = isinstance(result, dict)
+    songs = result["songs"] if is_dict else result.songs
+    names = result["artist_names"] if is_dict else result.artist_names
+    solo = len(names) <= 1
+    if solo and songs:
+        targets = []
+    else:
+        with_songs = {s.get("artist") if isinstance(s, dict) else s.artist for s in songs}
+        targets = [name for name in names if solo or name not in with_songs]
+    attempted = not is_dict and result.attempted_at is not None
+
+    statuses = []
+    for artist in targets:
+        canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
+        if no_artist:
+            statuses.append({"artist": artist, "state": "not_artist"})
+        elif canonical is None or not canonical.mbid:
+            statuses.append({"artist": artist, "state": "unresolved"})
+        else:
+            statuses.append({
+                "artist": artist,
+                "state": "searched" if attempted else "searching",
+                "name": canonical.display_name or canonical.canonical_name,
+                "mbid": canonical.mbid,
+                "itunes": canonical.itunes_artist_id,
+            })
+    top_songs = await asyncio.gather(*(
+        candidate_top_songs(s["mbid"], s["itunes"], limit=1) for s in statuses if "mbid" in s
+    ))
+    linked = iter(top_songs)
+    for status in statuses:
+        if "mbid" in status:
+            status["top_song"] = next(iter(next(linked)), None)
+            del status["mbid"], status["itunes"]
+
+    if is_dict:
+        result["artist_statuses"] = statuses
+    else:
+        result.artist_statuses = statuses
+
+
 # Setlist.fm 검색 한 번 - (검색어, 우리 canonical mbid, mbid로 검색할지)를 받아 결과 목록 반환
 SetlistSearch = Callable[[str, str | None, bool], Awaitable[list[dict]]]
 

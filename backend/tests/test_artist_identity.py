@@ -417,3 +417,68 @@ async def test_representative_songs_and_setlist_search_follow_concert_link():
         assert await representative_songs_for_artist(db, artist, 20, concert_id) == []
         assert await search_with_artist_fallbacks(db, artist, search, concert_id) == []
     search.assert_not_awaited()
+
+
+# 실제 셋리가 비었을 때 아티스트별 상태 - 앱 빈 화면 문구용
+
+async def _get_real_setlist(ticket_id: str, token: str) -> dict:
+    songs = AsyncMock(side_effect=lambda mbid, itunes=None, limit=2: [f"{mbid}-대표곡"])
+    with patch("app.api.v1.endpoints.tickets.check_real_setlist_on_view", new=AsyncMock()), patch(
+        "app.services.representative_songs.candidate_top_songs", new=songs
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(f"/api/v1/tickets/{ticket_id}/setlist", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    return res.json()
+
+
+@pytest.mark.asyncio
+async def test_real_setlist_statuses_searching_then_searched_with_top_song():
+    from datetime import date, datetime, timezone
+
+    from app.models.setlist import RealSetlist
+
+    artist = f"상태가수{uuid.uuid4().hex[:6]}"
+    await _canonical(f"{artist}-표시", mbid=f"mbid-s-{artist}", alias=artist)
+    concert_id, ticket_id, token = await _concert_and_ticket(artist)
+
+    data = await _get_real_setlist(ticket_id, token)
+    assert data["artist_statuses"] == [
+        {"artist": artist, "state": "searching", "name": f"{artist}-표시", "top_song": f"mbid-s-{artist}-대표곡"}
+    ]
+
+    async with AsyncSessionLocal() as db:
+        db.add(RealSetlist(concert_id=concert_id, performance_date=date(2030, 6, 1), songs=[],
+                           attempted_at=datetime.now(timezone.utc)))
+        await db.commit()
+    data = await _get_real_setlist(ticket_id, token)
+    assert data["artist_statuses"][0]["state"] == "searched"
+
+
+@pytest.mark.asyncio
+async def test_real_setlist_statuses_unresolved_and_not_artist():
+    artist = f"미확정가수{uuid.uuid4().hex[:6]}"
+    await _canonical(artist, mbid=None, alias=artist)
+    _, ticket_id, token = await _concert_and_ticket(artist)
+    assert (await _get_real_setlist(ticket_id, token))["artist_statuses"] == [
+        {"artist": artist, "state": "unresolved", "name": None, "top_song": None}
+    ]
+
+    assert (await _post_change(ticket_id, token, {"artist": artist, "no_artist": True})).status_code == 200
+    assert (await _get_real_setlist(ticket_id, token))["artist_statuses"][0]["state"] == "not_artist"
+
+
+@pytest.mark.asyncio
+async def test_real_setlist_statuses_empty_when_solo_has_songs():
+    from datetime import date
+
+    from app.models.setlist import RealSetlist
+
+    artist = f"곡있는가수{uuid.uuid4().hex[:6]}"
+    await _canonical(artist, mbid=f"mbid-h-{artist}", alias=artist)
+    concert_id, ticket_id, token = await _concert_and_ticket(artist)
+    async with AsyncSessionLocal() as db:
+        db.add(RealSetlist(concert_id=concert_id, performance_date=date(2030, 6, 1), songs=[{"name": "곡"}]))
+        await db.commit()
+
+    assert (await _get_real_setlist(ticket_id, token))["artist_statuses"] == []
