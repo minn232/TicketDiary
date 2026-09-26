@@ -320,6 +320,25 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre.
   // 게스트도 이제 서버 ticketId를 가지므로, 예전에 있던 concertId 기준
   // 게스트 전용 폴백은 제거.
+  // [백엔드 수정] 비어 있으면 서버가 백그라운드로 생성하므로 2초 간격 최대 8번 재확인.
+  Future<void> _pollPreSetlist(String ticketId) async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted || widget.ticketInfo?.ticketId != ticketId) return;
+      try {
+        final res = await _service.getPreSetlist(ticketId);
+        if (!mounted) return;
+        if (res.songs.isNotEmpty) {
+          setState(() {
+            _fetchedSetlist = res.songs;
+            _fetchedArtistNames = res.artistNames;
+          });
+          return;
+        }
+      } catch (_) {}
+    }
+  }
+
   /// `GET /tickets/{ticketId}/setlist/pre`. 미등록(404)은 "미정"으로,
   /// 그 외 실패는 상태 코드와 함께 오류로 표시합니다.
   Future<void> _loadPreSetlist(String ticketId) async {
@@ -335,6 +354,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         _fetchedArtistNames = res.artistNames;
         _presetlistStatus = _FetchStatus.loaded;
       });
+      if (res.songs.isEmpty) unawaited(_pollPreSetlist(ticketId));
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
