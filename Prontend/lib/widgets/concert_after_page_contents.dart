@@ -414,6 +414,22 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   List<String> _artistNames = const [];
   // [백엔드 수정] 셋리가 빈 아티스트별 상태(빈 화면 문구용).
   RealSetlistResponse? _response;
+  // 재확인이 끝났는데도 "찾는 중"이면 "없음"으로 보여줌.
+  bool _settled = false;
+
+  ArtistSetlistStatus? _statusFor(String? artist) {
+    final status = _response?.statusFor(artist);
+    if (status == null || !_settled || status.state != 'searching') {
+      return status;
+    }
+    return ArtistSetlistStatus(
+      artist: status.artist,
+      state: 'searched',
+      name: status.name,
+      topSong: status.topSong,
+    );
+  }
+
   bool _isUserEdited = false;
   // 연결 수정 후 서버가 다시 채우는 동안.
   bool _refilling = false;
@@ -426,6 +442,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
     final cached = ticketId == null ? null : _cache[ticketId];
     if (cached != null) {
       _apply(ticketId!, cached);
+      _settled = true;
       return;
     }
     _load();
@@ -447,7 +464,11 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       final res =
           await (widget.initialLoad ?? _service.getRealSetlist(ticketId));
       if (!mounted) return;
-      setState(() => _apply(ticketId, res));
+      setState(() {
+        _apply(ticketId, res);
+        // 곡이 있으면 서버가 다시 찾지 않으므로 재확인 없이 확정.
+        _settled = res.songs.isNotEmpty;
+      });
       if (res.songs.isEmpty) {
         _pollForUpdate(ticketId);
       }
@@ -482,7 +503,12 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         } catch (_) {}
       }
     } finally {
-      if (mounted && _refilling) setState(() => _refilling = false);
+      if (mounted) {
+        setState(() {
+          _refilling = false;
+          _settled = true;
+        });
+      }
     }
   }
 
@@ -534,27 +560,18 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   ].join('|');
 
   Widget _buildEmptyState({VoidCallback? onFixIdentity, String? artist}) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.music_note_outlined,
-            size: 22,
-            color: widget.ink.withValues(alpha: 0.4),
-          ),
-          const SizedBox(height: 6),
-          SetlistEmptyMessage(
-            status: _response?.statusFor(artist),
-            refilling: _refilling,
-            ink: widget.ink,
-          ),
-          if (onFixIdentity != null && !_refilling) ...[
-            const SizedBox(height: 8),
-            _RealFixIdentityLink(ink: widget.ink, onTap: onFixIdentity),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _RealSetlistEmptyText(
+          text: setlistEmptyText(_statusFor(artist), refilling: _refilling),
+          ink: widget.ink,
+        ),
+        if (onFixIdentity != null && !_refilling) ...[
+          const SizedBox(height: 8),
+          _RealFixIdentityLink(ink: widget.ink, onTap: onFixIdentity),
         ],
-      ),
+      ],
     );
   }
 
@@ -668,7 +685,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         selection: widget.selection,
         fixIdentityFor: _fixIdentityFor,
         refilling: _refilling,
-        statusFor: (artist) => _response?.statusFor(artist),
+        statusFor: _statusFor,
       ),
     );
   }
@@ -866,18 +883,21 @@ class _RealSetlistArtistSection extends StatelessWidget {
         ),
         if (expanded)
           Padding(
-            padding: const EdgeInsets.only(left: 20, top: 2, bottom: 8),
+            padding: EdgeInsets.only(
+              left: 20,
+              top: songs.isEmpty ? 6 : 2,
+              bottom: songs.isEmpty ? 14 : 8,
+            ),
             // [백엔드 수정] songs가 비면 빈 공간 대신 안내 문구 표시.
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (songs.isEmpty)
-                  SetlistEmptyMessage(
-                    status: status,
-                    refilling: refilling,
+                  _RealSetlistEmptyText(
+                    text: setlistEmptyText(status, refilling: refilling),
                     ink: ink,
-                    fontSize: 11.5,
-                    alignment: WrapAlignment.start,
+                    size: 11,
+                    groupTitle: artistName,
                   )
                 else
                   ..._buildRealSongRows(
@@ -887,12 +907,89 @@ class _RealSetlistArtistSection extends StatelessWidget {
                     selection: selection,
                   ),
                 if (onFixIdentity != null) ...[
-                  const SizedBox(height: 4),
+                  SizedBox(height: songs.isEmpty ? 8 : 4),
                   _RealFixIdentityLink(ink: ink, onTap: onFixIdentity!),
                 ],
               ],
             ),
           ),
+      ],
+    );
+  }
+}
+
+// [백엔드 수정] 실제 셋리 빈 화면 문구 - 본문 + "♪ 곡 · 이름 기준" 보조 줄.
+class _RealSetlistEmptyText extends StatelessWidget {
+  final SetlistEmptyText text;
+  final Color ink;
+  final double size;
+
+  /// 페스티벌 아코디언 제목 - 연결된 이름이 같으면 보조 줄에서 뺌.
+  final String? groupTitle;
+
+  const _RealSetlistEmptyText({
+    required this.text,
+    required this.ink,
+    this.size = 12,
+    this.groupTitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final noteStyle = TextStyle(
+      fontSize: context.sp(size - 1.5),
+      fontWeight: FontWeight.w500,
+      color: ink.withValues(alpha: 0.55),
+      height: 1.35,
+    );
+    final song = text.song;
+    final name = text.name;
+    final showName =
+        name != null &&
+        name.trim().toLowerCase() != groupTitle?.trim().toLowerCase();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _keepWords(text.main),
+          style: _articleText(
+            context,
+            size: size,
+            weight: FontWeight.w700,
+            color: ink.withValues(alpha: 0.55),
+            height: 1.35,
+          ),
+        ),
+        if ((name != null && (song != null || showName)) ||
+            text.note != null) ...[
+          const SizedBox(height: 4),
+          Text.rich(
+            TextSpan(
+              style: noteStyle,
+              children: [
+                if (name != null) ...[
+                  if (song != null)
+                    TextSpan(
+                      text:
+                          '♪\u00A0${_keepWords(song)}${showName ? ' · ' : ''}',
+                    ),
+                  if (showName)
+                    TextSpan(
+                      text: _keepWords(name),
+                      style: noteStyle.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: ink.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  const TextSpan(text: '\u00A0기준'),
+                ] else
+                  TextSpan(text: _keepWords(text.note!)),
+              ],
+            ),
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ],
     );
   }
