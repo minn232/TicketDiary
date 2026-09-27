@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'paper_texture_cache.dart';
+
 const int kHanjiTextureSeed = 91;
 const double kHanjiTextureOpacity = .13;
 
@@ -42,6 +44,18 @@ class HanjiTexturePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty || opacity <= 0) return;
+    PaperTextureCache.paint(canvas, size, (
+      'hanji',
+      seed,
+      opacity,
+      kHanjiTextureFiberDensity,
+      kHanjiTextureFiberAlpha,
+      kHanjiTextureSpeckDensity,
+      kHanjiTextureSpeckAlpha,
+    ), _paintTexture);
+  }
+
+  void _paintTexture(Canvas canvas, Size size) {
     canvas.save();
     canvas.clipRect(Offset.zero & size);
     final rnd = math.Random(seed);

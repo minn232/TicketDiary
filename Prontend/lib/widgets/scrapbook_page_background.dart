@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'concert_after_palette.dart';
+import 'paper_texture_cache.dart';
 
 /// Decorative paper only; never participates in the scrapbook gestures.
 class ScrapbookPageBackground extends StatelessWidget {
@@ -54,6 +55,14 @@ class _PaperTextureOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty || opacity <= 0) return;
+    PaperTextureCache.paint(canvas, size, (
+      'paper-overlay',
+      seed,
+      opacity,
+    ), _paintTexture);
+  }
+
+  void _paintTexture(Canvas canvas, Size size) {
     final bounds = Offset.zero & size;
     final random = math.Random(seed);
     final paint = Paint();
@@ -82,7 +91,7 @@ class _PaperTextureOverlayPainter extends CustomPainter {
     }
     paint.shader = null;
 
-    for (var i = 0; i < 3600; i++) {
+    for (var i = 0; i < 650; i++) {
       final x = random.nextDouble() * size.width;
       final y = random.nextDouble() * size.height;
       final length = 0.8 + random.nextDouble() * 4.8;
@@ -102,7 +111,7 @@ class _PaperTextureOverlayPainter extends CustomPainter {
       );
     }
 
-    for (var i = 0; i < 1600; i++) {
+    for (var i = 0; i < 260; i++) {
       final dark = random.nextDouble() < .62;
       paint.color = (dark ? const Color(0xFF6B573F) : Colors.white).withValues(
         alpha: random.nextDouble() * (dark ? .035 : .05) * opacity,
@@ -170,25 +179,13 @@ class _PaperPainter extends CustomPainter {
         ).createShader(bounds),
     );
     paint.shader = null;
-    _paperTexture(canvas, size, paint);
-    // 장식 종이와 위젯 아래에 인쇄된 노트 줄.
-    final inset = size.width * .045;
-    final rulePaint = Paint()
-      ..color = const Color(
-        0xFF77756D,
-      ).withValues(alpha: kConcertAfterRuleAlpha)
-      ..strokeWidth = kConcertAfterRuleWidth;
-    for (
-      double y = kConcertAfterRuleSpacing;
-      y < size.height - 16;
-      y += kConcertAfterRuleSpacing
-    ) {
-      canvas.drawLine(
-        Offset(inset, y),
-        Offset(size.width - inset, y),
-        rulePaint,
-      );
-    }
+    PaperTextureCache.paint(
+      canvas,
+      size,
+      ('paper-background', mood?.textureOpacity ?? .13),
+      (textureCanvas, textureSize) =>
+          _paperTexture(textureCanvas, textureSize, Paint()),
+    );
   }
 
   void _paperTexture(Canvas canvas, Size size, Paint paint) {
@@ -218,7 +215,7 @@ class _PaperPainter extends CustomPainter {
     paint.shader = null;
 
     // Fine paper fibres. Different lengths and angles keep it from looking digital.
-    for (var i = 0; i < 3600; i++) {
+    for (var i = 0; i < 650; i++) {
       final x = random.nextDouble() * size.width;
       final y = random.nextDouble() * size.height;
       final length = 0.8 + random.nextDouble() * 4.8;
@@ -242,7 +239,7 @@ class _PaperPainter extends CustomPainter {
     }
 
     // Tiny pulp specks. These read as analog paper grain rather than photo noise.
-    for (var i = 0; i < 1600; i++) {
+    for (var i = 0; i < 260; i++) {
       final dark = random.nextDouble() < .62;
       paint.color = (dark ? const Color(0xFF6B573F) : Colors.white).withValues(
         alpha: random.nextDouble() * (dark ? .035 : .05),

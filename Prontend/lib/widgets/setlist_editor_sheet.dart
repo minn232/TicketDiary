@@ -125,8 +125,7 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
     Offset globalPosition,
     String? current,
   ) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     final picked = await showMenu<Object?>(
       context: context,
       position: RelativeRect.fromRect(
@@ -204,7 +203,9 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: artist == null ? Colors.transparent : _accent.withValues(alpha: 0.12),
+            color: artist == null
+                ? Colors.transparent
+                : _accent.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: _ink.withValues(alpha: 0.25)),
           ),
@@ -216,9 +217,7 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  color: artist == null
-                      ? _ink.withValues(alpha: 0.4)
-                      : _accent,
+                  color: artist == null ? _ink.withValues(alpha: 0.4) : _accent,
                 ),
               ),
               const SizedBox(width: 2),
@@ -318,7 +317,7 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
                     : ReorderableListView.builder(
                         buildDefaultDragHandles: false,
                         itemCount: _songs.length,
-                        onReorderItem: _reorder,
+                        onReorder: _reorder,
                         itemBuilder: (context, index) {
                           return Padding(
                             key: ValueKey(_ids[index]),
