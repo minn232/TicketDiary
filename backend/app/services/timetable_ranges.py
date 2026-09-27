@@ -26,6 +26,10 @@ _TIME_RE = re.compile(
     r"|(?<!\d)\d{1,2}\s{0,2}:\s{0,2}\d{2}(?!\d)"
 )
 
+# 같은 줄에 날짜가 붙은 시간 줄은 예매일정/배송/운영시간 안내("2026년 9월 14일(월) 14:00")라 제외.
+# 실제 시간표는 날짜가 표 머리에만 있고 시간 줄엔 없음(서버 스크린샷 44건 실측)
+_DATE_RE = re.compile(r"\d{4}\s*[년./-]\s*\d{1,2}|\d{1,2}\s*월\s*\d{1,2}\s*일")
+
 
 # Vision 응답의 단어들을 (y0, y1, text) 줄 단위로 묶음. 문단 경계와 무관하게 y좌표만 봄 -
 # 시간표는 시간/아티스트가 서로 다른 문단으로 잡히는 경우가 많기 때문
@@ -54,9 +58,13 @@ def _group_words_into_lines(annotation: dict) -> list[tuple[float, float, str]]:
 
 
 # 시간이 들어간 줄들을 y간격으로 묶어 3줄 이상인 묶음만 시간표 구간으로 보고 (top, bottom) 반환.
-# 날짜별 운영시간 안내("7월31일 11:00AM~10:30PM")가 3일치 이상이면 같이 잡히는 오탐은 남아있음
+# 페스티벌 아티스트 시간표와 단독 공연 당일 일정표(MD/입장/공연 시작) 둘 다 대상
 def find_timetable_ranges(annotation: dict, image_height: int) -> list[tuple[int, int]]:
-    time_lines = [(y0, y1) for y0, y1, text in _group_words_into_lines(annotation) if _TIME_RE.search(text)]
+    time_lines = [
+        (y0, y1)
+        for y0, y1, text in _group_words_into_lines(annotation)
+        if _TIME_RE.search(text) and not _DATE_RE.search(text)
+    ]
 
     clusters: list[list[tuple[float, float]]] = []
     for y0, y1 in time_lines:

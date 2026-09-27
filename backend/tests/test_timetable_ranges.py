@@ -61,6 +61,21 @@ def test_find_ranges_matches_split_colon_time():
     assert len(find_timetable_ranges(_annotation(words), 5000)) == 1
 
 
+# 날짜가 같은 줄에 붙은 시간 줄(예매일정/배송 안내)은 시간표로 안 봄 - Vision 띄어쓰기 형태 포함
+def test_find_ranges_ignores_lines_with_dates():
+    words = []
+    for y, date in ((1000, "2026년 9월 14일(월) 14:00"), (1100, "2026 년 9 월 17 일 ( 목 ) 20:00"), (1200, "2026.9.22 15:00")):
+        words.append((date, 100, y, 600, y + 20))
+    assert find_timetable_ranges(_annotation(words), 5000) == []
+
+
+# 단독 공연 당일 일정표(날짜는 표 머리에만)는 그대로 잡힘
+def test_find_ranges_keeps_day_of_schedule():
+    words = [("11월 7일(토)", 300, 950, 500, 970)]
+    words += _time_row(1000, "4:00PM", "티켓부스 오픈") + _time_row(1100, "5:00PM", "입장") + _time_row(1200, "6:00PM", "공연 시작")
+    assert len(find_timetable_ranges(_annotation(words), 5000)) == 1
+
+
 def test_find_ranges_clamps_to_image_bounds():
     words = _time_row(0) + _time_row(100) + _time_row(200)
     assert find_timetable_ranges(_annotation(words), 240) == [(0, 240)]
