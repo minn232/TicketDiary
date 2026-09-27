@@ -115,21 +115,14 @@ def _extract_artist_names(raw: dict, concert_name: str | None = None) -> list[st
 
 # LLM 네이티브 타임테이블 항목({performance_date,time,artist,stage})을 백엔드
 # TimeTableEntry({date,time,stage,event})로 변환. event는 필수(non-null) 필드라
-# artist가 없는 블라인드 항목은 안내 문구로 채워야 검증을 통과함
+# artist가 없는 블라인드 항목은 안내 문구로 채워야 검증을 통과함. 시간은 time 필드로
+# 따로 가므로 event엔 안 붙임(붙이면 프론트에 시간이 두 번 나옴)
 def _to_timetable_entry(entry: dict) -> dict:
-    artist = entry.get("artist")
-    time_ = entry.get("time")
-    if artist and time_:
-        event = f"{artist} {time_}"
-    elif artist:
-        event = artist
-    else:
-        event = "라인업 미공개"
     return {
         "date": entry.get("performance_date"),
-        "time": time_,
+        "time": entry.get("time"),
         "stage": entry.get("stage"),
-        "event": event,
+        "event": entry.get("artist") or "라인업 미공개",
     }
 
 

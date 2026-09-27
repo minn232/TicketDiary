@@ -34,6 +34,9 @@ class Concert(Base):
     price = Column(JSONB, nullable=True)
     event_type = Column(String, nullable=False, default=EventType.UNKNOWN.value)
     crawl_screenshot_url = Column(String, nullable=True)
+    # crawl_screenshot_url 안 시간표 구간의 세로 픽셀 범위 [[top, bottom], ...] - LLM이 이 구간만
+    # 따로 읽어 아티스트 시간표를 뽑음. None은 미계산(백필 대상), []는 계산했는데 시간표 없음
+    timetable_ranges = Column(JSONB, nullable=True)
     # 가장 최근 크롤링 시도 시각(성공/실패 무관). ticketing_date를 아직 못 얻었으면 크롤링을
     # "완료"로 보지 않고 재시도하되, 너무 자주 재시도하지 않도록 쿨다운 판단에 씀
     crawl_attempted_at = Column(DateTime(timezone=True), nullable=True)

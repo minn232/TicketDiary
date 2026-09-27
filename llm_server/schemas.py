@@ -10,6 +10,9 @@ class CrawlAnalyzeItem(BaseModel):
     concert_id: str
     concert_name: str | None = None
     screenshot_url: str
+    # 스크린샷 원본 픽셀 기준 시간표 구간의 세로 범위 [(top, bottom), ...]. 백엔드가 OCR로
+    # 시간 줄이 몰린 구간을 찾아 보냄. None/[]이면 페스티벌 아티스트 시간표는 비워짐(extract_poster_info)
+    timetable_ranges: list[tuple[int, int]] | None = None
 
 
 class ArtistExtractItem(BaseModel):

@@ -17,7 +17,12 @@ from schemas import ArtistExtractItem, CrawlAnalyzeItem, DiaryGenerateItem
 def analyze_crawl_screenshot(item: CrawlAnalyzeItem) -> dict:
     """예매 사이트 크롤링 스크린샷(item.screenshot_url)에서 타임테이블/가격/배송일/
     아티스트명/음식물 반입 여부를 뽑아낸다 (poster_info 스키마 그대로 반환)."""
-    return extract_poster_info(item.screenshot_url, base_url=settings.VLLM_BASE_URL, api_key=settings.VLLM_API_KEY)
+    return extract_poster_info(
+        item.screenshot_url,
+        base_url=settings.VLLM_BASE_URL,
+        api_key=settings.VLLM_API_KEY,
+        timetable_ranges=item.timetable_ranges,
+    )
 
 
 def extract_artists_from_poster(item: ArtistExtractItem) -> dict:

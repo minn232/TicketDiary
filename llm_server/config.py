@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     # 문제없었음. 평소 트래픽은 기본값으로 충분하고, 몰아서 보낼 때만 일시적으로 올리는
     # 용도 - vLLM 쪽 GPU 메모리 여유에 따라 감당 가능한 값이 다르므로 낮게 시작해서
     # 점진적으로 올릴 것 (너무 높이면 vLLM이 OOM 나거나 스케줄러가 요청을 계속 deferred함).
-    CRAWL_BATCH_CONCURRENCY: int = 30
-    ARTIST_BATCH_CONCURRENCY: int = 5
+    CRAWL_BATCH_CONCURRENCY: int = 5
+    ARTIST_BATCH_CONCURRENCY: int = 30
     DIARY_BATCH_CONCURRENCY: int = 3
 
 
