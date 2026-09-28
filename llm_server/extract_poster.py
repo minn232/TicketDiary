@@ -66,6 +66,10 @@ POSTER_FEW_SHOT=0으로 끌 수 있다. 같은 날 병합 보정 3가지를 추�
 같은 날 few-shot 예시를 뺐다(_FEW_SHOT_EXAMPLES, POSTER_FEW_SHOT, _drop_few_shot_leaks 삭제) - 배치 요청은
 system 프롬프트와 조각 이미지만 보낸다. 예시 이미지(few_shot_examples/interpark_*.png)도 폴더에서 지워졌다.
 
+2026-09-28 변경: ticketing_date를 단일 날짜 문자열에서 예매 단계별 [{phase, date}] 배열로 바꿨다(schema.py,
+프롬프트는 prompts.py). 배치 병합은 단계 이름이 같은 항목끼리 묶고, 단계마다 예전 다수결(_pick_ticketing_date)로
+날짜를 고른다(_merge_ticketing_phases).
+
 사전 준비:
     vllm serve Qwen/Qwen2.5-VL-7B-Instruct-AWQ \
         --quantization awq \
@@ -131,7 +135,7 @@ MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 # --out-dir로 저장하는 결과 파일에 "_pipeline_version"으로 같이 남김
 # grep으로 구버전 결과만 골라내기
 # --skip-up-to-date로 최신 버전의 파일 건너뛰기.
-PIPELINE_VERSION = "2026-09-25-2"
+PIPELINE_VERSION = "2026-09-28-1"
 
 # ── 업스케일 ────────────────────────────────────────────────────────
 # 자른 타일(조각)을 이 수치를 목표로 업스케일링
@@ -672,7 +676,7 @@ def _pick_majority(values: list) -> object | None:
     return None  # pragma: no cover - non_null이 비어있지 않으면 도달하지 않음
 
 
-def _pick_ticketing_date(results: list[dict], performance_dates: set[str]) -> str | None:
+def _pick_ticketing_date(candidates: list[str], performance_dates: set[str]) -> str | None:
     """배치마다 ticketing_date를 독립적으로 답하다 보니, 어떤 조각은 "공연시간 안내"처럼
     공연 당일 날짜가 적힌 구간만 보고 그걸 예매 오픈일로 착각해 답하는 경우가 있었다(실제
     "판매시작 OOOO-OO-OO"는 페이지 더 아래 다른 조각에 있는데, 그 조각이 먼저 처리돼 잘못된
@@ -683,8 +687,10 @@ def _pick_ticketing_date(results: list[dict], performance_dates: set[str]) -> st
     유발한 배치 하나에서만 나온다(실제로 이 방식으로 재현 테스트했을 때 정답 2표 vs 오답 1표로
     정답이 이겼다). performance_dates(라인업/타임테이블에 등장하는 실제 공연일)와 우연히 같은
     값은 동표일 때만 후순위로 미루는 2차 기준으로 쓴다(1차로 쓰면 timetable에 잘못 섞여든
-    항목 때문에 함께 오염될 수 있어 신뢰도가 더 낮다)."""
-    candidates = [r["ticketing_date"] for r in results if r.get("ticketing_date")]
+    항목 때문에 함께 오염될 수 있어 신뢰도가 더 낮다).
+
+    2026-09-28: ticketing_date가 예매 단계별 배열이 되면서 이 다수결은 단계마다 따로 한다 - candidates는
+    한 단계에 대해 배치들이 답한 날짜들이다(_merge_ticketing_phases)."""
     if not candidates:
         return None
     counts = Counter(candidates)
@@ -694,6 +700,41 @@ def _pick_ticketing_date(results: list[dict], performance_dates: set[str]) -> st
         return top_candidates[0]
     non_performance = [c for c in top_candidates if c not in performance_dates]
     return non_performance[0] if non_performance else top_candidates[0]
+
+
+def _phase_key(phase: str) -> str:
+    """같은 예매 단계의 표기 차이(대소문자, 공백, 기호)를 무시하고 비교하기 위한 키(2026-09-28). _artist_key와
+    달리 괄호 속 글자는 지우지 않는다 - "선예매(팬클럽)"과 "선예매(카드사)"는 다른 단계다."""
+    folded = phase.casefold()
+    return re.sub(r"[\W_]+", "", folded) or folded.strip()
+
+
+def _merge_ticketing_phases(results: list[dict], performance_dates: set[str]) -> list[dict] | None:
+    """배치마다 답한 ticketing_date 배열([{phase, date}, ...])을 하나로 합친다(2026-09-28). 단계 이름이
+    _phase_key로 같은 항목은 한 단계로 보고(표기는 먼저 나온 것), 그 단계의 날짜는 _pick_ticketing_date의
+    다수결로 고른다 - 한 배치는 (단계, 날짜)마다 한 표다. 날짜를 답한 배치가 하나도 없는 단계("추후 공지")는
+    date=null로 남긴다. 단계 이름이 비었거나 모델이 null 대신 쓴 문자열("null")인 항목은 버린다. 결과는
+    날짜순(null은 맨 뒤)이고, 항목이 없으면 None이다."""
+    labels: dict[str, str] = {}
+    votes: dict[str, list[str]] = {}
+    for r in results:
+        voted: set[tuple[str, str]] = set()
+        for e in r.get("ticketing_date") or []:
+            phase = (e.get("phase") or "").strip()
+            if not phase or phase.casefold() in ("null", "none"):
+                continue
+            key = _phase_key(phase)
+            labels.setdefault(key, phase)
+            dates = votes.setdefault(key, [])
+            date = e.get("date")
+            if date and (key, date) not in voted:
+                voted.add((key, date))
+                dates.append(date)
+    merged = [
+        {"phase": labels[key], "date": _pick_ticketing_date(dates, performance_dates)} for key, dates in votes.items()
+    ]
+    merged.sort(key=lambda e: (e["date"] is None, e["date"] or ""))
+    return merged or None
 
 
 def _pick_delivery_date(results: list[dict]) -> str | None:
@@ -774,7 +815,8 @@ UNKNOWN_YEAR = 2000
 def _date_years(result: dict, include_ticket_dates: bool) -> list[int]:
     dates = [e.get("performance_date") for e in (result.get("lineup") or []) + (result.get("timetable") or [])]
     if include_ticket_dates:
-        dates += [result.get("ticketing_date"), result.get("ticket_delivery_date")]
+        dates += [e.get("date") for e in (result.get("ticketing_date") or [])]
+        dates.append(result.get("ticket_delivery_date"))
     years = [int(m.group(1)) for d in dates if (m := _DATE_YEAR_RE.match(d or ""))]
     return [y for y in years if y != UNKNOWN_YEAR]
 
@@ -817,7 +859,8 @@ def _normalize_years(results: list[dict]) -> list[dict]:
         r["lineup"] = [{**e, "performance_date": fix(e.get("performance_date"))} for e in (r.get("lineup") or [])]
         if r.get("timetable") is not None:
             r["timetable"] = [{**e, "performance_date": fix(e.get("performance_date"))} for e in r["timetable"]]
-        r["ticketing_date"] = fix(r.get("ticketing_date"))
+        if r.get("ticketing_date") is not None:
+            r["ticketing_date"] = [{**e, "date": fix(e.get("date"))} for e in r["ticketing_date"]]
         r["ticket_delivery_date"] = fix(r.get("ticket_delivery_date"))
         fixed.append(r)
     return fixed
@@ -1048,7 +1091,7 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     performance_dates = {e["performance_date"] for e in lineup if e["performance_date"]}
     performance_dates |= {e["performance_date"] for e in (timetable or []) if e.get("performance_date")}
 
-    ticketing_date = _pick_ticketing_date(results, performance_dates)
+    ticketing_date = _merge_ticketing_phases(results, performance_dates)
     ticket_delivery_date = _pick_delivery_date(results)
 
     food_allowed = _pick_majority([(r.get("other_info") or {}).get("food_allowed") for r in results])
@@ -1259,7 +1302,7 @@ def extract_poster_info(
     # 받아도 처리 가능하므로(test_batch_extract.py가 이미지 "간" 동시 처리에 쓰는 것과 같은 근거),
     # 배치 순서대로 결과를 모아도(pool.submit 후 원래 순서로 .result() 호출) 총 대기 시간은
     # "가장 오래 걸린 배치 1개" 수준으로 줄어든다. ticketing_date의 "먼저 나온 값 우선" 동표
-    # 처리(_pick_ticketing_date)가 배치 제출 순서에 의존하므로, results 리스트 순서는 그대로
+    # 처리(_merge_ticketing_phases)가 배치 제출 순서에 의존하므로, results 리스트 순서는 그대로
     # 유지한다(동시 실행 자체는 순서에 영향 없음 - future를 만든 순서대로 결과를 받을 뿐).
     # 각 배치는 _call_batch_with_split_retry를 거치므로, 응답이 max_tokens에 걸려 잘려도 그
     # 배치 하나만 내부적으로 더 잘게 쪼개져 재시도되고(위 함수 설명 참고), 성공하면 dict 1개가

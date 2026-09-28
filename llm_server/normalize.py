@@ -79,7 +79,7 @@ def _is_null_literal(name: str) -> bool:
 
 
 # entries(lineup 또는 timetable)에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
-# 반환. 블라인드 라인업(artist=None)은 자연히 걸러짐 - 순서는 처음 등장한 순서 유지
+# 반환. 블라인드 라인업(artist=None)은 자연히 걸러짐 - 순서는 처음 등장한 순서 유지.
 def _unique_artist_names(entries: list[dict]) -> list[str]:
     seen: set[str] = set()
     names: list[str] = []

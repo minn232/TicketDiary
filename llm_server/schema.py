@@ -48,6 +48,17 @@ TICKET_PRICE_SCHEMA = {
     "additionalProperties": False,
 }
 
+# 예매 단계 하나(2026-09-28). date는 "추후 공지"처럼 단계만 공개되고 날짜가 없을 때 null이다.
+TICKETING_PHASE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "phase": {"type": "string"},
+        "date": {"anyOf": [{"type": "string", "pattern": DATE_PATTERN}, {"type": "null"}]},
+    },
+    "required": ["phase", "date"],
+    "additionalProperties": False,
+}
+
 POSTER_INFO_SCHEMA = {
     "type": "object",
     "properties": {
@@ -126,9 +137,15 @@ POSTER_INFO_SCHEMA = {
         # 기대해서 셋이 서로 어긋나 있었다 - 실제로 강제 디코딩 스키마와 자연어 지시가 맞지 않으니
         # 모델이 사실상 항상 null만 반환하는 상태였다(38개 테스트 결과 전부 null 확인). 프롬프트/
         # 백엔드에 맞춰 단일 날짜 문자열로 되돌린다.
+        # 2026-09-28: 다시 {phase, date} 객체 배열로 바꾼다 - 선예매/1차/2차/일반예매처럼 단계가 여러 개면
+        # 가장 이른 날짜 하나가 아니라 전부 담기 위함. 위 실패를 되풀이하지 않게 프롬프트(prompts.py의
+        # POSTER_SYSTEM_PROMPT 3번, FRAGMENT_NOTE)도 같은 배열로 답하게 함께 고쳤다. 백엔드 계약은 그대로다 -
+        # normalize.py가 가장 이른 날짜를 ticketing_date(단일 문자열)로 접고, 배열 전체는 ticketing_phases로
+        # 보낸다. date에 null을 허용하는 건 날짜 미정 단계 때문이다 - 막으면 강제 디코딩이 그런 단계에 날짜를
+        # 지어내게 된다.
         "ticketing_date": {
             "anyOf": [
-                {"type": "string", "pattern": DATE_PATTERN},
+                {"type": "array", "items": TICKETING_PHASE_SCHEMA},
                 {"type": "null"},
             ]
         },
