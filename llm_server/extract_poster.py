@@ -69,6 +69,10 @@ system 프롬프트와 조각 이미지만 보낸다. 예시 이미지(few_shot_
 2026-09-28 변경: ticketing_date를 단일 날짜 문자열에서 예매 단계별 [{phase, date}] 배열로 바꿨다(schema.py,
 프롬프트는 prompts.py). 배치 병합은 단계 이름이 같은 항목끼리 묶고, 단계마다 예전 다수결(_pick_ticketing_date)로
 날짜를 고른다(_merge_ticketing_phases).
+같은 날 그 외 공연의 공연 시작 시각이 결과에서 빠질 수 있던 구조를 고쳤다. FRAGMENT_NOTE의 "시간표 칸이 안 보이면
+포스터 이름에 시각을 붙이지 말라"는 문구가 그 외 공연 절차와 부딪혔고, 공연시간 안내가 공연명·포스터와 다른
+배치에 있으면 붙일 이름도 없었다. 지금은 그 문구를 페스티벌로 한정하고, 이름이 안 보이는 배치는 artist=null로
+답하게 한 뒤 병합에서 lineup 이름으로 채운다(_fill_start_time_artists).
 
 사전 준비:
     vllm serve Qwen/Qwen2.5-VL-7B-Instruct-AWQ \
@@ -135,7 +139,7 @@ MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 # --out-dir로 저장하는 결과 파일에 "_pipeline_version"으로 같이 남김
 # grep으로 구버전 결과만 골라내기
 # --skip-up-to-date로 최신 버전의 파일 건너뛰기.
-PIPELINE_VERSION = "2026-09-28-1"
+PIPELINE_VERSION = "2026-09-28-2"
 
 # ── 업스케일 ────────────────────────────────────────────────────────
 # 자른 타일(조각)을 이 수치를 목표로 업스케일링
@@ -973,6 +977,35 @@ def _artist_timetable_entries(results: list[dict]) -> list[dict]:
     ]
 
 
+def _fill_start_time_artists(entries: list[dict], lineup: list[dict]) -> list[dict]:
+    """그 외 공연의 공연 시작 시각 항목 중 artist가 빈 것을 lineup 이름으로 채운다(2026-09-28). 공연시간
+    안내가 공연명·포스터와 다른 구간에 있으면 그 구간 배치는 이름 없이 시각만 답한다(FRAGMENT_NOTE).
+    항목 날짜에 lineup 항목이 있는 아티스트와 날짜를 모르는 아티스트마다 한 항목씩 만들고, 항목에 날짜가
+    없거나 그렇게 고른 아티스트가 없으면 lineup 아티스트 전체로 채운다. 이름이 있는 항목도 lineup 표기로
+    맞춘다 - 같은 시각을 이름을 본 구간과 못 본 구간이 함께 답하면, 표기가 달라 _dedupe_timetable이
+    중복으로 거르지 못한다. lineup이 비어 있으면 채울 이름이 없어 이름 없는 항목은 버린다."""
+    display: dict[str, str] = {}
+    names_by_date: dict[str | None, list[str]] = {}
+    for e in lineup:
+        if not e["artist"]:
+            continue
+        key = _artist_key(e["artist"])
+        display.setdefault(key, e["artist"])
+        names_by_date.setdefault(e["performance_date"], []).append(display[key])
+
+    filled: list[dict] = []
+    for e in entries:
+        name = (e.get("artist") or "").strip()
+        # 모델이 null 대신 문자열 "null"을 쓰는 경우가 있다(_clean_timetable 참고).
+        if name and name.lower() not in ("null", "none"):
+            filled.append({**e, "artist": display.get(_artist_key(name), e["artist"])})
+        elif e.get("time"):
+            date = e.get("performance_date")
+            names = names_by_date.get(date, []) + names_by_date.get(None, []) if date else []
+            filled.extend({**e, "artist": n} for n in names or display.values())
+    return filled
+
+
 def _merge_results(results: list[dict], timetable_results: list[dict] | None = None) -> dict:
     """타일 배치 결과(results)와 시간표 구간 조각 결과(timetable_results, _timetable_region_result로 정리한
     것)를 백엔드 계약 6키 결과로 합친다. timetable_results가 None이면 시간표 구간이 주어지지 않은 것이고,
@@ -1043,6 +1076,12 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     for e in lineup:
         if e["artist"] and e["performance_date"]:
             artist_dates.setdefault(_artist_key(e["artist"]), set()).add(e["performance_date"])
+
+    # 그 외 공연의 공연 시작 시각(2026-09-28): 공연시간 안내가 공연명·포스터와 다른 구간에 있으면 그 배치는
+    # artist=null로 답한다. 이름 없는 항목은 아래 _filter_timetable_to_lineup이 지우므로, lineup이 정해진
+    # 여기서 먼저 이름을 채운다.
+    if timetable_results is None and not is_festival:
+        raw_timetable_entries = _fill_start_time_artists(raw_timetable_entries, lineup)
 
     # 빈 결과는 맨 아래에서 null로 통일한다(2026-09-25: 예전에는 timetable_present를 보고 null과 []를
     # 여기서 구분했지만, 마지막의 `timetable or None`이 어차피 둘을 같게 만들어 뺐다).
