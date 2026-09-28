@@ -278,7 +278,7 @@ async def request_ticket_diary(db: AsyncSession, user_id: UUID, ticket_id: UUID)
     return ticket
 
 
-# 티켓이 소유한 S3 이미지(공연 사진 + page_layout 사진/썸네일). 포스터는 공연 공용이라 제외
+# 티켓이 소유한 S3 이미지(공연 사진 + page_layout 사진/썸네일), 포스터는 공연 공용이라 제외함
 def _owned_photo_urls(ticket: Ticket) -> set[str]:
     urls = set(ticket.concert_photo_urls or [])
     for item in (ticket.page_layout or {}).get("items", []):

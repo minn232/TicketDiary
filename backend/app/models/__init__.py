@@ -15,6 +15,7 @@ from app.models.artist_normalization import (
     CanonicalArtist, ArtistAlias, ArtistNormalizationStatus, ArtistGroupMembership,
 )
 from app.models.artist_blocklist import BlockedArtistName
+from app.models.artist_identity import ArtistIdentityChange, ConcertArtistLink
 from app.models.music_link_cache import MusicLinkCache
 from app.models.llm_batch_state import LlmNightBatchState
 
@@ -34,6 +35,7 @@ __all__ = [
     "ArtistLastfmSyncStatus",
     "CanonicalArtist", "ArtistAlias", "ArtistNormalizationStatus", "ArtistGroupMembership",
     "BlockedArtistName",
+    "ArtistIdentityChange", "ConcertArtistLink",
     "MusicLinkCache",
     "LlmNightBatchState",
 ]

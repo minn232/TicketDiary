@@ -4,7 +4,7 @@
 export해서 CSV로 만들어 pod에 올려두면 됨(백엔드 API 호출 불필요).
 
 extract_artist_info는 동기 함수라 asyncio 대신 ThreadPoolExecutor로 동시 실행한다(vLLM은
-continuous batching이라 여러 요청을 동시에 받아도 처리 가능 - main.py의 BATCH_CONCURRENCY와
+continuous batching이라 여러 요청을 동시에 받아도 처리 가능 - main.py의 ARTIST_BATCH_CONCURRENCY와
 같은 이유). --concurrency로 동시 요청 수 조절, 너무 높이면 vLLM이 OOM 날 수 있으니 낮게
 시작해서 올릴 것.
 

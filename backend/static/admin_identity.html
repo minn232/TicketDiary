@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TicketDiary 아티스트 연결 기록</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e3e1dc;
+    --text: #2a2a28;
+    --muted: #8a8781;
+    --accent: #c0562f;
+    --accent-soft: #f4e3da;
+    --danger: #b0473a;
+    --ok: #4a7c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  header a.nav-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  header a.nav-link:hover { text-decoration: underline; }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  input[type="text"], input[type="password"] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    background: #fff;
+    color: var(--text);
+  }
+  button {
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--danger); border-color: var(--danger); background: #fff; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h2 { font-size: 14px; margin: 24px 0 8px; }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: #faf9f7; }
+  tr:last-child td { border-bottom: none; }
+  tr.reverted td { color: var(--muted); text-decoration: line-through; }
+  .artist { display: inline-flex; align-items: center; gap: 6px; }
+  .artist img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--border); }
+  .none { color: var(--muted); font-style: italic; }
+  .date { color: var(--muted); font-size: 11px; }
+  .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .form-row input { min-width: 240px; }
+  .candidate { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; background: var(--panel); }
+  .candidate img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: var(--border); }
+  .candidate .meta { flex: 1; }
+  .candidate .sub { color: var(--muted); font-size: 12px; }
+  .candidate.current { border-color: var(--ok); }
+  .tag { display: inline-block; border-radius: 999px; padding: 1px 7px; font-size: 11px; margin-left: 6px; }
+  .tag.current { background: #e4efe7; color: var(--ok); }
+  .tag.db { background: var(--accent-soft); color: var(--accent); }
+  #msg { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 20; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔗 TicketDiary 아티스트 연결 기록</h1>
+  <div class="field">
+    <label>관리자 키</label>
+    <input type="password" id="admin-key" placeholder="Bearer key" />
+    <button onclick="saveKey()">저장</button>
+  </div>
+  <a class="nav-link" href="/">← 공연 목록</a>
+  <a class="nav-link" href="/artists">아티스트 조회</a>
+</header>
+
+<main>
+  <h2>공연별 연결 수정</h2>
+  <div class="hint">이 공연에서만 아티스트 연결을 바꿔요. 같은 이름의 다른 공연은 그대로예요.</div>
+  <div class="form-row">
+    <input type="text" id="concert-id" placeholder="공연 ID (UUID)" />
+    <input type="text" id="artist" placeholder="공연에 적힌 아티스트 표기 그대로" />
+    <button onclick="loadCandidates()">후보 보기</button>
+  </div>
+  <div id="candidates"></div>
+
+  <h2>변경 기록</h2>
+  <div class="hint">최신순. 같은 공연·표기는 가장 최근 변경부터 되돌릴 수 있어요.</div>
+  <table>
+    <thead>
+      <tr><th>시간</th><th>공연</th><th>표기</th><th>전 → 후</th><th>누가</th><th></th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+
+<div id="msg"></div>
+
+<script>
+const API = '/api/v1/admin';
+
+function adminKey() { return localStorage.getItem('td_admin_key') || ''; }
+function saveKey() {
+  localStorage.setItem('td_admin_key', document.getElementById('admin-key').value.trim());
+  toast('키 저장됨');
+  loadChanges();
+}
+document.getElementById('admin-key').value = adminKey();
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey(), ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function toast(text) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 2500);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function artistHtml(a) {
+  if (!a) return '<span class="none">연결 없음</span>';
+  const img = a.image_url ? `<img src="${esc(a.image_url)}" alt="">` : '<img alt="">';
+  return `<span class="artist">${img}${esc(a.name)}</span>`;
+}
+
+async function loadChanges() {
+  const tbody = document.getElementById('rows');
+  try {
+    const rows = await api('/artist-identity-changes?limit=100');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="none">기록이 없어요.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr class="${r.reverted_at ? 'reverted' : ''}">
+        <td class="date">${esc(new Date(r.created_at).toLocaleString('ko-KR'))}</td>
+        <td>${esc(r.concert_name)}<div class="date">${esc(r.kopis_id || '')} · ${esc(r.concert_id)}</div></td>
+        <td>${esc(r.artist_text)}</td>
+        <td>${artistHtml(r.before)} → ${artistHtml(r.after)}</td>
+        <td>${r.source === 'admin' ? '관리자' : esc(r.changed_by || '유저')}</td>
+        <td>${r.reverted_at
+          ? '<span class="date">되돌림</span>'
+          : `<button class="danger" onclick="revert('${r.id}')">되돌리기</button>`}</td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="none">불러오지 못했어요: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function revert(id) {
+  if (!confirm('이 변경을 되돌릴까요?')) return;
+  try {
+    await api(`/artist-identity-changes/${id}/revert`, { method: 'POST' });
+    toast('되돌렸어요');
+    loadChanges();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function loadCandidates() {
+  const concertId = document.getElementById('concert-id').value.trim();
+  const artist = document.getElementById('artist').value.trim();
+  const box = document.getElementById('candidates');
+  if (!concertId || !artist) return toast('공연 ID와 아티스트 표기를 입력해주세요');
+  box.innerHTML = '<div class="hint">찾는 중… (MusicBrainz 조회라 몇 초 걸려요)</div>';
+  try {
+    const data = await api(`/concerts/${concertId}/artist-identity/candidates?artist=${encodeURIComponent(artist)}`);
+    const items = data.candidates.map(c => {
+      const sub = [c.country, c.type, c.begin_year && `${c.begin_year}~`, c.disambiguation].filter(Boolean).join(' · ');
+      const target = c.canonical_id ? `{canonical_id:'${c.canonical_id}'}` : `{mbid:'${c.mbid}'}`;
+      return `
+        <div class="candidate ${c.is_current ? 'current' : ''}">
+          ${c.image_url ? `<img src="${esc(c.image_url)}" alt="">` : '<img alt="">'}
+          <div class="meta">
+            ${esc(c.name)}${c.is_current ? '<span class="tag current">현재 연결</span>' : ''}${c.canonical_id ? '<span class="tag db">DB</span>' : ''}
+            <div class="sub">${esc(sub || c.mbid || '')}</div>
+          </div>
+          ${c.is_current ? '' : `<button class="primary" onclick="change(${target})">이 사람으로</button>`}
+        </div>`;
+    }).join('');
+    box.innerHTML = `
+      <div class="hint">지금: ${data.no_artist ? '<span class="none">연결 없음</span>' : artistHtml(data.current)}</div>
+      ${items || '<div class="hint">후보가 없어요.</div>'}
+      <button class="danger" onclick="change({no_artist:true})">연결할 아티스트 없음</button>`;
+  } catch (e) {
+    box.innerHTML = `<div class="hint">불러오지 못했어요: ${esc(e.message)}</div>`;
+  }
+}
+
+async function change(target) {
+  const concertId = document.getElementById('concert-id').value.trim();
+  const artist = document.getElementById('artist').value.trim();
+  try {
+    await api(`/concerts/${concertId}/artist-identity`, {
+      method: 'POST',
+      body: JSON.stringify({ artist, ...target }),
+    });
+    toast('바꿨어요');
+    loadCandidates();
+    loadChanges();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+loadChanges();
+</script>
+</body>
+</html>

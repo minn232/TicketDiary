@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 _LAYOUT_WEIGHTS_PATH = Path(__file__).resolve().parents[3] / "core" / "layout_weights.json"
 
 
-# 공연후 페이지 자동 배치 가중치 (프론트 LayoutWeights.fromJson) - 앱 재배포 없이 서버 배포만으로
-# 튜닝하기 위함. 준 키만 덮어쓰고 나머지는 앱 기본값이라 빈 객체면 기본값 그대로. 게스트도 쓰므로 인증 없음
+# 공연후 페이지 자동 배치 가중치 (프론트 LayoutWeights.fromJson) - 앱 재배포 없이 서버 배포로 튜닝하려고 분리함
+# 준 키만 덮어쓰고 나머지는 앱 기본값이라 빈 객체면 기본값 그대로 / 게스트도 쓰므로 인증 없음
 @router.get("/layout-weights")
 async def get_layout_weights() -> dict:
     try:

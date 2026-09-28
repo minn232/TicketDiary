@@ -270,7 +270,11 @@ def _build_few_shot_messages() -> list[dict]:
 
 
 def extract_artist_info(
-    image: str, concert_name: str | None, base_url: str, api_key: str = "EMPTY", venue: str | None = None
+    image: str,
+    concert_name: str | None,
+    base_url: str,
+    api_key: str = "EMPTY",
+    venue: str | None = None,
 ) -> dict:
     client = OpenAI(base_url=base_url, api_key=api_key)
 
@@ -295,8 +299,7 @@ def extract_artist_info(
         },
     )
 
-    raw = response.choices[0].message.content
-    return json.loads(raw)
+    return json.loads(response.choices[0].message.content)
 
 
 def main():

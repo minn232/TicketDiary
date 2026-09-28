@@ -16,6 +16,9 @@ from app.models.artist_normalization import (
     CanonicalArtist,
 )
 from app.models.concert import Concert, EventType
+from app.schemas.artist_identity import (
+    IdentityCandidatesResponse, IdentityChangeRecord, IdentityChangeRequest, IdentityChangeResponse,
+)
 from app.schemas.admin import (
     AdminAddAliasRequest,
     AdminArtistAddRequest,
@@ -40,6 +43,14 @@ from app.schemas.admin import (
     AdminRegisterNewArtistRequest,
 )
 from app.services.artist_blocklist import add_to_blocklist
+from app.services.artist_identity import (
+    canonical_summary,
+    change_concert_artist_identity,
+    identity_candidates,
+    list_identity_changes,
+    revert_identity_change,
+)
+from app.services.pre_setlist import refresh_setlists_after_identity_change
 from app.services.artist_normalization import (
     _display_value,
     add_artist_alias,
@@ -319,6 +330,44 @@ async def resolve_artist_suggestion_route(
     await resolve_artist_suggestion(db, concert_id, body.artist_text, body.accept)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
+
+
+# 공연별 아티스트 연결(앱의 "다른 아티스트예요?"와 같은 기능) - 이 공연에서만 바꾸고 기록을 남김
+@router.get("/concerts/{concert_id}/artist-identity/candidates", response_model=IdentityCandidatesResponse)
+async def get_artist_identity_candidates(
+    concert_id: UUID, artist: str = Query(..., min_length=1), db: AsyncSession = Depends(get_db)
+):
+    return await identity_candidates(db, concert_id, artist)
+
+
+@router.post("/concerts/{concert_id}/artist-identity", response_model=IdentityChangeResponse)
+async def change_artist_identity(
+    concert_id: UUID,
+    body: IdentityChangeRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    target = await change_concert_artist_identity(
+        db, concert_id, body.artist,
+        canonical_id=body.canonical_id, mbid=body.mbid, no_artist=body.no_artist, source="admin",
+    )
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
+    return {"artist": body.artist, "current": canonical_summary(target), "no_artist": target is None}
+
+
+# 유저/관리자가 바꾼 공연별 아티스트 연결 기록(최신순) - 잘못된 변경을 찾아 되돌리는 용도
+@router.get("/artist-identity-changes", response_model=list[IdentityChangeRecord])
+async def get_artist_identity_changes(limit: int = Query(50, le=200), db: AsyncSession = Depends(get_db)):
+    return await list_identity_changes(db, limit)
+
+
+@router.post("/artist-identity-changes/{change_id}/revert", response_model=IdentityChangeRecord)
+async def revert_artist_identity_change(
+    change_id: UUID, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)
+):
+    change = await revert_identity_change(db, change_id)
+    background_tasks.add_task(refresh_setlists_after_identity_change, change.concert_id)
+    return (await list_identity_changes(db, 1, change_id=change.id))[0]
 
 
 # 동명이인 오매칭(텍스트는 같은데 실존 인물이 다름, 예: LiSA→블랙핑크 Lisa) 강제 수정용 -
@@ -703,6 +752,7 @@ async def upload_manual_crawl_screenshot(
 
 _PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin.html"
 _ARTISTS_PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin_artists.html"
+_IDENTITY_PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin_identity.html"
 
 
 # 관리자 페이지 HTML(인증 없이 서빙 - 실서비스에선 Nginx Basic Auth로 서브도메인 자체를 막고,
@@ -719,3 +769,8 @@ async def admin_page():
 @page_router.get("/artists", response_class=HTMLResponse, include_in_schema=False)
 async def admin_artists_page():
     return _ARTISTS_PAGE_PATH.read_text(encoding="utf-8")
+
+
+@page_router.get("/identity", response_class=HTMLResponse, include_in_schema=False)
+async def admin_identity_page():
+    return _IDENTITY_PAGE_PATH.read_text(encoding="utf-8")

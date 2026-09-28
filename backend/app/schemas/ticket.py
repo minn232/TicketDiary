@@ -45,13 +45,13 @@ class PageLayoutPhoto(BaseModel):
     w: int = Field(gt=0, le=20000)
     h: int = Field(gt=0, le=20000)
     thumb_url: str | None = Field(default=None, max_length=1024)
-    # EXIF 촬영 시각 원문(기기 현지 시각, 시간대 없음)이라 datetime으로 해석하지 않고 문자열로 보관
+    # EXIF 촬영 시각 원문(기기 현지 시각, 시간대 없음)이라 datetime으로 해석하지 않고 문자열로 보관함
     taken_at: str | None = Field(default=None, max_length=40)
     quality: float | None = Field(default=None, ge=0, le=1)
 
 
 class PageLayoutItem(BaseModel):
-    # cx/cy는 중심, w는 폭(높이는 비율로 계산), rot는 라디안. ref는 사진 URL 또는 자유메모 id
+    # cx/cy는 중심, w는 폭(높이는 비율로 계산), rot는 라디안 / ref는 사진 URL 또는 자유메모 id
     id: str = Field(max_length=64)
     type: Literal["poster", "photo", "text"]
     ref: str | None = Field(default=None, max_length=1024)
@@ -67,7 +67,7 @@ class PageLayoutItem(BaseModel):
 
 
 class PageLayout(BaseModel):
-    # 공연후 페이지 배치 전체. canvas_aspect는 생성 당시 캔버스 높이/폭 (비율 다른 기기면 재배치)
+    # 공연후 페이지 배치 전체 / canvas_aspect는 생성 당시 캔버스 높이/폭 (비율이 다른 화면은 이 기준에 맞춰 축소해 보여줌)
     version: int = Field(default=1, ge=1)
     canvas_aspect: float = Field(gt=0.3, le=4)
     items: list[PageLayoutItem] = Field(max_length=80)

@@ -1,0 +1,431 @@
+import asyncio
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from uuid import UUID
+
+import httpx
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
+from app.services.artist_identity import get_concert_link, resolve_concert_artist
+from app.services.lastfm import fetch_top_tracks
+from app.services.music_resolve import _looks_like_alt_version
+from app.services.musicbrainz import fetch_apple_music_artist_id
+from app.services.setlistfm import _artist_matches
+
+logger = logging.getLogger(__name__)
+
+REPRESENTATIVE_SOURCE = "representative"
+# anchor_confirmed_by 값 - "대표곡 해당 없음"으로 확정(iTunes/Last.fm 모두 안 쓰고 자동 확정도 다시 안 함)
+NO_ITUNES_ANCHOR = "none"
+
+# 검색/곡 순서는 us 스토어(kr은 검색이 0건, us 순서는 인기순에 가까움), 표시 제목은 kr 스토어
+# ID 재조회로 가져옴(us는 한국 곡도 "For Lovers Who Hesitate"처럼 영문 제목, kr은 한글 원제)
+_ITUNES_COUNTRY = "us"
+_ITUNES_TITLE_COUNTRY = "kr"
+_ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
+_ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
+
+# Last.fm만으로 대표곡을 채울 때의 품질 기준 - 무명 아티스트는 청취자 수십 명 이하에 잡음
+# (뉴스 클립 제목 등)이 섞여 있어서, 이 기준을 못 넘으면 빈 채로 두는 게 나음
+_LASTFM_MIN_TOP_LISTENERS = 50
+_LASTFM_MIN_TRACKS = 5
+
+
+# 같은 곡의 표기 차이(대소문자/공백/기호)를 묶는 키 - 한글/일본어 제목도 유지해야 해서
+# a-z0-9만 남기는 music_resolve._normalize_title은 못 씀
+def _title_key(title: str) -> str:
+    return re.sub(r"\W", "", title.casefold())
+
+
+# music_resolve의 라이브/리믹스 등에 더해, 한국 카탈로그에 흔한 반주 버전 표기도 제외
+_EXTRA_ALT_MARKERS = ("inst.", "(mr)", "반주")
+
+
+def _is_alt_version(title: str) -> bool:
+    lower = title.lower()
+    return _looks_like_alt_version(title) or any(marker in lower for marker in _EXTRA_ALT_MARKERS)
+
+
+def _dedupe_titles(titles: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result = []
+    for title in titles:
+        key = _title_key(title)
+        if key and key not in seen and not _is_alt_version(title):
+            seen.add(key)
+            result.append(title)
+    return result
+
+
+# kr 스토어에서 같은 ID들(곡/아티스트)을 다시 조회해 (trackId -> 곡, artistId -> 아티스트).
+# 실패하거나 kr에 없는 항목은 호출부가 us 값을 그대로 씀
+async def _lookup_in_title_store(
+    client: httpx.AsyncClient, track_ids: list[int], artist_ids: list[int] = ()
+) -> tuple[dict[int, dict], dict[int, dict]]:
+    ids = [*artist_ids, *track_ids]
+    if not ids:
+        return {}, {}
+    try:
+        response = await client.get(
+            _ITUNES_LOOKUP_URL, params={"id": ",".join(map(str, ids)), "country": _ITUNES_TITLE_COUNTRY}
+        )
+        response.raise_for_status()
+        results = response.json().get("results", [])
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"iTunes kr 제목 조회 실패: {e}")
+        return {}, {}
+    tracks = {r["trackId"]: r for r in results if r.get("wrapperType") == "track" and r.get("trackId")}
+    artists = {r["artistId"]: r for r in results if r.get("wrapperType") == "artist" and r.get("artistId")}
+    return tracks, artists
+
+
+# iTunes에 등록된 그 아티스트의 곡 목록 [(kr 제목, us 제목)](순서는 us, 다른 버전 제외, kr 제목
+# 기준 중복 제거). 피처링으로만 참여한 남의 곡도 같이 오므로 아티스트 ID가 같은 곡만 씀. 실패 시 빈 리스트
+async def fetch_itunes_artist_song_titles(itunes_artist_id: str) -> list[tuple[str, str]]:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                _ITUNES_LOOKUP_URL,
+                params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": _ITUNES_COUNTRY},
+            )
+            response.raise_for_status()
+            tracks = [
+                r for r in response.json().get("results", [])
+                if r.get("wrapperType") == "track" and str(r.get("artistId")) == itunes_artist_id
+            ]
+            titled, _ = await _lookup_in_title_store(client, [r["trackId"] for r in tracks if r.get("trackId")])
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"iTunes 곡 목록 조회 실패 (artist_id={itunes_artist_id}): {e}")
+        return []
+    pairs = []
+    for r in tracks:
+        us_name = r.get("trackName")
+        kr_name = (titled.get(r.get("trackId")) or r).get("trackName")
+        if kr_name and us_name:
+            pairs.append((kr_name, us_name))
+    kept = set(_dedupe_titles([kr for kr, _ in pairs]))
+    seen: set[str] = set()
+    result = []
+    for kr, us in pairs:
+        if kr in kept and kr not in seen:
+            seen.add(kr)
+            result.append((kr, us))
+    return result
+
+
+# 곡 목록(kr 제목) - 한국 곡은 한글 원제로 보이게 kr 스토어 제목을 씀
+async def fetch_itunes_artist_songs(itunes_artist_id: str) -> list[str]:
+    return [kr for kr, _ in await fetch_itunes_artist_song_titles(itunes_artist_id)]
+
+
+# iTunes 아티스트 ID가 실제로 존재하는지 확인하고 그 이름을 반환(없으면 None)
+async def fetch_itunes_artist_name(itunes_artist_id: str) -> str | None:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(_ITUNES_LOOKUP_URL, params={"id": itunes_artist_id, "country": _ITUNES_COUNTRY})
+    if response.status_code != 200:
+        return None
+    artist = next((r for r in response.json().get("results", []) if r.get("wrapperType") == "artist"), None)
+    return artist.get("artistName") if artist else None
+
+
+# 유저가 입력한 곡 제목으로 iTunes 곡 검색 - 앵커 후보(고르면 그 곡의 아티스트로 확정)
+async def search_itunes_songs(term: str, limit: int = 25) -> list[dict]:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            _ITUNES_SEARCH_URL,
+            params={"term": term, "media": "music", "entity": "song", "country": _ITUNES_COUNTRY, "limit": limit},
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail="iTunes 검색에 실패했습니다.")
+        results = [r for r in response.json().get("results", []) if r.get("artistId") and r.get("trackName")]
+        titled, _ = await _lookup_in_title_store(client, [r["trackId"] for r in results if r.get("trackId")])
+
+    candidates = []
+    for r in results:
+        shown = titled.get(r.get("trackId")) or r
+        candidates.append({
+            "itunes_artist_id": str(r["artistId"]),
+            "artist_name": shown.get("artistName") or r.get("artistName", ""),
+            "track_name": shown.get("trackName") or r["trackName"],
+            "album_name": shown.get("collectionName") or r.get("collectionName"),
+            "artwork_url": r.get("artworkUrl100"),
+        })
+    return candidates
+
+
+# 공연 아티스트 이름으로 iTunes 아티스트 후보 검색(앵커용) - 동명이인은 장르/대표곡으로 구분하게
+# 대표곡 3개를 붙임. 이름이 정확히 같은 후보를 앞으로. 호출 3번(검색/곡/kr 이름)이라 분당 제한
+# (약 20회)을 넘지 않게 같은 이름은 하루 캐시
+_ARTIST_CANDIDATE_CACHE_TTL = timedelta(days=1)
+_artist_candidate_cache: dict[str, tuple[datetime, list[dict]]] = {}
+
+
+async def search_itunes_artists(artist: str, limit: int = 8) -> list[dict]:
+    key = _title_key(artist)
+    cached = _artist_candidate_cache.get(key)
+    if cached and datetime.now(timezone.utc) - cached[0] < _ARTIST_CANDIDATE_CACHE_TTL:
+        return cached[1]
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            _ITUNES_SEARCH_URL,
+            params={"term": artist, "entity": "musicArtist", "country": _ITUNES_COUNTRY, "limit": limit},
+        )
+        if response.status_code != 200:
+            raise HTTPException(status_code=502, detail="iTunes 검색에 실패했습니다.")
+        found = [a for a in response.json().get("results", []) if a.get("artistId")]
+        if not found:
+            _artist_candidate_cache[key] = (datetime.now(timezone.utc), [])
+            return []
+
+        artist_ids = [a["artistId"] for a in found]
+        songs_response = await client.get(
+            _ITUNES_LOOKUP_URL,
+            params={"id": ",".join(map(str, artist_ids)), "entity": "song", "limit": 6, "country": _ITUNES_COUNTRY},
+        )
+        songs_response.raise_for_status()
+        tracks = [r for r in songs_response.json().get("results", []) if r.get("wrapperType") == "track"]
+        titled, kr_artists = await _lookup_in_title_store(client, [t["trackId"] for t in tracks], artist_ids)
+
+    candidates = []
+    for a in found:
+        own = [t for t in tracks if t.get("artistId") == a["artistId"]]
+        top_songs = _dedupe_titles([(titled.get(t["trackId"]) or t).get("trackName", "") for t in own])[:3]
+        if not top_songs:
+            continue  # 곡이 없으면 확정해도 대표곡을 못 채움
+        # 한글 이름은 kr 아티스트 항목이 아니라 kr 곡 항목에 있음(아티스트 항목은 로마자 그대로)
+        kr_track = next((titled[t["trackId"]] for t in own if t["trackId"] in titled), None)
+        name = (kr_track or kr_artists.get(a["artistId"]) or a).get("artistName") or a.get("artistName", "")
+        candidates.append({
+            "itunes_artist_id": str(a["artistId"]),
+            "artist_name": name,
+            "genre": a.get("primaryGenreName"),
+            "top_songs": top_songs,
+            "artwork_url": own[0].get("artworkUrl100"),
+            "exact_match": key in {_title_key(name), _title_key(a.get("artistName", ""))},
+        })
+
+    # 이름이 정확히 같은 후보를 앞으로(협업/편집 앨범 이름은 뒤로)
+    candidates.sort(key=lambda c: not c["exact_match"])
+    _artist_candidate_cache[key] = (datetime.now(timezone.utc), candidates)
+    return candidates
+
+
+# Last.fm 청취자 수가 있는 곡을 앞으로 정렬(나머지는 iTunes us 순서 그대로)
+def _rank_by_listeners(titles: list[str], lastfm_tracks: list[tuple[str, int]]) -> list[str]:
+    listeners = {_title_key(name): count for name, count in lastfm_tracks}
+    return sorted(titles, key=lambda t: -listeners.get(_title_key(t), 0))
+
+
+# mbid로 먼저, Last.fm이 그 mbid를 모르면 이름으로 조회. 이름 조회 결과는 같은 사람인지
+# (setlistfm과 같은 기준: 같은 문자 체계 + 유사도) 확인된 것만 씀
+async def _lastfm_top_tracks(artist: str, mbid: str | None) -> list[tuple[str, int]]:
+    if mbid:
+        _, tracks = await fetch_top_tracks(mbid=mbid)
+        if tracks:
+            return tracks
+    resolved_name, tracks = await fetch_top_tracks(artist_name=artist)
+    return tracks if _artist_matches(artist, resolved_name, None, None) else []
+
+
+_CANDIDATE_SONGS_CACHE_TTL = timedelta(days=1)
+
+
+# 후보 한 명의 곡 - 표시용(읽을 수 있는 곡 먼저) + 후보끼리 겹침을 비교할 제목 키
+@dataclass
+class _CandidateSongs:
+    songs: list[str]
+    from_lastfm: bool = False
+    lastfm_keys: set[str] = field(default_factory=set)
+    all_keys: set[str] = field(default_factory=set)
+
+
+_candidate_songs_cache: dict[tuple[str, bool], tuple[datetime, _CandidateSongs]] = {}
+
+# 가나/한자 - 한국 유저가 못 읽는 경우가 많아 영문/로마자 제목으로 바꿔 보여줄 대상
+_UNREADABLE_SCRIPT = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
+
+
+def _is_unreadable(title: str) -> bool:
+    return bool(_UNREADABLE_SCRIPT.search(title))
+
+
+# 못 읽는 제목은 us 스토어 제목(일본 곡은 대부분 "Idol"/"Gunjou" 같은 영문·로마자)으로 바꾸고,
+# 바꿔도 못 읽는 곡은 뒤로 미룸(중국어권은 us에도 원제뿐이라 그대로 남음)
+def _readable_first(titles: list[str], us_titles: dict[str, str]) -> list[str]:
+    shown = []
+    for title in titles:
+        us = us_titles.get(_title_key(title))
+        shown.append(us if _is_unreadable(title) and us and not _is_unreadable(us) else title)
+    return sorted(shown, key=_is_unreadable)
+
+
+# 연결 수정 후보를 알아보게 붙이는 곡 - 이름 검색 없이 mbid로만(동명이인 섞임 방지). Last.fm
+# 인기순이 먼저(use_lastfm), Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록.
+# 일본어/중국어 제목이 있으면 iTunes us 제목으로 바꿔서 읽을 수 있는 곡부터 보여줌
+async def _candidate_songs(
+    mbid: str | None, itunes_artist_id: str | None, use_lastfm: bool = True, shown: int = 2
+) -> _CandidateSongs:
+    if not mbid and not itunes_artist_id:
+        return _CandidateSongs([])
+    key = (mbid or f"itunes:{itunes_artist_id}", use_lastfm)
+    cached = _candidate_songs_cache.get(key)
+    if cached and datetime.now(timezone.utc) - cached[0] < _CANDIDATE_SONGS_CACHE_TTL:
+        return cached[1]
+
+    titles: list[str] = []
+    if mbid and use_lastfm:
+        _, tracks = await fetch_top_tracks(mbid=mbid, limit=10, strict_mbid=True)
+        titles = _dedupe_titles([name for name, _ in tracks])
+    from_lastfm = bool(titles)
+    catalog: list[tuple[str, str]] = []
+    if not titles or any(_is_unreadable(t) for t in titles[:shown]):
+        if not itunes_artist_id and mbid:
+            itunes_artist_id = await fetch_apple_music_artist_id(mbid)
+        if itunes_artist_id:
+            catalog = await fetch_itunes_artist_song_titles(itunes_artist_id)
+    lastfm_keys = {_title_key(t) for t in titles}
+    if not titles:
+        titles = [kr for kr, _ in catalog]
+    us_titles = {_title_key(kr): us for kr, us in catalog}
+    result = _CandidateSongs(
+        songs=_readable_first(titles, us_titles),
+        from_lastfm=from_lastfm,
+        lastfm_keys=lastfm_keys,
+        all_keys=lastfm_keys | {_title_key(t) for pair in catalog for t in pair},
+    )
+    _candidate_songs_cache[key] = (datetime.now(timezone.utc), result)
+    return result
+
+
+async def candidate_top_songs(mbid: str | None, itunes_artist_id: str | None = None, limit: int = 2) -> list[str]:
+    return (await _candidate_songs(mbid, itunes_artist_id, shown=limit)).songs[:limit]
+
+
+# Last.fm 곡이 다른 후보 곡과 2개 이상 겹치면 Last.fm이 동명이인을 한 페이지로 합친 것(실측: 일본
+# 가수 Aimer 페이지에 이탈리아 기타리스트 Aimer의 mbid가 붙어 있어 mbid 확인만으론 못 거름) - 그 후보는
+# Last.fm 없이(iTunes만) 다시 구함. 곡 제목 한두 개는 우연히 같을 수 있어 2개부터
+_LASTFM_OVERLAP_MIN = 2
+
+
+async def candidate_top_songs_for(pairs: list[tuple[str | None, str | None]], limit: int = 2) -> list[list[str]]:
+    results = list(await asyncio.gather(*(_candidate_songs(m, i, shown=limit) for m, i in pairs)))
+    suspicious = [
+        idx for idx, r in enumerate(results)
+        if r.from_lastfm and any(
+            len(r.lastfm_keys & other.all_keys) >= _LASTFM_OVERLAP_MIN
+            for j, other in enumerate(results) if j != idx
+        )
+    ]
+    retried = await asyncio.gather(*(
+        _candidate_songs(pairs[idx][0], pairs[idx][1], use_lastfm=False, shown=limit) for idx in suspicious
+    ))
+    for idx, r in zip(suspicious, retried):
+        results[idx] = r
+    return [r.songs[:limit] for r in results]
+
+
+# 확정된 iTunes 아티스트가 없으면 MusicBrainz의 Apple Music 링크로 찾아서 canonical에 저장
+async def _resolve_itunes_artist_id(db: AsyncSession, canonical: CanonicalArtist | None) -> str | None:
+    if canonical is None:
+        return None
+    if canonical.itunes_artist_id or not canonical.mbid:
+        return canonical.itunes_artist_id
+    itunes_artist_id = await fetch_apple_music_artist_id(canonical.mbid)
+    if itunes_artist_id:
+        canonical.itunes_artist_id = itunes_artist_id
+        canonical.anchor_confirmed_by = "musicbrainz"
+        await db.commit()
+    return itunes_artist_id
+
+
+async def _is_band_member(db: AsyncSession, canonical: CanonicalArtist | None) -> bool:
+    if canonical is None:
+        return False
+    result = await db.execute(
+        select(ArtistGroupMembership.id).where(ArtistGroupMembership.member_canonical_id == canonical.id).limit(1)
+    )
+    return result.first() is not None
+
+
+# iTunes에 이름이 정확히 같은 아티스트가 1명뿐이면 그 사람으로 자동 확정(동명이인이 여럿이면
+# 유저가 고르게 둠) - 틀리면 유저가 화면의 "다른 아티스트예요?"로 다시 고름
+async def _auto_anchor(db: AsyncSession, artist: str, concert_id: UUID | None = None) -> str | None:
+    try:
+        candidates = await search_itunes_artists(artist)
+    except (HTTPException, httpx.HTTPError, ValueError) as e:
+        logger.warning(f"iTunes 아티스트 후보 조회 실패, 자동 확정 건너뜀 ({artist}): {e}")
+        return None
+    exact = [c for c in candidates if c["exact_match"]]
+    if len(exact) != 1:
+        return None
+    await _save_anchor(db, artist, exact[0]["itunes_artist_id"], confirmed_by="auto", concert_id=concert_id)
+    return exact[0]["itunes_artist_id"]
+
+
+# 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)가
+# 있으면 그 곡 목록(Last.fm 청취자 순), 없으면 Last.fm 인기곡(품질 기준 통과 시만) -
+# concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선
+async def representative_songs_for_artist(
+    db: AsyncSession, artist: str, n: int, concert_id: UUID | None = None
+) -> list[dict]:
+    canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
+    if no_artist or (canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR):
+        return []
+    mbid = canonical.mbid if canonical is not None else None
+
+    # 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes 자동 확정/Last.fm 모두 동명이인이 잡힘
+    # (실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로 확정된 iTunes만 씀
+    is_member = await _is_band_member(db, canonical)
+    itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
+    if itunes_artist_id is None and not is_member:
+        itunes_artist_id = await _auto_anchor(db, artist, concert_id)
+    lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
+
+    titles: list[str] = []
+    if itunes_artist_id:
+        titles = _rank_by_listeners(await fetch_itunes_artist_songs(itunes_artist_id), lastfm_tracks)
+    if not titles and len(lastfm_tracks) >= _LASTFM_MIN_TRACKS:
+        if max(count for _, count in lastfm_tracks) >= _LASTFM_MIN_TOP_LISTENERS:
+            titles = _dedupe_titles([name for name, _ in lastfm_tracks])
+
+    return [{"name": title, "encore": False, "source": REPRESENTATIVE_SOURCE} for title in titles[:n]]
+
+
+# canonical에 iTunes 아티스트 확정값 저장(itunes_artist_id=None이면 "없음"으로 확정) - canonical이
+# 없던 아티스트(MusicBrainz 미등록 등)면 새로 만듦 - 공연에서 "연결 없음"으로 확정된 표기였으면
+# 새로 만든 canonical을 그 공연의 연결로 둠
+async def _save_anchor(
+    db: AsyncSession,
+    artist: str,
+    itunes_artist_id: str | None,
+    confirmed_by: str,
+    concert_id: UUID | None = None,
+) -> CanonicalArtist:
+    canonical, _ = await resolve_concert_artist(db, concert_id, artist)
+    if canonical is None:
+        canonical = CanonicalArtist(mbid=None, canonical_name=artist.strip())
+        db.add(canonical)
+        await db.flush()
+        link = await get_concert_link(db, concert_id, artist)
+        if link is not None:
+            link.canonical_id = canonical.id
+    canonical.itunes_artist_id = itunes_artist_id
+    canonical.anchor_confirmed_by = confirmed_by
+    await db.commit()
+    await db.refresh(canonical)
+    return canonical
+
+
+# 유저가 고른 iTunes 아티스트로 확정 - 잘못 고른 경우는 추후 수정 기능에서 다룰 예정이라 바로 확정함
+async def set_itunes_anchor(
+    db: AsyncSession, artist: str, itunes_artist_id: str, concert_id: UUID | None = None
+) -> CanonicalArtist:
+    if await fetch_itunes_artist_name(itunes_artist_id) is None:
+        raise HTTPException(status_code=400, detail="iTunes 아티스트를 찾을 수 없습니다.")
+    return await _save_anchor(db, artist, itunes_artist_id, confirmed_by="user", concert_id=concert_id)

@@ -51,8 +51,8 @@ class Ticket(Base):
     # 공연전 여부/일회성 여부는 백엔드에서 강제하지 않음 - 프론트가 뜯은 뒤엔 다시 뜯을
     # 방법 자체를 UI에서 없애는 방식으로 막고 있어서 백엔드는 그냥 값 저장만 담당
     torn_at = Column(DateTime(timezone=True), nullable=True)
-    # 공연후 페이지 배치(포스터/사진/자유메모) - 캔버스 폭=1 정규화 좌표. 배치 계산은 기기에서 하고
-    # 서버는 범위 검증 후 저장만 (형식은 schemas/ticket.py의 PageLayout)
+    # 공연후 페이지 배치(포스터/사진/자유메모), 캔버스 폭=1 정규화 좌표
+    # 배치 계산은 기기에서 하고 서버는 범위 검증 후 저장만 함 (형식은 schemas/ticket.py의 PageLayout)
     page_layout = Column(JSONB, nullable=True)
 
     concert = relationship("Concert", back_populates="tickets")

@@ -21,6 +21,7 @@ from app.services.kopis import refresh_ticketing_links
 from app.services.llm_batch_state import mark_llm_sent
 from app.services.site_aliases import normalize_site_key
 from app.services.storage import _do_upload
+from app.services.timetable_ranges import compute_timetable_ranges
 
 logger = logging.getLogger(__name__)
 
@@ -816,6 +817,7 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         url = await _upload_screenshot(image_bytes, concert_id, upload_key)
         if url:
             concert.crawl_screenshot_url = url
+            concert.timetable_ranges = await compute_timetable_ranges(image_bytes)
             await db.commit()
             logger.info(f"크롤링 완료: {concert.name} → {url}")
 
@@ -879,6 +881,7 @@ async def save_manual_crawl_screenshot(
         raise HTTPException(status_code=502, detail="스크린샷 업로드에 실패했습니다.")
 
     concert.crawl_screenshot_url = url
+    concert.timetable_ranges = await compute_timetable_ranges(image_bytes)
     concert.crawl_attempted_at = datetime.now(timezone.utc)
     concert.crawl_attempt_count += 1
     await db.commit()
@@ -922,6 +925,7 @@ async def send_screenshots_to_llm() -> None:
             "concert_id": str(c.id),
             "concert_name": c.name,
             "screenshot_url": c.crawl_screenshot_url,
+            "timetable_ranges": c.timetable_ranges,
         }
         for c in concerts
     ]
@@ -1153,6 +1157,7 @@ async def _check_festival_lineup(concert_id) -> None:
             return
 
         concert.crawl_screenshot_url = url
+        concert.timetable_ranges = await compute_timetable_ranges(screenshot)
         concert.lineup_snapshot_hash = text_hash
         concert.lineup_snapshot_img_srcs = img_srcs
         # 새 스크린샷이라 이전 분석 결과는 더 이상 유효하지 않음 - 리셋 안 하면

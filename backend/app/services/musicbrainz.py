@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -69,6 +70,8 @@ async def _get_with_retry(client: httpx.AsyncClient, path: str, params: dict, lo
             if response.status_code == 200:
                 return response.json()
             last_error = Exception(f"HTTP {response.status_code}")
+            if response.status_code == 404:
+                break  # 없는 항목이라 재시도해도 같음(백오프 대기만 늘어남)
         except httpx.HTTPError as e:
             last_error = e
 
@@ -138,6 +141,64 @@ async def fetch_wikidata_qid(mbid: str, client: httpx.AsyncClient | None = None)
         return await _fetch(client)
     async with httpx.AsyncClient(timeout=10.0) as c:
         return await _fetch(c)
+
+
+_APPLE_ARTIST_ID_RE = re.compile(r"(?:music|itunes)\.apple\.com/.*?/artist/(?:[^/]+/)?(?:id)?(\d+)")
+
+
+# canonical mbid에 MusicBrainz가 걸어둔 Apple Music 링크에서 iTunes 아티스트 ID를 뽑음 - mbid
+# 앵커라 이름 검색과 달리 동명이인 위험 없음. 링크가 없거나 조회 실패 시 None
+async def fetch_apple_music_artist_id(mbid: str) -> str | None:
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        data = await _get_with_retry(c, f"/artist/{mbid}", {"inc": "url-rels", "fmt": "json"}, f"apple link mbid={mbid}")
+    for rel in data.get("relations", []):
+        match = _APPLE_ARTIST_ID_RE.search((rel.get("url") or {}).get("resource", ""))
+        if match:
+            return match.group(1)
+    return None
+
+
+def _candidate_detail(a: dict) -> dict:
+    begin = (a.get("life-span") or {}).get("begin") or ""
+    return {
+        "mbid": a["id"],
+        "name": a.get("name", ""),
+        "country": a.get("country"),
+        "type": a.get("type"),
+        "disambiguation": a.get("disambiguation") or None,
+        "begin_year": begin[:4] or None,
+    }
+
+
+# 아티스트 연결 수정용 후보 - search_artist와 달리 KR 결과가 있어도 전체 검색까지 합침(LiSA처럼
+# KR 필터 때문에 해외 본인이 빠지는 걸 막으려고) - 동명이인 구분용 설명/유형/활동 시작 연도 포함
+async def search_artist_detailed(name: str) -> list[dict]:
+    escaped = _escape_lucene_phrase(name)
+    base_query = f'(artist:"{escaped}" OR alias:"{escaped}")'
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        results = await _run_query(c, f"{base_query} AND country:KR") + await _run_query(c, base_query)
+    seen: set[str] = set()
+    candidates = []
+    for a in results:
+        if a.get("id") and a["id"] not in seen:
+            seen.add(a["id"])
+            candidates.append(_candidate_detail(a))
+    return candidates
+
+
+# mbid 하나를 조회해 후보와 같은 형태로 반환(병합된 옛 mbid면 현재 항목), 없으면 None
+async def fetch_artist_detail(mbid: str) -> dict | None:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+        data = await _get_with_retry(c, f"/artist/{mbid}", {"fmt": "json"}, f"artist detail mbid={mbid}")
+    return _candidate_detail(data) if data.get("id") else None
+
+
+# 병합돼 없어진 옛 mbid는 MusicBrainz가 병합 후 항목으로 301 리다이렉트해서, 따라간 응답의 id가
+# 현재 mbid임(실사례: Setlist.fm은 혁오를 옛 mbid로 들고 있음). 조회 실패 시 None
+async def fetch_current_mbid(mbid: str) -> str | None:
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+        data = await _get_with_retry(c, f"/artist/{mbid}", {"fmt": "json"}, f"current mbid mbid={mbid}")
+    return data.get("id")
 
 
 # canonical의 mbid로 MusicBrainz가 걸어둔 Spotify 아티스트 링크를 찾는다(fetch_wikidata_qid와

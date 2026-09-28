@@ -6,6 +6,7 @@ from httpx import AsyncClient, ASGITransport
 
 from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.services.lineup import upsert_concert_lineup
 from conftest import _get_token, kopis_mock
 
@@ -233,7 +234,7 @@ async def test_generate_pre_setlist_api_502():
 def _setlistfm_artist_mock_multi(by_artist: dict[str, dict]):
     async def _get(url, headers=None, params=None):
         mock_response = MagicMock()
-        artist = (params or {}).get("artistName")
+        artist = (params or {}).get("artistName") or (params or {}).get("artistMbid")
         data = by_artist.get(artist)
         if data is None:
             mock_response.status_code = 404
@@ -416,7 +417,9 @@ async def test_ticket_registration_skips_pre_setlist_when_no_artist():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
 
-    assert pre_res.status_code == 404
+    # row가 없으면 404 대신 빈 응답(id 없음)
+    assert pre_res.status_code == 200
+    assert pre_res.json()["id"] is None and pre_res.json()["songs"] == []
 
 
 # Setlist.fm에 그 아티스트 데이터가 없어도(404) 티켓 등록은 실패하지 않고
@@ -437,7 +440,9 @@ async def test_ticket_registration_succeeds_when_setlistfm_has_no_data():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=headers)
 
-    assert pre_res.status_code == 404
+    # row가 없으면 404 대신 빈 응답(id 없음)
+    assert pre_res.status_code == 200
+    assert pre_res.json()["id"] is None and pre_res.json()["songs"] == []
 
 
 # 예상 셋리스트 조회 테스트 (GET /concerts/{concert_id}/setlist/pre)
@@ -469,7 +474,8 @@ async def test_get_pre_setlist_success():
 
 # 예상 셋리스트 없는 공연 조회 시 404 테스트
 @pytest.mark.asyncio
-async def test_get_pre_setlist_not_found_404():
+async def test_get_pre_setlist_without_row_returns_artist_names():
+    # row가 없어도 앵커 대상을 알 수 있게 artist_names만 채운 빈 응답
     concert_id = await _create_concert("PF_PRE_GET_002")
     token = await _get_token()
 
@@ -479,7 +485,65 @@ async def test_get_pre_setlist_not_found_404():
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    assert response.status_code == 404
+    assert response.status_code == 200
+    assert response.json()["id"] is None
+    assert response.json()["songs"] == []
+    assert response.json()["artist_names"] == ["테스트아티스트"]
+
+
+# 조회 시점 생성 - 비어 있으면 생성 시도, 없음(404)이면 쿨다운, API 일시 실패(502)는 쿨다운 없이 재시도
+
+@pytest.mark.asyncio
+async def test_check_pre_setlist_on_view_generates_then_cools_down_on_404():
+    from fastapi import HTTPException
+    from app.services.pre_setlist import check_pre_setlist_on_view
+
+    concert_id = uuid.uuid4()
+    generate = AsyncMock(side_effect=HTTPException(status_code=404, detail="없음"))
+    with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
+        await check_pre_setlist_on_view(concert_id)
+        await check_pre_setlist_on_view(concert_id)
+
+    assert generate.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_check_pre_setlist_on_view_retries_after_502():
+    from fastapi import HTTPException
+    from app.services.pre_setlist import check_pre_setlist_on_view
+
+    concert_id = uuid.uuid4()
+    generate = AsyncMock(side_effect=HTTPException(status_code=502, detail="일시 실패"))
+    with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
+        await check_pre_setlist_on_view(concert_id)
+        await check_pre_setlist_on_view(concert_id)
+
+    assert generate.await_count == 2
+
+
+# 티켓 기준 조회가 비어 있으면 백그라운드 생성을 걸어둠
+@pytest.mark.asyncio
+async def test_get_ticket_pre_setlist_schedules_generation_when_empty():
+    concert_id = await _create_concert(f"PF_PRE_VIEW_{uuid.uuid4().hex[:6]}")
+    token = await _get_token()
+    check = AsyncMock()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        with _setlistfm_artist_mock(status_code=404):
+            created = await ac.post(
+                "/api/v1/tickets",
+                json={"concert_id": concert_id},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert created.status_code == 201
+        with patch("app.api.v1.endpoints.tickets.check_pre_setlist_on_view", new=check):
+            response = await ac.get(
+                f"/api/v1/tickets/{created.json()['id']}/setlist/pre",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["songs"] == []
+    check.assert_awaited_once()
 
 
 # show_predicted_setlist는 더 이상 조회/생성을 막는 스위치가 아니라(프론트가
@@ -525,3 +589,82 @@ async def test_generate_pre_setlist_not_forbidden_when_setting_off():
             )
 
     assert res.status_code == 201
+
+
+# canonical mbid가 있으면 이름이 같아도 mbid가 다른 아티스트(본명이 같은 다른 사람) 셋리는 안 씀
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_filters_same_name_other_mbid():
+    artist = "동명이인가수P"
+    concert_id = await _create_concert("PF_PRE_MBID_001", artist=artist)
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(mbid="mbid-pre-ours", canonical_name=artist))
+        await db.commit()
+
+    other = _make_artist_setlists([["남의곡A", "남의곡B"]], artist=artist)
+    for s in other["setlist"]:
+        s["artist"]["mbid"] = "mbid-pre-other"
+    with _setlistfm_artist_mock(other):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
+    assert response.status_code == 404
+
+    ours = _make_artist_setlists([["본인곡A", "본인곡B"]], artist=artist)
+    for s in ours["setlist"]:
+        s["artist"]["mbid"] = "mbid-pre-ours"
+    with _setlistfm_artist_mock(ours):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(f"/api/v1/concerts/{concert_id}/setlist/pre/generate", headers=headers)
+    assert response.status_code == 201
+    assert [song["name"] for song in response.json()["songs"]] == ["본인곡A", "본인곡B"]
+
+
+# 한글 표기로는 Setlist.fm 0건인 해외 아티스트(실사례: 오피셜히게단디즘)도 canonical mbid로 찾아지는지
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_finds_by_mbid_when_name_search_empty():
+    artist = "한글표기해외가수P"
+    concert_id = await _create_concert("PF_PRE_BYMBID_001", artist=artist)
+    token = await _get_token()
+
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid="mbid-pre-bymbid", canonical_name="Overseas Artist P")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=artist, source="wikidata"))
+        await db.commit()
+
+    data = _make_artist_setlists([["곡A", "곡B"]], artist="Overseas Artist P")
+    for s in data["setlist"]:
+        s["artist"]["mbid"] = "mbid-pre-bymbid"
+    # 이름(한글 표기)으로는 404, mbid로만 결과가 나옴
+    with _setlistfm_artist_mock_multi({"mbid-pre-bymbid": data}):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 201
+    assert [song["name"] for song in response.json()["songs"]] == ["곡A", "곡B"]
+
+
+
+# 자동 생성된 예상 셋리가 없던 공연도 유저가 직접 채울 수 있는지(row 신규 생성)
+@pytest.mark.asyncio
+async def test_edit_pre_setlist_creates_row_when_missing():
+    concert_id = await _create_concert("PF_PRE_EDIT_NEW_001")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.patch(
+            f"/api/v1/concerts/{concert_id}/setlist/pre",
+            json={"songs": [{"name": "직접넣은곡", "encore": False}]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["id"] is not None
+    assert response.json()["is_user_edited"] is True
+    assert [s["name"] for s in response.json()["songs"]] == ["직접넣은곡"]

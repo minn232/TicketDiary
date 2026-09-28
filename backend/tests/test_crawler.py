@@ -627,7 +627,7 @@ async def test_crawl_and_save_nol_ticket_uses_interpark_crawler():
     assert mock_concert.crawl_screenshot_url == fake_url
 
 
-# INTERPARK 크롤링 성공 시 Concert.crawl_screenshot_url 저장
+# INTERPARK 크롤링 성공 시 Concert.crawl_screenshot_url과 시간표 구간 저장
 @pytest.mark.asyncio
 async def test_crawl_and_save_interpark_updates_concert():
     concert_id = uuid.uuid4()
@@ -655,10 +655,15 @@ async def test_crawl_and_save_interpark_updates_concert():
         patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
         patch.dict("app.services.crawler._CRAWLERS", {"INTERPARK": mock_crawler}),
         patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value=fake_url)),
+        patch(
+            "app.services.crawler.compute_timetable_ranges", new=AsyncMock(return_value=[[100, 900]])
+        ) as mock_ranges,
     ):
         await crawl_and_save(concert_id, "INTERPARK")
 
     assert mock_concert.crawl_screenshot_url == fake_url
+    assert mock_concert.timetable_ranges == [[100, 900]]
+    mock_ranges.assert_awaited_once_with(b"bytes")
     mock_db.commit.assert_awaited()
 
 
@@ -1218,6 +1223,7 @@ async def test_send_screenshots_posts_to_llm():
     concert.id = uuid.uuid4()
     concert.name = "테스트"
     concert.crawl_screenshot_url = "https://s3.example.com/shot.png"
+    concert.timetable_ranges = [[1200, 2400]]
 
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[concert])))))
@@ -1246,6 +1252,7 @@ async def test_send_screenshots_posts_to_llm():
     payload = call_args[1]["json"]
     assert len(payload) == 1
     assert payload[0]["concert_name"] == "테스트"
+    assert payload[0]["timetable_ranges"] == [[1200, 2400]]
 
 
 # 검수완료(admin_reviewed_at) 공연은 제외돼야 함 - 이 파이프라인의 콜백도 artist_name을

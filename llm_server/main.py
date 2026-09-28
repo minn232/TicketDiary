@@ -23,32 +23,39 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+_TOTAL_BATCH_CONCURRENCY = (
+    settings.CRAWL_BATCH_CONCURRENCY + settings.ARTIST_BATCH_CONCURRENCY + settings.DIARY_BATCH_CONCURRENCY
+)
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     # 기본 executor 크기는 호스트 CPU 코어 수에 따라 달라지는데(min(32, cpu_count+4)),
-    # 코어가 적은 인스턴스에서는 이게 BATCH_CONCURRENCY보다 작아서 세마포어가 허용하는
-    # 동시 개수만큼 스레드가 실제로 동시에 돌지 못하는 병목이 될 수 있다. 명시적으로
-    # BATCH_CONCURRENCY 이상으로 맞춰준다.
+    # 코어가 적은 인스턴스에서는 세 배치가 동시에 돌 때 필요한 스레드 수(세 세마포어 합)보다
+    # 작아서 병목이 될 수 있다. 명시적으로 그 합 이상으로 맞춰준다.
     asyncio.get_running_loop().set_default_executor(
-        ThreadPoolExecutor(max_workers=max(settings.BATCH_CONCURRENCY, 4))
+        ThreadPoolExecutor(max_workers=max(_TOTAL_BATCH_CONCURRENCY, 4))
     )
     yield
 
 
 app = FastAPI(title="TicketDiary LLM Server", lifespan=_lifespan)
 
-# crawl/artist/diary 배치가 전부 공유하는 동시성 제한. 셋 다 결국 같은 GPU/vLLM
-# 인스턴스를 두고 경쟁하므로, 배치 종류와 무관하게 전체 동시 모델 호출 수를 이 값
-# 하나로 묶어서 제한한다(설정은 config.py의 BATCH_CONCURRENCY 참고).
-_inference_semaphore = asyncio.Semaphore(settings.BATCH_CONCURRENCY)
+# crawl/artist/diary 배치별로 독립된 동시성 제한 (config.py의 *_BATCH_CONCURRENCY 참고) -
+# 배치마다 프롬프트 무게(이미지 프리필 비용, 필드 개수)가 달라 감당 가능한 동시 요청 수도
+# 다르기 때문에 분리함. 다만 셋 다 결국 같은 GPU/vLLM 인스턴스를 두고 경쟁하므로 여러
+# 배치를 동시에 몰아서 돌리면 부하는 합산된다는 점은 그대로 감안할 것.
+_crawl_semaphore = asyncio.Semaphore(settings.CRAWL_BATCH_CONCURRENCY)
+_artist_semaphore = asyncio.Semaphore(settings.ARTIST_BATCH_CONCURRENCY)
+_diary_semaphore = asyncio.Semaphore(settings.DIARY_BATCH_CONCURRENCY)
 
 
 # inference.py의 함수들은 동기(sync)이고 GPU/CPU를 오래 점유할 수 있으므로,
 # 이벤트 루프를 막지 않도록 스레드풀에서 실행한다. 세마포어로 동시 실행 개수를 제한해서
 # vLLM에 한꺼번에 너무 많은 요청이 몰리지 않게 한다.
-async def _run_sync(func, item):
+async def _run_sync(semaphore: asyncio.Semaphore, func, item):
     loop = asyncio.get_running_loop()
-    async with _inference_semaphore:
+    async with semaphore:
         return await loop.run_in_executor(None, func, item)
 
 
@@ -62,7 +69,7 @@ async def _process_crawl_batch(items: list[CrawlAnalyzeItem]) -> None:
             logger.info(f"[crawl] 이미 처리 완료, 스킵: {item.concert_id}")
             return
         try:
-            raw = await _run_sync(inference.analyze_crawl_screenshot, item)
+            raw = await _run_sync(_crawl_semaphore, inference.analyze_crawl_screenshot, item)
             body = normalize_crawl_result(raw, item.concert_name)
             await send_crawl_result(item.concert_id, body)
             mark_processed("crawl", dedup_key)
@@ -80,7 +87,7 @@ async def _process_artist_batch(items: list[ArtistExtractItem]) -> None:
             logger.info(f"[artist] 이미 처리 완료, 스킵: {item.concert_id}")
             return
         try:
-            raw = await _run_sync(inference.extract_artists_from_poster, item)
+            raw = await _run_sync(_artist_semaphore, inference.extract_artists_from_poster, item)
             body = {"artist_name": normalize_artist_list(raw, item.concert_name)}
             event_type = normalize_event_type(raw)
             if event_type is not None:
@@ -102,7 +109,7 @@ async def _process_diary_batch(items: list[DiaryGenerateItem]) -> None:
             logger.info(f"[diary] 이미 처리 완료, 스킵: {item.ticket_id}")
             return
         try:
-            raw = await _run_sync(inference.generate_diary_text, item)
+            raw = await _run_sync(_diary_semaphore, inference.generate_diary_text, item)
             diary = normalize_diary_text(raw)
             await send_diary_result(item.ticket_id, {"diary": diary})
             mark_processed("diary", item.ticket_id)
