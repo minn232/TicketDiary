@@ -60,7 +60,7 @@ class NewsModel {
   /// 상세 화면 정보 타일용 구조화 값 — 공연 기간(예: "2026.09.04 ~ 09.06").
   final String? periodText;
 
-  /// 상세 화면 정보 타일용 구조화 값 — 티켓팅 상태(예: "D-3"/"예매 중"/"미정").
+  /// 상세 화면 정보 타일용 구조화 값 — 티켓팅 상태(예: "T-3"/"예매 중"/"미정").
   final String? ticketingText;
 
   /// 공연 종료일. 공연 기간 타일을 눌렀을 때 캘린더에서 [concertDate]~여기까지
@@ -132,8 +132,9 @@ class NewsModel {
     final posterUrl = concertJson?['poster_url'] as String? ?? '';
     final venue = concertJson?['venue'] as String?;
     final ticketingLinks =
-        (concertJson?['ticketing_links'] as Map<String, dynamic>?)
-            ?.map((key, value) => MapEntry(key, value as String));
+        (concertJson?['ticketing_links'] as Map<String, dynamic>?)?.map(
+          (key, value) => MapEntry(key, value as String),
+        );
     final period = _formatPeriod(
       concertJson?['start_date'] as String?,
       concertJson?['end_date'] as String?,
@@ -155,10 +156,7 @@ class NewsModel {
       '',
       if (period != null) '공연 기간  $period',
     ];
-    const contentBottomLines = <String>[
-      '',
-      '예매 일정과 상세 정보는 예매처에서 확인해주세요.',
-    ];
+    const contentBottomLines = <String>['', '예매 일정과 상세 정보는 예매처에서 확인해주세요.'];
 
     return NewsModel(
       id: json['id'] as String?,
@@ -173,10 +171,13 @@ class NewsModel {
       articleImageUrl: posterUrl,
       venue: venue,
       ticketingLinks: ticketingLinks,
-      concertDate: DateTime.tryParse(concertJson?['start_date'] as String? ?? ''),
+      concertDate: DateTime.tryParse(
+        concertJson?['start_date'] as String? ?? '',
+      ),
       periodText: period,
-      concertEndDate:
-          DateTime.tryParse(concertJson?['end_date'] as String? ?? ''),
+      concertEndDate: DateTime.tryParse(
+        concertJson?['end_date'] as String? ?? '',
+      ),
       ticketingDate: ticketingDate,
       ticketingText: _ticketingDDay(ticketingDate),
       ticketingPhases: ticketingPhases,
@@ -188,7 +189,7 @@ class NewsModel {
   /// 읽음 처리 대상이 아니고, 그래서 [isRead]도 항상 true(NEW 배지 없음)로 둡니다.
   ///
   /// 카드 요약([description])은 제목 아래에 티케팅(예매) 오픈일까지 남은
-  /// 일수를 D-day로 보여줍니다. 상세 본문에는 출연진/공연 기간
+  /// 일수를 T-day로 보여줍니다. 상세 본문에는 출연진/공연 기간
   /// ([contentTop])과 티케팅 날짜([contentBottom])를 채워 넣고, 그 사이에
   /// 공연장([venue])이 들어갑니다.
   factory NewsModel.fromFavoritedConcert(ConcertModel concert) {
@@ -212,9 +213,9 @@ class NewsModel {
       artist: '찜한 공연',
       concert: concert.name,
       imageUrl: concert.posterImageUrl,
-      description: '티케팅 날짜  $dDay',
+      description: dDay,
       contentTop: contentTopLines.join('\n'),
-      contentBottom: '티케팅 날짜  $dDay',
+      contentBottom: dDay,
       articleImageUrl: concert.posterImageUrl,
       venue: concert.venue,
       ticketingLinks: concert.ticketingLinks,
@@ -266,8 +267,9 @@ class NewsModel {
       contentBottom: json['contentBottom'] as String? ?? '',
       articleImageUrl: json['articleImageUrl'] as String? ?? '',
       venue: json['venue'] as String?,
-      ticketingLinks: (json['ticketingLinks'] as Map<String, dynamic>?)
-          ?.map((key, value) => MapEntry(key, value as String)),
+      ticketingLinks: (json['ticketingLinks'] as Map<String, dynamic>?)?.map(
+        (key, value) => MapEntry(key, value as String),
+      ),
       concertDate: json['concertDate'] != null
           ? DateTime.tryParse(json['concertDate'] as String)
           : null,
@@ -281,9 +283,7 @@ class NewsModel {
           ? DateTime.tryParse(json['ticketingDate'] as String)
           : null,
       ticketingPhases: (json['ticketingPhases'] as List<dynamic>?)
-          ?.map(
-            (e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>),
-          )
+          ?.map((e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>))
           .toList(),
     );
   }
@@ -296,8 +296,8 @@ class NewsModel {
     final today = DateTime(now.year, now.month, now.day);
     final target = DateTime(date.year, date.month, date.day);
     final diff = target.difference(today).inDays;
-    if (diff > 0) return 'D-$diff';
-    if (diff == 0) return 'D-DAY';
+    if (diff > 0) return 'T-$diff';
+    if (diff == 0) return 'T-DAY';
     return '예매 중';
   }
 

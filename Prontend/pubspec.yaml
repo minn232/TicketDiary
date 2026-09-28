@@ -84,6 +84,7 @@ flutter:
   assets:
     - assets/
     - assets/images/summary/
+    - assets/images/summary/stickers/
     - assets/images/vendors/
     - assets/images/streaming/
 
