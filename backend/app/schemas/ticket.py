@@ -1,6 +1,10 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
-from uuid import UUID
+import math
 from datetime import datetime, timezone
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
 from app.models.ticket import TicketStatus
 from app.schemas.concert import ConcertResponse, ConcertSummary
 
@@ -36,6 +40,39 @@ class TicketCreate(BaseModel):
         return self
 
 
+class PageLayoutPhoto(BaseModel):
+    # 사진 아이템 부가 정보 - w/h는 EXIF 회전 적용 후 크기, 다른 비율 기기에서 재배치할 때 씀
+    w: int = Field(gt=0, le=20000)
+    h: int = Field(gt=0, le=20000)
+    thumb_url: str | None = Field(default=None, max_length=1024)
+    # EXIF 촬영 시각 원문(기기 현지 시각, 시간대 없음)이라 datetime으로 해석하지 않고 문자열로 보관
+    taken_at: str | None = Field(default=None, max_length=40)
+    quality: float | None = Field(default=None, ge=0, le=1)
+
+
+class PageLayoutItem(BaseModel):
+    # cx/cy는 중심, w는 폭(높이는 비율로 계산), rot는 라디안. ref는 사진 URL 또는 자유메모 id
+    id: str = Field(max_length=64)
+    type: Literal["poster", "photo", "text"]
+    ref: str | None = Field(default=None, max_length=1024)
+    text: str | None = Field(default=None, max_length=2000)
+    cx: float = Field(ge=-0.5, le=1.5)
+    cy: float = Field(ge=-0.5, le=5)
+    w: float = Field(gt=0, le=1.5)
+    rot: float = Field(ge=-math.pi, le=math.pi)
+    z: int = Field(ge=0, le=1000)
+    # 유저가 직접 옮긴 아이템 - 사진 추가로 재배치할 때 이 위치는 그대로 둠
+    pinned: bool = False
+    photo: PageLayoutPhoto | None = None
+
+
+class PageLayout(BaseModel):
+    # 공연후 페이지 배치 전체. canvas_aspect는 생성 당시 캔버스 높이/폭 (비율 다른 기기면 재배치)
+    version: int = Field(default=1, ge=1)
+    canvas_aspect: float = Field(gt=0.3, le=4)
+    items: list[PageLayoutItem] = Field(max_length=80)
+
+
 class TicketUpdate(BaseModel):
     # 티켓 부분 수정 요청
     delivery_date: datetime | None = None
@@ -55,6 +92,7 @@ class TicketUpdate(BaseModel):
     # 공연 후 "티켓 뜯기" 연출 실행 시각. 백엔드는 값 저장만 담당, null로 되돌리는 것도 허용
     # (한 번 뜯으면 다시 뜯을 방법을 없애는 건 프론트 UI가 알아서 막음)
     torn_at: datetime | None = None
+    page_layout: PageLayout | None = None
 
     _normalize_dates = field_validator("delivery_date", "attended_date", "torn_at", mode="after")(_ensure_utc)
 
@@ -81,6 +119,7 @@ class TicketResponse(BaseModel):
     is_first_day: bool | None
     is_last_day: bool | None
     torn_at: datetime | None
+    page_layout: PageLayout | None = None
 
 
 class TicketWithConcert(TicketResponse):

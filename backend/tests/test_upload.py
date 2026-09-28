@@ -160,3 +160,48 @@ async def test_upload_ticket_image_s3_failure_502():
             )
 
     assert response.status_code == 502
+
+
+
+# 공연 사진 + 기기에서 만든 썸네일을 같이 올리면 둘 다 저장하고 thumb_url도 돌려주는지 테스트
+@pytest.mark.asyncio
+async def test_upload_concert_photo_with_thumbnail():
+    token = await _get_token()
+
+    def fake_upload(image_bytes, key, content_type):
+        return f"https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/{key}"
+
+    with patch("app.services.storage._do_upload", side_effect=fake_upload) as mock_upload:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/upload/concert-photo",
+                files={
+                    "image": ("photo.jpg", io.BytesIO(_SMALL_JPEG), "image/jpeg"),
+                    "thumbnail": ("thumb.jpg", io.BytesIO(_SMALL_JPEG[:50]), "image/jpeg"),
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "/concert-photos/" in data["url"]
+    assert "/concert-photo-thumbs/" in data["thumb_url"]
+    assert mock_upload.call_count == 2
+
+
+# 썸네일 없이 올리면 기존처럼 원본만 저장하고 thumb_url은 null
+@pytest.mark.asyncio
+async def test_upload_concert_photo_without_thumbnail():
+    token = await _get_token()
+
+    with _s3_mock() as mock_upload:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/upload/concert-photo",
+                files={"image": ("photo.jpg", io.BytesIO(_SMALL_JPEG), "image/jpeg")},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["thumb_url"] is None
+    assert mock_upload.call_count == 1

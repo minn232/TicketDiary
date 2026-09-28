@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/page_layout.dart';
 import 'scrapbook_page_background.dart';
 
 class _TextBox {
@@ -15,6 +16,11 @@ class _TextBox {
   Offset offset;
   double scale;
   double rotation;
+
+  /// page_layout에서 불러온 중심(px)/폭(px). 글자 크기로 상자를 잰 첫 배치 때
+  /// offset/scale로 바꾸고 비움.
+  Offset? pendingCenter;
+  double? pendingWidth;
   _TextBox(this.id, this.anchor, String text)
     : controller = TextEditingController(text: text),
       offset = Offset.zero,
@@ -48,6 +54,17 @@ class ConcertAfterTextCanvas extends StatefulWidget {
   final List<Widget> memos;
   final Future<void> Function(String) onReviewChanged;
   final VoidCallback? onBlankLongPress;
+
+  /// page_layout의 자유메모(text) 아이템. null이면 아직 배치가 없는 페이지라
+  /// 예전 기기 저장분 → 서버 후기 순으로 채움.
+  final List<PageLayoutItem>? initialItems;
+
+  /// 자유메모가 바뀔 때마다 정규화 좌표 아이템으로 알림 (page_layout에 합쳐 저장).
+  /// null이면 예전처럼 기기에만 저장.
+  final ValueChanged<List<PageLayoutItem>>? onTextsChanged;
+
+  /// 처음 불러온(예전 기기 저장분 / 서버 후기로 만든) 메모를 알림. 저장은 하지 않음.
+  final ValueChanged<List<PageLayoutItem>>? onTextsLoaded;
   const ConcertAfterTextCanvas({
     super.key,
     required this.storageKey,
@@ -61,10 +78,16 @@ class ConcertAfterTextCanvas extends StatefulWidget {
     required this.memos,
     required this.onReviewChanged,
     this.onBlankLongPress,
+    this.initialItems,
+    this.onTextsChanged,
+    this.onTextsLoaded,
   });
   @override
   State<ConcertAfterTextCanvas> createState() => ConcertAfterTextCanvasState();
 }
+
+/// 빈 메모에 보이는 안내 문구. 상자 폭도 이 문구 기준으로 잼.
+const String _kEmptyHint = '더블탭하여 입력';
 
 class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   static const double _boxPadding = 4;
@@ -124,6 +147,31 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   Future<void> _load() async {
+    final items = widget.initialItems;
+    if (items != null) {
+      // initState 안에서 동기로 채우므로 setState 없이 바로 준비 완료.
+      final w = widget.width;
+      for (final item in items) {
+        if (item.type != PageLayoutItemType.text) continue;
+        _add(
+          _TextBox(
+              item.ref ?? item.id,
+              Offset(item.cx.clamp(0, 1).toDouble(), item.cy * w),
+              item.text ?? '',
+            )
+            ..rotation = item.rot
+            ..pendingCenter = Offset(item.cx * w, item.cy * w)
+            ..pendingWidth = item.w * w,
+        );
+      }
+      // 배치는 있는데 메모가 없으면(메모 저장 이전 배치) 서버 후기로 채움.
+      if (_boxes.isEmpty && widget.initialReview.trim().isNotEmpty) {
+        _add(_reviewBox());
+        _notifyLoaded();
+      }
+      _ready = true;
+      return;
+    }
     _prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final raw = _prefs!.getString(_key);
@@ -160,15 +208,22 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
     if (raw == null &&
         _boxes.isEmpty &&
         widget.initialReview.trim().isNotEmpty) {
-      _add(
-        _TextBox(
-          'original_review',
-          const Offset(.06, 260),
-          widget.initialReview,
-        ),
-      );
+      _add(_reviewBox());
     }
     setState(() => _ready = true);
+    if (_boxes.isNotEmpty) _notifyLoaded();
+  }
+
+  _TextBox _reviewBox() =>
+      _TextBox('original_review', const Offset(.06, 260), widget.initialReview);
+
+  /// 첫 배치(상자 크기 측정) 뒤에 알림.
+  void _notifyLoaded() {
+    final onTextsLoaded = widget.onTextsLoaded;
+    if (onTextsLoaded == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) onTextsLoaded(_toItems());
+    });
   }
 
   void _add(_TextBox box) {
@@ -196,6 +251,11 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   void _saveLocal() {
+    final onTextsChanged = widget.onTextsChanged;
+    if (onTextsChanged != null) {
+      onTextsChanged(_toItems());
+      return;
+    }
     if (_prefs == null) return;
     unawaited(
       _prefs!.setString(
@@ -243,6 +303,62 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
     _writes = _writes.then((_) => widget.onReviewChanged(review));
     _syncDeleteOverlay();
     WidgetsBinding.instance.addPostFrameCallback((_) => box.dispose());
+  }
+
+  /// 화면에 그려진 상자 기준 중심/폭을 캔버스 폭 = 1 정규화 좌표로.
+  List<PageLayoutItem> _toItems() {
+    final w = widget.width;
+    if (w <= 0) return const [];
+    final items = <PageLayoutItem>[];
+    for (final box in _boxes) {
+      if (_isBlank(box)) continue;
+      final rect = _rects[box.id];
+      final center =
+          box.pendingCenter ??
+          (rect?.center ?? Offset(box.anchor.dx * w, box.anchor.dy)) +
+              box.offset;
+      final width = box.pendingWidth ?? (rect?.width ?? w * .4) * box.scale;
+      final text = box.controller.text;
+      final id = 'text_${box.id}';
+      items.add(
+        PageLayoutItem(
+          id: id.length > 64 ? id.substring(0, 64) : id,
+          type: PageLayoutItemType.text,
+          ref: box.id,
+          // 서버 검증 한도(2000자)
+          text: text.length > 2000 ? text.substring(0, 2000) : text,
+          cx: (center.dx / w).clamp(-0.5, 1.5).toDouble(),
+          cy: (center.dy / w).clamp(-0.5, 5.0).toDouble(),
+          w: (width / w).clamp(0.01, 1.5).toDouble(),
+          rot: math.atan2(math.sin(box.rotation), math.cos(box.rotation)),
+        ),
+      );
+    }
+    return items;
+  }
+
+  /// 내용이 있는 자유메모가 하나라도 있는지 (자동 배치 전 초기화 확인용).
+  bool get hasTexts => _boxes.any((b) => !_isBlank(b));
+
+  /// 자유메모를 전부 지움 (합쳐 저장하던 후기도 빈 값이 됨).
+  void clearAll() {
+    if (_boxes.isEmpty) return;
+    final removed = [..._boxes];
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _boxes.clear();
+      _selected = null;
+      _editing = null;
+      _selectedTextOverDeleteZone = false;
+    });
+    _saveLocal();
+    _writes = _writes.then((_) => widget.onReviewChanged(''));
+    _syncDeleteOverlay();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final box in removed) {
+        box.dispose();
+      }
+    });
   }
 
   void _deselect() {
@@ -299,9 +415,12 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
 
   @override
   void dispose() {
-    _saveTimer?.cancel();
+    // 타이핑 후 저장 대기(0.25초) 중일 때만 마지막으로 저장.
+    if (_saveTimer?.isActive ?? false) {
+      _saveTimer!.cancel();
+      _saveLocal();
+    }
     _removeDeleteOverlay();
-    _saveLocal();
     for (final box in _boxes) {
       box.dispose();
     }
@@ -314,7 +433,9 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
     const margin = 4.0;
     final maxWidth = math.max(_minBoxWidth, pageWidth - margin * 2);
     final maxHeight = math.max(_minBoxHeight, pageHeight - margin * 2);
-    final text = box.controller.text.isEmpty ? '내용 입력' : box.controller.text;
+    final text = box.controller.text.isEmpty
+        ? _kEmptyHint
+        : box.controller.text;
     final textScaler = MediaQuery.textScalerOf(context);
     final naturalWidth = _longestLineWidth(text, style, textScaler);
     final desiredWidth = (naturalWidth + _boxPadding * 2 + _textLayoutSlack)
@@ -425,6 +546,15 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
     for (final box in _boxes) {
       final rect = _place(box, style);
       _rects[box.id] = rect;
+      final center = box.pendingCenter;
+      if (center != null) {
+        box.offset = center - rect.center;
+        box.scale = ((box.pendingWidth ?? rect.width) / rect.width)
+            .clamp(.6, 2.4)
+            .toDouble();
+        box.pendingCenter = null;
+        box.pendingWidth = null;
+      }
     }
     return ClipRect(
       child: SizedBox(
@@ -587,7 +717,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
                                         text: box.controller.text.isEmpty
                                             ? ''
                                             : box.controller.text,
-                                        hint: '더블탭하여 입력',
+                                        hint: _kEmptyHint,
                                         style: style,
                                       ),
                               ),

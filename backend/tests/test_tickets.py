@@ -879,3 +879,130 @@ def test_upgrade_event_type_llm_solo_hint_does_not_upgrade_below_threshold():
     concert = Concert(event_type=EventType.SOLO.value, artist_name=["A", "B", "C", "D"])
     assert upgrade_event_type_if_multi_artist(concert, llm_event_type="SOLO") is False
     assert concert.event_type == EventType.SOLO.value
+
+
+
+_S3 = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com"
+
+
+# page_layout 테스트용 배치 - 포스터 1 + 자유메모 1 + 사진 N(썸네일 포함)
+def _page_layout(photo_refs: list[str]) -> dict:
+    items = [
+        {"id": "poster", "type": "poster", "ref": f"{_S3}/posters/poster.jpg",
+         "cx": 0.3, "cy": 0.4, "w": 0.34, "rot": 0.02, "z": 9},
+        {"id": "memo1", "type": "text", "ref": "memo1", "text": "최고의 공연",
+         "cx": 0.5, "cy": 1.3, "w": 0.4, "rot": 0.0, "z": 10, "pinned": True},
+    ]
+    for i, ref in enumerate(photo_refs):
+        items.append({
+            "id": f"photo_{i}", "type": "photo", "ref": ref,
+            "cx": 0.6, "cy": 0.5 + i * 0.3, "w": 0.3, "rot": -0.07, "z": i,
+            "photo": {"w": 1024, "h": 768, "thumb_url": ref.replace("concert-photos/", "concert-photo-thumbs/"),
+                      "taken_at": "2026:09:05 12:48:55", "quality": 0.8},
+        })
+    return {"version": 1, "canvas_aspect": 1.55, "items": items}
+
+
+# 공연후 페이지 배치 저장 후 그대로 조회되는지 테스트
+@pytest.mark.asyncio
+async def test_update_ticket_page_layout_roundtrip():
+    concert_id = await _create_concert("PF_LAYOUT_001")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    layout = _page_layout([f"{_S3}/concert-photos/a.jpg"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        patch_res = await ac.patch(f"/api/v1/tickets/{ticket_id}", json={"page_layout": layout}, headers=headers)
+        get_res = await ac.get(f"/api/v1/tickets/{ticket_id}", headers=headers)
+
+    assert patch_res.status_code == 200
+    saved = get_res.json()["page_layout"]
+    assert saved["canvas_aspect"] == 1.55
+    assert [i["id"] for i in saved["items"]] == ["poster", "memo1", "photo_0"]
+    assert saved["items"][2]["photo"]["thumb_url"] == f"{_S3}/concert-photo-thumbs/a.jpg"
+    assert saved["items"][1]["text"] == "최고의 공연"
+    assert saved["items"][1]["pinned"] is True
+    assert saved["items"][0]["pinned"] is False
+
+
+# 좌표/타입/개수가 범위를 벗어난 배치는 저장 거절 (서버는 값 범위만 검증)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broken", [
+    lambda l: l["items"][0].update(cx=3.0),
+    lambda l: l["items"][0].update(type="envelope"),
+    lambda l: l["items"][0].update(rot=10.0),
+    lambda l: l.update(items=l["items"] * 30),
+    lambda l: l.update(canvas_aspect=0),
+])
+async def test_update_ticket_page_layout_invalid_422(broken):
+    concert_id = await _create_concert(f"PF_LAYOUT_BAD_{uuid.uuid4().hex[:6]}")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    layout = _page_layout([f"{_S3}/concert-photos/a.jpg"])
+    broken(layout)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        response = await ac.patch(f"/api/v1/tickets/{ticket_id}", json={"page_layout": layout}, headers=headers)
+
+    assert response.status_code == 422
+
+
+# 배치에서 빠진 사진은 원본+썸네일 모두 S3에서 지우고, 포스터(공연 공용)와
+# concert_photo_urls에 아직 남아있는 사진 원본은 지우지 않는지 테스트
+@pytest.mark.asyncio
+async def test_update_ticket_page_layout_removed_photo_deleted_from_s3():
+    concert_id = await _create_concert("PF_LAYOUT_002")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    kept = f"{_S3}/concert-photos/kept.jpg"
+    removed = f"{_S3}/concert-photos/removed.jpg"
+    still_listed = f"{_S3}/concert-photos/listed.jpg"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"page_layout": _page_layout([kept, removed, still_listed]), "concert_photo_urls": [still_listed]},
+            headers=headers,
+        )
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            response = await ac.patch(
+                f"/api/v1/tickets/{ticket_id}",
+                json={"page_layout": _page_layout([kept])},
+                headers=headers,
+            )
+
+    assert response.status_code == 200
+    deleted = sorted(c.args[0] for c in mock_delete.call_args_list)
+    assert deleted == [
+        "concert-photo-thumbs/listed.jpg",
+        "concert-photo-thumbs/removed.jpg",
+        "concert-photos/removed.jpg",
+    ]
+
+
+# 티켓 삭제 시 page_layout 사진(원본+썸네일)도 S3에서 정리되는지 테스트
+@pytest.mark.asyncio
+async def test_delete_ticket_cleans_up_page_layout_photos():
+    concert_id = await _create_concert("PF_LAYOUT_003")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    photo = f"{_S3}/concert-photos/bye.jpg"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        await ac.patch(f"/api/v1/tickets/{ticket_id}", json={"page_layout": _page_layout([photo])}, headers=headers)
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            del_response = await ac.delete(f"/api/v1/tickets/{ticket_id}", headers=headers)
+
+    assert del_response.status_code == 204
+    deleted = sorted(c.args[0] for c in mock_delete.call_args_list)
+    assert deleted == ["concert-photo-thumbs/bye.jpg", "concert-photos/bye.jpg"]

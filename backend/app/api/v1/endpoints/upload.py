@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
@@ -12,6 +14,8 @@ _MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
 
 class UploadResponse(BaseModel):
     url: str
+    # 공연 사진에 썸네일을 같이 보냈을 때만 채워짐
+    thumb_url: str | None = None
 
 
 # 이미지 크기 및 형식 검증 후 바이트 반환
@@ -46,13 +50,23 @@ async def upload_ticket_image(
     return UploadResponse(url=url)
 
 
-# 공연 사진 업로드 (concert-photos/{uuid}.ext -> S3)
+# 공연 사진 업로드 (concert-photos/{uuid}.ext -> S3). 썸네일은 서버가 디코딩하지 않도록
+# 기기에서 만들어 같이 보냄(선택) - concert-photo-thumbs/에 저장
 @router.post("/concert-photo", response_model=UploadResponse)
 async def upload_concert_photo(
     request: Request,
     image: UploadFile = File(...),
+    thumbnail: UploadFile | None = File(None),
     current_user: User = Depends(get_current_user),
 ):
     image_bytes = await _read_and_validate(request, image)
-    url = await upload_image(image_bytes, "concert-photos", image.content_type or "image/jpeg")
-    return UploadResponse(url=url)
+    if thumbnail is None:
+        url = await upload_image(image_bytes, "concert-photos", image.content_type or "image/jpeg")
+        return UploadResponse(url=url)
+
+    thumb_bytes = await _read_and_validate(request, thumbnail)
+    url, thumb_url = await asyncio.gather(
+        upload_image(image_bytes, "concert-photos", image.content_type or "image/jpeg"),
+        upload_image(thumb_bytes, "concert-photo-thumbs", thumbnail.content_type or "image/jpeg"),
+    )
+    return UploadResponse(url=url, thumb_url=thumb_url)

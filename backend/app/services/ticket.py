@@ -278,6 +278,20 @@ async def request_ticket_diary(db: AsyncSession, user_id: UUID, ticket_id: UUID)
     return ticket
 
 
+# 티켓이 소유한 S3 이미지(공연 사진 + page_layout 사진/썸네일). 포스터는 공연 공용이라 제외
+def _owned_photo_urls(ticket: Ticket) -> set[str]:
+    urls = set(ticket.concert_photo_urls or [])
+    for item in (ticket.page_layout or {}).get("items", []):
+        if item.get("type") != "photo":
+            continue
+        if item.get("ref"):
+            urls.add(item["ref"])
+        thumb = (item.get("photo") or {}).get("thumb_url")
+        if thumb:
+            urls.add(thumb)
+    return urls
+
+
 # 티켓 수정
 async def update_ticket(
     db: AsyncSession, user: User, ticket_id: UUID, body: TicketUpdate
@@ -292,7 +306,7 @@ async def update_ticket(
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
     # 사진/티켓이미지가 교체되거나 빠지면 S3에서도 지우기 위해 미리 옛 값을 기억해둠
-    old_photo_urls = list(ticket.concert_photo_urls or [])
+    old_photo_urls = _owned_photo_urls(ticket)
     old_image_url = ticket.ticket_image_url
 
     fields = body.model_dump(exclude_unset=True)
@@ -320,8 +334,8 @@ async def update_ticket(
 
     # DB 갱신이 끝난 뒤 더 이상 참조되지 않는 옛 이미지를 S3에서도 지움(실패해도
     # delete_image가 조용히 로그만 남기므로 응답에는 영향 없음)
-    if "concert_photo_urls" in fields:
-        new_photo_urls = set(ticket.concert_photo_urls or [])
+    if "concert_photo_urls" in fields or "page_layout" in fields:
+        new_photo_urls = _owned_photo_urls(ticket)
         removed_photo_urls = [u for u in old_photo_urls if u not in new_photo_urls]
         if removed_photo_urls:
             await asyncio.gather(*(delete_image(u) for u in removed_photo_urls))
@@ -345,7 +359,7 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
 
     # 티켓과 함께 참조가 완전히 사라지는 이미지들 - DB 삭제 후 S3에서도 정리
-    orphaned_urls = list(ticket.concert_photo_urls or [])
+    orphaned_urls = list(_owned_photo_urls(ticket))
     if ticket.ticket_image_url:
         orphaned_urls.append(ticket.ticket_image_url)
 

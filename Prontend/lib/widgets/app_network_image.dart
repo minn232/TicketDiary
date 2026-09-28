@@ -26,6 +26,9 @@ class AppNetworkImage extends StatelessWidget {
   final WidgetBuilder? placeholderBuilder;
   final WidgetBuilder? errorBuilder;
 
+  /// true면 페이드 없이 바로 표시 (공유 이미지 캡처용).
+  final bool instant;
+
   const AppNetworkImage(
     this.url, {
     super.key,
@@ -36,6 +39,7 @@ class AppNetworkImage extends StatelessWidget {
     this.memCacheHeight,
     this.placeholderBuilder,
     this.errorBuilder,
+    this.instant = false,
   });
 
   @override
@@ -65,6 +69,12 @@ class AppNetworkImage extends StatelessWidget {
       height: height,
       memCacheWidth: memCacheWidth,
       memCacheHeight: memCacheHeight,
+      fadeInDuration: instant
+          ? Duration.zero
+          : const Duration(milliseconds: 500),
+      fadeOutDuration: instant
+          ? Duration.zero
+          : const Duration(milliseconds: 1000),
       placeholder: placeholderBuilder == null
           ? null
           : (context, url) => placeholderBuilder!(context),

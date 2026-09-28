@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'page_layout.dart';
 import 'ticket_scan.dart' show ConcertResponse;
 
 /// [TicketWithConcert.copyWith]의 [TicketWithConcert.tornAt] 파라미터 전용
@@ -47,6 +48,10 @@ class TicketWithConcert {
   /// 되돌리는 단방향 강제는 프론트가 담당합니다.
   final DateTime? tornAt;
 
+  // [백엔드 수정]
+  // 공연후 페이지 배치(page_layout) 추가. 형식이 깨졌으면 null.
+  final PageLayout? pageLayout;
+
   const TicketWithConcert({
     required this.id,
     this.concertId,
@@ -64,6 +69,7 @@ class TicketWithConcert {
     this.isLastDay,
     this.concert,
     this.tornAt,
+    this.pageLayout,
   });
 
   factory TicketWithConcert.fromJson(Map<String, dynamic> json) {
@@ -94,6 +100,7 @@ class TicketWithConcert {
       tornAt: json['torn_at'] != null
           ? DateTime.parse(json['torn_at'] as String)
           : null,
+      pageLayout: PageLayout.tryParse(json['page_layout']),
     );
   }
 
@@ -116,6 +123,7 @@ class TicketWithConcert {
     'is_last_day': isLastDay,
     'concert': concert?.toJson(),
     'torn_at': tornAt?.toIso8601String(),
+    'page_layout': pageLayout?.toJson(),
   };
 
   TicketWithConcert copyWith({
@@ -135,6 +143,7 @@ class TicketWithConcert {
     // 필드처럼 `??`(null이면 안 건드림)로는 표현할 수 없습니다. 감시값으로
     // "안 넘김"과 "null로 지움"을 구분합니다.
     Object? tornAt = _unset,
+    PageLayout? pageLayout,
   }) {
     return TicketWithConcert(
       id: id,
@@ -153,6 +162,7 @@ class TicketWithConcert {
       tornAt: identical(tornAt, _unset) ? this.tornAt : tornAt as DateTime?,
       isLastDay: isLastDay ?? this.isLastDay,
       concert: concert,
+      pageLayout: pageLayout ?? this.pageLayout,
     );
   }
 }

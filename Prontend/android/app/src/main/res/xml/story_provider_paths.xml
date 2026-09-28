@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- external_share_service.dart가 쓰는 cache/share_export 폴더만 공개. -->
+    <cache-path name="share_export" path="share_export/" />
+</paths>
