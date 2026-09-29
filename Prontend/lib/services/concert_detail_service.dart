@@ -1,3 +1,4 @@
+import '../models/preview_track.dart';
 import '../models/setlist.dart';
 import '../models/timetable.dart';
 import 'api_client.dart';
@@ -38,6 +39,13 @@ class ConcertDetailService {
   Future<RealSetlistResponse> getRealSetlist(String ticketId) async {
     final json = await _client.get('/tickets/$ticketId/setlist');
     return RealSetlistResponse.fromJson(json);
+  }
+
+  // [백엔드 수정] 티켓 미리듣기 후보 곡 조회 추가.
+  /// 미리듣기 후보 조회(`GET /tickets/{ticketId}/preview-tracks`).
+  Future<PreviewTracksResponse> getPreviewTracks(String ticketId) async {
+    final json = await _client.get('/tickets/$ticketId/preview-tracks');
+    return PreviewTracksResponse.fromJson(json);
   }
 
   // [백엔드 수정]

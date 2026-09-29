@@ -85,6 +85,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // [백엔드 수정] 티켓 열 때 노래 재생 토글 추가.
+  Future<void> _setPlayTicketPreview(bool v) async {
+    try {
+      await _appSettings.setPlayTicketPreview(v);
+    } catch (e) {
+      _showSaveError(e, label: '티켓 열 때 노래 재생');
+    }
+  }
+
   Future<void> _loadNotificationSettings() async {
     try {
       final s = await _notifSettingsService.fetch();
@@ -244,6 +253,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         title: '예상 셋리 노출 여부',
                         value: _appSettings.showExpectedSetlist,
                         onChanged: _setShowExpectedSetlist,
+                      ),
+                      _divider,
+                      _SwitchRow(
+                        title: '티켓 열 때 노래 재생',
+                        value: _appSettings.playTicketPreview,
+                        onChanged: _setPlayTicketPreview,
                       ),
                       _divider,
                       _MusicServiceRow(

@@ -34,11 +34,15 @@ class AppSettingsStore extends ChangeNotifier {
   // 기기/앱 취향에 가까운 값이라 다른 설정들과 달리 서버 소스오브트루스 불필요).
   static const _preferredMusicServicePrefsKey = 'preferred_music_service_v1';
 
+  // 티켓 미리듣기 자동재생 - 기기 로컬에만 저장.
+  static const _playTicketPreviewPrefsKey = 'play_ticket_preview_v1';
+
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
 
   bool _showExpectedSetlist = true;
   MusicService _preferredMusicService = MusicService.spotify;
+  bool _playTicketPreview = true;
   bool _loaded = false;
 
   /// 마지막으로 load()를 실행했던 유저 id.
@@ -61,6 +65,9 @@ class AppSettingsStore extends ChangeNotifier {
   /// 꾹 눌러 바꾸는 임시 선택([SetlistServiceSelection])과는 별개.
   MusicService get preferredMusicService => _preferredMusicService;
 
+  // [백엔드 수정] 티켓 미리듣기 자동재생 설정 추가.
+  bool get playTicketPreview => _playTicketPreview;
+
   Future<void> load() async {
     if (_loaded) return;
     _loaded = true;
@@ -73,6 +80,7 @@ class AppSettingsStore extends ChangeNotifier {
       _preferredMusicService = MusicService.fromPrefsName(
         prefs.getString(_preferredMusicServicePrefsKey),
       );
+      _playTicketPreview = prefs.getBool(_playTicketPreviewPrefsKey) ?? true;
       notifyListeners();
     } catch (_) {
       // 로컬 저장소를 못 읽어도 기본값(true/스포티파이)으로 시작합니다.
@@ -120,6 +128,16 @@ class AppSettingsStore extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_preferredMusicServicePrefsKey, value.prefsName);
+    } catch (_) {}
+  }
+
+  /// 기기 로컬에만 저장(서버 동기화 없음).
+  Future<void> setPlayTicketPreview(bool value) async {
+    _playTicketPreview = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_playTicketPreviewPrefsKey, value);
     } catch (_) {}
   }
 }

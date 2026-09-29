@@ -64,6 +64,9 @@ dependencies:
   gal: ^2.3.3
   kakao_flutter_sdk_share: ^2.0.1
   flutter_svg: ^2.3.0
+  # [백엔드 수정] 티켓 미리듣기 재생.
+  just_audio: ^0.10.6
+  audio_session: ^0.2.4
 
 dev_dependencies:
   flutter_test:

@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'concert_after_overlay.dart';
 import 'concert_before_overlay.dart';
 import 'package:ticketdiary/models/ticket_info.dart';
+import 'package:ticketdiary/services/ticket_preview_player.dart';
 import 'package:ticketdiary/models/ticket_response.dart';
 import 'package:ticketdiary/models/ticket_scan.dart';
 import 'package:ticketdiary/services/api_client.dart';
@@ -1787,6 +1788,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
           ),
         );
       case TicketStatus.beforeConcert:
+        // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
+        unawaited(TicketPreviewPlayer.instance.prepare(ticket.info?.ticketId));
         final isDue = _isDueForPromotion(ticket);
         final ticketWidget = PressableScale(
           onTap: _isAddTicketExpanded
@@ -2381,6 +2384,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 전달.
     int issueNumber = 1,
   }) {
+    // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
+    unawaited(TicketPreviewPlayer.instance.prepare(info?.ticketId));
     // 입장 티켓을 뜯은 뒤에는, 티켓 어디를 눌러도 "공연 후" 페이지가 뜹니다.
     // (예전의 뜯긴 왼쪽 = "공연전" 바로가기/공연 전 페이지 진입은 제거.)
     Future<void> openAfter() async {

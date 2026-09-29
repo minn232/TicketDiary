@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
 import '../models/ticket_info.dart';
+import '../services/ticket_preview_player.dart';
+import '../widgets/now_playing_chip.dart';
 import '../widgets/concert_before_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/responsive_text.dart';
@@ -141,10 +144,15 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     );
 
     _controller.forward();
+    // [백엔드 수정] 티켓 미리듣기 재생 시작.
+    unawaited(
+      TicketPreviewPlayer.instance.start(widget.ticketInfo?.ticketId, this),
+    );
   }
 
   @override
   void dispose() {
+    unawaited(TicketPreviewPlayer.instance.stop(this));
     _controller.dispose();
     super.dispose();
   }
@@ -206,6 +214,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   Future<void> _close() async {
     if (_isClosing) return;
     _isClosing = true;
+    unawaited(TicketPreviewPlayer.instance.stop(this));
 
     try {
       await _controller.reverse();
@@ -326,6 +335,16 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
                       borderRadius: BorderRadius.circular(radius),
                       clipBehavior: Clip.antiAlias,
                       child: child,
+                    ),
+                  ),
+
+                  // [백엔드 수정] 재생 중인 곡 칩(우측 상단).
+                  Positioned(
+                    right: 8,
+                    top: media.padding.top + 4,
+                    child: FadeTransition(
+                      opacity: _postItOpacity,
+                      child: const NowPlayingChip(),
                     ),
                   ),
                 ],
