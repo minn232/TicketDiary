@@ -15,6 +15,7 @@ from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.setlist import (
     RealSetlistResponse, PreSetlistResponse, SetlistFmCandidate,
     SetlistEditRequest, FetchSetlistRequest, ArtistAnchorCandidate, ArtistAnchorRequest, ArtistCandidate,
+    PreviewTracksResponse,
 )
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
 from app.services.artist_identity import (
@@ -37,6 +38,7 @@ from app.services.pre_setlist import (
     search_anchor_artist_candidates,
     update_pre_setlist,
 )
+from app.services.preview_tracks import get_preview_tracks
 from app.services.representative_songs import search_itunes_songs
 from app.services.setlist import (
     attach_artist_setlist_statuses,
@@ -152,6 +154,18 @@ async def get_ticket_real_setlist(
         background_tasks.add_task(check_real_setlist_on_view, concert_id, performance_date)
     await attach_artist_setlist_statuses(db, concert_id, result)
     return result
+
+
+# 티켓을 열 때 재생할 iTunes 30초 미리듣기 후보(실제 셋리 → 예상 셋리 → 대표곡 순). 없으면 빈 목록
+@router.get("/{ticket_id}/preview-tracks", response_model=PreviewTracksResponse)
+async def get_ticket_preview_tracks(
+    ticket_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ticket = await get_ticket(db, current_user.id, ticket_id)
+    concert_id, explicit_date = _ticket_concert_and_date(ticket)
+    return await get_preview_tracks(db, concert_id, explicit_date)
 
 
 # 티켓 기준 Setlist.fm 후보 검색

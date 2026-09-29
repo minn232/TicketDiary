@@ -368,23 +368,42 @@ async def _auto_anchor(db: AsyncSession, artist: str, concert_id: UUID | None = 
     return exact[0]["itunes_artist_id"]
 
 
+# 공연 아티스트의 iTunes 아티스트 ID 확정 - (ID, 쓸 수 없음 여부). 연결 없음/"해당 없음"이면 쓸 수
+# 없음(대표곡·미리듣기 모두 건너뜀). 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes 자동
+# 확정에서 동명이인이 잡힘(실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로
+# 확정된 iTunes만 씀
+async def _confirm_itunes_artist_id(
+    db: AsyncSession, artist: str, concert_id: UUID | None
+) -> tuple[str | None, bool]:
+    canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
+    if no_artist or (canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR):
+        return None, True
+    is_member = await _is_band_member(db, canonical)
+    itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
+    if itunes_artist_id is None and not is_member:
+        itunes_artist_id = await _auto_anchor(db, artist, concert_id)
+    return itunes_artist_id, False
+
+
+# 이름 검색 없이 확정된 iTunes 아티스트 ID만 돌려줌(없으면 None) - 미리듣기처럼 다른 아티스트
+# 곡이 섞이면 안 되는 곳용
+async def resolve_itunes_artist_id_for(db: AsyncSession, artist: str, concert_id: UUID | None) -> str | None:
+    itunes_artist_id, _ = await _confirm_itunes_artist_id(db, artist, concert_id)
+    return itunes_artist_id
+
+
 # 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)가
 # 있으면 그 곡 목록(Last.fm 청취자 순), 없으면 Last.fm 인기곡(품질 기준 통과 시만) -
 # concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선
 async def representative_songs_for_artist(
     db: AsyncSession, artist: str, n: int, concert_id: UUID | None = None
 ) -> list[dict]:
-    canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
-    if no_artist or (canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR):
-        return []
+    canonical, _ = await resolve_concert_artist(db, concert_id, artist)
     mbid = canonical.mbid if canonical is not None else None
-
-    # 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes 자동 확정/Last.fm 모두 동명이인이 잡힘
-    # (실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로 확정된 iTunes만 씀
     is_member = await _is_band_member(db, canonical)
-    itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
-    if itunes_artist_id is None and not is_member:
-        itunes_artist_id = await _auto_anchor(db, artist, concert_id)
+    itunes_artist_id, unusable = await _confirm_itunes_artist_id(db, artist, concert_id)
+    if unusable:
+        return []
     lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
 
     titles: list[str] = []

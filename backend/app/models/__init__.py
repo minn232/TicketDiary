@@ -17,6 +17,7 @@ from app.models.artist_normalization import (
 from app.models.artist_blocklist import BlockedArtistName
 from app.models.artist_identity import ArtistIdentityChange, ConcertArtistLink
 from app.models.music_link_cache import MusicLinkCache
+from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.llm_batch_state import LlmNightBatchState
 
 __all__ = [
@@ -37,5 +38,6 @@ __all__ = [
     "BlockedArtistName",
     "ArtistIdentityChange", "ConcertArtistLink",
     "MusicLinkCache",
+    "ItunesCatalogCache",
     "LlmNightBatchState",
 ]

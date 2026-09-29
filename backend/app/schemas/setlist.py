@@ -103,3 +103,17 @@ class ArtistAnchorRequest(BaseModel):
     # 공연의 어느 아티스트(concert.artist_name 중 하나)를 어느 iTunes 아티스트로 확정할지
     artist: str
     itunes_artist_id: str
+
+
+class PreviewTrack(BaseModel):
+    # 티켓 미리듣기용 iTunes 곡 하나(30초 미리듣기 URL + Apple 곡 페이지)
+    track_name: str
+    artist_name: str
+    preview_url: str
+    track_view_url: str | None = None
+
+
+class PreviewTracksResponse(BaseModel):
+    # source - 곡을 고른 근거("real" 실제 셋리, "pre" 예상 셋리, "catalog" 아티스트 대표곡), 곡이 없으면 None
+    source: str | None = None
+    tracks: list[PreviewTrack] = []
