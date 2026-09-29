@@ -1042,9 +1042,19 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
 _RETRY_CRAWL_CONCURRENCY = 2
 
 
+# 재시도 배치 건당 상한 - _FESTIVAL_LINEUP_CHECK_TIMEOUT과 같은 이유(한 건이 멈추면 gather 전체가
+# 안 끝남). crawl_and_save는 후보 사이트를 차례로 시도하고 Vision까지 불러서 더 넉넉히 잡음
+_RETRY_CRAWL_TIMEOUT = 180
+
+
 async def _crawl_and_save_limited(semaphore: asyncio.Semaphore, concert_id) -> None:
     async with semaphore:
-        await crawl_and_save(concert_id)
+        try:
+            await asyncio.wait_for(crawl_and_save(concert_id), timeout=_RETRY_CRAWL_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error(f"크롤링 재시도 타임아웃({_RETRY_CRAWL_TIMEOUT}초 초과): {concert_id}")
+        except Exception:
+            logger.exception(f"크롤링 재시도 실패: {concert_id}")
 
 
 # 자정 배치: 찜한 유저가 있는데 아직 ticketing_date를 못 얻은 공연들에 크롤링 재시도

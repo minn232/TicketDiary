@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,7 +12,7 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.setlist import PreSetlist, RealSetlist
-from app.services.preview_tracks import _fetch_catalog, _interleave, get_preview_tracks
+from app.services.preview_tracks import _fetch_catalog, _get_catalog, _interleave, get_preview_tracks
 from conftest import _get_token
 from test_pre_setlists import _create_concert
 
@@ -150,6 +151,28 @@ async def test_stale_cache_is_refetched():
         await _preview(concert_id)
 
     assert fetch_mock.await_count == 2
+
+
+# 같은 아티스트를 동시에 처음 열어도(둘 다 캐시 없음) 유니크 충돌 없이 한 행으로 저장
+@pytest.mark.asyncio
+async def test_concurrent_first_fetch_does_not_conflict():
+    # 두 요청이 모두 "캐시 없음"을 확인한 뒤에야 저장으로 넘어가게 맞춤
+    barrier = asyncio.Barrier(2)
+
+    async def _slow_fetch(_itunes_artist_id):
+        await asyncio.wait_for(barrier.wait(), timeout=5)
+        return _CATALOG
+
+    async def _get() -> list[dict]:
+        async with AsyncSessionLocal() as db:
+            return await _get_catalog(db, "10")
+
+    with patch(f"{_SERVICE}._fetch_catalog", new=_slow_fetch):
+        results = await asyncio.gather(_get(), _get())
+
+    assert results == [_CATALOG, _CATALOG]
+    async with AsyncSessionLocal() as db:
+        assert len((await db.execute(select(ItunesCatalogCache))).all()) == 1
 
 
 @pytest.mark.asyncio

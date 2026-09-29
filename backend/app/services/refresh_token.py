@@ -27,10 +27,13 @@ async def issue_refresh_token(db: AsyncSession, user_id: UUID, commit: bool = Tr
 
 
 # 리프레시 토큰 검증 후 회전(rotation): 기존 토큰은 즉시 폐기하고 새 access/refresh 토큰 발급용 유저 반환
-# 위조/만료/이미 사용(폐기)된 토큰은 401 — 탈취된 토큰의 재사용 시도를 감지하기 위함
+# 위조/만료/이미 사용(폐기)된 토큰은 401 — 탈취된 토큰의 재사용 시도를 감지하기 위함.
+# 행 잠금으로 같은 토큰의 동시 요청을 직렬화 - 없으면 둘 다 revoked=False를 보고 둘 다 새 토큰을 받음
 async def rotate_refresh_token(db: AsyncSession, token: str) -> tuple[User, str]:
     token_hash = hash_refresh_token(token)
-    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token_hash == token_hash).with_for_update()
+    )
     stored = result.scalar_one_or_none()
 
     if stored is None or stored.revoked or stored.expires_at < datetime.now(timezone.utc):

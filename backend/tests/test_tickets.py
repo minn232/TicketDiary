@@ -607,8 +607,8 @@ async def test_update_ticket_removed_photo_deleted_from_s3():
     concert_id = await _create_concert("PF_PHOTO_DEL_001")
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    kept_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/concert-photos/kept.jpg"
-    removed_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/concert-photos/removed.jpg"
+    kept_url = _unique_s3_url("concert-photos")
+    removed_url = _unique_s3_url("concert-photos")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
@@ -628,7 +628,7 @@ async def test_update_ticket_removed_photo_deleted_from_s3():
             )
 
     assert response.status_code == 200
-    mock_delete.assert_called_once_with("concert-photos/removed.jpg")
+    mock_delete.assert_called_once_with(_s3_key(removed_url))
 
 
 # 티켓을 통째로 삭제하면 그 티켓에 달려있던 사진들도 S3에서 같이 지워지는지 테스트
@@ -637,7 +637,7 @@ async def test_delete_ticket_cleans_up_s3_photos():
     concert_id = await _create_concert("PF_PHOTO_DEL_002")
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    photo_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/concert-photos/bye.jpg"
+    photo_url = _unique_s3_url("concert-photos")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
@@ -653,7 +653,66 @@ async def test_delete_ticket_cleans_up_s3_photos():
             del_response = await ac.delete(f"/api/v1/tickets/{ticket_id}", headers=headers)
 
     assert del_response.status_code == 204
-    mock_delete.assert_called_once_with("concert-photos/bye.jpg")
+    mock_delete.assert_called_once_with(_s3_key(photo_url))
+
+
+# 남의 사진 URL을 내 티켓에 넣었다 빼거나 티켓째 지워도, 원래 주인 티켓이 참조 중이면 S3에서 안 지움
+@pytest.mark.asyncio
+async def test_ticket_photo_referenced_by_other_ticket_not_deleted():
+    victim_concert_id = await _create_concert("PF_PHOTO_OTHER_001")
+    attacker_concert_id = await _create_concert("PF_PHOTO_OTHER_002")
+    victim_headers = {"Authorization": f"Bearer {await _get_token()}"}
+    attacker_headers = {"Authorization": f"Bearer {await _get_token()}"}
+    victim_photo = _unique_s3_url("concert-photos")
+    victim_ticket_image = _unique_s3_url("ticket-images")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        victim_res = await ac.post("/api/v1/tickets", json={"concert_id": victim_concert_id}, headers=victim_headers)
+        await ac.patch(
+            f"/api/v1/tickets/{victim_res.json()['id']}",
+            json={"concert_photo_urls": [victim_photo], "ticket_image_url": victim_ticket_image},
+            headers=victim_headers,
+        )
+
+        attacker_res = await ac.post("/api/v1/tickets", json={"concert_id": attacker_concert_id}, headers=attacker_headers)
+        attacker_ticket_id = attacker_res.json()["id"]
+        await ac.patch(
+            f"/api/v1/tickets/{attacker_ticket_id}",
+            json={"page_layout": _page_layout([victim_photo]), "ticket_image_url": victim_ticket_image},
+            headers=attacker_headers,
+        )
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            patch_res = await ac.patch(
+                f"/api/v1/tickets/{attacker_ticket_id}",
+                json={"page_layout": _page_layout([]), "ticket_image_url": None},
+                headers=attacker_headers,
+            )
+            del_res = await ac.delete(f"/api/v1/tickets/{attacker_ticket_id}", headers=attacker_headers)
+
+    assert patch_res.status_code == 200
+    assert del_res.status_code == 204
+    deleted = {c.args[0] for c in mock_delete.call_args_list}
+    assert _s3_key(victim_photo) not in deleted
+    assert _s3_key(victim_ticket_image) not in deleted
+
+
+# 유저 업로드 폴더 밖의 버킷 객체(크롤링 스크린샷 등)는 티켓에 넣었다 빼도 S3에서 안 지움
+@pytest.mark.asyncio
+async def test_ticket_non_user_upload_url_not_deleted():
+    concert_id = await _create_concert("PF_PHOTO_CRAWL_001")
+    headers = {"Authorization": f"Bearer {await _get_token()}"}
+    screenshot_url = _unique_s3_url("crawls/x")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        await ac.patch(f"/api/v1/tickets/{ticket_id}", json={"concert_photo_urls": [screenshot_url]}, headers=headers)
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            await ac.delete(f"/api/v1/tickets/{ticket_id}", headers=headers)
+
+    mock_delete.assert_not_called()
 
 
 # "티켓 뜯기" 연출 시각(torn_at) 저장 + 재설정(null로 되돌리는 것 포함) 테스트 -
@@ -885,6 +944,20 @@ def test_upgrade_event_type_llm_solo_hint_does_not_upgrade_below_threshold():
 _S3 = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com"
 
 
+# 테스트마다 다른 S3 URL - 삭제 전 "다른 티켓이 참조 중인지" 검사가 다른 테스트 티켓과 엮이지 않도록
+def _unique_s3_url(folder: str) -> str:
+    return f"{_S3}/{folder}/{uuid.uuid4().hex}.jpg"
+
+
+def _s3_key(url: str) -> str:
+    return url.removeprefix(f"{_S3}/")
+
+
+# _page_layout이 사진마다 붙이는 썸네일 URL
+def _thumb(url: str) -> str:
+    return url.replace("concert-photos/", "concert-photo-thumbs/")
+
+
 # page_layout 테스트용 배치 - 포스터 1 + 자유메모 1 + 사진 N(썸네일 포함)
 def _page_layout(photo_refs: list[str]) -> dict:
     items = [
@@ -958,9 +1031,9 @@ async def test_update_ticket_page_layout_removed_photo_deleted_from_s3():
     concert_id = await _create_concert("PF_LAYOUT_002")
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    kept = f"{_S3}/concert-photos/kept.jpg"
-    removed = f"{_S3}/concert-photos/removed.jpg"
-    still_listed = f"{_S3}/concert-photos/listed.jpg"
+    kept = _unique_s3_url("concert-photos")
+    removed = _unique_s3_url("concert-photos")
+    still_listed = _unique_s3_url("concert-photos")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
@@ -980,11 +1053,11 @@ async def test_update_ticket_page_layout_removed_photo_deleted_from_s3():
 
     assert response.status_code == 200
     deleted = sorted(c.args[0] for c in mock_delete.call_args_list)
-    assert deleted == [
-        "concert-photo-thumbs/listed.jpg",
-        "concert-photo-thumbs/removed.jpg",
-        "concert-photos/removed.jpg",
-    ]
+    assert deleted == sorted([
+        _s3_key(_thumb(still_listed)),
+        _s3_key(_thumb(removed)),
+        _s3_key(removed),
+    ])
 
 
 # 티켓 삭제 시 page_layout 사진(원본+썸네일)도 S3에서 정리되는지 테스트
@@ -993,7 +1066,7 @@ async def test_delete_ticket_cleans_up_page_layout_photos():
     concert_id = await _create_concert("PF_LAYOUT_003")
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    photo = f"{_S3}/concert-photos/bye.jpg"
+    photo = _unique_s3_url("concert-photos")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
@@ -1005,4 +1078,4 @@ async def test_delete_ticket_cleans_up_page_layout_photos():
 
     assert del_response.status_code == 204
     deleted = sorted(c.args[0] for c in mock_delete.call_args_list)
-    assert deleted == ["concert-photo-thumbs/bye.jpg", "concert-photos/bye.jpg"]
+    assert deleted == sorted([_s3_key(_thumb(photo)), _s3_key(photo)])

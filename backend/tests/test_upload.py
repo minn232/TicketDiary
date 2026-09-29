@@ -189,6 +189,48 @@ async def test_upload_concert_photo_with_thumbnail():
     assert mock_upload.call_count == 2
 
 
+# 원본(9MB)+썸네일(2MB)처럼 파일마다는 한도 안인데 합이 10MB를 넘어도 거절하지 않는지 테스트
+# (요청 전체 Content-Length를 파일 1개 한도와 비교해 413을 내던 문제 회귀 방지)
+@pytest.mark.asyncio
+async def test_upload_concert_photo_with_thumbnail_each_under_limit_but_sum_over():
+    token = await _get_token()
+    image = b"\xff\xd8\xff\xe0" + b"x" * (9 * 1024 * 1024)
+    thumb = b"\xff\xd8\xff\xe0" + b"x" * (2 * 1024 * 1024)
+
+    with _s3_mock():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/upload/concert-photo",
+                files={
+                    "image": ("photo.jpg", io.BytesIO(image), "image/jpeg"),
+                    "thumbnail": ("thumb.jpg", io.BytesIO(thumb), "image/jpeg"),
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 200
+
+
+# 썸네일을 같이 올려도 원본 한 장이 10MB를 넘으면 여전히 413
+@pytest.mark.asyncio
+async def test_upload_concert_photo_with_thumbnail_single_file_over_limit_413():
+    token = await _get_token()
+    image = b"\xff\xd8\xff\xe0" + b"x" * (10 * 1024 * 1024)
+
+    with _s3_mock():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/upload/concert-photo",
+                files={
+                    "image": ("photo.jpg", io.BytesIO(image), "image/jpeg"),
+                    "thumbnail": ("thumb.jpg", io.BytesIO(_SMALL_JPEG), "image/jpeg"),
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 413
+
+
 # 썸네일 없이 올리면 기존처럼 원본만 저장하고 thumb_url은 null
 @pytest.mark.asyncio
 async def test_upload_concert_photo_without_thumbnail():

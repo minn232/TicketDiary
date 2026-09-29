@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -6,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 import app.services.kopis as kopis_module
 from app.main import app
@@ -17,6 +18,7 @@ from app.services.kopis import (
     _fetch_all_kopis_ids,
     _is_allowed_genre,
     _is_large_venue,
+    _upsert_concert,
     sync_daily_concerts,
 )
 from conftest import _get_token, kopis_mock, _get_notifications_from_db
@@ -842,6 +844,37 @@ async def test_refresh_ticketing_links_empty_relates_keeps_existing():
 
     assert changed is False
     assert concert.ticketing_links == {"INTERPARK": "https://tickets.interpark.com/goods/KEEP_ME"}
+
+
+# _upsert_concert 테스트
+
+# 스캔/검색/배치가 같은 공연을 동시에 처음 넣어도 한 행만 생기고 둘 다 에러 없이 그 행을 받는지 테스트
+@pytest.mark.asyncio
+async def test_upsert_concert_concurrent_insert_creates_single_row():
+    kopis_id = f"PF_RACE_{uuid.uuid4().hex[:8]}"
+    # DB 연결을 둘 다 맺은 뒤 동시에 출발시켜야 둘 다 "공연 없음"을 봄(연결 수립이 느려 한쪽이 먼저 끝나버림)
+    barrier = asyncio.Barrier(2)
+
+    async def _upsert(name: str):
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+            await asyncio.wait_for(barrier.wait(), timeout=5)
+            concert = await _upsert_concert(db, {
+                "kopis_id": kopis_id,
+                "name": name,
+                "artist_name": [],
+                "start_date": datetime(2030, 6, 1, tzinfo=timezone.utc),
+                "end_date": datetime(2030, 6, 1, tzinfo=timezone.utc),
+            })
+            await db.commit()
+            return concert.id
+
+    ids = await asyncio.gather(_upsert("먼저"), _upsert("나중"))
+
+    assert ids[0] == ids[1]
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
+        assert len(result.scalars().all()) == 1
 
 
 # KOPIS API 호출 자체가 실패해도 예외를 밖으로 던지지 않고 기존 링크를 유지하는지 테스트

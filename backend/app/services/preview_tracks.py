@@ -8,6 +8,7 @@ from uuid import UUID
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.concert import Concert
@@ -91,11 +92,14 @@ async def _get_catalog(db: AsyncSession, itunes_artist_id: str) -> list[dict]:
     if tracks is None:
         # 실패했으면 낡은 캐시라도 씀(없으면 그 아티스트만 빠짐)
         return row.tracks if row is not None else []
-    if row is None:
-        db.add(ItunesCatalogCache(itunes_artist_id=itunes_artist_id, tracks=tracks, fetched_at=now))
-    else:
-        row.tracks = tracks
-        row.fetched_at = now
+    # 같은 아티스트 티켓을 동시에 처음 열면 둘 다 row=None이라 둘 다 넣으려 해서 upsert로 저장
+    await db.execute(
+        pg_insert(ItunesCatalogCache)
+        .values(itunes_artist_id=itunes_artist_id, tracks=tracks, fetched_at=now)
+        .on_conflict_do_update(
+            index_elements=["itunes_artist_id"], set_={"tracks": tracks, "fetched_at": now}
+        )
+    )
     await db.commit()
     return tracks
 

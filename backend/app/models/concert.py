@@ -20,7 +20,7 @@ class Concert(Base):
     __tablename__ = "concerts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    kopis_id = Column(String, nullable=True, index=True)
+    kopis_id = Column(String, nullable=True, unique=True, index=True)
     name = Column(String, nullable=False)
     artist_name = Column(ARRAY(String), nullable=False)
     venue = Column(String, nullable=True)
