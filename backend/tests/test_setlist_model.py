@@ -123,3 +123,13 @@ def test_prediction_is_deterministic():
     songs = [f"곡{i}" for i in range(8)]
     history = _history(*[songs] * 4, list(reversed(songs)))
     assert predict_setlist(history) == predict_setlist(history)
+
+
+def test_full_target_estimates_normal_length_despite_short_partial_shows():
+    # YOASOBI 사례: 최근 이력에 4/10/7곡짜리 짧은 공연이 섞여 있어도 단독(full)으로 보면 20곡대로 나와야 함
+    lengths = [4, 22, 20, 23, 23, 23, 23, 14, 10, 7, 12]
+    pool = [f"곡{i:02d}" for i in range(23)]
+    history = _history(*[pool[:n] for n in lengths])
+
+    assert len(predict_setlist(history, "full")) >= 15
+    assert len(predict_setlist(history, "short")) < 10

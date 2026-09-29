@@ -182,18 +182,22 @@ async def _top_songs_for_artist(
 
 
 # 아티스트별 (공연 형태, 곡 수 상한). 단독 1명은 full, 페스티벌은 전원 short. 단독인데 여러 명이면
-# 공연명(+별칭)으로 주인공을 판정 - 주인공은 full, 나머지는 게스트로 short + 상한 5곡. 판정이 안 되거나
-# 전원이 공연명에 있으면(동등 출연) 전원 short
+# 공연명(+별칭)으로 주인공을 판정 - 주인공은 full, 나머지는 게스트로 short + 상한 5곡, 전원이 공연명에
+# 있으면(공동공연) 전원 short. 판정 불가면 full 유지(그룹 멤버를 개별 아티스트로 등록한 공연처럼 short로
+# 보면 곡 수가 과소 추정됨 - YOASOBI가 20곡에서 5곡으로 줄었음)
 async def _artist_roles(db: AsyncSession, concert: Concert, artists: list[str]) -> list[tuple[str, int | None]]:
     if len(artists) == 1:
         return [("full", None)]
-    equal_billing = [("short", None)] * len(artists)
-    if concert.event_type == EventType.FESTIVAL.value or not settings.PRE_SETLIST_MODEL_ENABLED:
-        return equal_billing
+    if concert.event_type == EventType.FESTIVAL.value:
+        return [("short", None)] * len(artists)
+    if not settings.PRE_SETLIST_MODEL_ENABLED:
+        return [("full", None)] * len(artists)
 
     headliners = pick_headliners(concert.name, await load_name_variants(db, concert.id, artists))
-    if headliners is None or len(headliners) == len(artists):
-        return equal_billing
+    if headliners is None:
+        return [("full", None)] * len(artists)
+    if len(headliners) == len(artists):
+        return [("short", None)] * len(artists)
     return [("full", None) if i in headliners else ("short", _GUEST_MAX_SONGS) for i in range(len(artists))]
 
 

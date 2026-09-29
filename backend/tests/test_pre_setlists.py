@@ -457,7 +457,9 @@ async def test_artist_roles():
 
     assert single == [("full", None)]
     assert headliner == [("full", None), ("short", 5)]
-    assert undecided == equal == festival == [("short", None), ("short", None)]
+    # 판정 불가는 full 유지 / 공동공연(전원이 공연명에)과 페스티벌은 short
+    assert undecided == [("full", None), ("full", None)]
+    assert equal == festival == [("short", None), ("short", None)]
 
 
 @pytest.mark.asyncio
