@@ -403,8 +403,8 @@ async def test_representative_songs_and_setlist_search_follow_concert_link():
     concert_id, ticket_id, token = await _concert_and_ticket(artist)
     await _post_change(ticket_id, token, {"artist": artist, "canonical_id": str(right_id)})
 
-    catalog = AsyncMock(return_value=["맞는사람곡"])
-    with patch("app.services.representative_songs.fetch_itunes_artist_songs", new=catalog), _lastfm("", []):
+    catalog = AsyncMock(return_value=[("맞는사람곡", "맞는사람곡", None)])
+    with patch("app.services.representative_songs.fetch_itunes_artist_catalog", new=catalog), _lastfm("", []):
         async with AsyncSessionLocal() as db:
             songs = await representative_songs_for_artist(db, artist, 20, concert_id)
     catalog.assert_awaited_once_with("222")

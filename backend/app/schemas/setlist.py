@@ -13,6 +13,10 @@ class SongEntry(BaseModel):
     # 곡 출처 - "representative"면 과거 셋리가 없어 대신 채운 대표곡(화면에서 예상 셋리와
     # 구분 표시), None이면 Setlist.fm 셋리 기반
     source: str | None = None
+    # 예상 셋리 확률 모델이 계산한 등장 확률(0~1)과 구간("high" | "likely" | "possible").
+    # 모델을 안 거친 곡(대표곡, 유저 수정, 실제 셋리)은 None
+    probability: float | None = None
+    confidence: str | None = None
 
 
 class SetlistEditRequest(BaseModel):

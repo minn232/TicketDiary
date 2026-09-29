@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,7 +8,9 @@ from httpx import AsyncClient, ASGITransport
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_normalization import ArtistAlias, CanonicalArtist
+from app.models.concert import EventType
 from app.services.lineup import upsert_concert_lineup
+from app.services.pre_setlist import _artist_roles
 from conftest import _get_token, kopis_mock
 
 
@@ -372,6 +375,110 @@ async def test_generate_pre_setlist_solo_artist_unaffected_by_festival_logic():
     assert response.status_code == 201
     songs = response.json()["songs"]
     assert all(s["artist"] is None for s in songs)
+
+
+# 확률 모델 - 곡별 확률/신뢰도 필드, 곡 수 추정, 순서
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_model_adds_probability_and_estimates_length():
+    concert_id = await _create_concert("PF_PRE_MODEL_001")
+    token = await _get_token()
+
+    # 12곡짜리 공연을 6번 - 고정 20곡이 아니라 12곡만 나오고, 셋리 순서대로 정렬됨
+    songs = [f"모델곡{i:02d}" for i in range(12)]
+    with _setlistfm_artist_mock(_make_artist_setlists([songs] * 6)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 201
+    result = response.json()["songs"]
+    assert [s["name"] for s in result] == songs
+    assert all(0 < s["probability"] < 1 and s["confidence"] in ("high", "likely", "possible") for s in result)
+    assert all(s["encore"] is False and s["source"] is None for s in result)
+
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_model_flag_off_uses_frequency_order():
+    concert_id = await _create_concert("PF_PRE_MODEL_002")
+    token = await _get_token()
+
+    data = _make_artist_setlists([["노래A", "노래B", "노래C"], ["노래A", "노래B"], ["노래A"]])
+    with patch("app.services.pre_setlist.settings.PRE_SETLIST_MODEL_ENABLED", False), _setlistfm_artist_mock(data):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    songs = response.json()["songs"]
+    assert [s["name"] for s in songs] == ["노래A", "노래B", "노래C"]
+    assert all(s["probability"] is None for s in songs)
+
+
+# 데이터가 너무 얇아 모델이 못 만들면(곡 3개 미만 셋리뿐) 예전 방식으로 채움
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_falls_back_to_frequency_when_model_has_no_usable_show():
+    concert_id = await _create_concert("PF_PRE_MODEL_003")
+    token = await _get_token()
+
+    with _setlistfm_artist_mock(_make_artist_setlists([["짧은곡1", "짧은곡2"]])):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    songs = response.json()["songs"]
+    assert [s["name"] for s in songs] == ["짧은곡1", "짧은곡2"]
+    assert all(s["probability"] is None for s in songs)
+
+
+# 단독공연인데 아티스트가 여럿일 때 역할 - 주인공은 full, 게스트는 short + 5곡 상한
+
+def _concert_stub(name: str, event_type: str = EventType.SOLO.value):
+    return SimpleNamespace(id=None, name=name, event_type=event_type)
+
+
+@pytest.mark.asyncio
+async def test_artist_roles():
+    variants = AsyncMock(return_value=[{"주인공"}, {"조연"}])
+    festival_concert = _concert_stub("주인공 페스티벌", EventType.FESTIVAL.value)
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.pre_setlist.load_name_variants", new=variants):
+            single = await _artist_roles(db, _concert_stub("주인공 콘서트"), ["주인공"])
+            headliner = await _artist_roles(db, _concert_stub("주인공 콘서트"), ["주인공", "조연"])
+            undecided = await _artist_roles(db, _concert_stub("어떤 공연"), ["주인공", "조연"])
+            equal = await _artist_roles(db, _concert_stub("주인공 x 조연"), ["주인공", "조연"])
+            festival = await _artist_roles(db, festival_concert, ["주인공", "조연"])
+
+    assert single == [("full", None)]
+    assert headliner == [("full", None), ("short", 5)]
+    assert undecided == equal == festival == [("short", None), ("short", None)]
+
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_caps_guest_songs():
+    headliner, guest = "주인공밴드테스트", "게스트가수테스트"
+    concert_id = await _create_concert("PF_PRE_GUEST_001", artist=f"{headliner},{guest}")
+    token = await _get_token()
+
+    songs = [f"곡{i:02d}" for i in range(10)]
+    data = {a: _make_artist_setlists([songs] * 4, artist=a) for a in (headliner, guest)}
+    roles = AsyncMock(return_value=[("full", None), ("short", 5)])
+    with patch("app.services.pre_setlist._artist_roles", new=roles), _setlistfm_artist_mock_multi(data):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/setlist/pre/generate",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    result = response.json()["songs"]
+    assert len([s for s in result if s["artist"] == headliner]) == 10
+    assert len([s for s in result if s["artist"] == guest]) == 5
 
 
 # 티켓 등록 시 자동 생성 테스트 (POST /tickets -> generate_pre_setlist_background)
