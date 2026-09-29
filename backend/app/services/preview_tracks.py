@@ -1,5 +1,7 @@
 import logging
+import random
 import re
+from itertools import zip_longest
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -25,7 +27,7 @@ from app.services.setlist import resolve_performance_date
 logger = logging.getLogger(__name__)
 
 _CATALOG_TTL = timedelta(days=7)
-# 페스티벌은 아티스트가 많아서 iTunes 조회가 폭증하지 않게 공연당 상한
+# 페스티벌은 아티스트가 많아서 iTunes 조회가 폭증하지 않게 공연당 상한(넘으면 열 때마다 무작위로 골라 다양하게)
 _MAX_ARTISTS = 5
 _MAX_TRACKS = 20
 _CATALOG_FALLBACK_TRACKS = 10
@@ -98,6 +100,17 @@ async def _get_catalog(db: AsyncSession, itunes_artist_id: str) -> list[dict]:
     return tracks
 
 
+# 아티스트별로 번갈아 한 곡씩 뽑아 limit까지 - 페스티벌에서 앞 아티스트 곡만 나오지 않게 함
+def _interleave(tracks: list[dict], limit: int) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for track in tracks:
+        groups.setdefault(track["artist_name"], []).append(track)
+    result = []
+    for round_tracks in zip_longest(*groups.values()):
+        result.extend(t for t in round_tracks if t is not None)
+    return result[:limit]
+
+
 def _to_track(track: dict, artist_name: str) -> dict:
     return {
         "track_name": track["kr_name"],
@@ -156,7 +169,8 @@ async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: 
     artists = list(concert.artist_name or [])
     if performance_date is not None:
         artists = await get_lineup_artists_for_date(db, concert_id, performance_date) or artists
-    artists = artists[:_MAX_ARTISTS]
+    if len(artists) > _MAX_ARTISTS:
+        artists = random.sample(artists, _MAX_ARTISTS)
 
     catalogs: dict[str, list[dict]] = {}
     for artist in artists:
@@ -178,11 +192,11 @@ async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: 
     for source, songs in sources:
         matched = _match_songs(songs, catalogs)
         if matched:
-            return {"source": source, "tracks": matched[:_MAX_TRACKS]}
+            return {"source": source, "tracks": _interleave(matched, _MAX_TRACKS)}
 
     fallback = [
         _to_track(track, artist)
         for artist, tracks in catalogs.items()
         for track in tracks[:_CATALOG_FALLBACK_TRACKS]
     ]
-    return {"source": "catalog", "tracks": fallback[:_MAX_TRACKS]}
+    return {"source": "catalog", "tracks": _interleave(fallback, _MAX_TRACKS)}

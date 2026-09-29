@@ -11,7 +11,7 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.setlist import PreSetlist, RealSetlist
-from app.services.preview_tracks import _fetch_catalog, get_preview_tracks
+from app.services.preview_tracks import _fetch_catalog, _interleave, get_preview_tracks
 from conftest import _get_token
 from test_pre_setlists import _create_concert
 
@@ -201,6 +201,23 @@ async def test_fetch_catalog_filters_and_uses_kr_titles():
         tracks = await _fetch_catalog("10")
 
     assert [(t["kr_name"], t["us_name"]) for t in tracks] == [("여름", "Summer")]
+
+
+# 페스티벌 다양성
+
+def test_interleave_alternates_artists_before_limit():
+    tracks = [{"artist_name": a, "track_name": f"{a}{i}"} for a in "ABC" for i in range(4)]
+    result = _interleave(tracks, 5)
+
+    # 앞 아티스트 곡만 나오지 않고 A, B, C 순으로 번갈아 나옴
+    assert [t["track_name"] for t in result] == ["A0", "B0", "C0", "A1", "B1"]
+
+
+def test_interleave_continues_with_remaining_artist_when_others_run_out():
+    tracks = [{"artist_name": "A", "track_name": "A0"}] + [
+        {"artist_name": "B", "track_name": f"B{i}"} for i in range(3)
+    ]
+    assert [t["track_name"] for t in _interleave(tracks, 10)] == ["A0", "B0", "B1", "B2"]
 
 
 # 엔드포인트
