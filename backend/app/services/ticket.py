@@ -6,7 +6,7 @@ import logging
 import re
 
 from fastapi import HTTPException
-from sqlalchemy import case, func, select, delete
+from sqlalchemy import Text, case, cast, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,7 +17,7 @@ from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
 from app.services.social import remove_concert_follow
-from app.services.storage import delete_image
+from app.services.storage import delete_image, is_user_upload_url
 
 logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
@@ -292,6 +292,29 @@ def _owned_photo_urls(ticket: Ticket) -> set[str]:
     return urls
 
 
+# 사진 URL은 클라이언트가 보낸 값이라 남의 사진일 수 있음 - 유저 업로드 폴더 안이고 어떤 티켓도
+# 참조하지 않는 것만 S3에서 지움(DB 커밋 뒤 호출). 남이 내 URL을 자기 티켓에 넣었다 빼도 내 티켓이
+# 참조 중이라 안 지워짐
+async def _delete_unreferenced_images(db: AsyncSession, urls: list[str]) -> None:
+    deletable = []
+    for url in dict.fromkeys(urls):
+        if not is_user_upload_url(url):
+            continue
+        referenced = await db.scalar(
+            select(Ticket.id)
+            .where(or_(
+                Ticket.ticket_image_url == url,
+                Ticket.concert_photo_urls.contains([url]),
+                cast(Ticket.page_layout, Text).contains(url, autoescape=True),
+            ))
+            .limit(1)
+        )
+        if referenced is None:
+            deletable.append(url)
+    if deletable:
+        await asyncio.gather(*(delete_image(u) for u in deletable))
+
+
 # 티켓 수정
 async def update_ticket(
     db: AsyncSession, user: User, ticket_id: UUID, body: TicketUpdate
@@ -334,17 +357,17 @@ async def update_ticket(
 
     # DB 갱신이 끝난 뒤 더 이상 참조되지 않는 옛 이미지를 S3에서도 지움(실패해도
     # delete_image가 조용히 로그만 남기므로 응답에는 영향 없음)
+    removed_urls: list[str] = []
     if "concert_photo_urls" in fields or "page_layout" in fields:
         new_photo_urls = _owned_photo_urls(ticket)
-        removed_photo_urls = [u for u in old_photo_urls if u not in new_photo_urls]
-        if removed_photo_urls:
-            await asyncio.gather(*(delete_image(u) for u in removed_photo_urls))
+        removed_urls += [u for u in old_photo_urls if u not in new_photo_urls]
     if (
         "ticket_image_url" in fields
         and old_image_url
         and old_image_url != ticket.ticket_image_url
     ):
-        await delete_image(old_image_url)
+        removed_urls.append(old_image_url)
+    await _delete_unreferenced_images(db, removed_urls)
 
     return ticket
 
@@ -366,8 +389,7 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     await db.delete(ticket)
     await db.commit()
 
-    if orphaned_urls:
-        await asyncio.gather(*(delete_image(u) for u in orphaned_urls))
+    await _delete_unreferenced_images(db, orphaned_urls)
 
 
 # 유저 알림 설정에서 delivery/day_before/concert_day 활성화 여부 반환

@@ -9,7 +9,12 @@ from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.models.notification import Notification
 from app.models.user import User
-from app.services.notification import process_pending_notifications
+from app.services.notification import (
+    _FCM_FAILED,
+    _FCM_INVALID_TOKEN,
+    _FCM_SENT,
+    process_pending_notifications,
+)
 from conftest import _get_token, kopis_mock, _get_notifications_from_db
 
 
@@ -81,6 +86,33 @@ async def _get_user_id(token: str) -> str:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     return res.json()["id"]
+
+
+# 유저 fcm_token 직접 설정
+async def _set_fcm_token(user_id: uuid.UUID, fcm_token: str) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(User).where(User.id == user_id).values(fcm_token=fcm_token))
+        await db.commit()
+
+
+# 유저의 알림 전체를 ago만큼 과거로 예약 시각 변경 (발송 대상으로 만듦)
+async def _make_due(user_id: uuid.UUID, ago: timedelta) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Notification)
+            .where(Notification.user_id == user_id)
+            .values(scheduled_at=datetime.now(timezone.utc) - ago)
+        )
+        await db.commit()
+
+
+# 유저의 알림 전체를 DB에서 조회 (미발송 포함)
+async def _get_user_notifications(user_id: uuid.UUID) -> list[Notification]:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Notification).where(Notification.user_id == user_id))
+        notifications = list(result.scalars().all())
+    assert notifications
+    return notifications
 
 
 # 해당 유저의 첫 번째 알림 ID 조회 (목록 최신순 기준)
@@ -394,44 +426,85 @@ async def test_process_pending_notifications_sends_fcm():
         )
         await db.commit()
 
-    with patch("app.services.notification._send_fcm", return_value=True) as mock_send:
+    with patch("app.services.notification._send_fcm", return_value=_FCM_SENT) as mock_send:
         async with AsyncSessionLocal() as db:
             await process_pending_notifications(db)
 
     assert mock_send.called
-
-    # is_sent=True로 변경됐는지 DB에서 직접 확인
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Notification).where(Notification.user_id == user_id)
-        )
-        notifications = result.scalars().all()
-
-    assert all(n.is_sent is True for n in notifications)
+    assert all(n.is_sent is True for n in await _get_user_notifications(user_id))
 
 
-# fcm_token 없는 유저의 알림 -> 발송 스킵 테스트
+# fcm_token 없는 유저의 알림 -> 푸시 없이 발송 완료 처리(알림함에는 보여야 함)
 @pytest.mark.asyncio
-async def test_process_pending_notifications_skips_no_token():
+async def test_process_pending_notifications_no_token_marks_sent_without_push():
     concert_id = await _create_concert("PF_PROC_NOFCM_001", _make_future_xml("PF_PROC_NOFCM_001"))
     token = await _get_token()
     await _create_ticket(concert_id, token)
     user_id = uuid.UUID(await _get_user_id(token))
+    await _make_due(user_id, timedelta(minutes=5))
 
-    async with AsyncSessionLocal() as db:
-        # fcm_token 없는 상태로 scheduled_at만 과거로 변경
-        await db.execute(
-            update(Notification)
-            .where(Notification.user_id == user_id)
-            .values(scheduled_at=datetime.now(timezone.utc) - timedelta(minutes=5))
-        )
-        await db.commit()
-
-    with patch("app.services.notification._send_fcm", return_value=True) as mock_send:
+    with patch("app.services.notification._send_fcm", return_value=_FCM_SENT):
         async with AsyncSessionLocal() as db:
             await process_pending_notifications(db)
 
-    assert not mock_send.called
+    assert all(n.is_sent is True for n in await _get_user_notifications(user_id))
+
+
+# 만료 토큰 -> 알림은 발송 완료 처리, 유저 토큰은 삭제
+@pytest.mark.asyncio
+async def test_process_pending_notifications_invalid_token_clears_token():
+    concert_id = await _create_concert("PF_PROC_BADFCM_001", _make_future_xml("PF_PROC_BADFCM_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    user_id = uuid.UUID(await _get_user_id(token))
+    await _set_fcm_token(user_id, f"expired-{uuid.uuid4()}")
+    await _make_due(user_id, timedelta(minutes=5))
+
+    with patch("app.services.notification._send_fcm", return_value=_FCM_INVALID_TOKEN):
+        async with AsyncSessionLocal() as db:
+            await process_pending_notifications(db)
+
+    assert all(n.is_sent is True for n in await _get_user_notifications(user_id))
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, user_id)
+    assert user.fcm_token is None
+
+
+# 일시 오류 -> 재시도 기한 안이면 미발송으로 남겨 다음 틱에 재시도
+@pytest.mark.asyncio
+async def test_process_pending_notifications_transient_failure_retries():
+    concert_id = await _create_concert("PF_PROC_FAILFCM_001", _make_future_xml("PF_PROC_FAILFCM_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    user_id = uuid.UUID(await _get_user_id(token))
+    await _set_fcm_token(user_id, f"valid-{uuid.uuid4()}")
+    await _make_due(user_id, timedelta(minutes=5))
+
+    with patch("app.services.notification._send_fcm", return_value=_FCM_FAILED):
+        async with AsyncSessionLocal() as db:
+            await process_pending_notifications(db)
+
+    assert all(n.is_sent is False for n in await _get_user_notifications(user_id))
+
+
+# 재시도 기한이 지난 알림 -> 푸시 없이 발송 완료 처리(한참 늦은 푸시 방지)
+@pytest.mark.asyncio
+async def test_process_pending_notifications_stale_marks_sent_without_push():
+    concert_id = await _create_concert("PF_PROC_STALE_001", _make_future_xml("PF_PROC_STALE_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    user_id = uuid.UUID(await _get_user_id(token))
+    fcm_token = f"valid-{uuid.uuid4()}"
+    await _set_fcm_token(user_id, fcm_token)
+    await _make_due(user_id, timedelta(hours=2))
+
+    with patch("app.services.notification._send_fcm", return_value=_FCM_SENT) as mock_send:
+        async with AsyncSessionLocal() as db:
+            await process_pending_notifications(db)
+
+    # 다른 테스트가 남긴 미발송 알림도 같이 처리되므로 이 유저 토큰으로 호출됐는지만 확인
+    assert all(call.args[0] != fcm_token for call in mock_send.call_args_list)
+    assert all(n.is_sent is True for n in await _get_user_notifications(user_id))
 
 
 # 미래 예약 알림 -> 기한 미도래로 발송 안 됨 테스트
@@ -442,16 +515,16 @@ async def test_process_pending_notifications_skips_future_scheduled():
     await _create_ticket(concert_id, token)
     user_id = uuid.UUID(await _get_user_id(token))
 
-    async with AsyncSessionLocal() as db:
-        # fcm_token 설정 (scheduled_at은 미래 그대로 유지)
-        await db.execute(update(User).where(User.id == user_id).values(fcm_token="test-fcm-token"))
-        await db.commit()
+    # fcm_token 설정 (scheduled_at은 미래 그대로 유지)
+    fcm_token = f"valid-{uuid.uuid4()}"
+    await _set_fcm_token(user_id, fcm_token)
 
-    with patch("app.services.notification._send_fcm", return_value=True) as mock_send:
+    with patch("app.services.notification._send_fcm", return_value=_FCM_SENT) as mock_send:
         async with AsyncSessionLocal() as db:
             await process_pending_notifications(db)
 
-    assert not mock_send.called
+    assert all(call.args[0] != fcm_token for call in mock_send.call_args_list)
+    assert all(n.is_sent is False for n in await _get_user_notifications(user_id))
 
 
 # notification_settings 반영 테스트

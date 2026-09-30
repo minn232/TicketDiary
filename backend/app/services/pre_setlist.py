@@ -1,5 +1,6 @@
 import logging
 from collections import Counter
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
@@ -7,10 +8,12 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.models.setlist import PreSetlist, RealSetlist
 from app.schemas.setlist import SongEntry
+from app.services.headliner import load_name_variants, pick_headliners
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.representative_songs import (
     representative_songs_for_artist,
@@ -18,6 +21,7 @@ from app.services.representative_songs import (
     set_itunes_anchor,
 )
 from app.services.setlist import search_with_artist_fallbacks
+from app.services.setlist_model import ModelParams, confidence_label, predict_setlist, shows_from_setlistfm
 from app.services.setlistfm import search_setlists_by_artist
 
 logger = logging.getLogger(__name__)
@@ -115,11 +119,21 @@ async def update_pre_setlist(
     return pre_setlist
 
 
-# 한 아티스트의 과거 공연 데이터를 집계해 상위 n곡을 뽑음(앙코르 여부는 과반수 기준).
-# Setlist.fm에 데이터가 없으면(404) 빈 리스트 - 호출부가 "이 아티스트만 스킵"할 수 있게
-# 예외를 던지지 않음(페스티벌에서 아티스트 하나 데이터 없다고 전체를 실패시키면 안 됨).
+# 게스트로 판정된 아티스트에게 주는 곡 수 상한(짧은 무대)
+_GUEST_MAX_SONGS = 5
+
+
+# 한 아티스트의 과거 공연 데이터로 예상 곡 목록을 만듦. 모델(최근성/곡 수 추정/순서)이 켜져 있으면
+# 그걸 쓰고, 꺼져 있거나 쓸 만한 공연이 없으면(곡 3개 이상인 셋리가 없음) 예전 방식(빈도 top n,
+# 앙코르 여부는 과반수 기준). Setlist.fm에 데이터가 없으면(404) 빈 리스트 - 호출부가 "이 아티스트만
+# 스킵"할 수 있게 예외를 던지지 않음(페스티벌에서 아티스트 하나 데이터 없다고 전체를 실패시키면 안 됨)
 async def _top_songs_for_artist(
-    db: AsyncSession, artist_name: str, n: int, concert_id: UUID | None = None
+    db: AsyncSession,
+    artist_name: str,
+    n: int,
+    concert_id: UUID | None = None,
+    target_form: str = "full",
+    max_songs: int | None = None,
 ) -> list[dict]:
     async def _search(query: str, artist_mbid: str | None, by_mbid: bool) -> list[dict]:
         return await search_setlists_by_artist(query, pages=3, artist_mbid=artist_mbid, by_mbid=by_mbid)
@@ -127,6 +141,22 @@ async def _top_songs_for_artist(
     raw_setlists = await search_with_artist_fallbacks(db, artist_name, _search, concert_id)
     if not raw_setlists:
         return []
+
+    if settings.PRE_SETLIST_MODEL_ENABLED:
+        params = ModelParams()
+        if max_songs is not None:
+            params = replace(params, max_songs=max_songs, min_songs=min(params.min_songs, max_songs))
+        predicted = predict_setlist(shows_from_setlistfm(raw_setlists), target_form, params)
+        if predicted:
+            return [
+                {
+                    "name": song["name"],
+                    "encore": False,
+                    "probability": round(song["probability"], 2),
+                    "confidence": confidence_label(song["probability"]),
+                }
+                for song in predicted
+            ]
 
     song_counts: Counter = Counter()
     song_encore_counts: Counter = Counter()
@@ -147,13 +177,33 @@ async def _top_songs_for_artist(
 
     return [
         {"name": name_map[key], "encore": song_encore_counts[key] > count / 2}
-        for key, count in song_counts.most_common(n)
+        for key, count in song_counts.most_common(max_songs or n)
     ]
 
 
-# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트별
-# top_n(기본 20곡)에 artist 태그를 붙여 합침(단독은 태그 없음). 과거 셋리가 없는 아티스트는
-# 대표곡(source="representative")으로 대신 채움
+# 아티스트별 (공연 형태, 곡 수 상한). 단독 1명은 full, 페스티벌은 전원 short. 단독인데 여러 명이면
+# 공연명(+별칭)으로 주인공을 판정 - 주인공은 full, 나머지는 게스트로 short + 상한 5곡, 전원이 공연명에
+# 있으면(공동공연) 전원 short. 판정 불가면 full 유지(그룹 멤버를 개별 아티스트로 등록한 공연처럼 short로
+# 보면 곡 수가 과소 추정됨 - YOASOBI가 20곡에서 5곡으로 줄었음)
+async def _artist_roles(db: AsyncSession, concert: Concert, artists: list[str]) -> list[tuple[str, int | None]]:
+    if len(artists) == 1:
+        return [("full", None)]
+    if concert.event_type == EventType.FESTIVAL.value:
+        return [("short", None)] * len(artists)
+    if not settings.PRE_SETLIST_MODEL_ENABLED:
+        return [("full", None)] * len(artists)
+
+    headliners = pick_headliners(concert.name, await load_name_variants(db, concert.id, artists))
+    if headliners is None:
+        return [("full", None)] * len(artists)
+    if len(headliners) == len(artists):
+        return [("short", None)] * len(artists)
+    return [("full", None) if i in headliners else ("short", _GUEST_MAX_SONGS) for i in range(len(artists))]
+
+
+# 아티스트 과거 공연 데이터 기반 예상 셋리스트 생성/저장 - 페스티벌(2명 이상)이면 아티스트별로 곡을
+# 뽑고 artist 태그를 붙여 합침(단독은 태그 없음). 과거 셋리가 없는 아티스트는 대표곡
+# (source="representative")으로 대신 채움
 async def generate_pre_setlist(
     db: AsyncSession, concert_id: UUID, top_n: int = 20
 ) -> PreSetlist:
@@ -164,12 +214,15 @@ async def generate_pre_setlist(
 
     artists = concert.artist_name
     is_festival = len(artists) > 1
+    roles = await _artist_roles(db, concert, artists)
 
     all_songs: list[dict] = []
-    for artist in artists:
-        songs = await _top_songs_for_artist(db, artist, top_n, concert_id)
+    for artist, (target_form, max_songs) in zip(artists, roles):
+        songs = await _top_songs_for_artist(db, artist, top_n, concert_id, target_form, max_songs)
         if not songs:
-            songs = await representative_songs_for_artist(db, artist, top_n, concert_id)
+            songs = await representative_songs_for_artist(
+                db, artist, max_songs or top_n, concert_id, as_of=concert.start_date.date()
+            )
         if is_festival:
             for song in songs:
                 song["artist"] = artist

@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from app.models.setlist import PreSetlist
 from app.services.pre_setlist import generate_pre_setlist
 from app.services.representative_songs import (
     _dedupe_titles,
+    fetch_itunes_artist_catalog,
     fetch_itunes_artist_song_titles,
     fetch_itunes_artist_songs,
     _artist_candidate_cache,
@@ -117,6 +119,11 @@ async def test_search_itunes_songs_uses_korean_titles():
         ("잔나비", "주저하는 연인들을 위해"),
         ("Only US", "US Song"),
     ]
+
+
+# iTunes 카탈로그 모킹용 - 곡명만 주면 (kr, us, 발매일 없음) 튜플로
+def _songs(*names: str) -> list[tuple[str, str, None]]:
+    return [(n, n, None) for n in names]
 
 
 @pytest.mark.asyncio
@@ -254,8 +261,8 @@ async def test_lastfm_name_lookup_other_script_rejected():
 @pytest.mark.asyncio
 async def test_itunes_catalog_ranked_by_lastfm_listeners():
     await _add_canonical("대표곡가수D", itunes_artist_id="111")
-    catalog = AsyncMock(return_value=["덜유명한곡", "제일유명한곡", "중간곡"])
-    with patch(f"{_SERVICE}.fetch_itunes_artist_songs", new=catalog), _lastfm(
+    catalog = AsyncMock(return_value=_songs("덜유명한곡", "제일유명한곡", "중간곡"))
+    with patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog), _lastfm(
         "대표곡가수D", [("제일유명한곡", 900), ("중간곡", 300)]
     ):
         async with AsyncSessionLocal() as db:
@@ -265,11 +272,81 @@ async def test_itunes_catalog_ranked_by_lastfm_listeners():
     assert [s["name"] for s in songs] == ["제일유명한곡", "중간곡", "덜유명한곡"]
 
 
+# 최근 발매곡 가산 - 인기도(청취자)가 낮아도 최근 곡이 인기 낮은 옛 곡보다 위로 옴
+
+@pytest.mark.asyncio
+async def test_itunes_recent_release_boosted_over_low_listener_old_song():
+    await _add_canonical("대표곡가수G", itunes_artist_id="444")
+    today = date.today()
+    catalog = AsyncMock(return_value=[
+        ("옛날히트", "Old Hit", today - timedelta(days=2000)),
+        ("중간곡", "Mid", today - timedelta(days=1500)),
+        ("신곡", "New", today - timedelta(days=30)),
+    ])
+    with patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog), _lastfm(
+        "대표곡가수G", [("옛날히트", 1000), ("중간곡", 100)]
+    ):
+        async with AsyncSessionLocal() as db:
+            songs = await representative_songs_for_artist(db, "대표곡가수G", 20)
+
+    assert [s["name"] for s in songs] == ["옛날히트", "신곡", "중간곡"]
+
+
+@pytest.mark.asyncio
+async def test_itunes_songs_released_after_concert_date_excluded():
+    await _add_canonical("대표곡가수H", itunes_artist_id="445")
+    catalog = AsyncMock(return_value=[
+        ("공연전곡", "Before", date(2024, 1, 1)),
+        ("공연후곡", "After", date(2025, 6, 1)),
+        ("발매일모름", "Unknown", None),
+    ])
+    with patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog), _lastfm("", []):
+        async with AsyncSessionLocal() as db:
+            songs = await representative_songs_for_artist(db, "대표곡가수H", 20, as_of=date(2025, 1, 1))
+
+    assert {s["name"] for s in songs} == {"공연전곡", "발매일모름"}
+
+
+@pytest.mark.asyncio
+async def test_model_flag_off_ranks_by_listeners_only():
+    await _add_canonical("대표곡가수I", itunes_artist_id="446")
+    today = date.today()
+    catalog = AsyncMock(return_value=[
+        ("옛날히트", "Old Hit", today - timedelta(days=2000)),
+        ("중간곡", "Mid", today - timedelta(days=1500)),
+        ("신곡", "New", today - timedelta(days=30)),
+    ])
+    with patch(f"{_SERVICE}.settings.PRE_SETLIST_MODEL_ENABLED", False), patch(
+        f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["옛날히트", "중간곡", "신곡"])
+    ), patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog), _lastfm(
+        "대표곡가수I", [("옛날히트", 1000), ("중간곡", 100)]
+    ):
+        async with AsyncSessionLocal() as db:
+            songs = await representative_songs_for_artist(db, "대표곡가수I", 20)
+
+    assert [s["name"] for s in songs] == ["옛날히트", "중간곡", "신곡"]
+    catalog.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fetch_itunes_artist_catalog_uses_earliest_release_date_for_same_title():
+    us = [
+        {**_track(1, 10, "JANNABI", "Summer"), "releaseDate": "2024-05-01T07:00:00Z"},
+        {**_track(2, 10, "JANNABI", "Summer"), "releaseDate": "2019-01-10T08:00:00Z"},  # 베스트 앨범 이전 발매
+        {**_track(3, 10, "JANNABI", "Winter"), "releaseDate": "not-a-date"},
+    ]
+    with _itunes_mock({"us": us, "kr": []}):
+        assert await fetch_itunes_artist_catalog("10") == [
+            ("Summer", "Summer", date(2019, 1, 10)),
+            ("Winter", "Winter", None),
+        ]
+
+
 @pytest.mark.asyncio
 async def test_musicbrainz_apple_link_saved_as_anchor():
     await _add_canonical("대표곡가수E", mbid="mbid-rep-e")
     with patch(f"{_SERVICE}.fetch_apple_music_artist_id", new=AsyncMock(return_value="222")), patch(
-        f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["곡A"])
+        f"{_SERVICE}.fetch_itunes_artist_catalog", new=AsyncMock(return_value=_songs("곡A"))
     ), _lastfm("", []):
         async with AsyncSessionLocal() as db:
             songs = await representative_songs_for_artist(db, "대표곡가수E", 20)
@@ -291,9 +368,9 @@ def _candidate(itunes_artist_id: str, exact: bool) -> dict:
 async def test_auto_anchor_single_exact_candidate():
     # 비슷한 이름(협업 등)은 섞여 있어도 정확히 같은 이름이 1명이면 확정, canonical이 없으면 새로 만듦
     candidates = AsyncMock(return_value=[_candidate("901", True), _candidate("902", False)])
-    catalog = AsyncMock(return_value=["자동곡1", "자동곡2"])
+    catalog = AsyncMock(return_value=_songs("자동곡1", "자동곡2"))
     with patch(f"{_SERVICE}.search_itunes_artists", new=candidates), patch(
-        f"{_SERVICE}.fetch_itunes_artist_songs", new=catalog
+        f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog
     ), _lastfm("", []):
         async with AsyncSessionLocal() as db:
             songs = await representative_songs_for_artist(db, "자동확정가수A", 20)
@@ -309,9 +386,9 @@ async def test_auto_anchor_single_exact_candidate():
 async def test_auto_anchor_skipped_when_several_exact_candidates():
     # 동명이인이 여럿이면 유저가 고르게 둠
     candidates = AsyncMock(return_value=[_candidate("911", True), _candidate("912", True)])
-    catalog = AsyncMock(return_value=["곡"])
+    catalog = AsyncMock(return_value=_songs("곡"))
     with patch(f"{_SERVICE}.search_itunes_artists", new=candidates), patch(
-        f"{_SERVICE}.fetch_itunes_artist_songs", new=catalog
+        f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog
     ), _lastfm("", []):
         async with AsyncSessionLocal() as db:
             assert await representative_songs_for_artist(db, "자동확정가수B", 20) == []
@@ -367,7 +444,7 @@ async def test_band_member_uses_user_confirmed_itunes():
         db.add(ArtistGroupMembership(member_canonical_id=member.id, group_canonical_id=band.id))
         await db.commit()
 
-    with patch(f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["솔로곡"])):
+    with patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=AsyncMock(return_value=_songs("솔로곡"))):
         async with AsyncSessionLocal() as db:
             songs = await representative_songs_for_artist(db, "밴드멤버가수B", 20)
 
@@ -405,7 +482,7 @@ async def test_generate_pre_setlist_falls_back_to_representative():
     token = await _get_token()
 
     with _setlistfm_not_found(), _lastfm("", []), patch(
-        f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["곡1", "곡2"])
+        f"{_SERVICE}.fetch_itunes_artist_catalog", new=AsyncMock(return_value=_songs("곡1", "곡2"))
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
@@ -463,7 +540,7 @@ async def test_anchor_creates_canonical_and_fills_pre_setlist():
 
     with _setlistfm_not_found(), _lastfm("", []), patch(
         f"{_SERVICE}.fetch_itunes_artist_name", new=AsyncMock(return_value="Anchor B")
-    ), patch(f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["곡X", "곡Y"])):
+    ), patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=AsyncMock(return_value=_songs("곡X", "곡Y"))):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
                 f"/api/v1/tickets/{ticket_id}/setlist/pre/anchor",
@@ -494,7 +571,7 @@ async def test_anchor_keeps_user_edited_pre_setlist():
 
     with _setlistfm_not_found(), _lastfm("", []), patch(
         f"{_SERVICE}.fetch_itunes_artist_name", new=AsyncMock(return_value="Anchor C")
-    ), patch(f"{_SERVICE}.fetch_itunes_artist_songs", new=AsyncMock(return_value=["곡X"])):
+    ), patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=AsyncMock(return_value=_songs("곡X"))):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
                 f"/api/v1/tickets/{ticket_id}/setlist/pre/anchor",

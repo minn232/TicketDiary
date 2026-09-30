@@ -71,6 +71,16 @@ def _key_from_url(url: str) -> str | None:
     return m.group("key") if m else None
 
 
+# 유저가 업로드하는 폴더(upload.py) - 크롤링 스크린샷 등 같은 버킷의 다른 객체와 구분용
+USER_UPLOAD_FOLDERS = ("ticket-images", "concert-photos", "concert-photo-thumbs")
+
+
+# 이 버킷의 유저 업로드 폴더 안 URL인지 (유저 요청으로 지워도 되는 범위)
+def is_user_upload_url(url: str) -> bool:
+    key = _key_from_url(url)
+    return key is not None and key.split("/", 1)[0] in USER_UPLOAD_FOLDERS
+
+
 def _do_delete(key: str) -> None:
     try:
         _get_s3_client().delete_object(Bucket=settings.S3_BUCKET_NAME, Key=key)

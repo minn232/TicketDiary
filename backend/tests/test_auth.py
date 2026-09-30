@@ -1,10 +1,15 @@
+import asyncio
+import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 
+from app.core.database import AsyncSessionLocal
 from app.main import app
+from app.services.refresh_token import rotate_refresh_token
 from conftest import _get_token
 
 
@@ -184,6 +189,48 @@ async def test_refresh_token_rotation_rejects_reuse():
         reuse_res = await ac.post("/api/v1/auth/refresh", json={"refresh_token": old_refresh})
 
     assert reuse_res.status_code == 401
+
+
+# 같은 리프레시 토큰으로 동시에 재발급해도 한쪽만 성공하는지 확인 (회전이 동시 요청에 뚫리지 않도록)
+@pytest.mark.asyncio
+async def test_refresh_token_concurrent_rotation_only_one_succeeds():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/guest", json={"device_id": f"refresh-device-{uuid.uuid4()}"})
+    refresh_token = login_res.json()["refresh_token"]
+    # DB 연결을 둘 다 맺은 뒤 동시에 출발시켜야 둘 다 "아직 안 쓴 토큰"을 봄
+    barrier = asyncio.Barrier(2)
+
+    async def _rotate() -> int:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+            await asyncio.wait_for(barrier.wait(), timeout=5)
+            try:
+                await rotate_refresh_token(db, refresh_token)
+                return 200
+            except HTTPException as e:
+                return e.status_code
+
+    results = await asyncio.gather(_rotate(), _rotate())
+
+    assert sorted(results) == [200, 401]
+
+
+# 요청 제한 기록에서 보관 기간(1시간)이 지난 유저/IP 키는 정리되고, 최근 키와 정리 주기는 지켜지는지 확인
+def test_rate_limit_sweep_removes_only_stale_keys():
+    from app.core import deps
+
+    now = 100_000.0
+    deps._rate_limit_hits["stale"] = [now - deps._RATE_LIMIT_RETENTION_SECONDS - 1]
+    deps._rate_limit_hits["fresh"] = [now - 10]
+    deps._rate_limit_hits["empty"] = []
+
+    with patch.object(deps, "_last_rate_limit_sweep", now - deps._RATE_LIMIT_SWEEP_INTERVAL_SECONDS + 1):
+        deps._sweep_rate_limit_hits(now)
+        assert "stale" in deps._rate_limit_hits
+
+    with patch.object(deps, "_last_rate_limit_sweep", 0.0):
+        deps._sweep_rate_limit_hits(now)
+        assert set(deps._rate_limit_hits) == {"fresh"}
 
 
 # 존재하지 않는 리프레시 토큰으로 재발급 시도

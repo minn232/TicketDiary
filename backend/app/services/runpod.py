@@ -186,6 +186,12 @@ async def run_start_script_via_ssh() -> bool:
         return False
     try:
         async with await _ssh_connect(connect_timeout=15) as conn:
+            # tmux는 /workspace 밖에 설치돼서 pod을 stop/start하면 사라짐 - 없으면 아래 new-session이
+            # 조용히 실패해(check=False) start_vllm.sh가 아예 안 돌므로 매번 먼저 확인해 설치
+            await conn.run(
+                "command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)",
+                check=False,
+            )
             await conn.run(f"tmux kill-session -t {_TMUX_SESSION} 2>/dev/null; true", check=False)
             await conn.run(
                 f"tmux new-session -d -s {_TMUX_SESSION} -c /workspace "

@@ -9,6 +9,7 @@ from xml.etree import ElementTree as ET
 import httpx
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -128,24 +129,31 @@ async def _upsert_concert(
             known_artist_names = await get_known_artist_names(db)
         data["artist_name"] = normalize_artist_names(data["artist_name"], known_artist_names)
 
-    result = await db.execute(
-        select(Concert).where(Concert.kopis_id == data["kopis_id"])
-    )
-    concert = result.scalar_one_or_none()
+    select_concert = select(Concert).where(Concert.kopis_id == data["kopis_id"])
+    concert = (await db.execute(select_concert)).scalar_one_or_none()
 
-    # 공연이 없으면 새로 생성
+    # 공연이 없으면 새로 생성. 스캔/검색/자정 배치가 같은 공연을 동시에 넣을 수 있어 충돌은
+    # 무시하고 다시 조회 - 다른 요청이 먼저 넣었으면 아래에서 그 행을 덮어씀
     if concert is None:
-        concert = Concert(**data)
-        db.add(concert)
+        inserted = await db.execute(
+            pg_insert(Concert)
+            .values(**data)
+            .on_conflict_do_nothing(index_elements=["kopis_id"])
+            .returning(Concert.id)
+        )
+        is_new = inserted.scalar_one_or_none() is not None
+        concert = (await db.execute(select_concert)).scalar_one()
+        if is_new:
+            return concert
+
     # 공연이 있으면 덮어쓰기
-    else:
-        for key, value in data.items():
-            existing = getattr(concert, key, None)
-            # 빈 배열로 기존 데이터 덮어쓰기 방지
-            if isinstance(value, list) and not value and existing:
-                continue
-            if value is not None:
-                setattr(concert, key, value)
+    for key, value in data.items():
+        existing = getattr(concert, key, None)
+        # 빈 배열로 기존 데이터 덮어쓰기 방지
+        if isinstance(value, list) and not value and existing:
+            continue
+        if value is not None:
+            setattr(concert, key, value)
 
     return concert
 
@@ -709,12 +717,13 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
             await schedule_new_concert_notifications(db, concert, matched)
             await db.commit()
 
+    # 이미 있고 아티스트 정보 있음: API 재호출 없이 뉴스피드만 생성. 대부분 매칭 없이 끝나는 수천 건이라
+    # 건마다 커밋하지 않고 마지막에 한 번만 (실패해도 다음 배치가 이미 있는 피드는 건너뛰고 다시 만듦)
     for kopis_id in kopis_ids:
         concert = existing.get(kopis_id)
         if concert is not None and concert.artist_name:
-            # 이미 있고 아티스트 정보 있음: API 재호출 없이 뉴스피드만 생성
             await _create_news_feeds_for_concert(db, concert, follow_index)
-            await db.commit()
+    await db.commit()
 
 
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)

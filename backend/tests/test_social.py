@@ -536,6 +536,27 @@ async def test_news_feed_created_immediately_on_follow_for_existing_concert():
     assert feed[0]["artist_name"] == artist_name
 
 
+# 팔로우 즉시 피드 생성은 공연 쪽 표기와 대소문자가 달라도 매칭되고, 피드엔 공연 쪽 표기가 남는지 테스트
+# (SQL에서 공연을 좁히는 필터도 파이썬 비교와 같이 대소문자를 무시해야 함)
+@pytest.mark.asyncio
+async def test_news_feed_on_follow_matches_case_insensitively():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    concert_artist = f"CaseBand_{uuid.uuid4().hex.upper()}"
+    kopis_id = f"PF_FEED_{uuid.uuid4().hex[:8]}"
+    await _fetch_concert(kopis_id, concert_artist, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": concert_artist.lower()}]},
+            headers=headers,
+        )
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+
+    assert [f["artist_name"] for f in res.json()] == [concert_artist]
+
+
 # D-day(공연 당일)/지나간 공연 소식은 조회 시점에 걸러지는지 테스트. 생성 시점엔
 # 미래 공연이라 정상 생성됐다가, 시간이 지나 당일/과거가 된 경우를 재현(한 번
 # 만들어진 NewsFeed는 안 지워지는 정책이라 생성 시점 필터만으론 못 잡는 케이스)

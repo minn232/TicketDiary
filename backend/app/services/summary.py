@@ -1,8 +1,9 @@
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -10,6 +11,7 @@ from app.models.ticket import Ticket, TicketStatus
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
 from app.models.artist_genre import ArtistGenre
+from app.services.setlist import resolve_performance_date
 
 _STANDING_KEYWORDS = {"스탠딩", "standing", "ga", "입석", "floor"}
 
@@ -65,12 +67,24 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
             "last_day_count": 0,
         }
 
-    concert_ids = [t.concert_id for t in tickets]
+    # 관람한 날의 셋리만 셈 - 여러 날 공연은 날짜별 셋리가 따로 있어서 다 더하면 안 간 날 곡까지 들어감.
+    # 관람일 모르는 여러 날 공연은 날짜를 추측하지 않고 뺌(resolve_performance_date와 같은 기준)
+    performance_keys: set[tuple[UUID, date]] = set()
+    for t in tickets:
+        try:
+            explicit_date = t.attended_date.date() if t.attended_date else None
+            performance_keys.add((t.concert_id, resolve_performance_date(t.concert, explicit_date)))
+        except HTTPException:
+            continue
 
-    setlist_result = await db.execute(
-        select(RealSetlist).where(RealSetlist.concert_id.in_(concert_ids))
-    )
-    setlists = list(setlist_result.scalars().all())
+    setlists = []
+    if performance_keys:
+        setlist_result = await db.execute(
+            select(RealSetlist).where(
+                tuple_(RealSetlist.concert_id, RealSetlist.performance_date).in_(list(performance_keys))
+            )
+        )
+        setlists = list(setlist_result.scalars().all())
 
     # 공연 수
     concert_count = len(tickets)

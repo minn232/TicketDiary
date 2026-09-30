@@ -1200,6 +1200,42 @@ async def test_retry_pending_crawls_bounds_concurrency():
     assert max_in_flight == _RETRY_CRAWL_CONCURRENCY
 
 
+# 한 건이 멈추거나 예외를 던져도 건당 타임아웃/예외 처리로 나머지 건은 끝까지 처리되는지 테스트
+# (gather 하나가 안 끝나 배치 전체가 멈추거나, 한 건 예외로 나머지가 버려지던 문제 회귀 방지)
+@pytest.mark.asyncio
+async def test_retry_pending_crawls_hung_or_failing_crawl_does_not_block_others():
+    hung_id, failing_id, ok_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    concert_ids = [hung_id, failing_id, ok_id]
+    mock_follow = MagicMock()
+    mock_follow.concerts = [{"concert_id": str(cid)} for cid in concert_ids]
+
+    follows_result = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[mock_follow]))))
+    concerts_result = MagicMock(all=MagicMock(return_value=[(cid,) for cid in concert_ids]))
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[follows_result, concerts_result])
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    finished = []
+
+    async def _fake_crawl(concert_id):
+        if concert_id == hung_id:
+            await asyncio.sleep(10)
+        if concert_id == failing_id:
+            raise RuntimeError("브라우저 크래시")
+        finished.append(concert_id)
+
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler.crawl_and_save", new=AsyncMock(side_effect=_fake_crawl)),
+        patch("app.services.crawler._RETRY_CRAWL_TIMEOUT", 0.05),
+    ):
+        await asyncio.wait_for(retry_pending_crawls(), timeout=5)
+
+    assert finished == [ok_id]
+
+
 # send_screenshots_to_llm 테스트
 
 # LLM_CRAWL_URL 미설정 시 전송 없이 종료

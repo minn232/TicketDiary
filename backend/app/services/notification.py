@@ -4,7 +4,7 @@ from uuid import UUID
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -78,20 +78,33 @@ async def delete_notification(db: AsyncSession, user_id: UUID, notification_id: 
     await db.commit()
 
 
+# FCM 발송 결과 - 만료 토큰(앱 삭제/재설치 등)은 재시도해도 계속 실패하므로 일시 오류와 구분
+_FCM_SENT = "sent"
+_FCM_INVALID_TOKEN = "invalid_token"
+_FCM_FAILED = "failed"
+
+
 # FCM 푸시 발송
-def _send_fcm(token: str, title: str, body: str) -> bool:
+def _send_fcm(token: str, title: str, body: str) -> str:
     try:
         _init_firebase()
         from firebase_admin import messaging
+    except ImportError as e:
+        logger.error(f"FCM 발송 실패: {e}")
+        return _FCM_FAILED
+    try:
         message = messaging.Message(
             notification=messaging.Notification(title=title, body=body),
             token=token,
         )
         messaging.send(message)
-        return True
+        return _FCM_SENT
+    except (messaging.UnregisteredError, messaging.SenderIdMismatchError) as e:
+        logger.info(f"FCM 만료 토큰, 토큰 삭제 예정: {e}")
+        return _FCM_INVALID_TOKEN
     except Exception as e:
         logger.error(f"FCM 발송 실패: {e}")
-        return False
+        return _FCM_FAILED
 
 
 _KST = timezone(timedelta(hours=9))
@@ -208,18 +221,22 @@ async def schedule_new_concert_notifications(
 # 동시에 발송할 FCM 요청 수 상한 (스레드풀 기본 워커 수를 넘지 않도록 제한)
 _FCM_SEND_CONCURRENCY = 10
 
+# 예약 시각에서 이만큼 지나면 푸시는 포기하고 알림함에만 남김 - 일시 오류의 무한 재시도와
+# 서버 다운 뒤 한참 늦은 "오늘 공연 날이에요" 푸시를 막음
+_PUSH_RETRY_WINDOW = timedelta(hours=1)
+
 
 # 세마포어로 동시성 제한하며 FCM 발송
 async def _send_fcm_limited(
     loop: asyncio.AbstractEventLoop, semaphore: asyncio.Semaphore, token: str, title: str, body: str
-) -> bool:
+) -> str:
     async with semaphore:
         return await loop.run_in_executor(None, _send_fcm, token, title, body)
 
 
-# 미발송 알림 처리 및 FCM 발송 (스케줄러 호출용)
+# 미발송 알림 처리 및 FCM 발송 (스케줄러 호출용). 알림함은 is_sent=True만 보여주므로 토큰 없는
+# 유저(푸시 권한 거부, iOS 등)나 재시도 기한이 지난 알림도 푸시 없이 발송 완료로 처리해 알림함엔 남김
 async def process_pending_notifications(db: AsyncSession) -> None:
-    # 현재 시각 기준으로 발송되지 않은 알림 조회
     now = datetime.now(timezone.utc)
 
     result = await db.execute(
@@ -228,21 +245,37 @@ async def process_pending_notifications(db: AsyncSession) -> None:
         .where(
             Notification.is_sent == False,  # noqa: E712
             Notification.scheduled_at <= now,
-            User.fcm_token.isnot(None),
         )
     )
     rows = result.all()
     if not rows:
         return
 
+    push_rows = []
+    for notif, fcm_token in rows:
+        if fcm_token and now - notif.scheduled_at <= _PUSH_RETRY_WINDOW:
+            push_rows.append((notif, fcm_token))
+        else:
+            notif.is_sent = True
+
     # 알림 발송이 특정 시각(예: 매일 09시)에 몰리므로 순차 발송 대신 동시성 제한을 두고 병렬 발송
     loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(_FCM_SEND_CONCURRENCY)
     results = await asyncio.gather(
-        *(_send_fcm_limited(loop, semaphore, fcm_token, notif.title, notif.body) for notif, fcm_token in rows)
+        *(_send_fcm_limited(loop, semaphore, fcm_token, notif.title, notif.body) for notif, fcm_token in push_rows)
     )
-    for (notif, _), success in zip(rows, results):
-        if success:
+    invalid_tokens: set[str] = set()
+    for (notif, fcm_token), outcome in zip(push_rows, results):
+        if outcome == _FCM_INVALID_TOKEN:
+            invalid_tokens.add(fcm_token)
+        if outcome != _FCM_FAILED:
             notif.is_sent = True
+
+    # 만료 토큰은 지워서 매 틱 재발송을 막음 (앱이 켜질 때마다 새 토큰을 다시 등록함). 그 사이
+    # 새 토큰이 등록됐으면 덮어쓰지 않도록 토큰 값이 그대로인 행만 지움
+    if invalid_tokens:
+        await db.execute(
+            update(User).where(User.fcm_token.in_(invalid_tokens)).values(fcm_token=None)
+        )
 
     await db.commit()

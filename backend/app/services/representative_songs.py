@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 import httpx
@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
 from app.services.artist_identity import get_concert_link, resolve_concert_artist
 from app.services.lastfm import fetch_top_tracks
@@ -84,9 +85,17 @@ async def _lookup_in_title_store(
     return tracks, artists
 
 
-# iTunes에 등록된 그 아티스트의 곡 목록 [(kr 제목, us 제목)](순서는 us, 다른 버전 제외, kr 제목
-# 기준 중복 제거). 피처링으로만 참여한 남의 곡도 같이 오므로 아티스트 ID가 같은 곡만 씀. 실패 시 빈 리스트
-async def fetch_itunes_artist_song_titles(itunes_artist_id: str) -> list[tuple[str, str]]:
+def _parse_release_date(value: str | None) -> date | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date() if value else None
+    except ValueError:
+        return None
+
+
+# iTunes에 등록된 그 아티스트의 곡 목록 [(kr 제목, us 제목, 발매일)](순서는 us, 다른 버전 제외, kr 제목
+# 기준 중복 제거). 같은 제목이 베스트/재발매 앨범에 또 있으면 가장 이른 발매일을 씀. 피처링으로만 참여한
+# 남의 곡도 같이 오므로 아티스트 ID가 같은 곡만 씀. 실패 시 빈 리스트
+async def fetch_itunes_artist_catalog(itunes_artist_id: str) -> list[tuple[str, str, date | None]]:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
@@ -107,15 +116,25 @@ async def fetch_itunes_artist_song_titles(itunes_artist_id: str) -> list[tuple[s
         us_name = r.get("trackName")
         kr_name = (titled.get(r.get("trackId")) or r).get("trackName")
         if kr_name and us_name:
-            pairs.append((kr_name, us_name))
-    kept = set(_dedupe_titles([kr for kr, _ in pairs]))
+            pairs.append((kr_name, us_name, _parse_release_date(r.get("releaseDate"))))
+    kept = set(_dedupe_titles([kr for kr, _, _ in pairs]))
+    earliest: dict[str, date] = {}
+    for kr, _, released in pairs:
+        if released is not None:
+            key = _title_key(kr)
+            earliest[key] = min(released, earliest.get(key, released))
     seen: set[str] = set()
     result = []
-    for kr, us in pairs:
+    for kr, us, _ in pairs:
         if kr in kept and kr not in seen:
             seen.add(kr)
-            result.append((kr, us))
+            result.append((kr, us, earliest.get(_title_key(kr))))
     return result
+
+
+# 곡 목록 [(kr 제목, us 제목)]
+async def fetch_itunes_artist_song_titles(itunes_artist_id: str) -> list[tuple[str, str]]:
+    return [(kr, us) for kr, us, _ in await fetch_itunes_artist_catalog(itunes_artist_id)]
 
 
 # 곡 목록(kr 제목) - 한국 곡은 한글 원제로 보이게 kr 스토어 제목을 씀
@@ -220,6 +239,27 @@ async def search_itunes_artists(artist: str, limit: int = 8) -> list[dict]:
 def _rank_by_listeners(titles: list[str], lastfm_tracks: list[tuple[str, int]]) -> list[str]:
     listeners = {_title_key(name): count for name, count in lastfm_tracks}
     return sorted(titles, key=lambda t: -listeners.get(_title_key(t), 0))
+
+
+# 인기도(Last.fm 청취자 / 최대 청취자)에 최근 발매 가산점을 더해 정렬 - 인기도가 0인 신곡(Last.fm에
+# 아직 안 잡힘)도 올라올 수 있게 덧셈. 공연일 이후 발매곡은 뺌. 백테스트에서 F1 0.304 -> 0.382,
+# 가산 강도/기간을 바꿔도 결과가 거의 같아서 튜닝 없이 고정값 사용
+_RECENT_RELEASE_WEIGHT = 0.5
+_RECENT_RELEASE_WINDOW_DAYS = 365
+
+
+def _rank_with_recent_releases(
+    catalog: list[tuple[str, str, date | None]], lastfm_tracks: list[tuple[str, int]], as_of: date
+) -> list[str]:
+    listeners = {_title_key(name): count for name, count in lastfm_tracks}
+    playable = [(kr, released) for kr, _, released in catalog if released is None or released < as_of]
+    top = max((listeners.get(_title_key(kr), 0) for kr, _ in playable), default=0) or 1
+    scored = []
+    for idx, (kr, released) in enumerate(playable):
+        recent = max(0.0, 1 - (as_of - released).days / _RECENT_RELEASE_WINDOW_DAYS) if released else 0.0
+        scored.append((listeners.get(_title_key(kr), 0) / top + _RECENT_RELEASE_WEIGHT * recent, idx, kr))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [kr for _, _, kr in scored]
 
 
 # mbid로 먼저, Last.fm이 그 mbid를 모르면 이름으로 조회. 이름 조회 결과는 같은 사람인지
@@ -368,27 +408,49 @@ async def _auto_anchor(db: AsyncSession, artist: str, concert_id: UUID | None = 
     return exact[0]["itunes_artist_id"]
 
 
-# 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)가
-# 있으면 그 곡 목록(Last.fm 청취자 순), 없으면 Last.fm 인기곡(품질 기준 통과 시만) -
-# concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선
-async def representative_songs_for_artist(
-    db: AsyncSession, artist: str, n: int, concert_id: UUID | None = None
-) -> list[dict]:
+# 공연 아티스트의 iTunes 아티스트 ID 확정 - (ID, 쓸 수 없음 여부). 연결 없음/"해당 없음"이면 쓸 수
+# 없음(대표곡·미리듣기 모두 건너뜀). 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes 자동
+# 확정에서 동명이인이 잡힘(실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로
+# 확정된 iTunes만 씀
+async def _confirm_itunes_artist_id(
+    db: AsyncSession, artist: str, concert_id: UUID | None
+) -> tuple[str | None, bool]:
     canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
     if no_artist or (canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR):
-        return []
-    mbid = canonical.mbid if canonical is not None else None
-
-    # 밴드 멤버는 솔로 카탈로그가 없는 경우가 많아 iTunes 자동 확정/Last.fm 모두 동명이인이 잡힘
-    # (실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로 확정된 iTunes만 씀
+        return None, True
     is_member = await _is_band_member(db, canonical)
     itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
     if itunes_artist_id is None and not is_member:
         itunes_artist_id = await _auto_anchor(db, artist, concert_id)
+    return itunes_artist_id, False
+
+
+# 이름 검색 없이 확정된 iTunes 아티스트 ID만 돌려줌(없으면 None) - 미리듣기처럼 다른 아티스트
+# 곡이 섞이면 안 되는 곳용
+async def resolve_itunes_artist_id_for(db: AsyncSession, artist: str, concert_id: UUID | None) -> str | None:
+    itunes_artist_id, _ = await _confirm_itunes_artist_id(db, artist, concert_id)
+    return itunes_artist_id
+
+
+# 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)가
+# 있으면 그 곡 목록(Last.fm 청취자 순 + 최근 발매곡 가산, as_of=공연일), 없으면 Last.fm 인기곡(품질 기준 통과 시만) -
+# concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선
+async def representative_songs_for_artist(
+    db: AsyncSession, artist: str, n: int, concert_id: UUID | None = None, as_of: date | None = None
+) -> list[dict]:
+    canonical, _ = await resolve_concert_artist(db, concert_id, artist)
+    mbid = canonical.mbid if canonical is not None else None
+    is_member = await _is_band_member(db, canonical)
+    itunes_artist_id, unusable = await _confirm_itunes_artist_id(db, artist, concert_id)
+    if unusable:
+        return []
     lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
 
     titles: list[str] = []
-    if itunes_artist_id:
+    if itunes_artist_id and settings.PRE_SETLIST_MODEL_ENABLED:
+        catalog = await fetch_itunes_artist_catalog(itunes_artist_id)
+        titles = _rank_with_recent_releases(catalog, lastfm_tracks, as_of or date.today())
+    elif itunes_artist_id:
         titles = _rank_by_listeners(await fetch_itunes_artist_songs(itunes_artist_id), lastfm_tracks)
     if not titles and len(lastfm_tracks) >= _LASTFM_MIN_TRACKS:
         if max(count for _, count in lastfm_tracks) >= _LASTFM_MIN_TOP_LISTENERS:
