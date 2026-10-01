@@ -60,6 +60,8 @@ from app.services.ticket import (
 
 router = APIRouter()
 
+_QUICK_PREVIEW_ARTISTS = 2
+
 
 # 티켓 등록
 @router.post("", response_model=TicketWithConcert, status_code=status.HTTP_201_CREATED)
@@ -160,11 +162,14 @@ async def get_ticket_real_setlist(
 @router.get("/{ticket_id}/preview-tracks", response_model=PreviewTracksResponse)
 async def get_ticket_preview_tracks(
     ticket_id: UUID,
+    quick: bool = Query(False, description="아티스트 2팀만 모아 빨리 응답(첫 재생용)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, explicit_date = _ticket_concert_and_date(ticket)
+    if quick:
+        return await get_preview_tracks(db, concert_id, explicit_date, max_artists=_QUICK_PREVIEW_ARTISTS)
     return await get_preview_tracks(db, concert_id, explicit_date)
 
 

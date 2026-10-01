@@ -14,6 +14,7 @@ from app.services.crawler import (
     send_screenshots_to_llm,
 )
 from app.services.diary import send_diary_requests_to_llm
+from app.services.preview_tracks import warm_preview_catalogs
 from app.services.setlist import retry_real_setlist_generation
 from app.services.social import cleanup_ended_concert_follows
 from app.services.ticket import sync_ticket_statuses
@@ -168,6 +169,13 @@ async def _run_real_setlist_backfill() -> None:
         logger.exception("실제 셋리스트 자동 채움 오류")
 
 
+async def _run_preview_warmup() -> None:
+    try:
+        logger.info(f"미리듣기 곡 목록 미리 받기 완료: {await warm_preview_catalogs()}")
+    except Exception:
+        logger.exception("미리듣기 곡 목록 미리 받기 오류")
+
+
 async def _run_musicbrainz_normalize() -> None:
     try:
         stats = await normalize_pending_artists()
@@ -217,6 +225,8 @@ def start_scheduler() -> None:
     scheduler.add_job(
         _run_musicbrainz_normalize, "cron", hour=17, minute=10, id="musicbrainz_normalize", max_instances=1
     )
+    # 티켓이 있는 공연 아티스트의 iTunes 미리듣기 곡 목록을 미리 캐시(첫 재생 지연 방지, KST 03:00 = UTC 18:00)
+    scheduler.add_job(_run_preview_warmup, "cron", hour=18, minute=0, id="preview_warmup", max_instances=1)
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

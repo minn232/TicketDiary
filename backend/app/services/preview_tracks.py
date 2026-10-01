@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import random
 import re
@@ -11,9 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
 from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.setlist import PreSetlist, RealSetlist
+from app.models.ticket import Ticket
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.representative_songs import (
     _ITUNES_COUNTRY,
@@ -29,10 +32,10 @@ logger = logging.getLogger(__name__)
 
 _CATALOG_TTL = timedelta(days=7)
 # 페스티벌은 아티스트가 많아서 iTunes 조회가 폭증하지 않게 공연당 상한(넘으면 열 때마다 무작위로 골라 다양하게)
-_MAX_ARTISTS = 5
+_MAX_ARTISTS = 8
 # 곡 목록이 있는 아티스트 _MAX_ARTISTS명을 채우려고 시도할 최대 아티스트 수(iTunes ID 없는 아티스트는 건너뜀)
-_MAX_ARTIST_ATTEMPTS = 15
-_MAX_TRACKS = 20
+_MAX_ARTIST_ATTEMPTS = 20
+_MAX_TRACKS = 30
 _CATALOG_FALLBACK_TRACKS = 10
 
 # "(feat. ...)" / "[feat. ...]" / "(with ...)" 표기 차이 제거용
@@ -162,7 +165,10 @@ async def _read_setlist_songs(db: AsyncSession, model, *conditions) -> list[dict
 
 # 티켓 미리듣기 후보 곡 - real(그 날 실제 셋리) → pre(예상 셋리) → catalog(아티스트 대표곡) 순으로
 # 곡이 1개라도 나오면 멈춤. 셋리는 읽기만 함(get_*_setlist는 조회하며 생성/저장할 수 있어서 안 씀)
-async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: date | None = None) -> dict:
+# max_artists를 주면 곡 목록이 있는 아티스트가 그만큼 모이는 즉시 응답(첫 재생을 빨리 시작하려는 빠른 조회)
+async def get_preview_tracks(
+    db: AsyncSession, concert_id: UUID, explicit_date: date | None = None, max_artists: int = _MAX_ARTISTS
+) -> dict:
     concert = await db.get(Concert, concert_id)
     if concert is None:
         return {"source": None, "tracks": []}
@@ -181,7 +187,7 @@ async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: 
     # 앞에서부터 곡 목록이 있는 아티스트를 _MAX_ARTISTS명까지 채움(ID 없는 아티스트가 자리를 먹지 않게)
     catalogs: dict[str, list[dict]] = {}
     for artist in artists[:_MAX_ARTIST_ATTEMPTS]:
-        if len(catalogs) >= _MAX_ARTISTS:
+        if len(catalogs) >= max_artists:
             break
         itunes_artist_id = await resolve_itunes_artist_id_for(db, artist, concert_id)
         if itunes_artist_id is None:
@@ -215,3 +221,69 @@ async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: 
             used_sources.append("catalog")
     source = next(name for name in ("real", "pre", "catalog") if name in used_sources)
     return {"source": source, "tracks": _interleave(collected, _MAX_TRACKS)}
+
+
+# 미리듣기 곡 목록 미리 데우기 - 티켓이 있는 공연의 아티스트 곡 목록을 밤에 캐시해 둬서 유저가 처음 눌러도
+# iTunes를 기다리지 않게 함. iTunes는 비공식 호출 제한(대략 분당 20회)이 있어 간격을 두고 한 번에
+# 처리하는 아티스트 수에도 상한을 둠(캐시 TTL이 7일이라 매일 돌려도 7일에 한 번씩만 다시 받음)
+_WARM_INTERVAL_SECONDS = 4.0
+_WARM_MAX_ARTISTS_PER_RUN = 80
+_WARM_MAX_CONSECUTIVE_FAILURES = 3
+# 공연 끝난 지 이 기간 안의 티켓까지 대상(공연 후 페이지에서도 재생하므로)
+_WARM_AFTER_CONCERT = timedelta(days=30)
+
+
+async def _is_catalog_fresh(db: AsyncSession, itunes_artist_id: str) -> bool:
+    row = (await db.execute(
+        select(ItunesCatalogCache).where(ItunesCatalogCache.itunes_artist_id == itunes_artist_id)
+    )).scalar_one_or_none()
+    return row is not None and datetime.now(timezone.utc) - row.fetched_at < _CATALOG_TTL
+
+
+async def warm_preview_catalogs(interval: float = _WARM_INTERVAL_SECONDS) -> dict:
+    now = datetime.now(timezone.utc)
+    stats = {"artists": 0, "fetched": 0, "skipped_fresh": 0, "no_itunes_id": 0, "failed": 0}
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(Concert.id, Concert.artist_name)
+            .join(Ticket, Ticket.concert_id == Concert.id)
+            .where(Concert.end_date >= now - _WARM_AFTER_CONCERT)
+            .group_by(Concert.id, Concert.artist_name, Concert.start_date)
+            .order_by(Concert.start_date)
+        )).all()
+
+        targets: list[tuple[str, UUID]] = []
+        seen: set[str] = set()
+        for concert_id, artist_names in rows:
+            for artist in artist_names or []:
+                if artist not in seen:
+                    seen.add(artist)
+                    targets.append((artist, concert_id))
+
+        consecutive_failures = 0
+        for artist, concert_id in targets:
+            if stats["artists"] >= _WARM_MAX_ARTISTS_PER_RUN:
+                break
+            itunes_artist_id = await resolve_itunes_artist_id_for(db, artist, concert_id)
+            if itunes_artist_id is None:
+                stats["no_itunes_id"] += 1
+                stats["artists"] += 1
+                await asyncio.sleep(interval)  # 아티스트 검색 호출이 있었을 수 있음
+                continue
+            if await _is_catalog_fresh(db, itunes_artist_id):
+                stats["skipped_fresh"] += 1
+                continue
+            stats["artists"] += 1
+            await _get_catalog(db, itunes_artist_id)
+            if await _is_catalog_fresh(db, itunes_artist_id):
+                stats["fetched"] += 1
+                consecutive_failures = 0
+            else:
+                stats["failed"] += 1
+                consecutive_failures += 1
+                if consecutive_failures >= _WARM_MAX_CONSECUTIVE_FAILURES:
+                    # iTunes가 막혔거나 장애 - 계속 두드리면 다른 기능까지 막힐 수 있어 중단
+                    logger.warning("미리듣기 곡 목록 미리 받기 연속 실패, 중단")
+                    break
+            await asyncio.sleep(interval)
+    return stats

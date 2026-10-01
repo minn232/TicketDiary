@@ -12,7 +12,9 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.setlist import PreSetlist, RealSetlist
-from app.services.preview_tracks import _fetch_catalog, _get_catalog, _interleave, get_preview_tracks
+from app.services.preview_tracks import (
+    _fetch_catalog, _get_catalog, _interleave, get_preview_tracks, warm_preview_catalogs,
+)
 from conftest import _get_token
 from test_pre_setlists import _create_concert
 
@@ -287,3 +289,62 @@ async def test_festival_artist_without_setlist_still_gets_tracks():
         by_artist.setdefault(track["artist_name"], []).append(track["track_name"])
     assert by_artist["페스A"] == ["Alpha"]
     assert set(by_artist["페스B"]) == {"Other One", "Other Two"}
+
+
+# 빠른 조회 - 곡 목록이 있는 아티스트가 max_artists명 모이면 나머지는 조회하지 않음
+@pytest.mark.asyncio
+async def test_max_artists_stops_collecting_early():
+    from app.models.concert import Concert
+
+    concert_id = await _create_concert("PV0010", "빠른A")
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.artist_name = ["빠른A", "빠른B", "빠른C"]
+        await db.commit()
+
+    resolve = AsyncMock(side_effect=lambda db, a, c: {"빠른A": "1", "빠른B": "2", "빠른C": "3"}[a])
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=resolve),          patch(f"{_SERVICE}._fetch_catalog", new=AsyncMock(return_value=_CATALOG)),          patch(f"{_SERVICE}.random.shuffle", new=lambda items: None):
+        async with AsyncSessionLocal() as db:
+            result = await get_preview_tracks(db, uuid.UUID(concert_id), max_artists=2)
+
+    assert resolve.await_count == 2
+    assert {t["artist_name"] for t in result["tracks"]} == {"빠른A", "빠른B"}
+
+
+# 미리 받기 - 티켓 있는 공연 아티스트만 캐시하고, 이미 신선한 건 다시 안 받음
+@pytest.mark.asyncio
+async def test_warm_caches_ticketed_artists_and_skips_fresh():
+    token = await _get_token()
+    tag = uuid.uuid4().hex[:6]
+    concert_id = await _create_concert("PV0011", f"워밍가수{tag}")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers={"Authorization": f"Bearer {token}"})
+
+    fetch = AsyncMock(return_value=_CATALOG)
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=AsyncMock(return_value="777")),          patch(f"{_SERVICE}._fetch_catalog", new=fetch):
+        first = await warm_preview_catalogs(interval=0)
+        second = await warm_preview_catalogs(interval=0)
+
+    assert first["fetched"] >= 1
+    assert fetch.await_count == first["fetched"]  # 두 번째 실행은 전부 캐시 적중이라 추가 조회 없음
+    assert second["fetched"] == 0 and second["skipped_fresh"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_warm_stops_after_consecutive_failures():
+    token = await _get_token()
+    concert_id = await _create_concert("PV0012", "실패가수A")
+    async with AsyncSessionLocal() as db:
+        from app.models.concert import Concert
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.artist_name = [f"실패{i}" for i in range(10)]
+        await db.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers={"Authorization": f"Bearer {token}"})
+
+    fetch = AsyncMock(return_value=None)
+    ids = AsyncMock(side_effect=lambda db, a, c: f"id-{a}")
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=ids), patch(f"{_SERVICE}._fetch_catalog", new=fetch):
+        result = await warm_preview_catalogs(interval=0)
+
+    assert result["fetched"] == 0 and result["failed"] == 3
