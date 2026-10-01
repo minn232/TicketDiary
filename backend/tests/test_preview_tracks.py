@@ -280,7 +280,7 @@ async def test_festival_artist_without_setlist_still_gets_tracks():
 
     catalogs = {"1": [_cat(1, "Alpha"), _cat(2, "Beta")], "2": [_cat(11, "Other One"), _cat(12, "Other Two")]}
     ids = {"페스A": "1", "페스B": "2"}
-    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=AsyncMock(side_effect=lambda db, a, c: ids[a])),          patch(f"{_SERVICE}._fetch_catalog", new=AsyncMock(side_effect=lambda i: catalogs[i])):
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=AsyncMock(side_effect=lambda db, a, c, *args: ids[a])),          patch(f"{_SERVICE}._fetch_catalog", new=AsyncMock(side_effect=lambda i: catalogs[i])):
         result = await _preview(concert_id)
 
     assert result["source"] == "real"
@@ -302,7 +302,7 @@ async def test_max_artists_stops_collecting_early():
         concert.artist_name = ["빠른A", "빠른B", "빠른C"]
         await db.commit()
 
-    resolve = AsyncMock(side_effect=lambda db, a, c: {"빠른A": "1", "빠른B": "2", "빠른C": "3"}[a])
+    resolve = AsyncMock(side_effect=lambda db, a, c, *args: {"빠른A": "1", "빠른B": "2", "빠른C": "3"}[a])
     with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=resolve),          patch(f"{_SERVICE}._fetch_catalog", new=AsyncMock(return_value=_CATALOG)),          patch(f"{_SERVICE}.random.shuffle", new=lambda items: None):
         async with AsyncSessionLocal() as db:
             result = await get_preview_tracks(db, uuid.UUID(concert_id), max_artists=2)
@@ -343,8 +343,58 @@ async def test_warm_stops_after_consecutive_failures():
         await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers={"Authorization": f"Bearer {token}"})
 
     fetch = AsyncMock(return_value=None)
-    ids = AsyncMock(side_effect=lambda db, a, c: f"id-{a}")
+    ids = AsyncMock(side_effect=lambda db, a, c, *args: f"id-{a}")
     with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=ids), patch(f"{_SERVICE}._fetch_catalog", new=fetch):
         result = await warm_preview_catalogs(interval=0)
 
     assert result["fetched"] == 0 and result["failed"] == 3
+
+
+# 아티스트가 많은 공연(페스티벌)은 요청 중 iTunes 자동 검색을 안 함, 적으면 함
+@pytest.mark.asyncio
+async def test_many_artists_skip_itunes_search_in_request():
+    from app.models.concert import Concert
+
+    concert_id = await _create_concert("PV0013", "검색A")
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.artist_name = [f"검색{i}" for i in range(12)]
+        await db.commit()
+
+    resolve = AsyncMock(return_value=None)
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=resolve):
+        async with AsyncSessionLocal() as db:
+            await get_preview_tracks(db, uuid.UUID(concert_id))
+        assert all(call.args[3] is False for call in resolve.await_args_list)
+
+        async with AsyncSessionLocal() as db:
+            concert = await db.get(Concert, uuid.UUID(concert_id))
+            concert.artist_name = ["검색A", "검색B"]
+            await db.commit()
+        resolve.reset_mock()
+        async with AsyncSessionLocal() as db:
+            await get_preview_tracks(db, uuid.UUID(concert_id))
+        assert all(call.args[3] is True for call in resolve.await_args_list)
+
+
+# 페스티벌(아티스트 8팀 초과)은 팀당 2곡, 최대 12팀
+@pytest.mark.asyncio
+async def test_festival_limits_tracks_per_artist_and_widens_artists():
+    from app.models.concert import Concert
+
+    concert_id = await _create_concert("PV0014", "페스타A")
+    names = [f"페스타{i}" for i in range(15)]
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.artist_name = names
+        await db.commit()
+
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=AsyncMock(return_value="10")), \
+         patch(f"{_SERVICE}._fetch_catalog", new=AsyncMock(return_value=_CATALOG)):
+        result = await _preview(concert_id)
+
+    by_artist: dict[str, int] = {}
+    for track in result["tracks"]:
+        by_artist[track["artist_name"]] = by_artist.get(track["artist_name"], 0) + 1
+    assert len(by_artist) == 12
+    assert max(by_artist.values()) == 2

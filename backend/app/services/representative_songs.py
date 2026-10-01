@@ -413,22 +413,24 @@ async def _auto_anchor(db: AsyncSession, artist: str, concert_id: UUID | None = 
 # 확정에서 동명이인이 잡힘(실사례: NELL 이재경/김종완) - 유저가 고른 값이나 MusicBrainz 링크로
 # 확정된 iTunes만 씀
 async def _confirm_itunes_artist_id(
-    db: AsyncSession, artist: str, concert_id: UUID | None
+    db: AsyncSession, artist: str, concert_id: UUID | None, allow_search: bool = True
 ) -> tuple[str | None, bool]:
     canonical, no_artist = await resolve_concert_artist(db, concert_id, artist)
     if no_artist or (canonical is not None and canonical.anchor_confirmed_by == NO_ITUNES_ANCHOR):
         return None, True
     is_member = await _is_band_member(db, canonical)
     itunes_artist_id = await _resolve_itunes_artist_id(db, canonical)
-    if itunes_artist_id is None and not is_member:
+    if itunes_artist_id is None and not is_member and allow_search:
         itunes_artist_id = await _auto_anchor(db, artist, concert_id)
     return itunes_artist_id, False
 
 
 # 이름 검색 없이 확정된 iTunes 아티스트 ID만 돌려줌(없으면 None) - 미리듣기처럼 다른 아티스트
-# 곡이 섞이면 안 되는 곳용
-async def resolve_itunes_artist_id_for(db: AsyncSession, artist: str, concert_id: UUID | None) -> str | None:
-    itunes_artist_id, _ = await _confirm_itunes_artist_id(db, artist, concert_id)
+# 곡이 섞이면 안 되는 곳용. allow_search=False면 아직 확정 안 된 아티스트의 iTunes 자동 검색을 건너뜀
+async def resolve_itunes_artist_id_for(
+    db: AsyncSession, artist: str, concert_id: UUID | None, allow_search: bool = True
+) -> str | None:
+    itunes_artist_id, _ = await _confirm_itunes_artist_id(db, artist, concert_id, allow_search)
     return itunes_artist_id
 
 

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 import re
 from itertools import zip_longest
 from datetime import date, datetime, timedelta, timezone
@@ -33,8 +34,13 @@ logger = logging.getLogger(__name__)
 _CATALOG_TTL = timedelta(days=7)
 # 페스티벌은 아티스트가 많아서 iTunes 조회가 폭증하지 않게 공연당 상한(넘으면 열 때마다 무작위로 골라 다양하게)
 _MAX_ARTISTS = 8
+# 아티스트가 _MAX_ARTISTS보다 많은 공연(페스티벌)은 더 많은 팀을 담되 팀당 곡 수를 줄여 다양하게 들려줌
+_FESTIVAL_MAX_ARTISTS = 12
+_FESTIVAL_TRACKS_PER_ARTIST = 2
 # 곡 목록이 있는 아티스트 _MAX_ARTISTS명을 채우려고 시도할 최대 아티스트 수(iTunes ID 없는 아티스트는 건너뜀)
 _MAX_ARTIST_ATTEMPTS = 20
+# 곡 목록이 하나라도 모였으면 이 시간 넘어서는 더 모으지 않고 응답
+_MAX_COLLECT_SECONDS = 12.0
 _MAX_TRACKS = 30
 _CATALOG_FALLBACK_TRACKS = 10
 
@@ -184,12 +190,19 @@ async def get_preview_tracks(
     if len(artists) > _MAX_ARTISTS:
         random.shuffle(artists)
 
-    # 앞에서부터 곡 목록이 있는 아티스트를 _MAX_ARTISTS명까지 채움(ID 없는 아티스트가 자리를 먹지 않게)
+    # 앞에서부터 곡 목록이 있는 아티스트를 _MAX_ARTISTS명까지 채움(ID 없는 아티스트가 자리를 먹지 않게).
+    # 페스티벌처럼 아티스트가 많으면 ID 미확정 아티스트의 iTunes 자동 검색은 건너뜀 - 검색 한 번씩이
+    # 쌓여 응답이 수 분 걸림(미확정 아티스트는 밤 미리 받기 배치가 확정해 둠)
+    is_festival = len(artists) > _MAX_ARTISTS
+    allow_search = not is_festival
+    if is_festival and max_artists == _MAX_ARTISTS:
+        max_artists = _FESTIVAL_MAX_ARTISTS  # 빠른 조회(max_artists 지정)는 그대로 둠
+    started = time.monotonic()
     catalogs: dict[str, list[dict]] = {}
     for artist in artists[:_MAX_ARTIST_ATTEMPTS]:
-        if len(catalogs) >= max_artists:
+        if len(catalogs) >= max_artists or (catalogs and time.monotonic() - started > _MAX_COLLECT_SECONDS):
             break
-        itunes_artist_id = await resolve_itunes_artist_id_for(db, artist, concert_id)
+        itunes_artist_id = await resolve_itunes_artist_id_for(db, artist, concert_id, allow_search)
         if itunes_artist_id is None:
             continue
         tracks = await _get_catalog(db, itunes_artist_id)
@@ -219,6 +232,14 @@ async def get_preview_tracks(
         else:
             collected.extend(_to_track(t, artist) for t in artist_catalog[:_CATALOG_FALLBACK_TRACKS])
             used_sources.append("catalog")
+    if is_festival:
+        counts: dict[str, int] = {}
+        limited = []
+        for track in collected:
+            counts[track["artist_name"]] = counts.get(track["artist_name"], 0) + 1
+            if counts[track["artist_name"]] <= _FESTIVAL_TRACKS_PER_ARTIST:
+                limited.append(track)
+        collected = limited
     source = next(name for name in ("real", "pre", "catalog") if name in used_sources)
     return {"source": source, "tracks": _interleave(collected, _MAX_TRACKS)}
 
