@@ -143,6 +143,11 @@ async def list_concerts(
     unreviewed_only: bool = Query(False),
     ai_reviewed_only: bool = Query(False),
     upcoming_only: bool = Query(False),
+    # 관리자 페이지가 쓰는 양방향 필터 - 위 *_only 불리언은 한쪽 방향만 되고 기존 호출 호환용으로 남김
+    flagged: str | None = Query(None, pattern="^(yes|no)$"),
+    review: str | None = Query(None, pattern="^(unreviewed|human|ai|done)$"),
+    crawl: str | None = Query(None, pattern="^(filled|unfilled)$"),
+    period: str | None = Query(None, pattern="^(upcoming|ended)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -168,6 +173,27 @@ async def list_concerts(
         # 다른 곳(concert_search.py 등)과 동일 기준(end_date > now) - 이미 끝난 공연은
         # 우선순위가 낮으므로 admin이 검수 대상에서 제외해서 볼 수 있게
         query = query.where(Concert.end_date > now)
+
+    if flagged == "yes":
+        query = query.where(Concert.id.in_(flagged_concert_ids))
+    elif flagged == "no":
+        query = query.where(Concert.id.not_in(flagged_concert_ids))
+    if review == "unreviewed":
+        query = query.where(Concert.admin_reviewed_at.is_(None), Concert.ai_reviewed_at.is_(None))
+    elif review == "human":
+        query = query.where(Concert.admin_reviewed_at.isnot(None))
+    elif review == "ai":
+        query = query.where(Concert.ai_reviewed_at.isnot(None))
+    elif review == "done":
+        query = query.where(or_(Concert.admin_reviewed_at.isnot(None), Concert.ai_reviewed_at.isnot(None)))
+    if crawl == "filled":
+        query = query.where(_auto_covered_by_crawl_filter())
+    elif crawl == "unfilled":
+        query = query.where(_needs_manual_artist_fill_filter())
+    if period == "upcoming":
+        query = query.where(Concert.end_date > now)
+    elif period == "ended":
+        query = query.where(Concert.end_date <= now)
 
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
 

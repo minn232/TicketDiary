@@ -47,6 +47,8 @@
     color: var(--text);
   }
   input[type="checkbox"] { accent-color: var(--accent); }
+  select { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px; background: #fff; color: var(--text); }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--border); }
   button {
     border: 1px solid var(--border);
     background: #fff;
@@ -113,30 +115,48 @@
   <div class="field" style="flex:1; min-width:200px;">
     <input type="text" id="search" placeholder="공연명 / kopis_id / 아티스트 검색" style="width:100%;" />
   </div>
-  <div class="field">
-    <input type="checkbox" id="flagged-only" checked onchange="load(1)" />
-    <label for="flagged-only">확인 필요만 보기</label>
-  </div>
-  <div class="field">
-    <input type="checkbox" id="unsent-to-llm-only" onchange="load(1)" />
-    <label for="unsent-to-llm-only" title="크롤링 스크린샷 재추출(찜/티켓등록 크롤링, 페스티벌 라인업 재확인) 어느 쪽 대상도 아닌 공연만 - 포스터 LLM 추출 진행 상태와는 무관">크롤링으로 안 채워지는 공연만 보기</label>
-  </div>
-  <div class="field">
-    <input type="checkbox" id="unreviewed-only" onchange="load(1)" />
-    <label for="unreviewed-only">검수 안 된 것만 보기</label>
-  </div>
-  <div class="field">
-    <input type="checkbox" id="ai-reviewed-only" onchange="load(1)" />
-    <label for="ai-reviewed-only" title="사람이 아니라 Claude가 대신 검수한 공연만">AI 검수완료만 보기</label>
-  </div>
-  <div class="field">
-    <input type="checkbox" id="upcoming-only" onchange="load(1)" />
-    <label for="upcoming-only" title="이미 끝난 공연(end_date 지남)은 제외">아직 진행 예정인 공연만 보기</label>
-  </div>
   <button onclick="load(1)">검색</button>
   <a class="nav-link" href="/artists">아티스트 조회 →</a>
   <a class="nav-link" href="/identity">아티스트 연결 기록 →</a>
 </header>
+
+<div class="filters">
+  <div class="field">
+    <label for="f-flagged">확인 필요</label>
+    <select id="f-flagged" onchange="load(1)">
+      <option value="">전체</option>
+      <option value="yes" selected>확인 필요만</option>
+      <option value="no">확인 필요 없음만</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-review">검수</label>
+    <select id="f-review" onchange="load(1)">
+      <option value="">전체</option>
+      <option value="unreviewed">검수 안 됨</option>
+      <option value="done">검수 완료 (사람+AI)</option>
+      <option value="human">사람 검수만</option>
+      <option value="ai">AI 검수만</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-crawl" title="크롤링 스크린샷 재추출(찜/티켓등록 크롤링, 페스티벌 라인업 재확인) 대상 여부 - 포스터 LLM 추출 진행 상태와는 무관">크롤링 채움</label>
+    <select id="f-crawl" onchange="load(1)">
+      <option value="">전체</option>
+      <option value="filled">크롤링으로 채워지는 공연</option>
+      <option value="unfilled">크롤링으로 안 채워지는 공연</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-period" title="end_date 기준">진행</label>
+    <select id="f-period" onchange="load(1)">
+      <option value="">전체</option>
+      <option value="upcoming">진행 예정</option>
+      <option value="ended">종료</option>
+    </select>
+  </div>
+  <button onclick="resetFilters()">필터 초기화</button>
+</div>
 
 <main>
   <div id="status-line"></div>
@@ -192,18 +212,12 @@ function toast(text) {
 async function load(p) {
   page = p || page;
   const search = document.getElementById('search').value.trim();
-  const flaggedOnly = document.getElementById('flagged-only').checked;
-  const unsentToLlmOnly = document.getElementById('unsent-to-llm-only').checked;
-  const unreviewedOnly = document.getElementById('unreviewed-only').checked;
-  const aiReviewedOnly = document.getElementById('ai-reviewed-only').checked;
-  const upcomingOnly = document.getElementById('upcoming-only').checked;
-  const qs = new URLSearchParams({
-    page, page_size: pageSize,
-    flagged_only: flaggedOnly, unsent_to_llm_only: unsentToLlmOnly, unreviewed_only: unreviewedOnly,
-    ai_reviewed_only: aiReviewedOnly,
-    upcoming_only: upcomingOnly,
-  });
+  const qs = new URLSearchParams({ page, page_size: pageSize });
   if (search) qs.set('search', search);
+  for (const [param, id] of [['flagged', 'f-flagged'], ['review', 'f-review'], ['crawl', 'f-crawl'], ['period', 'f-period']]) {
+    const v = document.getElementById(id).value;
+    if (v) qs.set(param, v);
+  }
 
   document.getElementById('status-line').textContent = '불러오는 중...';
   try {
@@ -215,6 +229,11 @@ async function load(p) {
   } catch (e) {
     document.getElementById('status-line').textContent = '오류: ' + e.message;
   }
+}
+
+function resetFilters() {
+  for (const id of ['f-flagged', 'f-review', 'f-crawl', 'f-period']) document.getElementById(id).value = '';
+  load(1);
 }
 
 function prevPage() { if (page > 1) load(page - 1); }

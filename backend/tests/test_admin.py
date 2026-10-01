@@ -1055,6 +1055,62 @@ async def test_admin_unreviewed_only_filter_excludes_ai_reviewed():
     assert concert_id not in ids
 
 
+# 양방향 필터(review/crawl) - 기존 *_only 불리언은 한쪽 방향만 볼 수 있었음
+@pytest.mark.asyncio
+async def test_admin_review_filter_both_directions():
+    tag = uuid.uuid4().hex[:6]
+    human_id = await _create_concert(f"PF_ADMIN_RV_H_{tag}", f"양방향검수_{tag}_사람")
+    ai_id = await _create_concert(f"PF_ADMIN_RV_A_{tag}", f"양방향검수_{tag}_AI")
+    none_id = await _create_concert(f"PF_ADMIN_RV_N_{tag}", f"양방향검수_{tag}_없음")
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(ai_id)).values(ai_reviewed_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+
+    async def ids_for(review):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/admin/concerts",
+                params={"review": review, "search": f"양방향검수_{tag}"},
+                headers=_admin_headers(),
+            )
+        return {item["id"] for item in res.json()["items"]}
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.post(f"/api/v1/admin/concerts/{human_id}/review", headers=_admin_headers())
+        assert await ids_for("done") == {human_id, ai_id}
+        assert await ids_for("human") == {human_id}
+        assert await ids_for("ai") == {ai_id}
+        assert await ids_for("unreviewed") == {none_id}
+
+
+@pytest.mark.asyncio
+async def test_admin_crawl_filter_filled_excludes_unfilled():
+    tag = uuid.uuid4().hex[:6]
+    filled_id = await _create_concert(f"PF_ADMIN_CR_F_{tag}", f"크롤필터_{tag}_채움")
+    unfilled_id = await _create_concert(f"PF_ADMIN_CR_U_{tag}", f"크롤필터_{tag}_안채움")
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(filled_id)).values(crawl_screenshot_url="https://x/y.png")
+        )
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            filled = await ac.get(
+                "/api/v1/admin/concerts", params={"crawl": "filled", "search": f"크롤필터_{tag}"}, headers=_admin_headers()
+            )
+            unfilled = await ac.get(
+                "/api/v1/admin/concerts", params={"crawl": "unfilled", "search": f"크롤필터_{tag}"}, headers=_admin_headers()
+            )
+    assert {i["id"] for i in filled.json()["items"]} == {filled_id}
+    assert {i["id"] for i in unfilled.json()["items"]} == {unfilled_id}
+
+
 # 상세/목록 응답에 ai_reviewed_at 필드가 그대로 내려오는지 테스트
 @pytest.mark.asyncio
 async def test_admin_concert_detail_includes_ai_reviewed_at():
