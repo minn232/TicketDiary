@@ -262,3 +262,28 @@ async def test_endpoint_requires_ownership_and_returns_tracks():
     assert response.json()["source"] == "catalog"
     assert response.json()["tracks"][0]["preview_url"].endswith("1.m4a")
     assert missing.status_code == 404
+
+
+# 셋리가 일부 아티스트 것만 있는 페스티벌 - 셋리 있는 팀 곡만 나오지 않고 없는 팀은 대표곡으로 채워짐
+@pytest.mark.asyncio
+async def test_festival_artist_without_setlist_still_gets_tracks():
+    from app.models.concert import Concert
+
+    concert_id = await _create_concert("PV0009", "페스A")
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.artist_name = ["페스A", "페스B"]
+        await db.commit()
+    await _add_real(concert_id, [{"name": "Alpha", "artist": "페스A"}])
+
+    catalogs = {"1": [_cat(1, "Alpha"), _cat(2, "Beta")], "2": [_cat(11, "Other One"), _cat(12, "Other Two")]}
+    ids = {"페스A": "1", "페스B": "2"}
+    with patch(f"{_SERVICE}.resolve_itunes_artist_id_for", new=AsyncMock(side_effect=lambda db, a, c: ids[a])),          patch(f"{_SERVICE}._fetch_catalog", new=AsyncMock(side_effect=lambda i: catalogs[i])):
+        result = await _preview(concert_id)
+
+    assert result["source"] == "real"
+    by_artist = {}
+    for track in result["tracks"]:
+        by_artist.setdefault(track["artist_name"], []).append(track["track_name"])
+    assert by_artist["페스A"] == ["Alpha"]
+    assert set(by_artist["페스B"]) == {"Other One", "Other Two"}

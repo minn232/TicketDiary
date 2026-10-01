@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 _CATALOG_TTL = timedelta(days=7)
 # 페스티벌은 아티스트가 많아서 iTunes 조회가 폭증하지 않게 공연당 상한(넘으면 열 때마다 무작위로 골라 다양하게)
 _MAX_ARTISTS = 5
+# 곡 목록이 있는 아티스트 _MAX_ARTISTS명을 채우려고 시도할 최대 아티스트 수(iTunes ID 없는 아티스트는 건너뜀)
+_MAX_ARTIST_ATTEMPTS = 15
 _MAX_TRACKS = 20
 _CATALOG_FALLBACK_TRACKS = 10
 
@@ -174,10 +176,13 @@ async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: 
     if performance_date is not None:
         artists = await get_lineup_artists_for_date(db, concert_id, performance_date) or artists
     if len(artists) > _MAX_ARTISTS:
-        artists = random.sample(artists, _MAX_ARTISTS)
+        random.shuffle(artists)
 
+    # 앞에서부터 곡 목록이 있는 아티스트를 _MAX_ARTISTS명까지 채움(ID 없는 아티스트가 자리를 먹지 않게)
     catalogs: dict[str, list[dict]] = {}
-    for artist in artists:
+    for artist in artists[:_MAX_ARTIST_ATTEMPTS]:
+        if len(catalogs) >= _MAX_ARTISTS:
+            break
         itunes_artist_id = await resolve_itunes_artist_id_for(db, artist, concert_id)
         if itunes_artist_id is None:
             continue
@@ -193,14 +198,20 @@ async def get_preview_tracks(db: AsyncSession, concert_id: UUID, explicit_date: 
             db, RealSetlist, RealSetlist.concert_id == concert_id, RealSetlist.performance_date == performance_date,
         )))
     sources.append(("pre", await _read_setlist_songs(db, PreSetlist, PreSetlist.concert_id == concert_id)))
-    for source, songs in sources:
-        matched = _match_songs(songs, catalogs)
-        if matched:
-            return {"source": source, "tracks": _interleave(matched, _MAX_TRACKS)}
 
-    fallback = [
-        _to_track(track, artist)
-        for artist, tracks in catalogs.items()
-        for track in tracks[:_CATALOG_FALLBACK_TRACKS]
-    ]
-    return {"source": "catalog", "tracks": _interleave(fallback, _MAX_TRACKS)}
+    # 아티스트별로 real → pre → 대표곡 순으로 따로 채움 - 셋리가 일부 아티스트 것만 있는 페스티벌에서
+    # 셋리 있는 한 팀 곡만 나오지 않게 함. 응답 source는 쓰인 것 중 가장 앞선 출처
+    collected: list[dict] = []
+    used_sources: list[str] = []
+    for artist, artist_catalog in catalogs.items():
+        for source, songs in sources:
+            matched = _match_songs(songs, {artist: artist_catalog})
+            if matched:
+                collected.extend(matched)
+                used_sources.append(source)
+                break
+        else:
+            collected.extend(_to_track(t, artist) for t in artist_catalog[:_CATALOG_FALLBACK_TRACKS])
+            used_sources.append("catalog")
+    source = next(name for name in ("real", "pre", "catalog") if name in used_sources)
+    return {"source": source, "tracks": _interleave(collected, _MAX_TRACKS)}
