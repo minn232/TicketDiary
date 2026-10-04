@@ -87,6 +87,8 @@ class TicketScanResponse(BaseModel):
     # 티켓 스캔 응답 (OCR 추출 결과 + KOPIS 후보 목록)
     extracted: TicketScanExtracted
     candidates: list[ConcertResponse]
+    # 후보가 비었을 때 이유(cooldown/no_text/no_date/kopis_error/no_match), 후보가 있으면 None
+    empty_reason: str | None = None
 
 
 class ArtistNameConfirmRequest(BaseModel):

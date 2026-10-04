@@ -11,6 +11,7 @@ from app.services.ocr import (
     _extract_raw_text,
     _parse_ticket_fields,
     _extract_title,
+    _extract_stacked_date_from_words,
     _extract_title_candidates,
     _extract_concert_date,
     _extract_shipping_date,
@@ -861,6 +862,39 @@ async def test_scan_cooldown_skips_vision_call_on_rapid_repeat(get_auth_token):
     assert mock_extract.call_count == 1
 
 
+_NO_RESULT_XML = b'<?xml version="1.0" encoding="UTF-8"?><dbs></dbs>'
+
+
+# 후보가 비었을 때 응답의 empty_reason이 원인별로 구분되는지 테스트
+# (쿨다운은 위 테스트, 날짜 없음/후보 없음/KOPIS 오류는 여기서 확인)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extracted_patch, kopis_xml, kopis_status, expected_reason",
+    [
+        ({"date": None}, None, 200, "no_date"),
+        ({}, None, 200, "no_match"),
+        ({}, None, 500, "kopis_error"),
+    ],
+)
+async def test_scan_empty_reason(get_auth_token, extracted_patch, kopis_xml, kopis_status, expected_reason):
+    headers = {"Authorization": f"Bearer {get_auth_token}"}
+    extracted = {**_SAMPLE_EXTRACTED, "title_candidates": ["존재하지않는공연"], **extracted_patch}
+    with (
+        _ocr_mock(extracted),
+        kopis_mock(kopis_xml or _NO_RESULT_XML, status_code=kopis_status),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                "/api/v1/concerts/scan",
+                files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
+                headers=headers,
+            )
+
+    assert response.status_code == 200
+    assert response.json()["candidates"] == []
+    assert response.json()["empty_reason"] == expected_reason
+
+
 # 카메라 정렬 인식이 티켓이 아닌 사물을 오인식해서 아무 필드도 못 뽑은 스캔(전부 None)은
 # "의미있는 스캔" 10회 한도를 깎아먹지 않아야 함 - 10회보다 많이 반복해도 전부 200
 @pytest.mark.asyncio
@@ -1188,3 +1222,53 @@ async def test_scan_unauthorized():
         )
 
     assert response.status_code == 401
+
+
+# 모바일 티켓 스크린샷 맨 윗줄은 폰 상태바 시계라 공연 시간으로 오인하면 안 됨
+def test_extract_time_skips_status_bar_clock():
+    assert _extract_time("5:47" + chr(10) + "SOUND PLANET" + chr(10) + "2026.09.05 (토) 11:00" + chr(10) + "인천 파라다이스시티") == "11:00"
+
+
+def test_extract_time_single_line_clock_kept():
+    assert _extract_time("18:00") == "18:00"
+
+
+# 모바일 캡처 맨 위 상태표시줄/앱 헤더 줄은 공연명 후보에서 빠져야 함 (실사용 캡처 원오크록/셰본)
+def test_title_candidates_skip_header_and_status_bar():
+    text = chr(10).join([
+        "8:00", "★카카오톡", "<상세 예매 내역", "관람을 완료했어요", "ill 45", "MY EN",
+        "MY티켓 지난 관람상세내역", "원 오크 록 내한공연",
+    ])
+    assert _extract_title_candidates(text) == ["원 오크 록 내한공연"]
+
+
+# 모바일 티켓의 세로 날짜("09 / 20 / 2026")는 Vision이 일(20)을 제목 블록에 합쳐도 단어 좌표로 잡혀야 함
+def _word(text: str, x0: int, y0: int, x1: int, y1: int) -> dict:
+    return {
+        "symbols": [{"text": ch} for ch in text],
+        "boundingBox": {"vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1}, {"x": x0, "y": y1}]},
+    }
+
+
+def _annotation_of_words(words: list[dict]) -> dict:
+    return {"fullTextAnnotation": {"pages": [{"blocks": [{"paragraphs": [{"words": words}]}]}]}}
+
+
+def test_extract_stacked_date_from_words():
+    ann = _annotation_of_words([
+        _word("TOUR", 210, 1068, 300, 1139),
+        _word("2026", 325, 1072, 421, 1126),   # 제목 안의 연도 - 위에 숫자가 없어 무시돼야 함
+        _word("09", 660, 1029, 745, 1077),
+        _word("20", 664, 1082, 747, 1138),
+        _word("2026", 663, 1163, 748, 1186),
+    ])
+    assert _extract_stacked_date_from_words(ann) == "2026-09-20"
+
+
+def test_extract_stacked_date_from_words_ignores_unstacked_numbers():
+    ann = _annotation_of_words([
+        _word("09", 100, 100, 150, 130),
+        _word("20", 600, 100, 650, 130),       # 가로로 멀리 떨어져 있음
+        _word("2026", 100, 900, 200, 930),     # 세로로 멀리 떨어져 있음
+    ])
+    assert _extract_stacked_date_from_words(ann) is None

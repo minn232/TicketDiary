@@ -1,3 +1,4 @@
+import logging
 from datetime import date, timedelta
 from uuid import UUID
 
@@ -30,6 +31,8 @@ from app.services.kopis import (
 )
 from app.services.ocr import extract_ticket_info
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 _MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -57,7 +60,8 @@ async def scan_ticket(
     # 카메라 정렬 오인식으로 짧은 간격에 연달아 들어온 요청이면, 유료 Vision 호출 없이
     # 빈 결과로 바로 응답 (is_within_scan_cooldown 주석 참고)
     if is_within_scan_cooldown(current_user.id):
-        return TicketScanResponse(extracted=TicketScanExtracted(), candidates=[])
+        logger.info("티켓 스캔 빈 결과: reason=cooldown user=%s", current_user.id)
+        return TicketScanResponse(extracted=TicketScanExtracted(), candidates=[], empty_reason="cooldown")
 
     # OCR + LLM으로 티켓 정보 추출
     extracted_raw = await extract_ticket_info(image_bytes, image.content_type or "image/jpeg")
@@ -91,6 +95,7 @@ async def scan_ticket(
     # title 하나만으로 실패하면 원본 텍스트의 다른 후보 줄들로 순서대로 재시도
     # (예: "빨래는 오늘을 살아가는"으로 실패 -> 원본 텍스트 뒷줄의 "빨래"로 재시도)
     candidates = []
+    kopis_failed = False
     title_candidates = extracted_raw.get("title_candidates") or (
         [extracted.title] if extracted.title else []
     )
@@ -109,7 +114,23 @@ async def scan_ticket(
                 db, title_candidates, start_date, end_date, extracted.location
             )
         except HTTPException:
-            pass
+            kopis_failed = True
+
+    # 후보가 비었을 때 이유를 로그/응답에 남김 (같은 사진이 때에 따라 안 되는 원인 추적용)
+    empty_reason = None
+    if not candidates:
+        if kopis_failed:
+            empty_reason = "kopis_error"
+        elif not title_candidates:
+            empty_reason = "no_text"
+        elif not extracted.date:
+            empty_reason = "no_date"
+        else:
+            empty_reason = "no_match"
+        logger.info(
+            "티켓 스캔 빈 결과: reason=%s user=%s title=%r date=%s location=%r",
+            empty_reason, current_user.id, extracted.title, extracted.date, extracted.location,
+        )
 
     # 목록 검색(kopis_search_multi)은 가격표(pcseguidance)를 안 주므로, 상세
     # 조회를 아직 한 번도 안 한 후보는 여기서 채워둠 - 프론트가 티켓 사진에
@@ -122,7 +143,7 @@ async def scan_ticket(
             except HTTPException:
                 pass
 
-    return TicketScanResponse(extracted=extracted, candidates=candidates)
+    return TicketScanResponse(extracted=extracted, candidates=candidates, empty_reason=empty_reason)
 
 
 # 찜 공연 검색 - DB 기준(KOPIS 실시간 아님). 매칭 기준은 concert_search.py 참고.

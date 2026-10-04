@@ -78,11 +78,13 @@ _MIN_LAYOUT_FIELD_MATCHES = 2
 # 예매내역 캡처의 헤더 영역(격자 시작 전)에서 실제 공연명이 아닌 화면 UI 텍스트를
 # 걸러내기 위한 스킵 목록 (네비게이션 타이틀/섹션 헤더/상태뱃지/카테고리 태그)
 # 뒤로가기 화살표(< 등)가 OCR로 같이 잡혀서 라벨 앞에 붙는 경우가 있어 선행 기호는 무시
+# 헤더 단어가 한 줄에 여러 개 붙어 인식되는 경우("MY티켓 지난 관람상세내역", "MY EN")도 걸리도록 반복 허용
 _LAYOUT_TITLE_SKIP = re.compile(
-    r"^[<>‹›«»\s]*(상세내역|예매내역|지난\s*관람상세내역|관람상세내역|MY\s*티켓|마이\s*티켓|티켓\s*예매\s*상세내역"
-    r"|카테고리|관람내역|예매정보|결제내역|구매\s*내역|티켓\s*수령방법|본인정보"
+    r"^[<>‹›«»\s]*(?:(?:상세내역|예매내역|상세\s*예매\s*내역|지난\s*관람상세내역|관람상세내역|MY\s*티켓|마이\s*티켓"
+    r"|티켓\s*예매\s*상세내역|MY|EN|KR"
+    r"|카테고리|관람내역|예매정보|결제내역|구매\s*내역|티켓\s*수령방법|본인정보|관람을\s*완료했어요"
     r"|배송완료|예매완료|취소완료|주문완료|결제완료|SOLD\s*OUT"
-    r"|단독|콘서트|뮤지컬|연극|페스티벌|공연)$",
+    r"|단독|콘서트|뮤지컬|연극|페스티벌|공연)\s*)+$",
     re.IGNORECASE,
 )
 
@@ -95,6 +97,10 @@ _STATUS_BAR_RE = re.compile(r"^\d{1,2}:\d{2}$|^[a-zA-Z]{0,4}\s*\(?\d{1,3}\)?$")
 # 진짜 공연명이라면 한글 또는 2자 이상 이어진 영문이 있어야 함 - 햄버거 메뉴/뒤로가기
 # 아이콘이 "< =" 같은 기호 조각으로 오인식된 경우를 걸러내기 위함 (실사용 캡처로 확인)
 _HAS_REAL_CONTENT_RE = re.compile(r"[가-힣]|[A-Za-z]{2,}")
+
+# 다른 앱에서 넘어오면 상태표시줄에 "◀ 카카오톡"이 찍히는데, OCR이 화살표를 "★" 등으로 읽어
+# "★카카오톡"이 공연명 후보 맨 앞에 남음 (실사용 캡처로 확인)
+_APP_RETURN_RE = re.compile(r"^[◀◁◂★☆]\s*[가-힣A-Za-z]+$")
 
 
 # 플랫폼 키워드 → 정규화 이름
@@ -479,7 +485,7 @@ def _extract_title_from_layout(
             text = block["text"].strip()
             if not text or not min_len_ok(text):
                 continue
-            if _LAYOUT_TITLE_SKIP.match(text) or _STATUS_BAR_RE.match(text):
+            if _LAYOUT_TITLE_SKIP.match(text) or _STATUS_BAR_RE.match(text) or _APP_RETURN_RE.match(text):
                 continue
             if not _HAS_REAL_CONTENT_RE.search(text):
                 continue
@@ -555,6 +561,53 @@ def _parse_ticket_fields_from_layout(annotation: dict, raw_text: str) -> dict | 
     }
 
 
+# 모바일 티켓(NOL 등)은 날짜가 "09 / 20 / 2026"으로 세로로 쌓여 있는데, Vision이 일(20)을 옆 제목
+# 블록에 합쳐 줄글 정규식으로는 못 잡음 - 단어 좌표에서 같은 x 위치에 쌓인 (월, 일, 연도)를 직접 찾음
+_STACKED_GAP_RATIO = 2.0   # 위아래 단어 사이 간격이 단어 높이의 이 배수 이내여야 같은 묶음
+_STACKED_X_TOLERANCE = 0.6  # 가로 중심 차이가 단어 너비의 이 비율 이내여야 같은 열
+
+
+def _extract_stacked_date_from_words(annotation: dict) -> str | None:
+    words = []
+    for page in annotation.get("fullTextAnnotation", {}).get("pages", []):
+        for block in page.get("blocks", []):
+            for para in block.get("paragraphs", []):
+                for w in para.get("words", []):
+                    text = "".join(s.get("text", "") for s in w.get("symbols", []))
+                    if not re.fullmatch(r"\d{1,4}", text):
+                        continue
+                    x0, y0, x1, y1 = _bounding_box(w.get("boundingBox", {}))
+                    if x1 > x0 and y1 > y0:
+                        words.append({"text": text, "x0": x0, "y0": y0, "x1": x1, "y1": y1})
+
+    def above(lower: dict, cond) -> dict | None:
+        best = None
+        for c in words:
+            if c is lower or not cond(c["text"]):
+                continue
+            height = c["y1"] - c["y0"]
+            gap = lower["y0"] - c["y1"]
+            if gap < -height * 0.5 or gap > height * _STACKED_GAP_RATIO:
+                continue
+            cx_diff = abs((c["x0"] + c["x1"]) / 2 - (lower["x0"] + lower["x1"]) / 2)
+            if cx_diff > max(c["x1"] - c["x0"], lower["x1"] - lower["x0"]) * _STACKED_X_TOLERANCE:
+                continue
+            if best is None or c["y1"] > best["y1"]:
+                best = c
+        return best
+
+    for year in words:
+        if not re.fullmatch(r"(?:19|20)\d{2}", year["text"]):
+            continue
+        day = above(year, lambda t: len(t) <= 2 and 1 <= int(t) <= 31)
+        month = above(day, lambda t: len(t) <= 2 and 1 <= int(t) <= 12) if day else None
+        if day and month:
+            parsed = _parse_date(year["text"], month["text"], day["text"])
+            if parsed:
+                return parsed
+    return None
+
+
 # 날짜 그룹 (y, m, d) → "YYYY-MM-DD" 변환 (범위 외 None)
 def _parse_date(year: str, month: str, day: str) -> str | None:
     y, mo, d = int(year), int(month), int(day)
@@ -593,6 +646,9 @@ def _title_line_candidates(text: str) -> list[str]:
         if _PRICE_RE.match(line):
             continue
         if _LABEL_SKIP.match(line):
+            continue
+        # 모바일 캡처 맨 위 헤더/상태표시줄 줄은 후보 수 제한(_MAX_TITLE_KEYWORDS) 자리를 차지해 진짜 제목을 밀어냄
+        if _LAYOUT_TITLE_SKIP.match(line) or _STATUS_BAR_RE.match(line) or _APP_RETURN_RE.match(line):
             continue
         # "2024 HA HYUN SANG CONCERT"처럼 연도로 시작하는 제목은 통과시키고,
         # 그 외 숫자로 시작하는 줄(예매번호/좌석코드 등)만 제외
@@ -653,6 +709,10 @@ def _extract_shipping_date(text: str) -> str | None:
 
 # 공연 시간 추출 (오후/오전/HH:MM → "HH:MM")
 def _extract_time(text: str) -> str | None:
+    # 모바일 스크린샷 맨 윗줄은 상태바 시계("5:47")라 공연 시간으로 오인하므로 제외
+    lines = text.splitlines()
+    if len(lines) > 1 and re.fullmatch(r"\s*\d{1,2}:\d{2}\s*", lines[0]):
+        text = "\n".join(lines[1:])
     m = _TIME_RE.search(text)
     if not m:
         return None
@@ -754,8 +814,7 @@ async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     annotation = await _call_vision(jpeg_bytes)
     raw_text = _full_text_from_annotation(annotation)
 
-    layout_fields = _parse_ticket_fields_from_layout(annotation, raw_text)
-    if layout_fields is not None:
-        return layout_fields
-
-    return _parse_ticket_fields(raw_text)
+    fields = _parse_ticket_fields_from_layout(annotation, raw_text) or _parse_ticket_fields(raw_text)
+    if not fields.get("date"):
+        fields["date"] = _extract_stacked_date_from_words(annotation)
+    return fields

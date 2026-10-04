@@ -10,7 +10,13 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_normalization import ArtistAlias, ArtistGroupMembership, CanonicalArtist
 from app.models.concert import Concert
-from app.services.kopis import _venue_candidates, _venue_overlaps, search_concerts as kopis_search_concerts
+from app.services.kopis import (
+    _query_specificity,
+    _venue_candidates,
+    _venue_overlaps,
+    search_concerts as kopis_search_concerts,
+    search_concerts_multi as kopis_search_concerts_multi,
+)
 from app.services.site_aliases import find_site_key
 from conftest import _get_token, kopis_mock
 
@@ -192,6 +198,57 @@ async def test_kopis_search_concerts_502_on_kopis_error():
                 await kopis_search_concerts(db, "테스트")
 
     assert exc_info.value.status_code == 502
+
+
+# 특정 검색어만 KOPIS가 막아도(400) 더 짧은 검색어로 계속 진행해야 함
+@pytest.mark.asyncio
+async def test_kopis_search_concerts_skips_blocked_keyword():
+    xml = _make_kopis_xml("PF_BLOCK_001", "사운드 플래닛 페스티벌 [인천]", "2030.09.05", "2030.09.06")
+    real_once = kopis_search_concerts.__globals__["_search_concerts_once"]
+
+    async def _once(db, q, *a, **kw):
+        if q.endswith("일반"):
+            raise HTTPException(status_code=502, detail="blocked")
+        return await real_once(db, q, *a, **kw)
+
+    async with AsyncSessionLocal() as db:
+        with kopis_mock(xml), patch("app.services.kopis._search_concerts_once", _once):
+            concerts = await kopis_search_concerts(db, "사운드 플래닛 페스티벌 2030 - 일반")
+
+    assert [c.kopis_id for c in concerts] == ["PF_BLOCK_001"]
+
+
+# 흔한 한 단어("FESTIVAL")가 기간 긴 무관한 공연에 날짜만 맞아 먼저 걸려도, 더 구체적인 후보가 있으면 그 결과를 써야 함
+# (비교 기준은 원래 후보 줄이 아니라 실제로 결과가 나온 검색어 길이)
+@pytest.mark.asyncio
+async def test_kopis_search_multi_prefers_most_specific_confident_keyword():
+    def _c(kid: str, name: str, start: str, end: str):
+        return MagicMock(
+            kopis_id=kid, name=name,
+            start_date=datetime.fromisoformat(start), end_date=datetime.fromisoformat(end),
+        )
+
+    by_kw = {
+        "FESTIVAL": [_c("WRONG", "아무 페스티벌", "2030-07-18", "2030-12-31")],
+        "사운드 플래닛 페스티벌 일반": [_c("RIGHT", "사운드 플래닛 페스티벌 [인천]", "2030-09-05", "2030-09-06")],
+    }
+
+    async def _fake(db, kw, *a, **k):
+        return (kw, by_kw[kw]) if kw in by_kw else (None, [])
+
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis._search_concerts_matched", _fake):
+            result = await kopis_search_concerts_multi(
+                db, ["FESTIVAL", "사운드 플래닛 페스티벌 일반"], date(2030, 8, 29), date(2030, 9, 12)
+            )
+
+    assert [c.kopis_id for c in result] == ["RIGHT"]
+
+
+# 한글 검색어는 글자 수가 적어도 정보량이 많음 - "셰본 내한공연"이 "IN SEOUL"보다 구체적으로 판정돼야 함
+def test_query_specificity_weights_hangul():
+    assert _query_specificity("셰본 내한공연") > _query_specificity("IN SEOUL")
+    assert _query_specificity("원 오크 록 내한공연") > _query_specificity("ONE")
 
 
 # 동일 공연 중복 검색 시 같은 ID로 upsert되는지 테스트

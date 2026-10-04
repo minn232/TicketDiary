@@ -2,6 +2,7 @@ import asyncio
 import difflib
 import logging
 import re
+import unicodedata
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from xml.etree import ElementTree as ET
@@ -375,14 +376,15 @@ def _is_confident_match(concert: Concert, target_date: date) -> bool:
 # KOPIS 공연 검색 (keyword, start_date, end_date -> Concert 목록 + DB upsert)
 # 결과 없으면 keyword 끝 단어를 하나씩 줄여 재시도 (최소 1단어까지 - 보통 맨 앞 단어가 아티스트명이라
 # 나머지 문구가 KOPIS 등록명과 표기/구두점이 달라도 아티스트명만으로는 후보 목록에 걸리는 경우가 많음)
-async def search_concerts(
+# 결과가 나온(축소된) 검색어도 함께 반환 - search_concerts_multi가 후보 간 비교에 씀
+async def _search_concerts_matched(
     db: AsyncSession,
     keyword: str,
     start_date: date | None = None,
     end_date: date | None = None,
     venue: str | None = None,
     client: httpx.AsyncClient | None = None,
-) -> list[Concert]:
+) -> tuple[str | None, list[Concert]]:
     words = keyword.split()
     # "2025 렛츠락 페스티벌"처럼 맨 앞이 연도면 끝단어 축소로는 절대 못 떼어내고 "2025"만 남을 수 있는데,
     # 연도 하나는 너무 광범위해서 무관한 결과가 대량으로 걸림 -> 실제 식별력 있는 뒷부분을 위해 미리 제거
@@ -390,6 +392,8 @@ async def search_concerts(
         words = words[1:]
     min_words = min(1, len(words))
     target_date = _midpoint(start_date, end_date)
+    last_error: HTTPException | None = None
+    any_succeeded = False
     for end in range(len(words), min_words - 1, -1):
         q = " ".join(words[:end])
         # 축소 도중 연도 하나만 남는 경우도 방어적으로 건너뜀 (위 처리로 보통 발생하지 않지만 안전장치)
@@ -400,7 +404,15 @@ async def search_concerts(
         # 한글은 2글자도 유의미한 경우가 많아 예외로 허용, 예: "빨래")
         if not min_len_ok(q):
             continue
-        concerts = await _search_concerts_once(db, q, start_date, end_date, client=client)
+        # 특정 검색어만 KOPIS 방화벽(400 Request Blocked, 예: " - " 포함)에 막히기도 하므로 건너뛰고 계속 진행
+        # (시도한 검색어가 전부 실패하면 아래서 다시 던짐)
+        try:
+            concerts = await _search_concerts_once(db, q, start_date, end_date, client=client)
+        except HTTPException as e:
+            logger.warning(f"KOPIS 검색 실패, 이 검색어는 건너뜀: {q!r}")
+            last_error = e
+            continue
+        any_succeeded = True
         # 결과가 API 상한(rows=50)에 도달하면 실제로는 더 많은 무관한 결과가 잘려나간 것 -> 검색어가
         # 너무 광범위하다는 뜻이라 못 믿고 버림 (예: "ONE"이 "TONE"/"Resone" 등에 부분일치해서 50건 걸림)
         if len(concerts) >= 50:
@@ -411,8 +423,22 @@ async def search_concerts(
                 logger.info(f"KOPIS 검색어 축소: {keyword!r} → {q!r} ({len(concerts)}건)")
             if target_date is not None:
                 concerts = _sort_by_date_match(concerts, target_date, venue)
-            return concerts
-    return []
+            return q, concerts
+    if last_error is not None and not any_succeeded:
+        raise last_error
+    return None, []
+
+
+async def search_concerts(
+    db: AsyncSession,
+    keyword: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    venue: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> list[Concert]:
+    _, concerts = await _search_concerts_matched(db, keyword, start_date, end_date, venue, client=client)
+    return concerts
 
 
 _PAREN_RE = re.compile(r"[\(（][^\)）]*[\)）]")
@@ -432,9 +458,15 @@ def _strip_parenthetical(s: str) -> str:
 _MAX_TITLE_KEYWORDS = 6
 
 
-# 제목 후보를 순서대로 시도, 날짜+장소로 교차검증해 확신 가능한 결과가 나오면 즉시 반환하고
-# 아니면 다음 후보로 넘어감(끝까지 없으면 폴백 없이 실패). 날짜 정보가 없으면 교차검증이
-# 불가능해 첫 매칭도 실패 처리함(실사용 샘플 98%가 날짜 추출돼 손실 거의 없음 확인).
+# 검색어 구체성 점수 - 한글 같은 전각 문자는 정보량이 많아 2, 나머지는 1로 셈
+def _query_specificity(q: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in q)
+
+
+# 제목 후보를 전부 시도해 날짜로 교차검증된 결과 중, 실제로 결과가 나온(축소된) 검색어가 가장 구체적인
+# 후보의 결과를 반환. 첫 확신 매칭을 바로 쓰면 "FESTIVAL" 같은 흔한 단어가 기간 긴 무관한 공연에 날짜만
+# 맞아 걸려서 진짜 제목까지 못 가므로 전부 비교함. 동률이면 앞쪽 후보 우선, 다른 후보 결과는 섞지 않음.
+# 날짜 정보가 없으면 교차검증이 불가능해 첫 매칭도 실패 처리함(실사용 샘플 98%가 날짜 추출돼 손실 거의 없음 확인).
 # 중복 키워드는 한 번만 시도, 후보 전체가 HTTP client 하나를 공유.
 async def search_concerts_multi(
     db: AsyncSession,
@@ -452,24 +484,38 @@ async def search_concerts_multi(
         if stripped and stripped != kw.strip():
             expanded_keywords.append(stripped)
 
+    confident: list[tuple[str, list[Concert]]] = []  # (실제로 결과가 나온 검색어, 결과)
+    last_error: HTTPException | None = None
+    any_succeeded = False
     async with httpx.AsyncClient(timeout=10.0) as client:
         for kw in expanded_keywords:
             kw = kw.strip()
             if not kw or kw in tried:
                 continue
             tried.add(kw)
-            concerts = await search_concerts(db, kw, start_date, end_date, venue, client=client)
+            try:
+                matched_q, concerts = await _search_concerts_matched(
+                    db, kw, start_date, end_date, venue, client=client
+                )
+            except HTTPException as e:
+                # 이 후보는 KOPIS 검색이 전부 실패(예: 방화벽 차단) -> 다음 후보로 계속 진행
+                last_error = e
+                continue
+            any_succeeded = True
             if not concerts:
                 continue
             # 날짜가 없으면 이 후보가 맞는지 검증할 방법이 없으므로 다음 후보로 넘어감
             # (모든 후보가 같은 target_date=None을 공유하므로, 결국 아래 최종 실패 처리로 귀결됨)
             if target_date is None:
                 continue
-            # concerts는 이미 날짜/장소 매칭 순으로 정렬돼 있으므로 1순위만 확인하면 됨
+            # concerts는 이미 날짜/장소 매칭 순으로 정렬돼 있으므로 1순위만 확인하면 됨.
+            # 날짜가 안 맞는 매칭(예: "스탠딩"이 "스탠딩에그"에 우연히 걸린 경우)은 신뢰할 수 없으므로 버림
             if _is_confident_match(concerts[0], target_date):
-                return concerts
-            # 날짜가 안 맞으면 신뢰할 수 없는 매칭(예: "스탠딩"이 "스탠딩에그"에 우연히 걸린 경우)이므로
-            # 폴백으로 쓰지 않고 버리고 다음 후보로 계속 진행
+                confident.append((matched_q, concerts))
+
+        if confident:
+            # max()는 동률이면 먼저 나온 것 반환
+            return max(confident, key=lambda qc: _query_specificity(qc[0]))[1]
 
         # 제목 후보를 전부 시도해도 확신 가능한 결과가 없으면 마지막 수단으로 장소+날짜 검색
         # (장소+날짜 조합은 보통 1~2건으로 좁혀지는 강한 필터라 제목 표기가 완전히 어긋나도 찾아낼 수 있음)
@@ -482,6 +528,9 @@ async def search_concerts_multi(
                 logger.info(f"KOPIS 제목 후보 전부 실패 → 장소+날짜 검색으로 대체 ({venue!r})")
                 return venue_concerts
 
+    # 후보 검색이 전부 KOPIS 오류였으면 "공연 없음"이 아니라 오류로 던짐(호출부가 이유를 구분)
+    if last_error is not None and not any_succeeded:
+        raise last_error
     # 확신 가능한 매칭이 끝까지 없으면 틀린 결과를 성공으로 오인하지 않도록 빈 목록 반환
     return []
 
