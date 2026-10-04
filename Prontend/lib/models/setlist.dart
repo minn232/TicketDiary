@@ -11,13 +11,24 @@ class SongEntry {
   /// 단독 공연이면 null.
   final String? artist;
 
-  const SongEntry({required this.name, this.encore = false, this.artist});
+  // [백엔드 수정] source 추가 - 'representative'면 대표곡.
+  final String? source;
+
+  const SongEntry({
+    required this.name,
+    this.encore = false,
+    this.artist,
+    this.source,
+  });
+
+  bool get isRepresentative => source == 'representative';
 
   factory SongEntry.fromJson(Map<String, dynamic> json) {
     return SongEntry(
       name: json['name'] as String,
       encore: json['encore'] as bool? ?? false,
       artist: json['artist'] as String?,
+      source: json['source'] as String?,
     );
   }
 
@@ -26,6 +37,7 @@ class SongEntry {
     'name': name,
     'encore': encore,
     'artist': artist,
+    'source': source,
   };
 }
 
@@ -45,6 +57,9 @@ class RealSetlistResponse {
   /// (placeholder 표시용).
   final List<String> artistNames;
 
+  // [백엔드 수정] 셋리가 빈 아티스트별 상태(빈 화면 문구용).
+  final List<ArtistSetlistStatus> artistStatuses;
+
   const RealSetlistResponse({
     this.id,
     required this.concertId,
@@ -53,7 +68,17 @@ class RealSetlistResponse {
     required this.isUserEdited,
     this.editedUserNickname,
     this.artistNames = const [],
+    this.artistStatuses = const [],
   });
+
+  ArtistSetlistStatus? statusFor(String? artist) {
+    for (final status in artistStatuses) {
+      if (status.artist == artist) return status;
+    }
+    return artist == null && artistStatuses.length == 1
+        ? artistStatuses.first
+        : null;
+  }
 
   factory RealSetlistResponse.fromJson(Map<String, dynamic> json) {
     return RealSetlistResponse(
@@ -68,6 +93,40 @@ class RealSetlistResponse {
       artistNames: (json['artist_names'] as List<dynamic>? ?? const [])
           .map((e) => e as String)
           .toList(),
+      artistStatuses: (json['artist_statuses'] as List<dynamic>? ?? const [])
+          .map((e) => ArtistSetlistStatus.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+// [백엔드 수정] 실제 셋리가 빈 아티스트의 상태 신규.
+/// [state]: searching(아직 안 찾아봄) / searched(찾았지만 없음) /
+/// unresolved(누구인지 확정 못함) / not_artist(아티스트 아님으로 설정됨).
+@immutable
+class ArtistSetlistStatus {
+  final String artist;
+  final String state;
+
+  /// 연결된 아티스트 이름(searching/searched만).
+  final String? name;
+
+  /// 대표곡 1곡.
+  final String? topSong;
+
+  const ArtistSetlistStatus({
+    required this.artist,
+    required this.state,
+    this.name,
+    this.topSong,
+  });
+
+  factory ArtistSetlistStatus.fromJson(Map<String, dynamic> json) {
+    return ArtistSetlistStatus(
+      artist: json['artist'] as String,
+      state: json['state'] as String,
+      name: json['name'] as String?,
+      topSong: json['top_song'] as String?,
     );
   }
 }
@@ -76,7 +135,8 @@ class RealSetlistResponse {
 /// 백엔드 `PreSetlistResponse`와 대응.
 @immutable
 class PreSetlistResponse {
-  final String id;
+  // [백엔드 수정] 예상 셋리가 아직 없으면 null(빈 songs + artistNames만 옴).
+  final String? id;
   final String concertId;
   final String? setlistfmId;
   final List<SongEntry> songs;
@@ -100,7 +160,7 @@ class PreSetlistResponse {
 
   factory PreSetlistResponse.fromJson(Map<String, dynamic> json) {
     return PreSetlistResponse(
-      id: json['id'] as String,
+      id: json['id'] as String?,
       concertId: json['concert_id'] as String,
       setlistfmId: json['setlistfm_id'] as String?,
       songs: (json['songs'] as List<dynamic>? ?? const [])
@@ -110,6 +170,137 @@ class PreSetlistResponse {
       editedUserNickname: json['edited_user_nickname'] as String?,
       artistNames: (json['artist_names'] as List<dynamic>? ?? const [])
           .map((e) => e as String)
+          .toList(),
+    );
+  }
+}
+
+// [백엔드 수정] 예상 셋리 앵커 후보(공연 아티스트 이름으로 찾은 iTunes 아티스트) 신규.
+/// `GET /tickets/{ticketId}/setlist/pre/artist-candidates` 응답 한 건.
+/// 동명이인은 [genre]/[topSongs]로 구분.
+@immutable
+class ArtistCandidate {
+  final String itunesArtistId;
+  final String artistName;
+  final String? genre;
+  final List<String> topSongs;
+  final String? artworkUrl;
+
+  const ArtistCandidate({
+    required this.itunesArtistId,
+    required this.artistName,
+    this.genre,
+    this.topSongs = const [],
+    this.artworkUrl,
+  });
+
+  factory ArtistCandidate.fromJson(Map<String, dynamic> json) {
+    return ArtistCandidate(
+      itunesArtistId: json['itunes_artist_id'] as String,
+      artistName: json['artist_name'] as String,
+      genre: json['genre'] as String?,
+      topSongs: (json['top_songs'] as List<dynamic>? ?? const [])
+          .map((e) => e as String)
+          .toList(),
+      artworkUrl: json['artwork_url'] as String?,
+    );
+  }
+}
+
+// [백엔드 수정] 예상 셋리 앵커 후보(iTunes 곡 검색 결과) 신규.
+/// `GET /tickets/{ticketId}/setlist/pre/anchor-candidates` 응답 한 건.
+/// 고르면 이 곡의 아티스트([itunesArtistId])로 확정됨.
+@immutable
+class ArtistAnchorCandidate {
+  final String itunesArtistId;
+  final String artistName;
+  final String trackName;
+  final String? albumName;
+  final String? artworkUrl;
+
+  const ArtistAnchorCandidate({
+    required this.itunesArtistId,
+    required this.artistName,
+    required this.trackName,
+    this.albumName,
+    this.artworkUrl,
+  });
+
+  factory ArtistAnchorCandidate.fromJson(Map<String, dynamic> json) {
+    return ArtistAnchorCandidate(
+      itunesArtistId: json['itunes_artist_id'] as String,
+      artistName: json['artist_name'] as String,
+      trackName: json['track_name'] as String,
+      albumName: json['album_name'] as String?,
+      artworkUrl: json['artwork_url'] as String?,
+    );
+  }
+}
+
+// [백엔드 수정] 공연별 아티스트 연결 수정 후보 신규.
+/// `GET /tickets/{ticketId}/artist-identity/candidates` 후보 한 건.
+/// [canonicalId]가 없으면 MusicBrainz에만 있는 아티스트(고르면 [mbid]로 연결).
+@immutable
+class IdentityCandidate {
+  final String? canonicalId;
+  final String? mbid;
+  final String name;
+  final String? imageUrl;
+  final String? country;
+  final String? type;
+  final String? disambiguation;
+  final String? beginYear;
+  // 알아보기용 곡 몇 개(인기순).
+  final List<String> topSongs;
+  final bool isCurrent;
+
+  const IdentityCandidate({
+    this.canonicalId,
+    this.mbid,
+    required this.name,
+    this.imageUrl,
+    this.country,
+    this.type,
+    this.disambiguation,
+    this.beginYear,
+    this.topSongs = const [],
+    this.isCurrent = false,
+  });
+
+  factory IdentityCandidate.fromJson(Map<String, dynamic> json) {
+    return IdentityCandidate(
+      canonicalId: json['canonical_id'] as String?,
+      mbid: json['mbid'] as String?,
+      name: json['name'] as String,
+      imageUrl: json['image_url'] as String?,
+      country: json['country'] as String?,
+      type: json['type'] as String?,
+      disambiguation: json['disambiguation'] as String?,
+      beginYear: json['begin_year']?.toString(),
+      topSongs: (json['top_songs'] as List<dynamic>? ?? const [])
+          .map((e) => e as String)
+          .toList(),
+      isCurrent: json['is_current'] as bool? ?? false,
+    );
+  }
+}
+
+/// 연결 수정 후보 응답 - [noArtist]면 지금 "연결할 아티스트 없음" 상태.
+@immutable
+class IdentityCandidatesResponse {
+  final bool noArtist;
+  final List<IdentityCandidate> candidates;
+
+  const IdentityCandidatesResponse({
+    this.noArtist = false,
+    this.candidates = const [],
+  });
+
+  factory IdentityCandidatesResponse.fromJson(Map<String, dynamic> json) {
+    return IdentityCandidatesResponse(
+      noArtist: json['no_artist'] as bool? ?? false,
+      candidates: (json['candidates'] as List<dynamic>? ?? const [])
+          .map((e) => IdentityCandidate.fromJson(e as Map<String, dynamic>))
           .toList(),
     );
   }

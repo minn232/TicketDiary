@@ -99,7 +99,8 @@ class TicketData {
 
     final artistName = concert?.artistName;
     if (artistName != null && artistName.isNotEmpty) {
-      extraFields['아티스트'] = artistName.join(', ');
+      // [백엔드 수정] 아티스트 연결을 바꾼 공연은 연결된 이름으로
+      extraFields['아티스트'] = concert!.artistLabel;
     }
     final eventType = concert?.eventType;
     if (eventType != null && eventType.isNotEmpty) {
@@ -116,7 +117,8 @@ class TicketData {
       info: TicketInfo(
         concertName: concert?.name ?? '',
         venueName: concert?.venue ?? '',
-        date: concert?.startDate,
+        // [백엔드 수정] 여러 날 공연은 관람일 우선
+        date: ticket.attendedDate ?? concert?.startDate,
         price: ticket.price?.toString() ?? '',
         seat: ticket.seatType ?? '',
         posterImageUrl: concert?.posterUrl,
@@ -128,6 +130,7 @@ class TicketData {
         review: ticket.review,
         concertPhotoUrls: ticket.concertPhotoUrls,
         ticketingLinks: concert?.ticketingLinks,
+        pageLayout: ticket.pageLayout,
       ),
       id: ticket.id,
       // 서버(또는 게스트는 LocalTicketStore)에 저장된 torn_at이 있으면
@@ -755,6 +758,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (selected == null || !mounted) return; // 여러 후보 중 아무것도 선택 안 하고 취소함
 
     final extracted = scanResult.extracted;
+    // [백엔드 수정] 여러 날 공연인데 관람일을 못 읽었거나 공연 기간 밖이면 고르게 함
+    // (관람일이 없으면 서버가 셋리/아티스트 연결을 어느 날 기준으로 할지 몰라 실패함).
+    DateTime? attendedDate = _parseYmd(extracted.date);
+    final days = _concertDays(selected);
+    if (days.length > 1 &&
+        (attendedDate == null ||
+            !days.any((d) => DateUtils.isSameDay(d, attendedDate)))) {
+      final picked = await _pickAttendedDate(days);
+      if (picked == null || !mounted) return;
+      attendedDate = picked;
+    }
+
     // 모바일 티켓 캡쳐처럼 사진에 가격/좌석이 없는 경우, KOPIS 가격표
     // (candidate.price)로 채움 - 하나만 없으면 자동 추정, 추정 실패하거나
     // 둘 다 없으면 강제 선택 시트(닫기로 건너뛸 수 없음)로 넘어감.
@@ -799,7 +814,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         startTime: extracted.time,
         // [백엔드 수정]
         // extracted.date(OCR 관람일)도 같은 이유로 넘기도록 수정.
-        attendedDate: _parseYmd(extracted.date),
+        attendedDate: attendedDate,
         ticketingSite: extracted.platform,
         price: finalPrice,
         seatType: finalSeat,
@@ -870,6 +885,68 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 onTap: () => Navigator.pop(context, candidate),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // [백엔드 수정] 여러 날 공연 관람일 선택 신규.
+  /// 공연 기간의 날짜 목록(시작일~종료일). 서버 날짜는 자정 UTC로 저장된 현지 날짜라
+  /// UTC 기준 연월일을 씀.
+  List<DateTime> _concertDays(ConcertResponse concert) {
+    final start = concert.startDate.toUtc();
+    final end = concert.endDate.toUtc();
+    final first = DateTime(start.year, start.month, start.day);
+    final last = DateTime(end.year, end.month, end.day);
+    return [
+      for (
+        var d = first;
+        !d.isAfter(last);
+        d = DateTime(d.year, d.month, d.day + 1)
+      )
+        d,
+    ];
+  }
+
+  /// 여러 날 공연에서 관람일을 반드시 고르게 하는 시트(좌석 선택 시트와 같은 방식).
+  Future<DateTime?> _pickAttendedDate(List<DateTime> days) {
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    return showModalBottomSheet<DateTime>(
+      context: context,
+      backgroundColor: Colors.white,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => PopScope(
+        canPop: false,
+        child: SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                child: Text(
+                  '여러 날 열리는 공연이에요.\n관람한 날짜를 선택해주세요.',
+                  style: TextStyle(
+                    fontSize: context.sp(15),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              for (final day in days)
+                ListTile(
+                  title: Text(
+                    '${day.year}. ${day.month}. ${day.day} '
+                    '(${weekdays[day.weekday - 1]})',
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  onTap: () => Navigator.pop(context, day),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1074,9 +1151,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
             borderRadius: const BorderRadius.horizontal(
               right: Radius.circular(8),
             ),
-            boxShadow: const [
+            boxShadow: [
               BoxShadow(
-                color: Colors.black26,
+                color: Colors.black.withValues(alpha: 0.18),
                 blurRadius: 4,
                 offset: Offset(2, 2),
               ),
@@ -1339,6 +1416,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                   posterOverlayKey: GlobalKey(),
                   vibrate: !_transitionSpotlightIds.contains(ticket.id),
                   initiallyRevealed: ticket.tornRevealed,
+                  issueNumber: _issueNumberForIndex(
+                    _tickets.indexWhere((t) => t.id == ticket.id),
+                  ),
                 ),
               )
             : _buildTicketPocket(
@@ -1743,6 +1823,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
                     frameScale:
                         DiaryFrameScale.maybeOf(context) ??
                         diaryScaleFromMediaQuery(context),
+                    // [백엔드 수정] 아티스트 연결 수정 반영
+                    onTicketInfoChanged: (updated) =>
+                        setState(() => ticket.info = updated),
                   );
                   if (mounted) setState(() => _overlayHiddenRegionKey = null);
                 },
@@ -1774,6 +1857,9 @@ class _DiaryScreenState extends State<DiaryScreen> {
             // 뜯긴 상태로 보여주고, 처음 뜯는 순간에는 티켓 데이터에 기록해서
             // 이후에도 계속 뜯긴 채로 유지되게 합니다.
             initiallyRevealed: ticket.tornRevealed,
+            issueNumber: _issueNumberForIndex(
+              _tickets.indexWhere((t) => t.id == ticket.id),
+            ),
             onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
               setState(() => ticket.tornRevealed = true);
@@ -1847,7 +1933,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withValues(alpha: 0.035),
             blurRadius: 5,
             offset: const Offset(2, 2),
           ),
@@ -2292,6 +2378,8 @@ class _DiaryScreenState extends State<DiaryScreen> {
     bool initiallyRevealed = false,
     VoidCallback? onTorn,
     ValueChanged<TicketInfo>? onInfoChanged,
+    // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 전달.
+    int issueNumber = 1,
   }) {
     // 입장 티켓을 뜯은 뒤에는, 티켓 어디를 눌러도 "공연 후" 페이지가 뜹니다.
     // (예전의 뜯긴 왼쪽 = "공연전" 바로가기/공연 전 페이지 진입은 제거.)
@@ -2317,6 +2405,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         onTicketInfoChanged: onInfoChanged,
         // [백엔드 수정] 이 리스트에서 쓰이는 배율을 그대로 넘김.
         frameScale: frameScale,
+        issueNumber: issueNumber,
       );
       if (mounted) setState(() => _overlayHiddenRegionKey = null);
     }

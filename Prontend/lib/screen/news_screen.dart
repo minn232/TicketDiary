@@ -908,11 +908,11 @@ class _GlassGloss extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  _tint.withValues(alpha: 0.13),
-                  _tint.withValues(alpha: 0.05),
-                  _tint.withValues(alpha: 0.01),
+                  _tint.withValues(alpha: 0.065),
+                  _tint.withValues(alpha: 0.025),
+                  _tint.withValues(alpha: 0.005),
                   _tint.withValues(alpha: 0.0),
-                  _tint.withValues(alpha: 0.035),
+                  _tint.withValues(alpha: 0.018),
                 ],
                 stops: const [0.0, 0.24, 0.52, 0.8, 1.0],
               ),
@@ -927,8 +927,8 @@ class _GlassGloss extends StatelessWidget {
                 colors: [
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
-                  _tint.withValues(alpha: 0.24),
-                  _tint.withValues(alpha: 0.24),
+                  _tint.withValues(alpha: 0.12),
+                  _tint.withValues(alpha: 0.12),
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
                 ],
@@ -946,8 +946,8 @@ class _GlassGloss extends StatelessWidget {
                 colors: [
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
-                  _tint.withValues(alpha: 0.15),
-                  _tint.withValues(alpha: 0.15),
+                  _tint.withValues(alpha: 0.075),
+                  _tint.withValues(alpha: 0.075),
                   _tint.withValues(alpha: 0.0),
                   _tint.withValues(alpha: 0.0),
                 ],
@@ -1083,7 +1083,7 @@ class _PolaroidCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
+              color: Colors.black.withValues(alpha: 0.105),
               blurRadius: 10,
               offset: const Offset(4, 8),
             ),

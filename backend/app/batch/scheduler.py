@@ -35,8 +35,8 @@ async def _run_pending_notifications() -> None:
     try:
         async with AsyncSessionLocal() as db:
             await process_pending_notifications(db)
-    except Exception as e:
-        logger.error(f"알림 스케줄러 실행 오류: {e}")
+    except Exception:
+        logger.exception("알림 스케줄러 실행 오류")
 
 
 async def _run_daily_kopis_sync() -> None:
@@ -44,8 +44,8 @@ async def _run_daily_kopis_sync() -> None:
         async with AsyncSessionLocal() as db:
             await sync_daily_concerts(db)
         logger.info("KOPIS 일별 동기화 완료")
-    except Exception as e:
-        logger.error(f"KOPIS 일별 동기화 오류: {e}")
+    except Exception:
+        logger.exception("KOPIS 일별 동기화 오류")
 
 
 async def _run_pod_start() -> None:
@@ -56,15 +56,15 @@ async def _run_pod_start() -> None:
         # pod 시작 + SSH 원격으로 start_vllm.sh 실행까지 한 번에 (LLM팀 Container Start
         # Command 자동화가 무산되면서 SSH 방식으로 대체함)
         await start_pod_and_launch_services()
-    except Exception as e:
-        logger.error(f"RunPod pod 시작 오류: {e}")
+    except Exception:
+        logger.exception("RunPod pod 시작 오류")
 
 
 async def _run_pod_stop() -> None:
     try:
         await stop_pod()
-    except Exception as e:
-        logger.error(f"RunPod pod 정지 오류: {e}")
+    except Exception:
+        logger.exception("RunPod pod 정지 오류")
 
 
 # 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡은 밤을 위한 안전망 - 유휴 5분 감지되면 01시
@@ -77,8 +77,8 @@ async def _run_llm_idle_check() -> None:
         if await stop_pod():
             await mark_stopped_early()
             logger.info("야간 배치 조기 완료로 pod 조기 정지 완료 (01시/02시 안전망은 그대로 유지됨)")
-    except Exception as e:
-        logger.error(f"LLM 배치 유휴 감지/조기 정지 오류: {e}")
+    except Exception:
+        logger.exception("LLM 배치 유휴 감지/조기 정지 오류")
 
 
 async def _run_crawl_send() -> None:
@@ -90,52 +90,52 @@ async def _run_crawl_send() -> None:
             logger.warning("llm_server 준비 안 됨, 이번 크롤링 전송은 건너뛰고 다음날 재시도")
             return
         await send_screenshots_to_llm()
-    except Exception as e:
-        logger.error(f"크롤링 스크린샷 전송 오류: {e}")
+    except Exception:
+        logger.exception("크롤링 스크린샷 전송 오류")
 
 
 async def _run_ticket_status_sync() -> None:
     try:
         async with AsyncSessionLocal() as db:
             await sync_ticket_statuses(db)
-    except Exception as e:
-        logger.error(f"티켓 상태 자동 전환 오류: {e}")
+    except Exception:
+        logger.exception("티켓 상태 자동 전환 오류")
 
 
 async def _run_concert_follow_cleanup() -> None:
     try:
         async with AsyncSessionLocal() as db:
             await cleanup_ended_concert_follows(db)
-    except Exception as e:
-        logger.error(f"찜 공연 자동 해제 오류: {e}")
+    except Exception:
+        logger.exception("찜 공연 자동 해제 오류")
 
 
 async def _run_crawl_retry() -> None:
     try:
         await retry_pending_crawls()
-    except Exception as e:
-        logger.error(f"크롤링 재시도 오류: {e}")
+    except Exception:
+        logger.exception("크롤링 재시도 오류")
 
 
 async def _run_festival_lineup_check() -> None:
     try:
         await retry_festival_lineup_checks()
-    except Exception as e:
-        logger.error(f"페스티벌 라인업 재확인 오류: {e}")
+    except Exception:
+        logger.exception("페스티벌 라인업 재확인 오류")
 
 
 async def _run_artist_similarity_sync() -> None:
     try:
         await sync_artist_similarities()
-    except Exception as e:
-        logger.error(f"Last.fm 아티스트 유사도 동기화 오류: {e}")
+    except Exception:
+        logger.exception("Last.fm 아티스트 유사도 동기화 오류")
 
 
 async def _run_artist_genre_sync() -> None:
     try:
         await sync_artist_genres()
-    except Exception as e:
-        logger.error(f"Last.fm 아티스트 장르 동기화 오류: {e}")
+    except Exception:
+        logger.exception("Last.fm 아티스트 장르 동기화 오류")
 
 
 async def _run_artist_extraction_send() -> None:
@@ -146,15 +146,15 @@ async def _run_artist_extraction_send() -> None:
             logger.warning("llm_server 준비 안 됨, 이번 아티스트 추출 전송은 건너뛰고 다음날 재시도")
             return
         await send_posters_for_artist_extraction()
-    except Exception as e:
-        logger.error(f"포스터 아티스트 추출 요청 전송 오류: {e}")
+    except Exception:
+        logger.exception("포스터 아티스트 추출 요청 전송 오류")
 
 
 async def _run_diary_send() -> None:
     try:
         await send_diary_requests_to_llm()
-    except Exception as e:
-        logger.error(f"일기 생성 요청 전송 오류: {e}")
+    except Exception:
+        logger.exception("일기 생성 요청 전송 오류")
     finally:
         # 그날 밤 예정된 전송 배치 3개 중 마지막 - 성공/실패 무관하게 "오늘 밤 전송은 이걸로
         # 끝"을 표시해야 정확한 건수 매칭(llm_batch_state.py)이 조기 정지를 판단할 수 있음
@@ -164,16 +164,16 @@ async def _run_diary_send() -> None:
 async def _run_real_setlist_backfill() -> None:
     try:
         await retry_real_setlist_generation()
-    except Exception as e:
-        logger.error(f"실제 셋리스트 자동 채움 오류: {e}")
+    except Exception:
+        logger.exception("실제 셋리스트 자동 채움 오류")
 
 
 async def _run_musicbrainz_normalize() -> None:
     try:
         stats = await normalize_pending_artists()
         logger.info(f"MusicBrainz 아티스트 정규화 배치 완료: {stats}")
-    except Exception as e:
-        logger.error(f"MusicBrainz 아티스트 정규화 배치 오류: {e}")
+    except Exception:
+        logger.exception("MusicBrainz 아티스트 정규화 배치 오류")
 
 
 def start_scheduler() -> None:

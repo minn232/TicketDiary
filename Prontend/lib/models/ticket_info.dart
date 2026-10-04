@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'page_layout.dart';
+
 /// 공연 타임테이블의 한 항목(시간/라벨).
 @immutable
 class TimetableEntry {
@@ -63,6 +65,10 @@ class TicketInfo {
   // 구매처(vendorName)와는 별개.
   final Map<String, String>? ticketingLinks;
 
+  // [백엔드 수정]
+  // 공연후 페이지 배치(page_layout). 사진 목록도 여기 photo 아이템이 기준.
+  final PageLayout? pageLayout;
+
   const TicketInfo({
     this.concertName = '',
     this.venueName = '',
@@ -80,6 +86,7 @@ class TicketInfo {
     this.review,
     this.concertPhotoUrls,
     this.ticketingLinks,
+    this.pageLayout,
   });
 
   TicketInfo copyWith({
@@ -99,6 +106,7 @@ class TicketInfo {
     String? review,
     List<String>? concertPhotoUrls,
     Map<String, String>? ticketingLinks,
+    PageLayout? pageLayout,
   }) {
     return TicketInfo(
       concertName: concertName ?? this.concertName,
@@ -117,6 +125,7 @@ class TicketInfo {
       review: review ?? this.review,
       ticketingLinks: ticketingLinks ?? this.ticketingLinks,
       concertPhotoUrls: concertPhotoUrls ?? this.concertPhotoUrls,
+      pageLayout: pageLayout ?? this.pageLayout,
     );
   }
 

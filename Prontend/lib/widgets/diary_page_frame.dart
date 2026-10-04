@@ -713,8 +713,9 @@ class DiaryPageFrame extends StatelessWidget {
         // indexTabTopReserve만큼 위 여백을 떼고 나머지 공간에 프레임 배치.
         // scaleOverride가 있으면(스플래시 미리보기) 이미 최종 크기로 계산돼
         // 들어온 값이라 여기서 또 빼면 이중 축소되므로 reserve를 0으로 둠.
-        final effectiveTopReserve =
-            scaleOverride == null ? indexTabTopReserve : 0.0;
+        final effectiveTopReserve = scaleOverride == null
+            ? indexTabTopReserve
+            : 0.0;
         final reservedHeight = availableHeight - effectiveTopReserve;
         double frameWidth;
         double frameHeight;
@@ -862,7 +863,7 @@ class DiaryPageFrame extends StatelessWidget {
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
+                          color: Colors.black.withValues(alpha: 0.21),
                           blurRadius: 10,
                           offset: const Offset(5, 5),
                         ),
@@ -1143,7 +1144,7 @@ class _DiaryPageLayer extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
+                color: Colors.black.withValues(alpha: 0.14),
                 blurRadius: 8,
                 offset: const Offset(4, 4),
               ),
@@ -1288,7 +1289,7 @@ class _BinderRing extends StatelessWidget {
               // 또렷이 보이도록 합니다.
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.55),
+                  color: Colors.black.withValues(alpha: 0.385),
                   blurRadius: 5,
                   spreadRadius: 0.5,
                   offset: const Offset(2, 2),

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, selectinload
 
@@ -37,8 +37,15 @@ async def _generate_feeds_for_new_follows(
     if not artist_names_lower:
         return
 
+    # 미래 공연 전체를 불러와 파이썬으로 거르지 않고, 새 팔로우 아티스트가 든 공연만 SQL에서 좁힘
     now = datetime.now(timezone.utc)
-    result = await db.execute(select(Concert).where(Concert.start_date >= now))
+    artist = func.unnest(Concert.artist_name).column_valued("artist")
+    result = await db.execute(
+        select(Concert).where(
+            Concert.start_date >= now,
+            exists(select(artist).where(func.lower(artist).in_(artist_names_lower))),
+        )
+    )
     concerts = result.scalars().all()
 
     matched: list[tuple[Concert, str]] = []

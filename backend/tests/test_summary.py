@@ -8,6 +8,7 @@ from httpx import AsyncClient, ASGITransport
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_genre import ArtistGenre
+from app.models.setlist import RealSetlist
 from app.services.summary import _is_standing, _period_start
 from conftest import _get_token, kopis_mock
 
@@ -32,6 +33,7 @@ def _make_kopis_xml(
     start: str,
     genre: str = "대중음악",
     artists: str = "테스트아티스트",
+    end: str | None = None,
 ) -> bytes:
     return (
         f'<?xml version="1.0" encoding="UTF-8"?>'
@@ -39,7 +41,7 @@ def _make_kopis_xml(
         f"<mt20id>{kopis_id}</mt20id>"
         f"<prfnm>{kopis_id} 공연</prfnm>"
         f"<prfpdfrom>{start}</prfpdfrom>"
-        f"<prfpdto>{start}</prfpdto>"
+        f"<prfpdto>{end or start}</prfpdto>"
         f"<fcltynm>테스트공연장</fcltynm>"
         f"<genrenm>{genre}</genrenm>"
         f"<prfcast>{artists}</prfcast>"
@@ -333,6 +335,48 @@ async def test_summary_song_count():
 
     assert res.status_code == 200
     assert res.json()["song_count"] == 3
+
+
+# 여러 날 공연(3일 전~2일 전 이틀) 셋리 두 개 저장, 관람일 지정 여부별로 요약
+async def _multi_day_song_count(kopis_id: str, attended_days_ago: int | None) -> int:
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    xml = _make_kopis_xml(kopis_id, _date_str(3), end=_date_str(2))
+    with kopis_mock(xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            concert_res = await ac.get(f"/api/v1/concerts/{kopis_id}", headers=headers)
+    concert_id = uuid.UUID(concert_res.json()["id"])
+
+    async with AsyncSessionLocal() as db:
+        db.add(RealSetlist(
+            concert_id=concert_id, performance_date=date.today() - timedelta(days=3),
+            songs=[{"name": f"Day1 {i}"} for i in range(5)],
+        ))
+        db.add(RealSetlist(
+            concert_id=concert_id, performance_date=date.today() - timedelta(days=2),
+            songs=[{"name": f"Day2 {i}"} for i in range(3)],
+        ))
+        await db.commit()
+
+    body: dict = {"concert_id": str(concert_id)}
+    if attended_days_ago is not None:
+        body["attended_date"] = (date.today() - timedelta(days=attended_days_ago)).isoformat()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        assert (await ac.post("/api/v1/tickets", json=body, headers=headers)).status_code == 201
+        res = await ac.get("/api/v1/summary", headers=headers)
+    return res.json()["song_count"]
+
+
+# 여러 날 공연은 관람한 날 셋리 곡만 셈(안 간 날 셋리까지 합산하던 버그 회귀 방지)
+@pytest.mark.asyncio
+async def test_summary_song_count_multi_day_uses_attended_date_only():
+    assert await _multi_day_song_count("PF_SUM_SONG_MULTI_001", attended_days_ago=2) == 3
+
+
+# 관람일 모르는 여러 날 공연은 어느 날인지 추측하지 않고 곡 수에서 뺌
+@pytest.mark.asyncio
+async def test_summary_song_count_multi_day_without_attended_date_skipped():
+    assert await _multi_day_song_count("PF_SUM_SONG_MULTI_002", attended_days_ago=None) == 0
 
 
 # 6m 필터: 183일 초과 공연 제외 테스트

@@ -415,8 +415,9 @@ class _SplashScreenState extends State<SplashScreen>
           // [백엔드 수정] DiaryPageFrame.indexTabTopReserve 참고 - 1페이지
           // 모드만 실제 프레임이 이만큼 밀려 배치되므로, 세로 예산과
           // 중앙정렬 오프셋도 똑같이 반영(2페이지는 여백 자체가 없음).
-          final topReserve =
-              usesTwoPage ? 0.0 : DiaryPageFrame.indexTabTopReserve;
+          final topReserve = usesTwoPage
+              ? 0.0
+              : DiaryPageFrame.indexTabTopReserve;
           final screenHForBook = screenH - topReserve;
 
           final centeringOffset = Offset(
@@ -442,8 +443,10 @@ class _SplashScreenState extends State<SplashScreen>
           // 써야 합니다. 예전엔 math.max에 1.04배까지 더해서 일부러 화면을
           // 살짝 넘치게 채웠는데, 그 결과 애니메이션 끝의 페이지가 실제
           // 다이어리 페이지보다 커 보이는 문제가 있었습니다.
-          final fillScale =
-              math.min(screenW / bookWidth, screenHForBook / bookHeight);
+          final fillScale = math.min(
+            screenW / bookWidth,
+            screenHForBook / bookHeight,
+          );
 
           // 실제 DiaryPageFrame이 이 화면에서 스스로 계산할 scale/marginEachSide와
           // 정확히 같은 수식(diary_page_frame.dart의 계산과 동일 - frameWidth는
@@ -692,7 +695,7 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black45,
+                        color: Colors.black.withValues(alpha: 0.315),
                         blurRadius: w * _edgeShadowBlurRatio,
                         offset: Offset(0, h * _edgeShadowOffsetRatio),
                       ),
@@ -1055,7 +1058,7 @@ class _SplashScreenState extends State<SplashScreen>
             borderRadius: BorderRadius.circular(w * _coverRadiusRatio),
             boxShadow: [
               BoxShadow(
-                color: Colors.black38,
+                color: Colors.black.withValues(alpha: 0.266),
                 blurRadius: w * _coverShadowBlurRatio,
                 offset: Offset(
                   w * _coverShadowOffsetXRatio,
@@ -1106,7 +1109,7 @@ class _SplashScreenState extends State<SplashScreen>
                     borderRadius: BorderRadius.circular(w * _bandRadiusRatio),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black38,
+                        color: Colors.black.withValues(alpha: 0.266),
                         blurRadius: w * _bandRadiusRatio,
                         offset: Offset(w * _bandShadowOffsetXRatio, 0),
                       ),
@@ -1629,7 +1632,7 @@ class _MainPageReplica extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
+                  color: Colors.black.withValues(alpha: 0.21),
                   blurRadius: 10 * k,
                   offset: Offset(5 * k, 5 * k),
                 ),
@@ -1748,7 +1751,7 @@ Widget _buildMiniBinderRing(
           borderRadius: BorderRadius.circular(3 * k),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.55),
+              color: Colors.black.withValues(alpha: 0.385),
               blurRadius: 5 * k,
               spreadRadius: 0.5 * k,
               offset: Offset(2 * k, 2 * k),

@@ -8,6 +8,13 @@ import 'api_client.dart';
 abstract class UploadService {
   /// 공연 사진 업로드(`POST /upload/concert-photo`).
   Future<String> uploadConcertPhoto(XFile image);
+
+  // [백엔드 수정] 기기에서 만든 썸네일을 같이 올림 (thumbnail 필드)
+  /// 공연 사진 + 썸네일 업로드. 반환값은 (원본 URL, 썸네일 URL).
+  Future<(String, String?)> uploadConcertPhotoBytes(
+    Uint8List image, {
+    Uint8List? thumbnail,
+  });
 }
 
 // [백엔드 수정]
@@ -32,5 +39,22 @@ class BackendUploadService implements UploadService {
       filename: image.name.isNotEmpty ? image.name : 'concert_photo.jpg',
     );
     return json['url'] as String;
+  }
+
+  @override
+  Future<(String, String?)> uploadConcertPhotoBytes(
+    Uint8List image, {
+    Uint8List? thumbnail,
+  }) async {
+    final json = await _client.postMultipart(
+      '/upload/concert-photo',
+      fileField: 'image',
+      fileBytes: image,
+      filename: 'concert_photo.jpg',
+      extraFiles: thumbnail == null
+          ? null
+          : {'thumbnail': (thumbnail, 'concert_photo_thumb.jpg')},
+    );
+    return (json['url'] as String, json['thumb_url'] as String?);
   }
 }

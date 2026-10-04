@@ -96,7 +96,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   late final ArtistRecommendationService _recommendationService =
       widget.recommendationService ?? BackendArtistRecommendationService();
   late final ConcertRecommendationService _concertRecommendationService =
-      widget.concertRecommendationService ?? BackendConcertRecommendationService();
+      widget.concertRecommendationService ??
+      BackendConcertRecommendationService();
   final FavoritesStore _favorites = FavoritesStore.instance;
 
   // [백엔드 수정]
@@ -255,7 +256,11 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
           : <String>{};
       setState(() {
         _recommendedArtists = highlightNew
-            ? _mergeKeepingOrderBy(previousOrder, recommendations, (a) => a.name)
+            ? _mergeKeepingOrderBy(
+                previousOrder,
+                recommendations,
+                (a) => a.name,
+              )
             : recommendations;
         _newlyRecommendedNames = newlyAdded;
         if (newlyAdded.isNotEmpty) {
@@ -277,8 +282,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     final previousOrder = _recommendedConcerts;
     final previousNames = previousOrder.map((c) => c.name).toSet();
     try {
-      final recommendations =
-          await _concertRecommendationService.getRecommendations();
+      final recommendations = await _concertRecommendationService
+          .getRecommendations();
       if (!mounted || seq != _concertRecommendationRequestSeq) return;
       final newlyAdded = highlightNew
           ? {
@@ -288,7 +293,11 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
           : <String>{};
       setState(() {
         _recommendedConcerts = highlightNew
-            ? _mergeKeepingOrderBy(previousOrder, recommendations, (c) => c.name)
+            ? _mergeKeepingOrderBy(
+                previousOrder,
+                recommendations,
+                (c) => c.name,
+              )
             : recommendations;
         _newlyRecommendedConcertNames = newlyAdded;
         if (newlyAdded.isNotEmpty) {
@@ -1063,7 +1072,9 @@ class _ThumbCard extends StatelessWidget {
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: accent.withValues(alpha: 0.35 * value),
+                                  color: accent.withValues(
+                                    alpha: 0.7 * (0.35 * value),
+                                  ),
                                   blurRadius: 10,
                                   spreadRadius: 1,
                                 ),

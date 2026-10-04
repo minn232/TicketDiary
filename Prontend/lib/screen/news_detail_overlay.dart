@@ -142,7 +142,21 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     );
 
     var width = safeWidth * 0.90;
-    final height = safeHeight * 0.90;
+    final vendorCount = widget.news.ticketingLinks?.length ?? 0;
+    final baseHeightFactor = vendorCount <= 1
+        ? 0.78
+        : (vendorCount == 2 ? 0.84 : 0.90);
+    final heightGrowth = (vendorCount - 2).clamp(0, 4) * 0.035;
+    final longTitleGrowth =
+        ((widget.news.concert.length - 18).clamp(0, 24) / 24) * 0.055;
+    final venueGrowth =
+        (((widget.news.venue ?? '').length - 12).clamp(0, 28) / 28) * 0.035;
+    final height =
+        safeHeight *
+        (baseHeightFactor + heightGrowth + longTitleGrowth + venueGrowth).clamp(
+          baseHeightFactor,
+          0.98,
+        );
     // [백엔드 수정]
     // 가로모드 태블릿에서 90%x90%가 극단적으로 넓어지는 것 방지 —
     // 티켓 오버레이와 같은 diaryAspectRatio를 폭 상한으로 둠.
@@ -438,7 +452,6 @@ class _ExpandedNewsDetail extends StatelessWidget {
             child: Center(
               child: FractionallySizedBox(
                 widthFactor: 0.888 * 1.08,
-                heightFactor: 0.888 * 1.08,
                 child: Container(
                   key: pageKey,
                   constraints: const BoxConstraints(maxWidth: 562),
@@ -451,7 +464,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.18),
+                        color: Colors.black.withValues(alpha: 0.126),
                         blurRadius: 18,
                         offset: const Offset(0, 10),
                       ),
@@ -460,29 +473,50 @@ class _ExpandedNewsDetail extends StatelessWidget {
                   child: LayoutBuilder(
                     builder: (context, cardConstraints) {
                       final k = cardConstraints.maxWidth / 350.0;
+                      final horizontalPadding = 18 * k;
+                      final vendorCount = news.ticketingLinks?.length ?? 0;
+                      final titleLines = (news.concert.length / 13)
+                          .ceil()
+                          .clamp(1, 3);
+                      final venueLines = ((news.venue ?? '').length / 12)
+                          .ceil()
+                          .clamp(1, 3);
+                      final estimatedNonPosterHeight =
+                          (18 * 2 + 14 + 14 + 16) * k +
+                          (titleLines * 24) * k +
+                          (96 + (venueLines - 1) * 14) * k +
+                          _VendorButtons.estimatedHeight(vendorCount, k);
+                      final availablePosterHeight =
+                          cardConstraints.maxHeight - estimatedNonPosterHeight;
+                      final posterHeight = availablePosterHeight
+                          .clamp(112 * k, 190 * k)
+                          .toDouble();
                       return FadeTransition(
                         opacity: contentOpacity,
-                        child: SingleChildScrollView(
-                          padding: EdgeInsets.fromLTRB(
-                            18 * k,
-                            18 * k,
-                            18 * k,
-                            18 * k,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _poster(context, k),
-                              SizedBox(height: 14 * k),
-                              _titleRow(context, k),
-                              SizedBox(height: 14 * k),
-                              _infoTiles(context, k),
-                              SizedBox(height: 16 * k),
-                              _VendorButtons(
-                                ticketingLinks: news.ticketingLinks,
-                                scale: k,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.topCenter,
+                          child: SizedBox(
+                            width: cardConstraints.maxWidth,
+                            child: Padding(
+                              padding: EdgeInsets.all(horizontalPadding),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _poster(context, k, posterHeight),
+                                  SizedBox(height: 14 * k),
+                                  _titleRow(context, k),
+                                  SizedBox(height: 14 * k),
+                                  _infoTiles(context, k),
+                                  SizedBox(height: 16 * k),
+                                  _VendorButtons(
+                                    ticketingLinks: news.ticketingLinks,
+                                    scale: k,
+                                  ),
+                                ],
                               ),
-                            ],
+                            ),
                           ),
                         ),
                       );
@@ -497,14 +531,14 @@ class _ExpandedNewsDetail extends StatelessWidget {
     );
   }
 
-  Widget _poster(BuildContext context, double k) {
+  Widget _poster(BuildContext context, double k, double height) {
     return GestureDetector(
       onTap: onPosterTap,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12 * k),
         child: SizedBox(
           width: double.infinity,
-          height: 190 * k,
+          height: height,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1056,7 +1090,7 @@ class _InfoTile extends StatelessWidget {
           border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
+              color: Colors.black.withValues(alpha: 0.042),
               blurRadius: 6,
               offset: const Offset(0, 3),
             ),
@@ -1187,6 +1221,11 @@ class _VendorButtons extends StatelessWidget {
 
   final Map<String, String>? ticketingLinks;
   final double scale;
+
+  static double estimatedHeight(int count, double k) {
+    if (count <= 0) return 0;
+    return (1 + 14 + 16 + 10 + count * (52 + 9)) * k;
+  }
 
   @override
   Widget build(BuildContext context) {

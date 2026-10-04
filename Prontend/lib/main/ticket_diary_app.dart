@@ -9,6 +9,7 @@ import 'package:ticketdiary/screen/splash_screen.dart';
 import 'package:ticketdiary/screen/summary_screen.dart';
 import 'package:ticketdiary/widgets/diary_route.dart';
 import 'package:ticketdiary/widgets/diary_tab_flip_route.dart';
+import 'package:ticketdiary/widgets/hanji_texture.dart';
 import 'package:ticketdiary/widgets/tab_hit_catcher_overlay.dart';
 import 'package:ticketdiary/widgets/tab_nav_coordinator.dart';
 
@@ -109,6 +110,9 @@ class TicketDiaryApp extends StatelessWidget {
           return Stack(
             children: [
               ?child,
+              const Positioned.fill(
+                child: IgnorePointer(child: HanjiTexture(opacity: .16)),
+              ),
               Positioned.fill(child: TabHitCatcherOverlay(coordinator: tabNav)),
             ],
           );

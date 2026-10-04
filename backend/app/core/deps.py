@@ -89,9 +89,26 @@ async def verify_admin_key(x_admin_key: str | None = Header(None)) -> None:
 # 지금은 단일 EC2 인스턴스 배포라 인메모리로 충분
 _rate_limit_hits: dict[str, list[float]] = defaultdict(list)
 
+# 한 번 온 유저/IP 키가 영영 안 지워지지 않도록 주기적으로 오래된 키를 정리. 보관 기간은 가장 긴
+# 한도 기간(1시간) - 그보다 오래된 기록은 어떤 한도 판단에도 안 쓰임
+_RATE_LIMIT_RETENTION_SECONDS = 3600
+_RATE_LIMIT_SWEEP_INTERVAL_SECONDS = 600
+_last_rate_limit_sweep = 0.0
+
+
+def _sweep_rate_limit_hits(now: float) -> None:
+    global _last_rate_limit_sweep
+    if now - _last_rate_limit_sweep < _RATE_LIMIT_SWEEP_INTERVAL_SECONDS:
+        return
+    _last_rate_limit_sweep = now
+    cutoff = now - _RATE_LIMIT_RETENTION_SECONDS
+    for key in [k for k, hits in _rate_limit_hits.items() if not hits or hits[-1] < cutoff]:
+        del _rate_limit_hits[key]
+
 
 def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
     now = time.monotonic()
+    _sweep_rate_limit_hits(now)
     hits = _rate_limit_hits[key]
     cutoff = now - period_seconds
     while hits and hits[0] < cutoff:
@@ -131,6 +148,7 @@ _SCAN_COOLDOWN_SECONDS = 2.0
 def is_within_scan_cooldown(user_id: UUID) -> bool:
     key = f"scan_cooldown:{user_id}"
     now = time.monotonic()
+    _sweep_rate_limit_hits(now)
     hits = _rate_limit_hits[key]
     cutoff = now - _SCAN_COOLDOWN_SECONDS
     while hits and hits[0] < cutoff:

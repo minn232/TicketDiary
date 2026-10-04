@@ -13,6 +13,10 @@ const Map<DiaryTab, Color> _diaryTabColors = {
   DiaryTab.settings: Color(0xFFB0B0B0),
 };
 
+const Map<DiaryTab, Color> _diaryTabPageBlendColors = {
+  DiaryTab.summary: Color(0xFFCEB99B),
+};
+
 const Map<DiaryTab, String> _diaryTabTexts = {
   DiaryTab.diary: '다이어리',
   DiaryTab.news: '소식',
@@ -41,9 +45,14 @@ List<DiarySideTabSpec> buildDiarySideTabs(
       right: layout.right,
       top: layout.top,
       isActive: isActive,
-      onTap: isActive ? null : () => TabNavCoordinator.instance.requestTab(layout.tab),
+      onTap: isActive
+          ? null
+          : () => TabNavCoordinator.instance.requestTab(layout.tab),
       child: DiaryIndexTab(
         color: _diaryTabColors[layout.tab]!,
+        pageColor:
+            _diaryTabPageBlendColors[layout.tab] ??
+            DiaryIndexTab.defaultPageColor,
         text: _diaryTabTexts[layout.tab]!,
       ),
     );

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     SETLISTFM_BASE_URL: str = "https://api.setlist.fm/rest/1.0"
     LASTFM_API_KEY: str = ""
     LASTFM_BASE_URL: str = "https://ws.audioscrobbler.com/2.0"
+    # 예상 셋리 확률 모델(최근성/곡 수 추정/순서, 대표곡 신곡 가중) 사용 여부 - False면 예전
+    # 빈도순 top20 + 청취자순 대표곡으로 되돌림
+    PRE_SETLIST_MODEL_ENABLED: bool = True
     MUSICBRAINZ_BASE_URL: str = "https://musicbrainz.org/ws/2"
     # MusicBrainz API 이용 정책상 User-Agent에 연락처(이메일 등)가 있어야 함 - 없으면 요청이
     # 차단될 수 있음. 형식: "AppName/Version (contact)"

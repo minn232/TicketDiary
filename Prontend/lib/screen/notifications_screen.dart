@@ -100,9 +100,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       setState(() => _items = items);
     } catch (e) {
       if (!mounted) return;
-      final message = e is ApiException
-          ? '오류 (${e.statusCode})'
-          : '오류 (연결 실패)';
+      final message = e is ApiException ? '오류 (${e.statusCode})' : '오류 (연결 실패)';
       setState(() => _errorMessage = message);
     }
   }
@@ -444,7 +442,7 @@ class _NotificationCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
+                color: Colors.black.withValues(alpha: 0.056),
                 blurRadius: 8,
                 offset: const Offset(0, 3),
               ),

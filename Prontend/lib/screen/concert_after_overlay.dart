@@ -6,6 +6,7 @@ import '../models/ticket_info.dart';
 import '../widgets/concert_after_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/responsive_text.dart';
+import 'concert_before_overlay.dart';
 
 /// 다이어리 화면 위에 "공연 후" 상세를 오버레이로 띄우는 위젯.
 ///
@@ -42,6 +43,9 @@ class ConcertAfterOverlay extends StatefulWidget {
   // 탭 시점의 배율을 그대로 넘겨받아 오버레이 안에서도 동일하게 사용.
   final double frameScale;
 
+  // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 신규.
+  final int issueNumber;
+
   const ConcertAfterOverlay({
     super.key,
     required this.startRect,
@@ -50,6 +54,7 @@ class ConcertAfterOverlay extends StatefulWidget {
     required this.frameScale,
     this.ticketInfo,
     this.onTicketInfoChanged,
+    this.issueNumber = 1,
   });
 
   /// 다이어리 위에 오버레이를 띄우는 헬퍼.
@@ -61,6 +66,7 @@ class ConcertAfterOverlay extends StatefulWidget {
     required double frameScale,
     TicketInfo? ticketInfo,
     ValueChanged<TicketInfo>? onTicketInfoChanged,
+    int issueNumber = 1,
   }) {
     return showGeneralDialog<void>(
       context: context,
@@ -76,6 +82,7 @@ class ConcertAfterOverlay extends StatefulWidget {
           frameScale: frameScale,
           ticketInfo: ticketInfo,
           onTicketInfoChanged: onTicketInfoChanged,
+          issueNumber: issueNumber,
         );
       },
     );
@@ -202,7 +209,8 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final screenSize = media.size;
-    final end = _endRect(screenSize, media.padding);
+    // 펼친 영역은 키보드와 무관한 viewPadding 기준으로 계산.
+    final end = _endRect(screenSize, media.viewPadding);
 
     // [백엔드 수정]
     // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김.
@@ -236,6 +244,8 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
               ticketInfo: widget.ticketInfo,
               onOutsideTap: _handleOutsideTap,
               onTicketInfoChanged: widget.onTicketInfoChanged,
+              issueNumber: widget.issueNumber,
+              frameScale: widget.frameScale,
             ),
           ),
         ),
@@ -319,11 +329,15 @@ class _ExpandedConcertAfter extends StatefulWidget {
   final TicketInfo? ticketInfo;
   final VoidCallback onOutsideTap;
   final ValueChanged<TicketInfo>? onTicketInfoChanged;
+  final int issueNumber;
+  final double frameScale;
 
   const _ExpandedConcertAfter({
     required this.postItOpacity,
     required this.concertTitle,
     required this.onOutsideTap,
+    required this.issueNumber,
+    required this.frameScale,
     this.ticketInfo,
     this.onTicketInfoChanged,
   });
@@ -337,7 +351,9 @@ class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
 
   @override
   Widget build(BuildContext context) {
+    // 키보드가 떠도 하단 여백 유지 (diary_page_frame.dart와 동일).
     return SafeArea(
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
         child: Center(
@@ -351,6 +367,19 @@ class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
                 postItOpacity: widget.postItOpacity,
                 onTicketInfoChanged: widget.onTicketInfoChanged,
                 pageBoundaryKey: _pageBoundaryKey,
+                issueNumber: widget.issueNumber,
+                // [백엔드 수정] "공연 전 신문"을 누르면 공연 전 페이지를 읽기 전용으로 엶.
+                onOpenBeforePage: (startRect, collapsed) =>
+                    ConcertBeforeOverlay.show(
+                      context,
+                      startRect: startRect,
+                      collapsedTicket: collapsed,
+                      concertTitle: widget.concertTitle,
+                      frameScale: widget.frameScale,
+                      ticketInfo: widget.ticketInfo,
+                      issueNumber: widget.issueNumber,
+                      readOnly: true,
+                    ),
               ),
             ),
           ),

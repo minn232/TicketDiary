@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +10,9 @@ import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/responsive_text.dart';
 
+const Color _summaryPageColor = Color(0xFFCEB99B);
+const Color _summaryReportColor = Color(0xFFE5D3B9);
+
 class SummaryScreen extends StatefulWidget {
   const SummaryScreen({super.key});
 
@@ -16,8 +20,7 @@ class SummaryScreen extends StatefulWidget {
   State<SummaryScreen> createState() => _SummaryScreenState();
 }
 
-/// 결산 조회 기간. 무대 위 밴드 스티커(기타=6개월/드럼=1년/보컬=전체)를
-/// 당겨서 고릅니다.
+/// 결산 조회 기간. 상단의 둥근 텍스트 버튼을 위로 당겨 선택합니다.
 enum _SummaryPeriod {
   sixMonths('6개월', '6m'),
   oneYear('1년', '1y'),
@@ -33,11 +36,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
   final SummaryService _service = SummaryService();
 
   /// 확정된(committed) 기간 + 지금 드래그로 향하고 있는 목표(target) 기간 +
-  /// 그 사이 진행도(progress, 0=committed 그대로 ~ 1=target으로 완전히
-  /// 이동). 전부 [_StageCollageState]가 밴드 스티커 드래그로부터 실시간으로
-  /// 계산해서 [onPeriodTransition]으로 올려준다. ValueNotifier로 들고
-  /// 있어서, 이 값이 바뀔 때 페이지 전체(setState)가 아니라 배경색+결산
-  /// 보고서만 다시 그린다([_StageCollage]는 그대로 캐싱).
+  /// 그 사이 진행도(progress, 0=committed 그대로 ~ 1=target으로 완전히 이동).
   final ValueNotifier<
     ({_SummaryPeriod? committed, _SummaryPeriod? target, double progress})
   >
@@ -46,10 +45,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
   Future<SummaryModel>? _committedFuture;
   Future<SummaryModel>? _targetFuture;
 
-  /// 관객 스티커 수를 셀 때 쓰는, 기간과 무관하게 항상 "전체"로 고정된
-  /// future. 6개월/1년/전체 중 무엇을 보고 있든 관객 수는 사용자가 등록한
-  /// 전체 티켓 수 기준으로 늘 같아야 하므로, 기간이 바뀌어도 이 future는
-  /// 다시 만들지 않는다.
+  /// 관객 스티커 수와 기본 결산 데이터를 가져오는 전체 기간 future.
   late final Future<SummaryModel> _allFuture;
 
   @override
@@ -73,11 +69,6 @@ class _SummaryScreenState extends State<SummaryScreen> {
     return future;
   }
 
-  /// [_StageCollage]가 밴드 스티커 드래그 상태가 바뀔 때마다(매 프레임)
-  /// 호출한다. committed/target이 새로 바뀌면 그 기간의 데이터를 새로
-  /// 받아오되, 이미 반대쪽(committed↔target)으로 받아둔 future가 있으면
-  /// (예: 드래그가 끝나 target이 committed로 확정된 경우) 재사용해서
-  /// 중복 요청을 피한다.
   void _onPeriodTransition(
     _SummaryPeriod? committed,
     _SummaryPeriod? target,
@@ -101,14 +92,6 @@ class _SummaryScreenState extends State<SummaryScreen> {
     );
   }
 
-  /// 기간별 배경색: 미선택(결산)=중립 톤, 6개월=연보라, 1년=연노랑, 전체=연파랑.
-  Color _colorFor(_SummaryPeriod? period) => switch (period) {
-    null => const Color(0xFFEDEAE3),
-    _SummaryPeriod.sixMonths => const Color(0xFFEDE6F7),
-    _SummaryPeriod.oneYear => const Color(0xFFFAF3D6),
-    _SummaryPeriod.all => const Color(0xFFDFEAF8),
-  };
-
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
@@ -120,23 +103,14 @@ class _SummaryScreenState extends State<SummaryScreen> {
       child: ValueListenableBuilder(
         valueListenable: _transition,
         builder: (context, t, child) {
-          final bgColor = Color.lerp(
-            _colorFor(t.committed),
-            _colorFor(t.target),
-            t.progress,
-          )!;
           return ColoredBox(
-            color: bgColor,
+            color: _summaryPageColor,
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // 무대 콜라주(밴드 스티커 드래그가 여기서 일어남). progress가
-                // 바뀔 때마다 이 트리 전체를 다시 만들 필요는 없으므로(무대
-                // 위젯 스스로 애니메이션을 처리) child로 캐싱해 재사용한다.
+                // 티켓 수만큼 배치되는 랜덤 스티커 콜라주.
                 ?child,
-                // 하단 슬롯에서 위로 잡아당기는 결산 보고서. 밴드 스티커
-                // 중 아무것도 최대로 안 당겨져 기간이 미선택 상태여도 구멍
-                // 자체는 항상 존재하고, 카드만 없다.
+                // 하단 슬롯에서 위로 잡아당기는 결산 보고서.
                 Positioned.fill(
                   child: _ReportDrawer(
                     committedFuture: _committedFuture,
@@ -144,11 +118,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
                     committedPeriod: t.committed,
                     targetPeriod: t.target,
                     progress: t.progress,
-                    slotColor: bgColor,
+                    slotColor: _summaryPageColor,
                   ),
                 ),
-                // 페이지 안쪽에 그리는 하얀 테두리.
-                const Positioned.fill(child: _WhiteInsetBorder()),
               ],
             ),
           );
@@ -169,29 +141,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
   }
 }
 
-/// 페이지 가장자리 안쪽에 그리는 하얀 테두리(장식, 터치 통과).
-class _WhiteInsetBorder extends StatelessWidget {
-  const _WhiteInsetBorder();
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white, width: 3),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 무대 공연 장면(스티커 콜라주). 밴드(기타·드럼·보컬)는 무대 플랫폼 위에
-/// 발을 맞춰 세우고, 각자를 위로 당기면 그에 해당하는 기간이 선택됩니다.
-/// 관객은 하단 결산 보고서와 겹치지 않도록 위쪽으로 배치합니다.
+/// 티켓 수만큼 랜덤 스티커를 배치하고, 기간 선택 버튼을 드래그하는 결산 콜라주.
 class _StageCollage extends StatefulWidget {
   final void Function(
     _SummaryPeriod? committed,
@@ -200,8 +150,7 @@ class _StageCollage extends StatefulWidget {
   )
   onPeriodTransition;
 
-  /// 사용자가 등록한 전체 티켓(관람) 수(기간 필터와 무관하게 항상 "전체"
-  /// 기준). 티켓 한 장마다 관객 스티커를 하나씩 무대 앞에 세운다.
+  /// 사용자가 등록한 전체 티켓 수. 티켓 한 장마다 스티커를 하나씩 배치합니다.
   final int ticketCount;
 
   const _StageCollage({
@@ -211,116 +160,72 @@ class _StageCollage extends StatefulWidget {
 
   static const String _dir = 'assets/images/summary';
 
-  static const double _feetFrac = 0.73;
-
-  static const _Sticker _stage = _Sticker('stage', 0.50, 0.30, 1.00, 0.881);
-
-  // 3버튼과 겹치지 않도록 밴드를 이전보다 작게. faceFx는 각 이미지에서
-  // 얼굴이 실제로 있는 가로 위치(원본 그림을 보고 눈대중으로 잰 값) —
-  // 기타/보컬은 몸이 오른쪽으로 뻗어 있어 얼굴이 중앙보다 왼쪽에 있고,
-  // 드럼은 좌우 대칭이라 거의 중앙이다.
-  static const List<_Sticker> _band = [
-    _Sticker('guitar', 0.20, 0, 0.26, 0.688, band: true, faceFx: 0.38),
-    _Sticker('drum', 0.74, 0, 0.36, 1.154, band: true, faceFx: 0.52),
-    _Sticker('vocal', 0.50, 0, 0.30, 0.669, band: true, faceFx: 0.38),
-  ];
-
-  /// [_band]와 같은 순서로, 각 밴드 스티커를 최대로 당겼을 때 선택되는 기간.
   static const List<_SummaryPeriod> periodForIndex = [
-    _SummaryPeriod.sixMonths, // 기타
-    _SummaryPeriod.oneYear, // 드럼
-    _SummaryPeriod.all, // 보컬
+    _SummaryPeriod.sixMonths,
+    _SummaryPeriod.oneYear,
+    _SummaryPeriod.all,
   ];
 
-  // 관객 자리(하단 결산 보고서 위쪽, 대략 y<0.80에만 오도록 배치). 티켓이
-  // 늘어날 때마다 이 자리를 순서대로 채우고, fan1~9 그림도 같은 순서로
-  // 돌아가며 씁니다(9장을 넘으면 다시 fan1/첫 자리부터, 즉 그대로 겹침).
-  static const List<(double fx, double fy, double wf, double aspect)>
-  _fanSlots = [
-    (0.30, 0.545, 0.16, 0.577),
-    (0.88, 0.545, 0.17, 0.420),
-    (0.72, 0.575, 0.18, 0.511),
-    (0.55, 0.575, 0.18, 0.488),
-    (0.15, 0.60, 0.19, 0.541),
-    (0.44, 0.64, 0.22, 0.574),
-    (0.73, 0.66, 0.22, 0.534),
-    (0.58, 0.69, 0.24, 0.700),
-    (0.30, 0.705, 0.26, 0.502),
+  static const List<_StickerAsset> _crowdStickerAssets = [
+    _StickerAsset('sticker_01', 0.966),
+    _StickerAsset('sticker_02', 0.865),
+    _StickerAsset('sticker_03', 1.376),
+    _StickerAsset('sticker_04', 0.953),
+    _StickerAsset('sticker_05', 0.996),
+    _StickerAsset('sticker_06', 1.312),
+    _StickerAsset('sticker_07', 0.780),
+    _StickerAsset('sticker_08', 0.913),
+    _StickerAsset('sticker_09', 0.755),
+    _StickerAsset('sticker_10', 0.596),
+    _StickerAsset('sticker_11', 1.318),
+    _StickerAsset('sticker_12', 0.853),
+    _StickerAsset('sticker_13', 0.930),
+    _StickerAsset('sticker_14', 0.922),
+    _StickerAsset('sticker_15', 0.854),
+    _StickerAsset('sticker_16', 2.455),
+    _StickerAsset('sticker_17', 0.692),
+    _StickerAsset('sticker_18', 1.301),
+    _StickerAsset('sticker_19', 2.163),
+    _StickerAsset('sticker_20', 1.000),
+    _StickerAsset('sticker_21', 1.108),
+    _StickerAsset('sticker_22', 1.249),
+    _StickerAsset('sticker_23', 0.627),
+    _StickerAsset('sticker_24', 1.009),
+    _StickerAsset('sticker_25', 0.820),
+    _StickerAsset('sticker_26', 1.064),
+    _StickerAsset('sticker_27', 0.943),
+    _StickerAsset('sticker_28', 0.534),
+    _StickerAsset('sticker_29', 1.683),
+    _StickerAsset('sticker_30', 0.903),
+    _StickerAsset('sticker_31', 0.781),
+    _StickerAsset('sticker_32', 1.067),
+    _StickerAsset('sticker_33', 1.056),
+    _StickerAsset('sticker_34', 0.762),
+    _StickerAsset('sticker_35', 0.626),
+    _StickerAsset('sticker_36', 0.939),
+    _StickerAsset('sticker_37', 0.966),
+    _StickerAsset('sticker_38', 1.370),
+    _StickerAsset('sticker_39', 0.939),
+    _StickerAsset('sticker_40', 0.495),
+    _StickerAsset('sticker_41', 1.291),
+    _StickerAsset('sticker_42', 2.541),
   ];
-
-  List<_Sticker> get _fans {
-    final n = ticketCount.clamp(0, 999);
-    return [for (var i = 0; i < n; i++) _fanSticker(i)];
-  }
-
-  /// [index]번째(0부터) 관객 스티커. 그림/자리는 9종류뿐이라, 9명을 넘으면
-  /// 처음 자리부터 다시 돌며 씁니다(주석에 적혀 있던 원래 의도 — clamp
-  /// 때문에 실제로는 동작하지 않던 부분을 고침). 완전히 같은 자리에
-  /// 겹치면 화면상 아무 변화가 없어 보이므로, 몇 바퀴째인지에 따라 자리를
-  /// 조금씩 밀어(지그재그) 관객이 계속 늘어나 빽빽해지는 것처럼 보이게 합니다.
-  _Sticker _fanSticker(int index) {
-    final slot = _fanSlots[index % _fanSlots.length];
-    final round = index ~/ _fanSlots.length;
-    final jitterX = round.isOdd ? 0.025 * round : -0.025 * round;
-    final jitterY = -0.02 * round; // 라운드가 늘수록 살짝 위/뒤로 밀림
-    return _Sticker(
-      'fan${(index % _fanSlots.length) + 1}',
-      (slot.$1 + jitterX).clamp(0.04, 0.96),
-      (slot.$2 + jitterY).clamp(0.30, 0.80),
-      slot.$3,
-      slot.$4,
-      crowd: true,
-    );
-  }
 
   @override
   State<_StageCollage> createState() => _StageCollageState();
-
-  Widget _positioned(_Sticker s, double w, double h) {
-    final wpx = s.wf * w;
-    final hpx = wpx / s.aspect;
-    return Positioned(
-      left: s.fx * w - wpx / 2,
-      top: s.fy * h - hpx / 2,
-      width: wpx,
-      height: hpx,
-      child: _image(s),
-    );
-  }
-
-  Widget _image(_Sticker s) {
-    Widget img = Image.asset(
-      '$_dir/${s.name}.png',
-      fit: BoxFit.contain,
-      filterQuality: FilterQuality.medium,
-    );
-    if (s.crowd && s.fx >= 0.5) {
-      img = Transform(
-        alignment: Alignment.center,
-        transform: Matrix4.identity()..scaleByDouble(-1.0, 1.0, 1.0, 1.0),
-        child: img,
-      );
-    }
-    return img;
-  }
 }
 
 class _StageCollageState extends State<_StageCollage>
     with SingleTickerProviderStateMixin {
-  /// 확정된(committed) 기간(시작은 미선택=null).
-  _SummaryPeriod? _committed;
-
-  /// 지금 드래그로 향하고 있는 목표 기간. 드래그 중이 아니면 null.
-  /// (committed 스티커를 다시 눌러 내리는 중이면 target도 null이지만,
-  /// 이땐 [_progress] > 0으로 "진행 중"임을 구분한다.)
-  _SummaryPeriod? _target;
-
   int? _draggingIndex;
-
-  /// 0(=committed 그대로) ~ 1(=target으로 완전히 이동) 진행도. 드래그
-  /// 중엔 손가락 위치에 맞춰 즉시 값이 바뀌고(요청4), 손을 떼면 0 또는
-  /// 1로 부드럽게 안착한 뒤 committed가 갱신된다.
+  _SummaryPeriod? _committed;
+  _SummaryPeriod? _target;
   late final AnimationController _progress;
+
+  List<_Sticker> get _fans {
+    final n = widget.ticketCount.clamp(0, 999);
+    return [for (var i = 0; i < n; i++) _fanSticker(i)];
+  }
 
   @override
   void initState() {
@@ -341,10 +246,6 @@ class _StageCollageState extends State<_StageCollage>
     widget.onPeriodTransition(_committed, _target, _progress.value);
   }
 
-  /// 스티커 [index]를 터치한 순간: 이미 활성화된(committed) 스티커를 다시
-  /// 누른 거라면 "내리기"(target=null)로, 다른 스티커라면 "그 기간으로
-  /// 올리기"(target=해당 기간)로 목표를 즉시 정한다(요청2). progress는
-  /// 이어지는 드래그로 채워질 것이므로 0에서 새로 시작한다.
   void _onDragStart(int index) {
     _progress.stop();
     setState(() {
@@ -356,8 +257,6 @@ class _StageCollageState extends State<_StageCollage>
     _report();
   }
 
-  /// [upDelta]는 위로 이동한 만큼(양수=위). 목표를 향해 "올리는" 중이면
-  /// 위로 갈수록, "내리는" 중이면 아래로 갈수록 progress가 늘어난다.
   void _onDrag(int index, double upDelta, double maxOffset) {
     if (_draggingIndex != index || maxOffset <= 0) return;
     final touched = _StageCollage.periodForIndex[index];
@@ -369,15 +268,16 @@ class _StageCollageState extends State<_StageCollage>
     );
   }
 
-  /// 요청3: 손을 떼면 절반(0.5)을 기준으로 target까지 마저 이동(확정)하거나
-  /// committed로 되돌아간다 — 중간 상태로 멈춰 있지 않는다.
   Future<void> _onDragEnd(int index) async {
     if (_draggingIndex != index) return;
-    final commit = _progress.value > 0.5;
+    _draggingIndex = null;
     final target = _target;
-    setState(() => _draggingIndex = null);
-    await _progress.animateTo(commit ? 1.0 : 0.0, curve: Curves.easeOutCubic);
-    if (!mounted) return;
+    final commit = _progress.value >= 0.5;
+    await _progress.animateTo(
+      commit ? 1 : 0,
+      curve: Curves.easeOutCubic,
+      duration: const Duration(milliseconds: 180),
+    );
     setState(() {
       if (commit) _committed = target;
       _target = null;
@@ -386,20 +286,93 @@ class _StageCollageState extends State<_StageCollage>
     _report();
   }
 
-  /// 밴드 [index]가 지금 [maxOffset] 중 얼마나 위로 올라와 있어야 하는지를
-  /// committed/target/progress로부터 유도한다. target으로 향하는 스티커는
-  /// 0→max로 올라가고, committed였다가 밀려나는 스티커는 max→0으로
-  /// 내려간다 — 다른 스티커를 당기면 이전 스티커가 자동으로 내려가는
-  /// 동작이 이 식 하나로 성립한다.
   double _offsetFor(int index, double maxOffset) {
     final period = _StageCollage.periodForIndex[index];
-    if (period == _target) {
-      return _progress.value * maxOffset;
-    }
+    if (period == _target) return _progress.value * maxOffset;
     if (period == _committed && _target != _committed) {
       return (1 - _progress.value) * maxOffset;
     }
     return 0;
+  }
+
+  /// [index]번째(0부터) 관객 스티커. 페이지 상단부터 보고서 슬롯 직전까지의
+  /// 안전 영역 안에서
+  /// index 기반 의사랜덤으로 위치와 크기를 정해 rebuild 때 흔들리지 않게 합니다.
+  _Sticker _fanSticker(int index) {
+    final random = math.Random(0x51A7C0DE ^ (index * 0x45D9F3B));
+    final asset =
+        _StageCollage._crowdStickerAssets[random.nextInt(
+          _StageCollage._crowdStickerAssets.length,
+        )];
+    final rawFx = 0.08 + random.nextDouble() * 0.84;
+    var rawFy = random.nextDouble();
+    // 기간 선택 망치들이 있는 상단 좌/중/우 영역과 과하게 겹치지 않도록,
+    // 그 부근에 걸리면 살짝 아래로 밀어 랜덤한 느낌은 유지합니다.
+    final nearPeriodControls =
+        rawFy < 0.38 &&
+        ((rawFx > 0.02 && rawFx < 0.36) ||
+            (rawFx > 0.33 && rawFx < 0.66) ||
+            (rawFx > 0.64 && rawFx < 0.98));
+    if (nearPeriodControls && random.nextBool()) {
+      rawFy += 0.10 + random.nextDouble() * 0.06;
+    }
+    final widthScale = 0.72 + random.nextDouble() * 0.34;
+    final aspectScale = asset.aspect > 1.7
+        ? 0.82
+        : (asset.aspect < 0.7 ? 0.88 : 1.0);
+    return _Sticker(
+      asset.name,
+      rawFx.clamp(0.06, 0.94),
+      rawFy.clamp(0.0, 1.0),
+      (0.18 * widthScale * aspectScale).clamp(0.10, 0.25),
+      asset.aspect,
+    );
+  }
+
+  Widget _positioned(_Sticker s, double w, double h) {
+    final wpx = s.wf * w;
+    final hpx = wpx / s.aspect;
+    final slotTop = h - context.rs(34) - context.rs(7);
+    final minTop = 0.0;
+    final maxTop = (slotTop - hpx).clamp(minTop, h).toDouble();
+    final top = minTop + (maxTop - minTop) * s.fy;
+    return Positioned(
+      left: s.fx * w - wpx / 2,
+      top: top,
+      width: wpx,
+      height: hpx,
+      child: RepaintBoundary(
+        child: Padding(
+          padding: EdgeInsets.all(context.rs(3)),
+          child: Stack(
+            fit: StackFit.expand,
+            clipBehavior: Clip.none,
+            children: [
+              // 투명 PNG의 알파 경계를 원형으로 확장해 둥근 흰 테두리를 만든다.
+              for (var i = 0; i < 16; i++)
+                Transform.translate(
+                  offset: Offset(
+                    math.cos(i * math.pi / 8) * context.rs(3),
+                    math.sin(i * math.pi / 8) * context.rs(3),
+                  ),
+                  child: Image.asset(
+                    '${_StageCollage._dir}/stickers/${s.name}.png',
+                    fit: BoxFit.contain,
+                    color: Colors.white,
+                    colorBlendMode: BlendMode.srcIn,
+                    filterQuality: FilterQuality.medium,
+                  ),
+                ),
+              Image.asset(
+                '${_StageCollage._dir}/stickers/${s.name}.png',
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.medium,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -420,72 +393,37 @@ class _StageCollageState extends State<_StageCollage>
               builder: (context, c) {
                 final w = c.maxWidth;
                 final h = c.maxHeight;
-                final stageHpx =
-                    _StageCollage._stage.wf * w / _StageCollage._stage.aspect;
-                final stageTop = _StageCollage._stage.fy * h - stageHpx / 2;
-                final feetY = stageTop + _StageCollage._feetFrac * stageHpx;
-
-                // 기타 기준으로 계산한 최댓값(반으로 줄임)을 3개 스티커가
-                // 모두 공유한다. "끝까지"(막대 아래쪽 끝이 구멍의 아래쪽
-                // 경계에 닿는) 값은 막대 길이(스티커 세로길이의 1배) 기준.
-                final guitar = _StageCollage._band[0];
-                final guitarHpx = (guitar.wf * w) / guitar.aspect;
-                final holeHeight = context.rs(_BandPuppet.holeHeightBase);
-                final guitarFullMaxOffset = (guitarHpx - holeHeight) / 2;
-                final sharedMaxOffset = guitarFullMaxOffset / 2;
-
-                // 기간 릴 위젯 위치: 원래는 무대 비율로만 정했는데, 보컬을
-                // 최대로 당기면 보컬 스티커 윗부분과 겹칠 수 있어 겹치지
-                // 않을 만큼 더 위여야 하면 그만큼 끌어올린다.
-                final vocal = _StageCollage._band[2];
-                final vocalHpx = (vocal.wf * w) / vocal.aspect;
-                final vocalTopAtMax = feetY - vocalHpx - sharedMaxOffset;
-                final reelH = context.rs(_PeriodReelHole.heightBase);
-                const reelMargin = 6.0;
-                final selectorTop = () {
-                  final byStageRatio = stageTop + 0.18 * stageHpx;
-                  final byVocalClearance =
-                      vocalTopAtMax - reelH - context.rs(reelMargin);
-                  return byStageRatio < byVocalClearance
-                      ? byStageRatio
-                      : byVocalClearance;
-                }();
-
+                final maxOffset = context.rs(44);
+                final pillW = 0.29 * w;
+                final pillH = context.rs(51);
                 return AnimatedBuilder(
                   animation: _progress,
                   builder: (context, _) {
                     return Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        widget._positioned(_StageCollage._stage, w, h),
-                        Positioned(
-                          top: selectorTop,
-                          left: 0,
-                          right: 0,
-                          child: Center(
-                            child: _PeriodReelHole(
-                              committed: _committed,
-                              target: _target,
-                              progress: _progress.value,
-                            ),
+                        for (final s in _fans) _positioned(s, w, h),
+                        for (
+                          var i = 0;
+                          i < _StageCollage.periodForIndex.length;
+                          i++
+                        )
+                          _PeriodDragPill(
+                            period: _StageCollage.periodForIndex[i],
+                            left: _periodPillLeft(i, w, pillW),
+                            top:
+                                _periodPillTop(i, h, pillH) -
+                                _offsetFor(i, maxOffset),
+                            lift: _offsetFor(i, maxOffset),
+                            width: pillW,
+                            height: pillH,
+                            active:
+                                _StageCollage.periodForIndex[i] == _committed,
+                            moving: _StageCollage.periodForIndex[i] == _target,
+                            onDragStart: () => _onDragStart(i),
+                            onDragDelta: (d) => _onDrag(i, d, maxOffset),
+                            onDragEnd: () => _onDragEnd(i),
                           ),
-                        ),
-                        for (var i = 0; i < _StageCollage._band.length; i++)
-                          Positioned.fill(
-                            child: _BandPuppet(
-                              sticker: _StageCollage._band[i],
-                              w: w,
-                              feetY: feetY,
-                              dir: _StageCollage._dir,
-                              offset: _offsetFor(i, sharedMaxOffset),
-                              onDragStart: () => _onDragStart(i),
-                              onDragDelta: (d) =>
-                                  _onDrag(i, d, sharedMaxOffset),
-                              onDragEnd: () => _onDragEnd(i),
-                            ),
-                          ),
-                        for (final s in widget._fans)
-                          widget._positioned(s, w, h),
                       ],
                     );
                   },
@@ -499,270 +437,178 @@ class _StageCollageState extends State<_StageCollage>
   }
 }
 
-/// 밴드 스티커 하나(기타/드럼/보컬) + 발밑의 작은 구멍 + 그 뒤에서 함께
-/// 움직이는 긴 페이지 막대. 스티커를 위로 드래그하면 꼭두각시처럼 뒤에
-/// 붙은 종이 막대가 구멍 속에서 딸려 올라옵니다. 실제 위치([offset])는
-/// [_StageCollageState]가 committed/target/progress로부터 계산해서
-/// 내려주므로(요청4), 이 위젯은 그 값을 그대로 그리기만 한다 — 값 자체가
-/// 이미 매끄럽게 이어지는 값이라 이 위젯에서 따로 애니메이션할 필요가 없다.
-class _BandPuppet extends StatelessWidget {
-  final _Sticker sticker;
-  final double w;
-  final double feetY;
-  final String dir;
-  final double offset;
+double _periodPillLeft(int index, double pageWidth, double pillWidth) {
+  const seeds = [0.04, 0.67, 0.35];
+  return (seeds[index] * pageWidth).clamp(0.0, pageWidth - pillWidth);
+}
 
+double _periodPillTop(int index, double pageHeight, double pillHeight) {
+  const seeds = [0.11, 0.23, 0.35];
+  final reportSafeBottom = pageHeight * 0.46;
+  return (seeds[index] * pageHeight).clamp(
+    0.0,
+    (reportSafeBottom - pillHeight).clamp(0.0, pageHeight),
+  );
+}
+
+class _PeriodDragPill extends StatelessWidget {
+  final _SummaryPeriod period;
+  final double left;
+  final double top;
+  final double lift;
+  final double width;
+  final double height;
+  final bool active;
+  final bool moving;
   final VoidCallback onDragStart;
   final ValueChanged<double> onDragDelta;
   final VoidCallback onDragEnd;
 
-  const _BandPuppet({
-    required this.sticker,
-    required this.w,
-    required this.feetY,
-    required this.dir,
-    required this.offset,
+  const _PeriodDragPill({
+    required this.period,
+    required this.left,
+    required this.top,
+    required this.lift,
+    required this.width,
+    required this.height,
+    required this.active,
+    required this.moving,
     required this.onDragStart,
     required this.onDragDelta,
     required this.onDragEnd,
   });
 
-  /// 발밑 구멍의 세로 길이(스케일 적용 전 기준값). [_StageCollageState]도
-  /// 공유 최댓값을 계산할 때 같은 값을 써야 하므로 공개 상수로 둔다.
-  static const double holeHeightBase = 6;
-
   @override
   Widget build(BuildContext context) {
-    final s = sticker;
-    final wpx = s.wf * w;
-    final hpx = wpx / s.aspect;
-
-    // 막대 길이는 스티커 세로길이의 1배로, 가로 위치는 스티커 전체 중앙이
-    // 아니라 얼굴의 가로 중앙([_Sticker.faceFx])에 맞춘다(얼굴이 막대에
-    // 가리지 않고 보이도록). 세로 위치는 그대로 스티커의 정중앙.
-    final holeWidth = wpx * 0.225;
-    final holeHeight = context.rs(holeHeightBase);
-    final barLength = hpx;
-    final barCenterX = s.fx * w - wpx / 2 + s.faceFx * wpx;
-    // 구멍의 가로 중심도 막대와 같은 위치로 맞춘다(막대가 나오는 자리와
-    // 구멍이 어긋나 보이지 않도록).
-    final holeLeft = barCenterX - holeWidth / 2;
-    final barLeft = holeLeft;
-    final holeCenterY = feetY;
-    final holeBottom = holeCenterY + holeHeight / 2;
-    final stickerTop = feetY - hpx - offset;
-    final barTop = stickerTop + hpx / 2; // 막대 위쪽 끝 = 스티커 중앙.
-
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        // 1. 발밑 구멍(고정, 드래그해도 자리 그대로).
-        Positioned(
-          left: holeLeft,
-          top: holeCenterY - holeHeight / 2,
-          width: holeWidth,
-          height: holeHeight,
-          child: const IgnorePointer(child: _MiniSlotMouth()),
-        ),
-        // 2. 긴 페이지 막대. 스티커와 함께 움직이되, 구멍의 아래쪽 경계
-        // 아래로는 절대 보이지 않도록 ClipRect로 잘라낸다.
-        Positioned(
-          left: barLeft,
-          top: 0,
-          width: holeWidth,
-          height: holeBottom,
-          child: ClipRect(
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned(
-                  left: 0,
-                  top: barTop,
-                  width: holeWidth,
-                  height: barLength,
-                  child: const IgnorePointer(child: _PageBar()),
-                ),
-              ],
-            ),
-          ),
-        ),
-        // 3. 스티커 본체(맨 앞, 위/아래로 드래그 가능 — 막대와 하나로 움직임).
-        Positioned(
-          left: s.fx * w - wpx / 2,
-          top: stickerTop,
-          width: wpx,
-          height: hpx,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragStart: (_) => onDragStart(),
-            // 위로 드래그(primaryDelta 음수)하면 위로 이동한 양이 양수가
-            // 되도록 부호를 뒤집어 보고한다.
-            onVerticalDragUpdate: (d) => onDragDelta(-d.primaryDelta!),
-            onVerticalDragEnd: (_) => onDragEnd(),
-            onVerticalDragCancel: onDragEnd,
-            child: Image.asset(
-              '$dir/${s.name}.png',
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.medium,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 밴드 발밑의 작은 구멍(장식). [_SlotMouth]보다 훨씬 작고 단순한 버전.
-class _MiniSlotMouth extends StatelessWidget {
-  const _MiniSlotMouth();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 3,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 구멍 속에서 스티커를 따라 올라오는 긴 종이 막대. 결산 보고서 카드와
-/// 같은 종이 색으로 통일감을 준다.
-class _PageBar extends StatelessWidget {
-  const _PageBar();
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFFFBF7EC),
-        border: Border.all(
-          color: const Color(0xFF5C4033).withValues(alpha: 0.25),
-        ),
-        borderRadius: BorderRadius.circular(4),
-      ),
-    );
-  }
-}
-
-/// 기간(6개월/1년/전체) 표시용 작은 구멍. 직접 조작하는 위젯이 아니라,
-/// 무대 위 밴드 스티커를 당겨서 바뀐 committed/target/progress를 그대로
-/// 보여주기만 한다(요청4: 부모가 이미 매끄러운 값을 주므로 여기선 애니메이션
-/// 컨트롤러 없이 순수하게 그리기만 함). 뒤에 숨은 "페이지"에는 -(미선택
-/// 기본)/6개월/1년/전체 네 텍스트가 세로로 이어져 있고, committed→target
-/// 진행도에 맞춰 그 페이지가 위아래로 넘어가며(릴처럼) 해당 텍스트가 구멍
-/// 한가운데로 들어온다.
-class _PeriodReelHole extends StatelessWidget {
-  final _SummaryPeriod? committed;
-  final _SummaryPeriod? target;
-  final double progress;
-
-  const _PeriodReelHole({
-    required this.committed,
-    required this.target,
-    required this.progress,
-  });
-
-  // 페이지에 위에서부터 적힌 순서. index0=미선택 기본("-"), 1=6개월(기타
-  // 당김), 2=1년(드럼 당김), 3=전체(보컬 당김) —
-  // [_StageCollage.periodForIndex]의 매핑과 맞춘다.
-  static const List<String> _labels = ['-', '6개월', '1년', '전체'];
-
-  // 예전 기간 위젯의 작은 "페이지 조각"(segW × labelH)과 같은 크기(스케일
-  // 적용 전 기준값). [_StageCollageState]도 보컬 최대 높이와 겹치지 않게
-  // 위치를 잡을 때 이 값을 같이 써야 하므로 공개 상수로 둔다.
-  static const double widthBase = 56;
-  static const double heightBase = 34;
-
-  static int _indexFor(_SummaryPeriod? p) => switch (p) {
-    null => 0,
-    _SummaryPeriod.sixMonths => 1,
-    _SummaryPeriod.oneYear => 2,
-    _SummaryPeriod.all => 3,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    final reelW = context.rs(widthBase);
-    final reelH = context.rs(heightBase);
-    final committedIndex = _indexFor(committed);
-    final targetIndex = _indexFor(target);
-    // progress=0이면 committedIndex 그대로(targetIndex가 뭐든 항이 0으로
-    // 사라짐), progress=1이면 targetIndex — 두 값이 같아도(=드래그 없음)
-    // 자연히 committedIndex로 고정된다.
-    final reelPos = committedIndex + (targetIndex - committedIndex) * progress;
-
-    return SizedBox(
-      width: reelW,
-      height: reelH,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          // 페이지(뒤): 4칸짜리 세로 릴을 구멍 크기만큼만 잘라서 보여준다.
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: OverflowBox(
-              minHeight: 0,
-              maxHeight: double.infinity,
-              alignment: Alignment.topCenter,
-              child: Transform.translate(
-                offset: Offset(0, -reelPos * reelH),
+    const bg = _summaryReportColor;
+    const fg = Color(0xFF2F251A);
+    final reactionScale = moving ? 1.06 : 1.0;
+    final handleWidth = width * 0.44;
+    final handleHeight = height * 1.35;
+    final holeWidth = handleWidth * 1.14;
+    final holeHeight = holeWidth / 10;
+    final holeTop = lift + height + 4;
+    final holeBottom = holeTop + holeHeight;
+    final totalHeight = holeBottom;
+    return Positioned(
+      left: left,
+      top: top,
+      width: width,
+      height: totalHeight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragStart: (_) => onDragStart(),
+        onVerticalDragUpdate: (d) => onDragDelta(-d.primaryDelta!),
+        onVerticalDragEnd: (_) => onDragEnd(),
+        onVerticalDragCancel: onDragEnd,
+        child: AnimatedScale(
+          scale: reactionScale,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.topCenter,
+            children: [
+              Positioned(
+                top: holeTop,
+                width: holeWidth,
+                height: holeHeight,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFBF7EC),
-                    border: Border.all(
-                      color: const Color(0xFF5C4033).withValues(alpha: 0.25),
-                    ),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (final label in _labels)
-                        SizedBox(
-                          width: reelW,
-                          height: reelH,
-                          child: Center(
-                            child: Text(
-                              label,
-                              style: TextStyle(
-                                fontSize: context.sp(13),
-                                fontWeight: FontWeight.w900,
-                                color: const Color(0xFF5C4033),
-                              ),
-                            ),
-                          ),
-                        ),
+                    color: const Color(0xFF4F3C28),
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
                     ],
                   ),
                 ),
               ),
-            ),
-          ),
-          // 구멍 테두리(앞): 실제로 뚫린 구멍처럼 보이도록, 주변(바깥)
-          // 그림자는 없애고 테두리 안쪽으로만 그림자가 지게 한다. 원형(방사형)
-          // 그라데이션이 아니라 네 변에서 각각 안쪽으로 옅어지는 네모 형태의
-          // 그림자([_BoxInnerShadow])를 쓴다.
-          Positioned.fill(
-            child: IgnorePointer(
-              child: _BoxInnerShadow(
-                borderRadius: 6,
-                reach: reelH * 0.45,
-                alpha: 0.16,
+              Positioned(
+                top: 0,
+                width: width,
+                height: holeBottom,
+                child: ClipRect(
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.topCenter,
+                    children: [
+                      Positioned(
+                        top: height - 2,
+                        width: handleWidth,
+                        height: handleHeight,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: bg,
+                            borderRadius: const BorderRadius.vertical(
+                              bottom: Radius.circular(5),
+                            ),
+                            border: Border.all(
+                              color: const Color(
+                                0xFF5C4033,
+                              ).withValues(alpha: 0.35),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.07),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              Positioned(
+                top: 0,
+                width: width,
+                height: height,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: bg,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: const Color(0xFF5C4033).withValues(alpha: 0.35),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.105),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: Text(
+                      period.label,
+                      style: TextStyle(
+                        fontSize: context.sp(18),
+                        fontWeight: FontWeight.w900,
+                        color: fg,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
+}
+
+class _StickerAsset {
+  final String name;
+  final double aspect;
+
+  const _StickerAsset(this.name, this.aspect);
 }
 
 /// 콜라주 스티커 하나.
@@ -772,24 +618,8 @@ class _Sticker {
   final double fy;
   final double wf;
   final double aspect;
-  final bool band;
-  final bool crowd;
 
-  /// 스티커 이미지 안에서 얼굴이 가로로 어디쯤 있는지(0=왼쪽 끝, 1=오른쪽
-  /// 끝, 0.5=정중앙). 밴드 스티커 뒤 페이지 막대를 얼굴 중앙에 맞추는 데
-  /// 쓴다(그 외 스티커는 안 쓰므로 기본값 0.5 그대로 둔다).
-  final double faceFx;
-
-  const _Sticker(
-    this.name,
-    this.fx,
-    this.fy,
-    this.wf,
-    this.aspect, {
-    this.band = false,
-    this.crowd = false,
-    this.faceFx = 0.5,
-  });
+  const _Sticker(this.name, this.fx, this.fy, this.wf, this.aspect);
 }
 
 /// 하단 슬롯("구멍")에서 위로 잡아당겨 여는 결산 보고서.
@@ -798,12 +628,8 @@ class _Sticker {
 /// 보고서 내용이 다 올라옵니다(이 펼침/접힘은 기간 전환과 무관한 별개
 /// 기능). 위젯의 아래쪽 끝은 항상 슬롯 아래(구멍 속)에 남아 있습니다.
 ///
-/// 기간 전환([committedPeriod]→[targetPeriod], [progress]로 진행도 전달)은
-/// 부모([_StageCollageState])가 스티커 드래그로부터 실시간으로 계산해 주는
-/// 값을 그대로 반영한다 — committed/target 둘 다 있으면(다른 기간으로 바로
-/// 넘어가는 경우) 앞 절반은 예전 보고서가 가라앉고 뒤 절반은 새 보고서가
-/// 올라오는 하나의 연속 동작으로, 한쪽만 있으면(미선택⇄기간) 그 구간
-/// 전체가 가라앉기/올라오기 하나로 처리된다.
+/// 기본 결산 기간은 전체로 고정되어 있으며, 카드 자체는 위아래로 드래그해서
+/// 펼치고 접을 수 있습니다.
 class _ReportDrawer extends StatefulWidget {
   final Future<SummaryModel>? committedFuture;
   final Future<SummaryModel>? targetFuture;
@@ -1040,14 +866,14 @@ class _ReportDrawerState extends State<_ReportDrawer>
   ) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFFFBF7EC),
+        color: _summaryReportColor,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         border: Border.all(
           color: const Color(0xFF5C4033).withValues(alpha: 0.25),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
+            color: Colors.black.withValues(alpha: 0.154),
             blurRadius: 16,
             offset: const Offset(0, -4),
           ),
@@ -1250,7 +1076,7 @@ class _SlotMouth extends StatelessWidget {
                   borderRadius: BorderRadius.circular(999),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.15),
+                      color: Colors.black.withValues(alpha: 0.105),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),

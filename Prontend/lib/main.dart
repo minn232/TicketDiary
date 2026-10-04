@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'package:ticketdiary/main/ticket_diary_app.dart';
+import 'package:ticketdiary/services/external_share_service.dart';
 
 export 'package:ticketdiary/main/ticket_diary_app.dart' show TicketDiaryApp;
 
@@ -17,6 +18,8 @@ void main() async {
   } catch (e) {
     debugPrint('[Firebase] 초기화 실패(무시): $e');
   }
+
+  await ExternalShareService.initKakao();
 
   runApp(TicketDiaryApp());
 }

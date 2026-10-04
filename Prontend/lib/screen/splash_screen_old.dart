@@ -339,7 +339,7 @@ class _SplashScreenOldState extends State<SplashScreenOld>
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black45,
+                    color: Colors.black.withValues(alpha: 0.315),
                     blurRadius: w * _edgeShadowBlurRatio,
                     offset: Offset(0, h * _edgeShadowOffsetRatio),
                   ),
@@ -581,7 +581,7 @@ class _SplashScreenOldState extends State<SplashScreenOld>
               borderRadius: BorderRadius.circular(w * _coverRadiusRatio),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black38,
+                  color: Colors.black.withValues(alpha: 0.266),
                   blurRadius: w * _coverShadowBlurRatio,
                   offset: Offset(
                     w * _coverShadowOffsetXRatio,
@@ -632,7 +632,7 @@ class _SplashScreenOldState extends State<SplashScreenOld>
                       borderRadius: BorderRadius.circular(w * _bandRadiusRatio),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black38,
+                          color: Colors.black.withValues(alpha: 0.266),
                           blurRadius: w * _bandRadiusRatio,
                           offset: Offset(w * _bandShadowOffsetXRatio, 0),
                         ),
@@ -1164,7 +1164,7 @@ class _MainPageReplica extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
+                  color: Colors.black.withValues(alpha: 0.21),
                   blurRadius: 10 * k,
                   offset: Offset(5 * k, 5 * k),
                 ),
@@ -1217,7 +1217,7 @@ class _MainPageReplica extends StatelessWidget {
           borderRadius: BorderRadius.circular(3 * k),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.25),
+              color: Colors.black.withValues(alpha: 0.175),
               blurRadius: 4 * k,
               offset: Offset(-2 * k, 2 * k),
             ),
@@ -1361,7 +1361,7 @@ class _MainPageReplica extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withValues(alpha: 0.035),
             blurRadius: 5 * k,
             offset: Offset(2 * k, 2 * k),
           ),
@@ -1429,7 +1429,7 @@ Widget _buildMiniBinderRing(double k) {
           borderRadius: BorderRadius.circular(3 * k),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.5),
+              color: Colors.black.withValues(alpha: 0.35),
               blurRadius: 2 * k,
               offset: Offset(1 * k, 1 * k),
             ),

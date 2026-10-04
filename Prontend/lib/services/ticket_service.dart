@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../models/page_layout.dart';
 import '../models/ticket_response.dart';
 import 'api_client.dart';
 import 'favorites_store.dart';
@@ -91,6 +92,12 @@ class TicketService {
         .toList();
   }
 
+  // [백엔드 수정] 아티스트 연결 수정 후 공연 정보 '아티스트' 칸 갱신용 단건 조회.
+  Future<TicketWithConcert> getTicket(String ticketId) async {
+    final json = await _client.get('/tickets/$ticketId');
+    return TicketWithConcert.fromJson(json);
+  }
+
   /// 티켓 부분 수정(`PATCH /tickets/{id}`). 값을 넘긴 필드만 갱신되고,
   /// 넘기지 않은 필드는 그대로 유지됩니다.
   ///
@@ -118,6 +125,8 @@ class TicketService {
     // 별도 플래그가 필요합니다.
     DateTime? tornAt,
     bool clearTornAt = false,
+    // [백엔드 수정] 공연후 페이지 배치 전체 교체
+    PageLayout? pageLayout,
   }) async {
     try {
       final json = await _client.patch(
@@ -138,6 +147,7 @@ class TicketService {
           if (isLastDay != null) 'is_last_day': isLastDay,
           if (tornAt != null) 'torn_at': tornAt.toIso8601String(),
           if (clearTornAt) 'torn_at': null,
+          if (pageLayout != null) 'page_layout': pageLayout.toJson(),
         },
       );
       return TicketWithConcert.fromJson(json);
