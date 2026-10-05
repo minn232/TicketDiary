@@ -43,7 +43,7 @@ class SummaryModel {
   });
 
   // [백엔드 수정]
-  // 스탠딩/좌석, 첫콘/막콘을 `*_percent`(합 100, 대상 없으면 null)로 받음.
+  // 스탠딩/좌석, 첫콘/막콘을 `*_percent`(대상 없으면 null)로 받음.
   factory SummaryModel.fromJson(Map<String, dynamic> json) {
     final concertCount = json['concert_count'] as int? ?? 0;
     double? ratio(dynamic percent) => percent is int ? percent / 100 : null;

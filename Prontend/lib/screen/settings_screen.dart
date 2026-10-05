@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'notifications_screen.dart';
+import 'summary_debug_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
@@ -354,6 +355,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             frameScale:
                                 DiaryFrameScale.maybeOf(menuContext) ??
                                 diaryScaleFromMediaQuery(menuContext),
+                          ),
+                        ),
+                      ),
+                      // [임시] 결산 응답 확인용 디버그 화면. 결산탭 개편 후 삭제.
+                      _divider,
+                      Builder(
+                        builder: (menuContext) => _MenuRow(
+                          title: '[임시] 결산 디버그',
+                          onTap: () => Navigator.of(menuContext).push(
+                            MaterialPageRoute(
+                              builder: (_) => const SummaryDebugScreen(),
+                            ),
                           ),
                         ),
                       ),
