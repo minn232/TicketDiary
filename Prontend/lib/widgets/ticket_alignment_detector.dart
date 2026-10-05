@@ -35,8 +35,7 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
   });
 
   final Duration alignDelay;
-  final StreamController<bool> _controller =
-      StreamController<bool>.broadcast();
+  final StreamController<bool> _controller = StreamController<bool>.broadcast();
   final StreamController<void> _unsupported =
       StreamController<void>.broadcast();
   Timer? _timer;
@@ -120,6 +119,9 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     this.outerBandFraction = 0.1,
     this.minCenterEdgeDelta = 14,
     this.smoothingFactor = 0.25,
+    this.minSharpness = 12,
+    this.minSharpnessRatio = 0.65,
+    this.peakSharpnessDecay = 0.99,
   });
 
   final CameraController _controller;
@@ -154,6 +156,16 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   /// 천천히 움직여, 카메라 자동노출의 프레임 단위 미세 흔들림에 덜 민감해집니다.
   final double smoothingFactor;
 
+  /// [백엔드 수정] 선명도(강한 경계의 날카로움) 판정. 흔들리거나 초점이 안 맞아
+  /// 글자가 번진 프레임은 촬영하지 않습니다. 절대 하한([minSharpness])은 심하게
+  /// 흐린 프레임을 거르고, 세션 최고 선명도 대비 비율([minSharpnessRatio])은
+  /// 기기/장면마다 다른 기준을 자동 보정합니다. 최고값은 프레임마다
+  /// [peakSharpnessDecay]배로 서서히 낮아집니다.
+  final double minSharpness;
+  final double minSharpnessRatio;
+  final double peakSharpnessDecay;
+  double _peakSharpness = 0;
+
   final StreamController<bool> _output = StreamController<bool>.broadcast();
   final StreamController<void> _unsupported =
       StreamController<void>.broadcast();
@@ -164,23 +176,49 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   /// 4가지(위/아래 행 제외, 왼쪽/오른쪽 열 제외 — 실제 센서 방향을 몰라
   /// 4가지를 모두 둠). 각 후보의 rowStart/rowEnd/colStart/colEnd는
   /// 박스 안쪽 범위([0,1])에 대한 비율입니다.
-  static const List<({double rowStart, double rowEnd, double colStart, double colEnd})>
-      _regionCandidates = [
+  static const List<
+    ({double rowStart, double rowEnd, double colStart, double colEnd})
+  >
+  _regionCandidates = [
     (rowStart: 0, rowEnd: 1, colStart: 0, colEnd: 1), // 박스 전체
-    (rowStart: 0, rowEnd: 1 - kTicketStubHeightRatio, colStart: 0, colEnd: 1), // 아래쪽 행 제외
-    (rowStart: kTicketStubHeightRatio, rowEnd: 1, colStart: 0, colEnd: 1), // 위쪽 행 제외
-    (rowStart: 0, rowEnd: 1, colStart: 0, colEnd: 1 - kTicketStubHeightRatio), // 오른쪽 열 제외
-    (rowStart: 0, rowEnd: 1, colStart: kTicketStubHeightRatio, colEnd: 1), // 왼쪽 열 제외
+    (
+      rowStart: 0,
+      rowEnd: 1 - kTicketStubHeightRatio,
+      colStart: 0,
+      colEnd: 1,
+    ), // 아래쪽 행 제외
+    (
+      rowStart: kTicketStubHeightRatio,
+      rowEnd: 1,
+      colStart: 0,
+      colEnd: 1,
+    ), // 위쪽 행 제외
+    (
+      rowStart: 0,
+      rowEnd: 1,
+      colStart: 0,
+      colEnd: 1 - kTicketStubHeightRatio,
+    ), // 오른쪽 열 제외
+    (
+      rowStart: 0,
+      rowEnd: 1,
+      colStart: kTicketStubHeightRatio,
+      colEnd: 1,
+    ), // 왼쪽 열 제외
   ];
 
   /// 후보별 밝기 기준선(EMA)과, 그 후보가 조건을 계속 만족하기 시작한
   /// 시각(끊기면 다시 null로 리셋). 후보마다 독립적으로 추적해서, 그
   /// 후보가 실제로 "티켓으로 채워진" 쪽이면 정상 수렴해 정렬로 인정될
   /// 수 있습니다.
-  final List<double?> _smoothBrightness =
-      List<double?>.filled(_regionCandidates.length, null);
-  final List<DateTime?> _stableSince =
-      List<DateTime?>.filled(_regionCandidates.length, null);
+  final List<double?> _smoothBrightness = List<double?>.filled(
+    _regionCandidates.length,
+    null,
+  );
+  final List<DateTime?> _stableSince = List<DateTime?>.filled(
+    _regionCandidates.length,
+    null,
+  );
 
   @override
   Stream<bool> get alignmentStream => _output.stream;
@@ -214,6 +252,13 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     _busy = true;
     try {
       final analysis = _analyze(image);
+      _peakSharpness = _peakSharpness * peakSharpnessDecay;
+      if (analysis.sharpness > _peakSharpness) {
+        _peakSharpness = analysis.sharpness;
+      }
+      final sharpOk =
+          analysis.sharpness >= minSharpness &&
+          analysis.sharpness >= _peakSharpness * minSharpnessRatio;
 
       final now = DateTime.now();
       var anyReady = false;
@@ -225,7 +270,7 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
           baseline: _smoothBrightness[i],
           onBaseline: (v) => _smoothBrightness[i] = v,
         );
-        if (!pass) {
+        if (!pass || !sharpOk) {
           _stableSince[i] = null;
           continue;
         }
@@ -256,14 +301,16 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     final brightnessOk =
         stats.mean >= minBrightness && stats.mean <= maxBrightness;
     final contrastOk = stats.contrast >= minContrast;
-    final fillsGuide = hasOuter &&
-        (stats.mean - outerBrightness).abs() >= minCenterEdgeDelta;
+    final fillsGuide =
+        hasOuter && (stats.mean - outerBrightness).abs() >= minCenterEdgeDelta;
     final steady = baseline == null
         ? false
         : (stats.mean - baseline).abs() <= maxFrameDelta;
-    onBaseline(baseline == null
-        ? stats.mean
-        : baseline + (stats.mean - baseline) * smoothingFactor);
+    onBaseline(
+      baseline == null
+          ? stats.mean
+          : baseline + (stats.mean - baseline) * smoothingFactor,
+    );
     return brightnessOk && contrastOk && steady && fillsGuide;
   }
 
@@ -310,6 +357,7 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
         ),
         outerBrightness: 0,
         hasOuter: false,
+        sharpness: 0,
       );
     }
 
@@ -322,6 +370,16 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     final colStep = ((colEnd - colStart) / targetSamplesPerAxis)
         .clamp(1, double.infinity)
         .round();
+
+    final sharpness = _sampleSharpness(
+      luma,
+      rowStart: rowStart,
+      rowEnd: rowEnd,
+      colStart: colStart,
+      colEnd: colEnd,
+      rowStep: rowStep,
+      colStep: colStep,
+    );
 
     final regions = [
       for (final candidate in _regionCandidates)
@@ -368,13 +426,56 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     sampleOuter(0, outerRows, 0, width); // 위쪽 띠
     sampleOuter(height - outerRows, height, 0, width); // 아래쪽 띠
     sampleOuter(outerRows, height - outerRows, 0, outerCols); // 왼쪽 띠
-    sampleOuter(outerRows, height - outerRows, width - outerCols, width); // 오른쪽 띠
+    sampleOuter(
+      outerRows,
+      height - outerRows,
+      width - outerCols,
+      width,
+    ); // 오른쪽 띠
 
     return _FrameAnalysis(
       regions: regions,
       outerBrightness: outerCount > 0 ? outerSum / outerCount : 0,
       hasOuter: outerCount > 0,
+      sharpness: sharpness,
     );
+  }
+
+  /// 샘플 지점마다 이웃 픽셀(2칸 옆/아래)과의 밝기 차(가로+세로)를 구하고, 그중
+  /// 가장 강한 상위 10%의 평균을 선명도로 씁니다. 글자 경계가 번지면 이 값이
+  /// 크게 떨어지고, 빈 종이 면적에는 영향받지 않습니다.
+  double _sampleSharpness(
+    int Function(int row, int col) luma, {
+    required int rowStart,
+    required int rowEnd,
+    required int colStart,
+    required int colEnd,
+    required int rowStep,
+    required int colStep,
+  }) {
+    const d = 2;
+    final histogram = List<int>.filled(511, 0);
+    var count = 0;
+    for (var row = rowStart; row < rowEnd - d; row += rowStep) {
+      for (var col = colStart; col < colEnd - d; col += colStep) {
+        final v = luma(row, col);
+        final right = luma(row, col + d);
+        final down = luma(row + d, col);
+        if (v < 0 || right < 0 || down < 0) continue;
+        histogram[(v - right).abs() + (v - down).abs()]++;
+        count++;
+      }
+    }
+    if (count == 0) return 0;
+    final topCount = (count * 0.1).ceil();
+    var remaining = topCount;
+    var sum = 0;
+    for (var g = histogram.length - 1; g >= 0 && remaining > 0; g--) {
+      final take = histogram[g] < remaining ? histogram[g] : remaining;
+      sum += take * g;
+      remaining -= take;
+    }
+    return sum / topCount;
   }
 
   /// 주어진 행/열 범위의 평균 밝기(mean)와 대비(표준편차, contrast)를
@@ -404,7 +505,10 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     if (count == 0) return _RegionStats.empty;
     final mean = sum / count;
     final variance = (sumSq / count) - (mean * mean);
-    return _RegionStats(mean: mean, contrast: variance > 0 ? sqrt(variance) : 0.0);
+    return _RegionStats(
+      mean: mean,
+      contrast: variance > 0 ? sqrt(variance) : 0.0,
+    );
   }
 
   @override
@@ -440,9 +544,13 @@ class _FrameAnalysis {
   /// 가장자리 띠에서 유효 샘플을 얻었는지(못 얻었으면 안-밖 대비 판단 불가).
   final bool hasOuter;
 
+  /// 중심 영역의 선명도(강한 경계의 평균 날카로움).
+  final double sharpness;
+
   const _FrameAnalysis({
     required this.regions,
     required this.outerBrightness,
     required this.hasOuter,
+    required this.sharpness,
   });
 }

@@ -750,7 +750,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
     final candidates = scanResult.candidates;
 
     if (candidates.isEmpty) {
-      _showSnack('일치하는 공연을 찾을 수 없어요. KOPIS에 등록되지 않은 공연일 수 있어요.');
+      // [백엔드 수정] 이유별 안내 추가.
+      _showSnack(switch (scanResult.emptyReason) {
+        'cooldown' => '너무 빠르게 연속으로 시도했어요. 잠시 후 다시 시도해주세요.',
+        'kopis_error' => '공연 정보 서버(KOPIS)가 응답하지 않아요. 잠시 후 다시 시도해주세요.',
+        'no_text' => '사진에서 글자를 읽지 못했어요. 다른 사진으로 시도해주세요.',
+        'no_date' => '사진에서 공연 날짜를 읽지 못했어요. 날짜가 보이는 사진으로 시도해주세요.',
+        _ => '일치하는 공연을 찾을 수 없어요. KOPIS에 등록되지 않은 공연일 수 있어요.',
+      });
       return;
     }
 
@@ -787,7 +794,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
         if (matched != null) finalPrice = matched.price;
       } else if (finalPrice != null && finalSeat == null) {
         matched = _matchTierByPaidPrice(finalPrice, tiers);
-        if (matched != null) finalSeat = matched.seatType;
+        // [백엔드 수정] 가격도 정가로 교체.
+        if (matched != null) {
+          finalPrice = matched.price;
+          finalSeat = matched.seatType;
+        }
       }
 
       // 자동 추정 실패(애초에 둘 다 없던 경우 포함)하면 반드시 고르게 함.
@@ -1023,14 +1034,23 @@ class _DiaryScreenState extends State<DiaryScreen> {
     return null;
   }
 
+  // [백엔드 수정] 수수료 범위 밖 차이는 매칭 제외.
+  static const int _paidPriceFeeTolerance = 8000;
+
   /// 결제 금액으로 좌석 등급을 추정. 수수료/배송비 때문에 결제액이 정가보다
-  /// 조금 높은 게 보통이라, 정가가 결제액보다 큰 등급은 제외하고 남은 것 중
-  /// 가장 가까운(=가장 비싼) 걸 고름. 전부 결제액보다 비싸면 포기(null).
+  /// 조금 높은 게 보통이라, 정가가 결제액 이하이면서 차이가
+  /// [_paidPriceFeeTolerance] 이내인 등급 중 가장 비싼 걸 고름. 없으면 null.
   PriceEntry? _matchTierByPaidPrice(int paidPrice, List<PriceEntry> tiers) {
-    final affordable = tiers.where((t) => t.price <= paidPrice).toList();
-    if (affordable.isEmpty) return null;
-    affordable.sort((a, b) => a.price.compareTo(b.price));
-    return affordable.last; // 결제액 이하 중 가장 비싼(=가장 가까운) 등급
+    final close = tiers
+        .where(
+          (t) =>
+              t.price <= paidPrice &&
+              paidPrice - t.price <= _paidPriceFeeTolerance,
+        )
+        .toList();
+    if (close.isEmpty) return null;
+    close.sort((a, b) => a.price.compareTo(b.price));
+    return close.last;
   }
 
   /// "YYYY-MM-DD" 문자열(백엔드 `shipping_date` 등)을 [DateTime]으로 변환합니다.
