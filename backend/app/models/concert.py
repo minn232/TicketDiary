@@ -68,6 +68,9 @@ class Concert(Base):
     # KOPIS 상세 러닝타임(prfruntime)을 분으로 변환한 값. 인터미션/페스티벌 하루 일정이 포함될 수
     # 있어 근사로만 쓸 것. KOPIS가 안 주면 None
     runtime_minutes = Column(Integer, nullable=True)
+    # KOPIS 상세 조회가 NODATA(옛 ID가 삭제/재발급된 경우 등)를 준 시점. 값이 있으면 검색/추천에서 숨김.
+    # 이후 상세 조회가 성공하면 다시 NULL로 되돌림
+    kopis_missing_at = Column(DateTime(timezone=True), nullable=True)
     # 포스터를 VLM팀에 아티스트 추출 요청으로 보낸 시점(HTTP 전송 성공 여부만 뜻함, 콜백 도착
     # 여부는 모름). attempt_count와 같이 crawl_attempted_at식 쿨다운 재시도에 씀 - 포스터는
     # 내용이 안 바뀌므로 크롤링(30회)보다 상한은 낮게 잡음(crawler.py 참고)

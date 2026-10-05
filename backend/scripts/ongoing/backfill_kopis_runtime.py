@@ -2,7 +2,8 @@
 
 runtime_minutes 컬럼 추가 전에 저장된 공연은 상세 API를 다시 부르지 않아 NULL이라, 상세를 다시
 조회해 runtime_minutes만 채운다(다른 필드는 안 건드림). 지난 공연도 대상(관람 시간 결산에 필요).
-KOPIS가 러닝타임을 안 주는 공연은 NULL로 남아 재실행하면 다시 시도됨. 새 공연은 일별 동기화가
+KOPIS가 러닝타임을 안 주는 공연은 NULL로 남아 재실행하면 다시 시도됨. 상세가 NODATA인 공연은
+kopis_missing_at을 찍어 검색/추천에서 숨김(상세가 다시 성공하면 해제). 새 공연은 일별 동기화가
 상세 조회 때 같이 채움. 호출 간격이 0.35초라 공연 1,900건이면 약 11분.
 
 사용법 (서버에서):
@@ -15,6 +16,7 @@ KOPIS가 러닝타임을 안 주는 공연은 NULL로 남아 재실행하면 다
 import argparse
 import asyncio
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -24,7 +26,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.concert import Concert  # noqa: E402
-from app.services.kopis import _fetch_kopis_detail_data  # noqa: E402
+from app.services.kopis import KopisNoData, _fetch_kopis_detail_data  # noqa: E402
 
 
 async def main(limit: int | None, dry_run: bool) -> None:
@@ -41,26 +43,34 @@ async def main(limit: int | None, dry_run: bool) -> None:
     if dry_run:
         return
 
-    updated = no_runtime = failed = 0
+    updated = no_runtime = missing = failed = 0
     async with httpx.AsyncClient(timeout=10.0) as client:
         for i, (concert_id, kopis_id) in enumerate(targets, 1):
             try:
                 data = await _fetch_kopis_detail_data(client, kopis_id)
+            except KopisNoData:
+                missing += 1
+                async with AsyncSessionLocal() as db:
+                    concert = (await db.execute(select(Concert).where(Concert.id == concert_id))).scalar_one()
+                    concert.kopis_missing_at = datetime.now(timezone.utc)
+                    await db.commit()
+                continue
             except Exception as e:
                 failed += 1
                 print(f"실패 {kopis_id}: {e}")
                 continue
-            if data.get("runtime_minutes") is None:
-                no_runtime += 1
-                continue
             async with AsyncSessionLocal() as db:
                 concert = (await db.execute(select(Concert).where(Concert.id == concert_id))).scalar_one()
-                concert.runtime_minutes = data["runtime_minutes"]
+                concert.kopis_missing_at = None
+                if data.get("runtime_minutes") is None:
+                    no_runtime += 1
+                else:
+                    concert.runtime_minutes = data["runtime_minutes"]
+                    updated += 1
                 await db.commit()
-            updated += 1
             if i % 100 == 0:
                 print(f"진행 {i}/{len(targets)}")
-    print(f"완료: 갱신 {updated}건, 러닝타임 없음 {no_runtime}건, 실패 {failed}건")
+    print(f"완료: 갱신 {updated}건, 러닝타임 없음 {no_runtime}건, KOPIS 상세 없음 {missing}건, 실패 {failed}건")
 
 
 if __name__ == "__main__":

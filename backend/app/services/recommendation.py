@@ -159,7 +159,9 @@ async def get_concert_recommendations(db: AsyncSession, user_id: UUID, limit: in
             continue
 
     concert_result = await db.execute(
-        select(Concert).where(Concert.id.in_(top_ids), Concert.end_date > now)
+        select(Concert).where(
+            Concert.id.in_(top_ids), Concert.end_date > now, Concert.kopis_missing_at.is_(None)
+        )
     )
     concerts_by_id = {str(c.id): c for c in concert_result.scalars().all()}
 

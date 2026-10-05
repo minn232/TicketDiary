@@ -9,7 +9,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -698,6 +698,9 @@ async def _fetch_new_concert_data(
         for attempt in range(_KOPIS_DETAIL_MAX_RETRIES):
             try:
                 return await _fetch_kopis_detail_data(client, kopis_id)
+            except KopisNoData:
+                logger.warning(f"KOPIS 상세 없음 ({kopis_id})")
+                return None
             except Exception as e:
                 last_error = e
                 if attempt < _KOPIS_DETAIL_MAX_RETRIES - 1:
@@ -795,6 +798,12 @@ def _parse_runtime_minutes(value: str | None) -> int | None:
     return total or None
 
 
+# KOPIS가 상세 정보를 더 이상 안 줌(returncode 04 NODATA) - 장르 불일치 404와 구분하기 위한 예외
+class KopisNoData(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(status_code=404, detail="KOPIS에 공연 상세 정보가 없습니다.")
+
+
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
 async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
     await _throttle_kopis_request()
@@ -810,6 +819,10 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
     elem = root.find("db")
     if elem is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+
+    # 삭제/재발급된 ID는 db 요소는 오지만 mt20id 없이 NODATA ERROR만 옴
+    if not elem.findtext("mt20id") and (elem.findtext("returncode") or "").strip() == "04":
+        raise KopisNoData()
 
     # 목록/검색 계열 API는 장르를 클라이언트 사이드에서 걸러내지만(_fetch_all_kopis_ids,
     # _fetch_and_upsert_concerts), 이 상세 조회는 kopis_id 하나만 알면 어디서든(스캔 후보 검색,
@@ -863,9 +876,17 @@ async def get_concert_detail(
     db: AsyncSession, kopis_id: str, follow_index: dict[str, list[tuple]] | None = None
 ) -> Concert:
     async with httpx.AsyncClient(timeout=10.0) as client:
-        data = await _fetch_kopis_detail_data(client, kopis_id)
+        try:
+            data = await _fetch_kopis_detail_data(client, kopis_id)
+        except KopisNoData:
+            await db.execute(
+                update(Concert).where(Concert.kopis_id == kopis_id).values(kopis_missing_at=datetime.now(timezone.utc))
+            )
+            await db.commit()
+            raise
 
     concert = await _upsert_concert(db, data)
+    concert.kopis_missing_at = None
     await _create_news_feeds_for_concert(db, concert, follow_index)
     await db.commit()
     await db.refresh(concert)
@@ -880,6 +901,9 @@ async def refresh_ticketing_links(concert: Concert) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             data = await _fetch_kopis_detail_data(client, concert.kopis_id)
+    except KopisNoData:
+        concert.kopis_missing_at = datetime.now(timezone.utc)
+        return False
     except HTTPException as e:
         logger.warning(f"페스티벌 예매링크 재동기화 실패 ({concert.kopis_id}): {e.detail}")
         return False

@@ -29,7 +29,7 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
 
     # 1) 공연명 직접 매치
     title_result = await db.execute(
-        select(Concert.id).where(Concert.name.ilike(pattern), Concert.end_date > now)
+        select(Concert.id).where(Concert.name.ilike(pattern), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
     )
     matched_ids: set = set(title_result.scalars().all())
 
@@ -37,7 +37,7 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
     artist_result = await db.execute(
         select(name_unnested.c.concert_id.distinct())
         .join(Concert, Concert.id == name_unnested.c.concert_id)
-        .where(name_unnested.c.name.ilike(pattern), Concert.end_date > now)
+        .where(name_unnested.c.name.ilike(pattern), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
     )
     matched_ids.update(artist_result.scalars().all())
 
@@ -65,7 +65,7 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
             alias_match_result = await db.execute(
                 select(name_unnested.c.concert_id.distinct())
                 .join(Concert, Concert.id == name_unnested.c.concert_id)
-                .where(func.lower(name_unnested.c.name).in_(own_names_lower), Concert.end_date > now)
+                .where(func.lower(name_unnested.c.name).in_(own_names_lower), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
             )
             matched_ids.update(alias_match_result.scalars().all())
 
@@ -74,6 +74,8 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
 
     # 임박한 공연부터 - 찜 후보로는 그게 더 유용함
     result = await db.execute(
-        select(Concert).where(Concert.id.in_(matched_ids)).order_by(Concert.start_date)
+        select(Concert)
+        .where(Concert.id.in_(matched_ids), Concert.kopis_missing_at.is_(None))
+        .order_by(Concert.start_date)
     )
     return list(result.scalars().all())[:limit]
