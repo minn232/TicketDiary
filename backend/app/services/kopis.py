@@ -785,6 +785,16 @@ def _parse_yes_no(value: str | None) -> bool | None:
     return None
 
 
+# KOPIS 러닝타임 문자열("1시간 30분", "2시간", "90분")을 분으로 변환. 괄호 안 부가 설명
+# ("(인터미션 20분 포함)")은 합산에서 제외하고, 못 읽거나 0이면 None
+def _parse_runtime_minutes(value: str | None) -> int | None:
+    text = re.sub(r"\([^)]*\)", "", value or "")
+    hours = re.search(r"(\d+)\s*시간", text)
+    minutes = re.search(r"(\d+)\s*분", text)
+    total = (int(hours.group(1)) * 60 if hours else 0) + (int(minutes.group(1)) if minutes else 0)
+    return total or None
+
+
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
 async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
     await _throttle_kopis_request()
@@ -843,6 +853,7 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
         "event_type": _classify_event_type(name),
         "ticketing_links": ticketing_links or None,
         "visit": _parse_yes_no(elem.findtext("visit")),
+        "runtime_minutes": _parse_runtime_minutes(elem.findtext("prfruntime")),
         "kopis_detail_synced_at": datetime.now(timezone.utc),
     }
 

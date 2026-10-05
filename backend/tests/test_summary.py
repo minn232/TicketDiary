@@ -8,8 +8,10 @@ from httpx import AsyncClient, ASGITransport
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_genre import ArtistGenre
+from app.models.concert import Concert
+from app.models.lineup import ConcertLineup
 from app.models.setlist import RealSetlist
-from app.services.summary import _is_standing, _period_start
+from app.services.summary import _is_standing, _percent_split, _period_start
 from conftest import _get_token, kopis_mock
 
 
@@ -112,6 +114,9 @@ def test_is_standing_detected():
     assert _is_standing("GA") is True
     assert _is_standing("floor") is True
     assert _is_standing("입석") is True
+    assert _is_standing("スタンディング") is True
+    assert _is_standing("스탠딩PGA석") is True
+    assert _is_standing("VIP(STANDING)석") is True
 
 
 # 일반 좌석은 스탠딩으로 판별하지 않는 테스트
@@ -119,12 +124,28 @@ def test_is_standing_not_detected():
     assert _is_standing("R석") is False
     assert _is_standing("VIP석") is False
     assert _is_standing("S석 3열 15번") is False
+    assert _is_standing("Garden 2F") is False
+    assert _is_standing("Gallery") is False
+    assert _is_standing("Standard") is False
+    assert _is_standing("VIP(SEATED)석") is False
+    assert _is_standing("플로어석") is False
+    assert _is_standing("Floor 좌석") is False
 
 
 # None / 빈 문자열 입력 시 False 반환 테스트
 def test_is_standing_none_returns_false():
     assert _is_standing(None) is False
     assert _is_standing("") is False
+
+
+# 퍼센트 분배는 항상 합이 100
+def test_percent_split_sums_to_100():
+    assert _percent_split([1, 1, 1]) == [34, 33, 33]
+    assert _percent_split([2, 1]) == [67, 33]
+    assert _percent_split([3, 0]) == [100, 0]
+    assert _percent_split([0, 0]) is None
+    for counts in ([5, 7], [1, 2, 4], [13, 29]):
+        assert sum(_percent_split(counts)) == 100
 
 
 # _period_start 단위 테스트
@@ -283,6 +304,70 @@ async def test_summary_top_genre_counts_each_genre_of_multi_genre_artist():
     assert res.json()["top_genre"] == "K-pop"
 
 
+# 티켓 1장은 1표 - 라인업이 큰 공연이 여러 장르 표를 몰아 가지 못함(솔로 2번 vs 다장르 페스티벌 1번)
+@pytest.mark.asyncio
+async def test_summary_top_genre_one_vote_per_ticket():
+    solo = f"솔로발라드_{uuid.uuid4().hex}"
+    fest = [f"페스티벌록{i}_{uuid.uuid4().hex}" for i in range(6)]
+    solo_c1 = await _create_concert(f"PF_SUM_VOTE_{uuid.uuid4().hex[:6]}", artists=solo)
+    solo_c2 = await _create_concert(f"PF_SUM_VOTE_{uuid.uuid4().hex[:6]}", artists=solo)
+    fest_c = await _create_concert(f"PF_SUM_VOTE_{uuid.uuid4().hex[:6]}", artists=",".join(fest))
+    token = await _get_token()
+
+    await _insert_artist_genre(solo, ["발라드"])
+    for name in fest:
+        await _insert_artist_genre(name, ["록/밴드"])
+    for c in (solo_c1, solo_c2, fest_c):
+        await _create_attended_ticket(c, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.json()["top_genre"] == "발라드"
+    assert res.json()["top_genres"] == ["발라드"]
+
+
+# 동률이면 공동 1위 장르를 모두 내림
+@pytest.mark.asyncio
+async def test_summary_top_genres_returns_all_tied():
+    artist_a = f"동률A_{uuid.uuid4().hex}"
+    artist_b = f"동률B_{uuid.uuid4().hex}"
+    c1 = await _create_concert(f"PF_SUM_TIE_{uuid.uuid4().hex[:6]}", artists=artist_a)
+    c2 = await _create_concert(f"PF_SUM_TIE_{uuid.uuid4().hex[:6]}", artists=artist_b)
+    token = await _get_token()
+
+    await _insert_artist_genre(artist_a, ["발라드"])
+    await _insert_artist_genre(artist_b, ["록/밴드"])
+    await _create_attended_ticket(c1, token)
+    await _create_attended_ticket(c2, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert sorted(res.json()["top_genres"]) == ["록/밴드", "발라드"]
+    assert res.json()["top_genre"] in ("록/밴드", "발라드")
+
+
+# 장르가 잡힌 티켓이 절반 미만이면 선호 장르를 단정하지 않음(3장 중 1장만 분류)
+@pytest.mark.asyncio
+async def test_summary_top_genre_none_when_coverage_low():
+    known = f"분류됨_{uuid.uuid4().hex}"
+    c1 = await _create_concert(f"PF_SUM_COV_{uuid.uuid4().hex[:6]}", artists=known)
+    c2 = await _create_concert(f"PF_SUM_COV_{uuid.uuid4().hex[:6]}", artists=f"미분류1_{uuid.uuid4().hex}")
+    c3 = await _create_concert(f"PF_SUM_COV_{uuid.uuid4().hex[:6]}", artists=f"미분류2_{uuid.uuid4().hex}")
+    token = await _get_token()
+
+    await _insert_artist_genre(known, ["발라드"])
+    for c in (c1, c2, c3):
+        await _create_attended_ticket(c, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.json()["top_genre"] is None
+    assert res.json()["top_genres"] == []
+
+
 # 스탠딩 / 좌석 / 미집계 카운트 테스트
 @pytest.mark.asyncio
 async def test_summary_standing_and_seated():
@@ -304,6 +389,7 @@ async def test_summary_standing_and_seated():
     data = res.json()
     assert data["standing_count"] == 2
     assert data["seated_count"] == 1
+    assert (data["standing_percent"], data["seated_percent"]) == (67, 33)
 
 
 # 실제 셋리스트 등록 후 곡 수 합산 테스트
@@ -377,6 +463,29 @@ async def test_summary_song_count_multi_day_uses_attended_date_only():
 @pytest.mark.asyncio
 async def test_summary_song_count_multi_day_without_attended_date_skipped():
     assert await _multi_day_song_count("PF_SUM_SONG_MULTI_002", attended_days_ago=None) == 0
+
+
+# 여러 날 공연은 관람한 날 라인업 아티스트만 관람으로 셈(안 간 날 아티스트 제외)
+@pytest.mark.asyncio
+async def test_summary_artists_only_attended_day_lineup():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    xml = _make_kopis_xml("PF_SUM_LINEUP_001", _date_str(3), end=_date_str(2))
+    with kopis_mock(xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            concert_res = await ac.get("/api/v1/concerts/PF_SUM_LINEUP_001", headers=headers)
+    concert_id = uuid.UUID(concert_res.json()["id"])
+
+    async with AsyncSessionLocal() as db:
+        db.add(ConcertLineup(concert_id=concert_id, artist="DayOneBand", performance_date=date.today() - timedelta(days=3), source="crawl"))
+        db.add(ConcertLineup(concert_id=concert_id, artist="DayTwoBand", performance_date=date.today() - timedelta(days=2), source="crawl"))
+        await db.commit()
+
+    body = {"concert_id": str(concert_id), "attended_date": (date.today() - timedelta(days=2)).isoformat()}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        assert (await ac.post("/api/v1/tickets", json=body, headers=headers)).status_code == 201
+        res = await ac.get("/api/v1/summary", headers=headers)
+    assert [a["name"] for a in res.json()["artists"]] == ["DayTwoBand"]
 
 
 # 6m 필터: 183일 초과 공연 제외 테스트
@@ -462,3 +571,78 @@ async def test_summary_unauthorized():
         res = await ac.get("/api/v1/summary")
 
     assert res.status_code == 401
+
+
+# 첫콘/막콘 퍼센트 - 이틀짜리 공연 3개(첫날 2번, 막날 1번) + 하루짜리 공연은 제외
+@pytest.mark.asyncio
+async def test_summary_first_last_day_percent_two_day_concerts_only():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    plan = [("A", 3, 3), ("B", 3, 3), ("C", 3, 2)]  # (id, 공연 시작 며칠 전, 관람일 며칠 전); 종료는 시작+1일
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for suffix, start_ago, attended_ago in plan:
+            kid = f"PF_SUM_DAYPCT_{suffix}_{uuid.uuid4().hex[:6]}"
+            xml = _make_kopis_xml(kid, _date_str(start_ago), end=_date_str(start_ago - 1))
+            with kopis_mock(xml):
+                concert = await ac.get(f"/api/v1/concerts/{kid}", headers=headers)
+            body = {"concert_id": concert.json()["id"],
+                    "attended_date": (date.today() - timedelta(days=attended_ago)).isoformat()}
+            assert (await ac.post("/api/v1/tickets", json=body, headers=headers)).status_code == 201
+        res = await ac.get("/api/v1/summary", headers=headers)
+    data = res.json()
+    assert (data["first_day_count"], data["last_day_count"]) == (2, 1)
+    assert (data["first_day_percent"], data["last_day_percent"]) == (67, 33)
+
+
+# 러닝타임/event_type을 직접 지정
+async def _set_runtime(concert_id: str, minutes: int | None, event_type: str = "SOLO") -> None:
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        concert.runtime_minutes = minutes
+        concert.event_type = event_type
+        await db.commit()
+
+
+# 총 관람 시간과 셋리스트 없는 공연의 곡 수 어림치(솔로 120분 -> 24곡), 실제 곡 수와는 별개
+@pytest.mark.asyncio
+async def test_summary_runtime_and_estimated_songs():
+    solo = await _create_concert(f"PF_SUM_RT_{uuid.uuid4().hex[:6]}")
+    fest = await _create_concert(f"PF_SUM_RT_{uuid.uuid4().hex[:6]}")
+    unknown = await _create_concert(f"PF_SUM_RT_{uuid.uuid4().hex[:6]}")
+    await _set_runtime(solo, 120)
+    await _set_runtime(fest, 480, "FESTIVAL")   # 페스티벌은 제외
+    await _set_runtime(unknown, None)           # 러닝타임 모름
+    token = await _get_token()
+    for c in (solo, fest, unknown):
+        await _create_attended_ticket(c, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    data = res.json()
+    assert data["total_runtime_minutes"] == 120
+    assert data["runtime_missing_count"] == 2
+    assert data["song_count_estimated"] == 24
+    assert data["song_count"] == 0
+
+
+# 실제 셋리스트가 있는 공연은 어림치에서 빠짐(실제 곡 수만 song_count에)
+@pytest.mark.asyncio
+async def test_summary_estimated_songs_skips_concert_with_setlist():
+    concert_id = await _create_concert(f"PF_SUM_RT_{uuid.uuid4().hex[:6]}")
+    await _set_runtime(concert_id, 120)
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, uuid.UUID(concert_id))
+        db.add(RealSetlist(concert_id=concert.id, performance_date=concert.start_date.date(),
+                           songs=[{"name": f"s{i}"} for i in range(10)]))
+        await db.commit()
+    token = await _get_token()
+    await _create_attended_ticket(concert_id, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})
+
+    data = res.json()
+    assert data["song_count"] == 10
+    assert data["song_count_estimated"] == 0
+    assert data["total_runtime_minutes"] == 120
