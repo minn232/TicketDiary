@@ -848,3 +848,50 @@ async def test_crawl_result_lineup_saved_per_date():
         ("아티스트A", date(2030, 6, 2), "crawl"),
         ("아티스트B", date(2030, 6, 1), "crawl"),
     }
+
+
+# 의심스러운 크롤링 콜백 값(과거 가짜 날짜, artist_name의 일정 문구)은 저장은 그대로 하되 경고 로그를 남김
+@pytest.mark.asyncio
+async def test_crawl_result_logs_warning_for_suspicious_values(caplog):
+    concert_id = await _create_concert("PF_CR_WARN_001")
+    body = {"ticketing_date": "2023-01-01", "artist_name": ["공연 시작", "정상아티스트"]}
+
+    with patch("app.core.deps.settings") as mock_settings, caplog.at_level("WARNING"):
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json=body,
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 200
+    assert "크롤링 콜백 값 의심" in caplog.text
+    assert "2023-01-01" in caplog.text
+    assert "공연 시작" in caplog.text
+
+
+# 존재하지 않는 공연의 콜백은 404지만 전송 건수와 맞추기 위해 콜백 카운트에는 잡히고 경고 로그가 남음
+@pytest.mark.asyncio
+async def test_crawl_result_unknown_concert_logs_and_counts_callback(caplog):
+    from app.services.llm_batch_state import mark_llm_sent, reset_llm_night_state
+    from sqlalchemy import select as _select
+    from app.models.llm_batch_state import LlmNightBatchState
+
+    await reset_llm_night_state()
+    await mark_llm_sent(1)
+
+    with patch("app.core.deps.settings") as mock_settings, caplog.at_level("WARNING"):
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.post(
+                f"/api/v1/concerts/{uuid.uuid4()}/crawl-result",
+                json={},
+                headers=_llm_headers(),
+            )
+
+    assert response.status_code == 404
+    assert "공연을 찾을 수 없음" in caplog.text
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(_select(LlmNightBatchState).where(LlmNightBatchState.id == "singleton"))).scalar_one()
+    assert row.pending_count == 0

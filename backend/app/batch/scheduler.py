@@ -1,4 +1,5 @@
 import logging
+import time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -20,6 +21,7 @@ from app.services.social import cleanup_ended_concert_follows
 from app.services.ticket import sync_ticket_statuses
 from app.services.lastfm import sync_artist_similarities, sync_artist_genres
 from app.services.llm_batch_state import (
+    describe_llm_batch_state,
     is_llm_batch_idle,
     mark_all_sent_for_tonight,
     mark_stopped_early,
@@ -54,47 +56,62 @@ async def _run_daily_kopis_sync() -> None:
 # pod이 못 뜨거나 llm_server가 준비 안 되면 이번 시도는 포기하고 다음날 재시도(전송 대상은 DB 조건으로
 # 다시 잡힘). GPU가 잡혔는데 llm_server가 안 뜬 경우엔 켜진 채 과금되지 않게 바로 정지한다
 async def _run_llm_attempt() -> None:
+    started = time.monotonic()
     try:
         # 그날 LLM 조기정지 판단 기준을 초기화 (llm_batch_state.py) - 실패해도 무해함
         # (실패하면 아래에서 바로 return이라 idle 판단이 쓰일 일이 없음)
         await reset_llm_night_state()
+        logger.info("[LLM] 배치 시도 시작")
         # pod 시작 + SSH 원격으로 start_vllm.sh 실행까지 한 번에 (LLM팀 Container Start
         # Command 자동화가 무산되면서 SSH 방식으로 대체함)
         if not await start_pod_and_launch_services():
-            logger.warning("pod 시작/원격 실행 실패, 이번 LLM 배치는 건너뛰고 다음날 재시도")
+            logger.warning(
+                f"[LLM] 배치 시도 실패(pod 시작/원격 실행, {time.monotonic() - started:.0f}초) - 다음날 재시도"
+            )
             # start 요청 자체가 실패한 경우엔 이미 꺼져있어 무해하고(멱등), SSH 단계 실패면 켜진 pod을 정리
             await stop_pod()
             return
+        launched = time.monotonic()
         # LLM_CRAWL_URL 미설정이면 준비 대기 불필요(전송 함수들이 알아서 건너뜀)
         if settings.LLM_CRAWL_URL and not await wait_until_llm_server_ready():
-            logger.warning("llm_server 준비 안 됨, 이번 LLM 배치는 건너뛰고 다음날 재시도")
+            logger.warning(
+                f"[LLM] 배치 시도 실패(llm_server 준비 안 됨, {time.monotonic() - started:.0f}초) - 다음날 재시도"
+            )
             await stop_pod()
             return
+        ready = time.monotonic()
+        # 단계별 전송 건수 - 실패한 단계는 0으로 남고 원인은 각 전송 함수의 에러 로그에 있음
+        sent = {"크롤": 0, "아티스트": 0, "일기": 0}
         try:
-            await send_screenshots_to_llm()
+            sent["크롤"] = await send_screenshots_to_llm()
         except Exception:
-            logger.exception("크롤링 스크린샷 전송 오류")
+            logger.exception("[LLM] 크롤링 스크린샷 전송 오류")
         try:
-            await send_posters_for_artist_extraction()
+            sent["아티스트"] = await send_posters_for_artist_extraction()
         except Exception:
-            logger.exception("포스터 아티스트 추출 요청 전송 오류")
+            logger.exception("[LLM] 포스터 아티스트 추출 요청 전송 오류")
         try:
-            await send_diary_requests_to_llm()
+            sent["일기"] = await send_diary_requests_to_llm()
         except Exception:
-            logger.exception("일기 생성 요청 전송 오류")
+            logger.exception("[LLM] 일기 생성 요청 전송 오류")
         finally:
             # 예정된 전송 3개 중 마지막 - 성공/실패 무관하게 "이번 전송은 이걸로 끝"을 표시해야
             # 정확한 건수 매칭(llm_batch_state.py)이 조기 정지를 판단할 수 있음
             await mark_all_sent_for_tonight()
+        logger.info(
+            f"[LLM] 배치 시도 전송 완료 - 크롤 {sent['크롤']}건, 아티스트 {sent['아티스트']}건, 일기 {sent['일기']}건 "
+            f"(pod 기동 {launched - started:.0f}초, 서버 준비 {ready - launched:.0f}초, 전송 {time.monotonic() - ready:.0f}초)"
+        )
     except Exception:
-        logger.exception("LLM 배치 시도 오류")
+        logger.exception("[LLM] 배치 시도 오류")
 
 
 async def _run_pod_stop() -> None:
     try:
-        await stop_pod()
+        stopped = await stop_pod()
+        logger.info(f"[LLM] 정해진 시각 정지 - 정지 확인={stopped}, {await describe_llm_batch_state()}")
     except Exception:
-        logger.exception("RunPod pod 정지 오류")
+        logger.exception("[LLM] RunPod pod 정지 오류")
 
 
 # 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡은 경우를 위한 안전망 - 유휴 5분 감지되면
@@ -103,12 +120,12 @@ async def _run_llm_idle_check() -> None:
     try:
         if not await is_llm_batch_idle(idle_minutes=5.0):
             return
-        logger.info("LLM 배치 유휴 5분 감지 - 조기 정지 시도")
+        logger.info(f"[LLM] 배치 유휴 5분 감지 - 조기 정지 시도 ({await describe_llm_batch_state()})")
         if await stop_pod():
             await mark_stopped_early()
-            logger.info("LLM 배치 조기 완료로 pod 조기 정지 완료 (05시/06시 안전망은 그대로 유지됨)")
+            logger.info("[LLM] 유휴 감지로 pod 조기 정지 완료 (05시/06시 안전망은 그대로 유지됨)")
     except Exception:
-        logger.exception("LLM 배치 유휴 감지/조기 정지 오류")
+        logger.exception("[LLM] 배치 유휴 감지/조기 정지 오류")
 
 
 async def _run_ticket_status_sync() -> None:

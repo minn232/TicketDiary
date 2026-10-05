@@ -5,6 +5,7 @@ import asyncssh
 import httpx
 
 from app.core.config import settings
+from app.core.http_errors import describe_http_error
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,10 @@ async def start_pod() -> bool:
                 headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
             )
             response.raise_for_status()
-        logger.info("RunPod pod 시작 요청 성공")
+        logger.info("[LLM] RunPod pod 시작 요청 성공")
         return True
     except Exception as e:
-        logger.error(f"RunPod pod 시작 요청 실패: {e}")
+        logger.error(f"[LLM] RunPod pod 시작 요청 실패: {describe_http_error(e)}")
         return False
 
 
@@ -74,15 +75,15 @@ async def stop_pod() -> bool:
                 headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
             )
             response.raise_for_status()
-        logger.info("RunPod pod 정지 요청 성공, 실제 정지 확인 중...")
+        logger.info("[LLM] RunPod pod 정지 요청 성공, 실제 정지 확인 중...")
     except Exception as e:
-        logger.error(f"RunPod pod 정지 요청 실패: {e}")
+        logger.error(f"[LLM] RunPod pod 정지 요청 실패: {describe_http_error(e)}")
         return False
 
     if await _wait_until_actually_stopped():
-        logger.info("RunPod pod 실제 정지 확인됨")
+        logger.info("[LLM] RunPod pod 실제 정지 확인됨")
         return True
-    logger.error("RunPod pod 정지 요청은 성공했지만 실제 정지를 확인하지 못함 - 계속 켜져있을 수 있음")
+    logger.error("[LLM] RunPod pod 정지 요청은 성공했지만 실제 정지를 확인하지 못함 - 계속 켜져있을 수 있음")
     return False
 
 
@@ -95,19 +96,22 @@ async def wait_until_llm_server_ready(timeout_seconds: float = 600.0, interval_s
 
     health_url = settings.LLM_CRAWL_URL.rsplit("/", 1)[0] + "/health"
     elapsed = 0.0
+    last_status = "응답 없음"
     async with httpx.AsyncClient(timeout=10.0) as client:
         while elapsed < timeout_seconds:
             try:
                 response = await client.get(health_url)
                 if response.status_code == 200:
-                    logger.info(f"llm_server 준비 확인됨 (약 {elapsed:.0f}초 소요)")
+                    logger.info(f"[LLM] llm_server 준비 확인됨 (약 {elapsed:.0f}초 소요)")
                     return True
-            except Exception:
-                pass
+                last_status = f"HTTP {response.status_code}"
+            except Exception as e:
+                last_status = describe_http_error(e)
             await asyncio.sleep(interval_seconds)
             elapsed += interval_seconds
 
-    logger.error(f"llm_server가 {timeout_seconds:.0f}초 안에 준비되지 않음")
+    # 530=cloudflared 터널 없음, 502=터널은 떴는데 llm_server 미기동 등 원인이 달라 마지막 상태를 남김
+    logger.error(f"[LLM] llm_server가 {timeout_seconds:.0f}초 안에 준비되지 않음 (마지막 상태: {last_status})")
     return False
 
 
@@ -154,17 +158,19 @@ async def _wait_for_ssh_ready(timeout_seconds: float = 180.0, interval_seconds: 
         return False
 
     elapsed = 0.0
+    last_error = "시도 없음"
     while elapsed < timeout_seconds:
         try:
             async with await _ssh_connect(connect_timeout=10):
-                logger.info(f"SSH 접속 준비 확인됨 (약 {elapsed:.0f}초 소요)")
+                logger.info(f"[LLM] SSH 접속 준비 확인됨 (약 {elapsed:.0f}초 소요)")
                 return True
-        except Exception:
-            pass
+        except Exception as e:
+            last_error = describe_http_error(e)
         await asyncio.sleep(interval_seconds)
         elapsed += interval_seconds
 
-    logger.error(f"SSH가 {timeout_seconds:.0f}초 안에 준비되지 않음")
+    # Permission denied(키 불일치)와 연결 거부/포트 미할당(아직 부팅 중)은 대응이 달라 마지막 예외를 남김
+    logger.error(f"[LLM] SSH가 {timeout_seconds:.0f}초 안에 준비되지 않음 (마지막 오류: {last_error})")
     return False
 
 
@@ -188,30 +194,41 @@ async def run_start_script_via_ssh() -> bool:
         async with await _ssh_connect(connect_timeout=15) as conn:
             # tmux는 /workspace 밖에 설치돼서 pod을 stop/start하면 사라짐 - 없으면 아래 new-session이
             # 조용히 실패해(check=False) start_vllm.sh가 아예 안 돌므로 매번 먼저 확인해 설치
-            await conn.run(
+            await _run_remote(
+                conn,
+                "tmux 설치 확인",
                 "command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)",
-                check=False,
             )
             await conn.run(f"tmux kill-session -t {_TMUX_SESSION} 2>/dev/null; true", check=False)
-            await conn.run(
+            await _run_remote(
+                conn,
+                "start_vllm.sh 세션 생성",
                 f"tmux new-session -d -s {_TMUX_SESSION} -c /workspace "
                 "'bash start_vllm.sh 2>&1 | tee start_vllm_remote.log'",
-                check=False,
             )
             await conn.run(f"tmux kill-session -t {_TMUX_LOG_SESSION} 2>/dev/null; true", check=False)
-            await conn.run(
+            await _run_remote(
+                conn,
+                "vLLM 로그 세션 생성",
                 f"tmux new-session -d -s {_TMUX_LOG_SESSION} "
                 f"'tail -n 50 -F {_VLLM_LOG_PATH}'",
-                check=False,
             )
         logger.info(
-            f"start_vllm.sh 원격 실행 요청 완료 (tmux 세션 '{_TMUX_SESSION}'=스크립트 진행상황, "
+            f"[LLM] start_vllm.sh 원격 실행 요청 완료 (tmux 세션 '{_TMUX_SESSION}'=스크립트 진행상황, "
             f"'{_TMUX_LOG_SESSION}'=vLLM 실시간 로그, 둘 다 SSH로 attach 가능)"
         )
         return True
     except Exception as e:
-        logger.error(f"start_vllm.sh 원격 실행 실패: {e}")
+        logger.error(f"[LLM] start_vllm.sh 원격 실행 실패: {describe_http_error(e)}")
         return False
+
+
+# check=False라 실패해도 예외가 안 나서(tmux 미설치로 세션이 안 만들어져 start_vllm.sh가 조용히
+# 안 도는 경우 등) 종료 코드와 stderr를 남겨 원인이 보이게 함
+async def _run_remote(conn, label: str, command: str) -> None:
+    result = await conn.run(command, check=False)
+    if result.exit_status != 0:
+        logger.error(f"[LLM] 원격 명령 실패 ({label}): exit={result.exit_status} stderr={str(result.stderr).strip()[:300]}")
 
 
 # pod 시작 + SSH 준비 대기 + start_vllm.sh 원격 실행까지 한 번에 처리. 스케줄러의 llm_attempt
@@ -224,6 +241,6 @@ async def start_pod_and_launch_services() -> bool:
         # 돌려야 하는 예전 방식 그대로 유지되는 것뿐이라 안전하게 건너뜀
         return True
     if not await _wait_for_ssh_ready():
-        logger.error("pod은 켜졌지만 SSH 접속이 준비되지 않아 원격 실행을 포기함")
+        logger.error("[LLM] pod은 켜졌지만 SSH 접속이 준비되지 않아 원격 실행을 포기함")
         return False
     return await run_start_script_via_ssh()

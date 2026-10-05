@@ -41,6 +41,27 @@ def _normalize_seat_type(seat_type: str) -> str:
     return _WHITESPACE_RE.sub("", seat_type).upper()
 
 
+# 콜백 내용 중 의심스러운 값을 로그로만 남김(저장 동작은 안 바꿈) - llm_server가 못 거른 가짜 날짜나
+# 일정 문구가 artist_name에 섞이는 걸 방어 로직 도입 전에 규모부터 파악하려는 용도
+_SCHEDULE_PHRASE_RE = re.compile(r"공연\s*시작|입장|인터미션|사운드\s*체크|티켓\s*부스|게이트|리허설")
+
+
+def _warn_suspicious_crawl_result(concert: Concert, body: CrawlResultRequest) -> None:
+    notes: list[str] = []
+    if body.ticketing_date:
+        try:
+            td = date.fromisoformat(body.ticketing_date)
+            if td.year < datetime.now(timezone.utc).year - 1:
+                notes.append(f"ticketing_date={body.ticketing_date}(과거 날짜)")
+        except ValueError:
+            pass
+    noisy = [n for n in body.artist_name or [] if _SCHEDULE_PHRASE_RE.search(n)]
+    if noisy:
+        notes.append(f"artist_name에 일정 문구 의심={noisy}")
+    if notes:
+        logger.warning(f"[LLM] 크롤링 콜백 값 의심 concert_id={concert.id} name={concert.name}: {'; '.join(notes)}")
+
+
 # LLM팀이 크롤링 분석 결과를 전송하는 웹훅 엔드포인트
 @router.post("/{concert_id}/crawl-result", response_model=CrawlResultResponse)
 async def receive_crawl_result(
@@ -50,15 +71,19 @@ async def receive_crawl_result(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
+    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
+    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도.
+    # 공연이 그 사이 삭제돼 404가 나는 콜백도 전송 건수에 잡혀 있으니 먼저 세어야 카운트가 맞음
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
+
     result = await db.execute(select(Concert).where(Concert.id == concert_id))
     concert = result.scalar_one_or_none()
     if concert is None:
+        logger.warning(f"[LLM] 크롤링 콜백의 공연을 찾을 수 없음 concert_id={concert_id}")
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
 
-    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
-    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도
-    await mark_llm_callback_received()
-    background_tasks.add_task(try_stop_pod_if_done)
+    _warn_suspicious_crawl_result(concert, body)
 
     # 이 콜백이 도착했다는 사실 자체를 기록 - 아래 개별 필드가 하나도 안 채워져도(스크린샷에서
     # 못 찾은 경우) LLM이 이 공연을 이미 처리했다는 건 남아야 재전송 배치가 다시 안 보낸다.
@@ -212,7 +237,7 @@ async def receive_crawl_result(
     if upgraded_to_festival:
         await backfill_first_last_day_from_concert(db, concert_id)
 
-    logger.info(f"크롤링 결과 수신 concert_id={concert_id} updated={updated}")
+    logger.info(f"[LLM] 크롤링 결과 수신 concert_id={concert_id} updated={updated}")
     return CrawlResultResponse(updated=updated)
 
 
@@ -225,15 +250,15 @@ async def receive_artist_extraction_result(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
+    # 카운트를 404 판정보다 먼저 하는 이유는 /crawl-result와 동일
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
+
     result = await db.execute(select(Concert).where(Concert.id == concert_id))
     concert = result.scalar_one_or_none()
     if concert is None:
+        logger.warning(f"[LLM] 아티스트 추출 콜백의 공연을 찾을 수 없음 concert_id={concert_id}")
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
-
-    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
-    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도
-    await mark_llm_callback_received()
-    background_tasks.add_task(try_stop_pod_if_done)
 
     known_artist_names: set[str] | None = None
     if body.artist_name or body.lineup:
@@ -281,5 +306,5 @@ async def receive_artist_extraction_result(
         # 웹훅 응답 시간엔 영향 없음(services/artist_normalization.py의 normalize_specific_artists 참고)
         background_tasks.add_task(normalize_specific_artists, concert_id, list(queue_names))
 
-    logger.info(f"아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
+    logger.info(f"[LLM] 아티스트 추출 결과 수신 concert_id={concert_id} artist_name={concert.artist_name}")
     return ArtistExtractionResponse(artist_name=concert.artist_name)

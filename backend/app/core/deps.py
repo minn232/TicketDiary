@@ -1,3 +1,4 @@
+import logging
 import secrets
 import time
 from collections import defaultdict
@@ -12,6 +13,8 @@ from app.core.database import get_db
 from app.core.security import verify_token
 from app.models.user import User
 from app.services.auth import get_user_by_id
+
+logger = logging.getLogger(__name__)
 
 # 인증 관련 의존성 함수들
 _bearer = HTTPBearer(auto_error=False)
@@ -68,8 +71,11 @@ async def verify_llm_api_key(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> None:
     if not settings.LLM_EXTRACT_API_KEY:
+        logger.error("[LLM] 콜백 거부: 서버에 LLM_EXTRACT_API_KEY가 설정되지 않음")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM API 키가 설정되지 않았습니다.")
     if credentials is None or not secrets.compare_digest(credentials.credentials, settings.LLM_EXTRACT_API_KEY):
+        # 키 값은 남기지 않음 - 헤더 누락과 불일치만 구분 (콜백이 전부 거부되는 상황을 "LLM이 안 보냄"과 구분)
+        logger.warning(f"[LLM] 콜백 거부: API 키 {'헤더 없음' if credentials is None else '불일치'}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="유효하지 않은 API 키입니다.")
 
 

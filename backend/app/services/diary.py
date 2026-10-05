@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.http_errors import describe_http_error
 from app.models.ticket import Ticket
 from app.services.llm_batch_state import mark_llm_sent
 
@@ -16,10 +17,10 @@ logger = logging.getLogger(__name__)
 # LLM팀 웹훅으로 전송. LLM팀 서버가 KST 00시~01시 사이 한정된 시간에만 떠있어서, 요청 즉시
 # 동기 호출하던 이전 방식(30초 타임아웃) 대신 크롤링/아티스트 추출과 동일하게 배치+웹훅 방식으로 전환함.
 # 결과는 POST /tickets/{ticket_id}/diary-result 웹훅으로 나중에 수신
-async def send_diary_requests_to_llm() -> None:
+async def send_diary_requests_to_llm() -> int:
     if not settings.LLM_DIARY_URL:
         logger.info("LLM_DIARY_URL 미설정, 전송 건너뜀")
-        return
+        return 0
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -30,8 +31,8 @@ async def send_diary_requests_to_llm() -> None:
         tickets = list(result.scalars().all())
 
     if not tickets:
-        logger.info("전송할 일기 생성 요청 없음")
-        return
+        logger.info("[LLM] 전송할 일기 생성 요청 없음")
+        return 0
 
     payload = [
         {
@@ -53,8 +54,10 @@ async def send_diary_requests_to_llm() -> None:
                 headers={"Authorization": f"Bearer {settings.LLM_EXTRACT_API_KEY}"},
             )
             response.raise_for_status()
-        logger.info(f"LLM팀 일기 생성 요청 전송 완료: {len(tickets)}건")
+        logger.info(f"[LLM] 일기 생성 요청 전송 완료: {len(tickets)}건")
         # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
         await mark_llm_sent(len(tickets))
+        return len(tickets)
     except Exception as e:
-        logger.error(f"LLM팀 일기 생성 요청 전송 실패: {e}")
+        logger.error(f"[LLM] 일기 생성 요청 전송 실패 ({len(tickets)}건 대상): {describe_http_error(e)}")
+        return 0

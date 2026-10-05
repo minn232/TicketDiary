@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.core.http_errors import describe_http_error
 from app.models.concert import Concert, EventType
 from app.models.social import ConcertFollow
 from app.services.kopis import refresh_ticketing_links
@@ -891,10 +892,10 @@ async def save_manual_crawl_screenshot(
 
 
 # 자정 배치: 예정된 공연 스크린샷 LLM팀 웹훅으로 전송
-async def send_screenshots_to_llm() -> None:
+async def send_screenshots_to_llm() -> int:
     if not settings.LLM_CRAWL_URL:
         logger.info("LLM_CRAWL_URL 미설정, 전송 건너뜀")
-        return
+        return 0
 
     now = datetime.now(timezone.utc)
 
@@ -917,8 +918,8 @@ async def send_screenshots_to_llm() -> None:
         concerts = list(result.scalars().all())
 
     if not concerts:
-        logger.info("전송할 크롤링 스크린샷 없음")
-        return
+        logger.info("[LLM] 전송할 크롤링 스크린샷 없음")
+        return 0
 
     payload = [
         {
@@ -938,11 +939,13 @@ async def send_screenshots_to_llm() -> None:
                 headers={"Authorization": f"Bearer {settings.LLM_EXTRACT_API_KEY}"},
             )
             response.raise_for_status()
-        logger.info(f"LLM팀 스크린샷 전송 완료: {len(concerts)}건")
+        logger.info(f"[LLM] 스크린샷 전송 완료: {len(concerts)}건")
         # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
         await mark_llm_sent(len(concerts))
+        return len(concerts)
     except Exception as e:
-        logger.error(f"LLM팀 스크린샷 전송 실패: {e}")
+        logger.error(f"[LLM] 스크린샷 전송 실패 ({len(concerts)}건 대상): {describe_http_error(e)}")
+        return 0
 
 
 # 콜백(/artist-result)이 타임아웃/522로 유실되면 attempted_at만 찍히고 영영 재시도가 안 되던
@@ -996,7 +999,7 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         concerts = list(result.scalars().all())
 
     if not concerts:
-        logger.info("아티스트 추출 대상 공연 없음")
+        logger.info("[LLM] 아티스트 추출 대상 공연 없음")
         return 0
 
     # venue는 KOPIS 동기화 시점에 이미 채워져 있어(fcltynm) 별도 API 호출 없이 그대로 실어
@@ -1015,7 +1018,7 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
             )
             response.raise_for_status()
     except Exception as e:
-        logger.error(f"LLM팀 포스터 전송 실패: {e}")
+        logger.error(f"[LLM] 포스터 전송 실패 ({len(concerts)}건 대상): {describe_http_error(e)}")
         return 0
 
     concert_ids = [c.id for c in concerts]
@@ -1030,7 +1033,7 @@ async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
         )
         await db.commit()
 
-    logger.info(f"LLM팀 포스터 전송 완료: {len(concerts)}건")
+    logger.info(f"[LLM] 포스터 전송 완료: {len(concerts)}건")
     # pod 조기 정지 판단용 - 이번에 보낸 건수 적립 (llm_batch_state.py 참고)
     await mark_llm_sent(len(concerts))
     return len(concerts)

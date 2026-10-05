@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -57,6 +58,8 @@ from app.services.ticket import (
     update_ticket,
     delete_ticket,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -374,15 +377,17 @@ async def receive_diary_result(
     db: AsyncSession = Depends(get_db),
     _: None = Depends(verify_llm_api_key),
 ):
+    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
+    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도.
+    # 티켓이 그 사이 삭제돼 404가 나는 콜백도 전송 건수에 잡혀 있으니 먼저 세어야 카운트가 맞음
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
+
     result = await db.execute(select(Ticket).where(Ticket.id == ticket_id))
     ticket = result.scalar_one_or_none()
     if ticket is None:
+        logger.warning(f"[LLM] 일기 콜백의 티켓을 찾을 수 없음 ticket_id={ticket_id}")
         raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
-
-    # pod 조기 정지 판단용 갱신 - pod이 살아서 실제로 처리 중이라는 증거. 이 콜백으로 그날 밤
-    # 보낸 만큼 다 받았으면(정확한 건수 매칭) 응답 지연 없이 백그라운드로 즉시 pod 정지 시도
-    await mark_llm_callback_received()
-    background_tasks.add_task(try_stop_pod_if_done)
 
     ticket.diary = body.diary
     await db.commit()

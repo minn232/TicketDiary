@@ -63,6 +63,19 @@ async def mark_llm_callback_received() -> None:
         await db.commit()
 
 
+# 정지 시점 로그용 - 보낸 만큼 콜백이 왔는지(미수신 건수)가 보여 콜백 유실 여부를 알 수 있음
+async def describe_llm_batch_state() -> str:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(LlmNightBatchState).where(LlmNightBatchState.id == _SINGLETON_ID))
+        row = result.scalar_one_or_none()
+    if row is None:
+        return "상태 없음"
+    return (
+        f"미수신 콜백={row.pending_count}건, 전송완료={'예' if row.all_sent_at else '아니오'}, "
+        f"마지막 콜백={row.last_callback_at.isoformat(timespec='seconds') if row.last_callback_at else '없음'}"
+    )
+
+
 async def mark_stopped_early() -> None:
     async with AsyncSessionLocal() as db:
         row = await _get_or_create_row(db)
@@ -106,7 +119,7 @@ async def try_stop_pod_if_done() -> None:
         return
     from app.services.runpod import stop_pod  # 순환 임포트 방지용 지연 임포트
 
-    logger.info("그날 밤 전송건수=콜백건수 일치 확인 - 조기 정지 시도")
+    logger.info("[LLM] 전송건수=콜백건수 일치 확인 - 조기 정지 시도")
     if await stop_pod():
         await mark_stopped_early()
-        logger.info("정확한 건수 매칭으로 pod 조기 정지 완료 (유휴시간 체크/01시·02시 안전망은 그대로 유지됨)")
+        logger.info("[LLM] 건수 매칭으로 pod 조기 정지 완료 (유휴시간 체크/05시·06시 안전망은 그대로 유지됨)")
