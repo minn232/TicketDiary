@@ -4,7 +4,7 @@ get_summary가 이미 읽어온 티켓/셋리스트를 받아 계산만 하고, 
 """
 import re
 from collections import Counter, defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 from uuid import UUID
 
@@ -26,17 +26,31 @@ _TICKETING_SITE_ALIASES = {"nol ticket": "INTERPARK", "nol": "INTERPARK", "inter
 _TOP_VENUE_LIMIT = 3
 
 
-# 개수들을 합이 정확히 100이 되는 정수 퍼센트로 변환(최대잔여법). 합계가 0이면 None
+# 개수들을 정수 퍼센트로 변환(최대잔여법). 같은 개수는 항상 같은 퍼센트로 보이게, 남은 몫은 같은
+# 개수 묶음 전체에 줄 수 있을 때만 나눠서 1:1:1이 34/33/33 대신 33/33/33이 됨(이 경우 합이 99일 수 있음).
+# 합계가 0이면 None
 def percent_split(counts: list[int]) -> list[int] | None:
     total = sum(counts)
     if total == 0:
         return None
     floors = [c * 100 // total for c in counts]
-    # 소수 부분이 큰 항목부터 남은 몫을 1씩 나눠 줌(동률이면 앞 항목 우선)
-    order = sorted(range(len(counts)), key=lambda i: (-(counts[i] * 100 % total), i))
-    for i in order[: 100 - sum(floors)]:
-        floors[i] += 1
+    remaining = 100 - sum(floors)
+    groups: dict[int, list[int]] = defaultdict(list)
+    for i, c in enumerate(counts):
+        groups[c].append(i)
+    # 소수 부분이 큰 개수 묶음부터 몫을 줌 - 묶음이 통째로 못 받으면 건너뜀
+    for count in sorted(groups, key=lambda c: -(c * 100 % total)):
+        members = groups[count]
+        if remaining >= len(members):
+            for i in members:
+                floors[i] += 1
+            remaining -= len(members)
     return floors
+
+
+# 한국 기준 현재 시각 - 공연/관람 날짜가 한국 날짜를 UTC 자정으로 저장한 값이라 "이번 달"도 한국 기준
+def kst_now() -> datetime:
+    return datetime.now(timezone(timedelta(hours=9)))
 
 
 def _attended_day(t: Ticket) -> date:
@@ -53,6 +67,7 @@ def empty_extras() -> dict:
         "top_venues": [], "weekday_counts": [0] * 7, "max_spend": None, "avg_ticket_price": None,
         "ticketing_sites": [], "ticketing_site_unknown_count": 0, "photo_count": 0, "diary_count": 0,
         "busiest_month": None, "monthly_stats": [], "top_spend_artist": None, "new_artist_count": 0, "new_artists": [],
+        "new_artists_by_year": [],
         "origin_domestic_percent": None, "origin_foreign_percent": None, "origin_unknown_count": 0,
         "most_heard_song": None, "rarest_song": None,
     }
@@ -72,7 +87,7 @@ def _monthly_stats(tickets: list[Ticket], period_start: datetime | None) -> list
     first = min(counts)
     if period_start is not None:
         first = min(first, (period_start.year, period_start.month))
-    now = datetime.now(timezone.utc)
+    now = kst_now()
     last = max(max(counts), (now.year, now.month))
 
     stats = []
@@ -169,6 +184,18 @@ async def compute_artist_extras(
         seen_before = await _artists_of_tickets(db, list(earlier))
     new_artists = [a for a in period_artists if a not in seen_before]
 
+    # 전체 기간은 "처음 본" 기준이 없어 전부 신규가 되므로, 대신 아티스트를 처음 본 해별로 묶어서 내림
+    new_artists_by_year: list[dict] = []
+    if period_start is None:
+        first_year: dict[str, int] = {}
+        for t in tickets:  # 관람일 순으로 정렬된 티켓
+            for artist in ticket_artists[t.id]:
+                first_year.setdefault(artist, _attended_day(t).year)
+        by_year: dict[int, list[str]] = defaultdict(list)
+        for artist, year in first_year.items():
+            by_year[year].append(artist)
+        new_artists_by_year = [{"year": y, "artists": by_year[y]} for y in sorted(by_year)]
+
     # 내한 vs 국내 - 티켓 단위로 분류. MB 국가(KR이면 국내)를 우선 쓰고 라인업 다수결(동률이면 해외),
     # 국가를 아는 아티스트가 없으면 KOPIS visit으로 보조, 그것도 없으면 미분류
     countries = await _artist_countries(db, set(period_artists))
@@ -193,6 +220,7 @@ async def compute_artist_extras(
         "top_spend_artist": {"name": top_spend[0], "amount": top_spend[1]} if top_spend else None,
         "new_artist_count": len(new_artists),
         "new_artists": new_artists,
+        "new_artists_by_year": new_artists_by_year,
         "origin_domestic_percent": origin[0] if origin else None,
         "origin_foreign_percent": origin[1] if origin else None,
         "origin_unknown_count": unknown,

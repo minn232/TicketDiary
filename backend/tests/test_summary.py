@@ -11,7 +11,7 @@ from app.models.artist_genre import ArtistGenre
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.models.setlist import RealSetlist
-from app.services.summary import _is_standing, _percent_split, _period_start
+from app.services.summary import _is_seated, _is_standing, _percent_split, _period_start
 from conftest import _get_token, kopis_mock
 
 
@@ -138,30 +138,38 @@ def test_is_standing_none_returns_false():
     assert _is_standing("") is False
 
 
-# 퍼센트 분배는 항상 합이 100
-def test_percent_split_sums_to_100():
-    assert _percent_split([1, 1, 1]) == [34, 33, 33]
+# 퍼센트 분배: 개수가 다르면 합 100, 같은 개수는 같은 퍼센트(남는 몫이 묶음에 안 맞으면 99까지 허용)
+def test_percent_split_equal_counts_get_equal_percent():
+    assert _percent_split([1, 1, 1]) == [33, 33, 33]
+    assert _percent_split([1, 1, 2]) == [25, 25, 50]
+    assert _percent_split([2, 2, 1]) == [40, 40, 20]
     assert _percent_split([2, 1]) == [67, 33]
     assert _percent_split([3, 0]) == [100, 0]
+    assert _percent_split([1, 1]) == [50, 50]
     assert _percent_split([0, 0]) is None
     for counts in ([5, 7], [1, 2, 4], [13, 29]):
-        assert sum(_percent_split(counts)) == 100
+        assert sum(_percent_split(counts)) == 100  # 모두 다른 개수면 항상 합 100
+    for counts in ([1, 1, 1], [3, 3, 3, 1], [2, 2, 2, 2, 2, 2, 2]):
+        percents = _percent_split(counts)
+        assert 100 - len(counts) < sum(percents) <= 100
+        assert all(p1 == p2 for (c1, p1) in zip(counts, percents) for (c2, p2) in zip(counts, percents) if c1 == c2)
 
 
 # _period_start 단위 테스트
 
-# 6m -> 183일 전 datetime 반환 테스트
+# 이번 달을 포함한 최근 N개월의 1일(한국 기준 현재 달) 반환 테스트
+def _months_back(months: int) -> datetime:
+    now = datetime.now(timezone(timedelta(hours=9)))
+    index = now.year * 12 + now.month - 1 - months
+    return datetime(index // 12, index % 12 + 1, 1, tzinfo=timezone.utc)
+
+
 def test_period_start_6m():
-    result = _period_start("6m")
-    expected = datetime.now(timezone.utc) - timedelta(days=183)
-    assert abs((result - expected).total_seconds()) < 5
+    assert _period_start("6m") == _months_back(5)
 
 
-# 1y -> 365일 전 datetime 반환 테스트
 def test_period_start_1y():
-    result = _period_start("1y")
-    expected = datetime.now(timezone.utc) - timedelta(days=365)
-    assert abs((result - expected).total_seconds()) < 5
+    assert _period_start("1y") == _months_back(11)
 
 
 # all -> None 반환 테스트
@@ -390,6 +398,21 @@ async def test_summary_standing_and_seated():
     assert data["standing_count"] == 2
     assert data["seated_count"] == 1
     assert (data["standing_percent"], data["seated_percent"]) == (67, 33)
+
+
+# 입장권 종류/테스트 값처럼 좌석이 아닌 구분은 스탠딩/좌석 비율 계산에서 빠짐
+@pytest.mark.asyncio
+async def test_summary_seat_ratio_ignores_unclear_seat_types():
+    token = await _get_token()
+    seat_types = ["스탠딩석", "지정석", "R석", "1일권", "테스트"]
+    for i, seat_type in enumerate(seat_types):
+        concert_id = await _create_concert(f"PF_SUM_SEATX_{i}_{uuid.uuid4().hex[:6]}")
+        await _create_attended_ticket(concert_id, token, seat_type=seat_type)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        data = (await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})).json()
+    assert (data["standing_count"], data["seated_count"]) == (1, 2)
+    assert (data["standing_percent"], data["seated_percent"]) == (33, 67)
 
 
 # 실제 셋리스트 등록 후 곡 수 합산 테스트
