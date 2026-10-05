@@ -203,8 +203,14 @@ class TicketScanExtracted {
 class TicketScanResponse {
   final TicketScanExtracted extracted;
   final List<ConcertResponse> candidates;
+  // [백엔드 수정] 후보가 비었을 때의 이유.
+  final String? emptyReason;
 
-  const TicketScanResponse({required this.extracted, required this.candidates});
+  const TicketScanResponse({
+    required this.extracted,
+    required this.candidates,
+    this.emptyReason,
+  });
 
   factory TicketScanResponse.fromJson(Map<String, dynamic> json) {
     return TicketScanResponse(
@@ -214,6 +220,7 @@ class TicketScanResponse {
       candidates: (json['candidates'] as List<dynamic>? ?? const [])
           .map((e) => ConcertResponse.fromJson(e as Map<String, dynamic>))
           .toList(),
+      emptyReason: json['empty_reason'] as String?,
     );
   }
 }

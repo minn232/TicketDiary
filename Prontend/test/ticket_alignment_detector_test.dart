@@ -68,7 +68,8 @@ void main() {
       width: width,
       height: height,
       brightnessAt: (row, col) {
-        final isEdge = row < height * 0.1 ||
+        final isEdge =
+            row < height * 0.1 ||
             row >= height * 0.9 ||
             col < width * 0.1 ||
             col >= width * 0.9;
@@ -127,7 +128,8 @@ void main() {
         width: width,
         height: height,
         brightnessAt: (row, col) {
-          final isEdge = row < height * 0.1 ||
+          final isEdge =
+              row < height * 0.1 ||
               row >= height * 0.9 ||
               col < width * 0.1 ||
               col >= width * 0.9;
@@ -167,5 +169,75 @@ void main() {
 
     expect(events, isEmpty);
     await sub.cancel();
+  });
+
+  // [백엔드 수정] 선명도 판정: 글자 경계가 번진(흐린) 프레임은 정렬로 인정하지 않음.
+  group('선명도 판정', () {
+    const w = 200;
+    const h = 300;
+
+    bool isEdge(int row, int col) =>
+        row < h * 0.1 || row >= h * 0.9 || col < w * 0.1 || col >= w * 0.9;
+
+    // 선명: 120/200이 번갈아 바뀌는 날카로운 줄무늬, 흐림: 같은 줄무늬를 부드러운 경사로 번지게 함
+    CameraImage frame({required bool blurred}) => buildFakeFrame(
+      width: w,
+      height: h,
+      brightnessAt: (row, col) {
+        if (isEdge(row, col)) return kBg;
+        if (!blurred) return paperBrightness(row, col);
+        return 160 + ((row % 14) < 7 ? (row % 7) : 7 - (row % 7)) * 2;
+      },
+    );
+
+    Future<List<bool>> run(
+      LiveTicketAlignmentDetector d,
+      List<CameraImage> frames,
+    ) async {
+      final events = <bool>[];
+      final sub = d.alignmentStream.listen(events.add);
+      for (final f in frames) {
+        d.debugProcessFrame(f);
+      }
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+      return events;
+    }
+
+    test('선명한 프레임은 정렬로 인식된다', () async {
+      final d = LiveTicketAlignmentDetector(
+        buildFakeController(),
+        requiredStableDuration: Duration.zero,
+      );
+      final events = await run(d, [
+        frame(blurred: false),
+        frame(blurred: false),
+      ]);
+      expect(events, contains(true));
+    });
+
+    test('심하게 흐린 프레임은 정렬로 인식되지 않는다', () async {
+      final d = LiveTicketAlignmentDetector(
+        buildFakeController(),
+        requiredStableDuration: Duration.zero,
+      );
+      final events = await run(d, [frame(blurred: true), frame(blurred: true)]);
+      expect(events, isEmpty);
+    });
+
+    test('선명하다가 흔들려 흐려지면 그 프레임에서는 정렬되지 않는다', () async {
+      final d = LiveTicketAlignmentDetector(
+        buildFakeController(),
+        requiredStableDuration: Duration.zero,
+        minSharpness: 0, // 절대 하한은 끄고 "최고 선명도 대비 비율"만 검증
+      );
+      // 선명 프레임으로 최고값을 만든 뒤 흐린 프레임이 이어지면(밝기는 비슷해 안정성은 통과) 비율 조건에서 걸러짐
+      final events = await run(d, [
+        frame(blurred: false),
+        frame(blurred: true),
+        frame(blurred: true),
+      ]);
+      expect(events, isEmpty);
+    });
   });
 }

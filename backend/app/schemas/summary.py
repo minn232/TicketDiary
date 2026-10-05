@@ -20,3 +20,16 @@ class SummaryResponse(BaseModel):
     seated_count: int
     first_day_count: int
     last_day_count: int
+
+
+class RegionalVisit(BaseModel):
+    latitude: float
+    longitude: float
+    count: int
+
+
+class RegionalSummaryResponse(BaseModel):
+    period: Literal["6m", "1y", "all"]
+    concert_count: int
+    unresolved_count: int
+    locations: list[RegionalVisit]

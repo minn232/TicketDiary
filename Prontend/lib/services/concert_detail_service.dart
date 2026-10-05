@@ -43,8 +43,14 @@ class ConcertDetailService {
 
   // [백엔드 수정] 티켓 미리듣기 후보 곡 조회 추가.
   /// 미리듣기 후보 조회(`GET /tickets/{ticketId}/preview-tracks`).
-  Future<PreviewTracksResponse> getPreviewTracks(String ticketId) async {
-    final json = await _client.get('/tickets/$ticketId/preview-tracks');
+  /// [quick]이면 아티스트 2팀만 모아 빨리 응답(첫 재생용).
+  Future<PreviewTracksResponse> getPreviewTracks(
+    String ticketId, {
+    bool quick = false,
+  }) async {
+    final json = await _client.get(
+      '/tickets/$ticketId/preview-tracks${quick ? '?quick=true' : ''}',
+    );
     return PreviewTracksResponse.fromJson(json);
   }
 

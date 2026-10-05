@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.models.user import User
-from app.schemas.summary import SummaryResponse
+from app.schemas.summary import SummaryResponse, RegionalSummaryResponse
+from app.services.summary_regions import get_regional_summary
 from app.services.summary import get_summary
 
 router = APIRouter()
@@ -20,3 +21,12 @@ async def summary(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_summary(db, current_user.id, period)
+
+
+@router.get("/regions", response_model=RegionalSummaryResponse)
+async def regional_summary(
+    period: Literal["6m", "1y", "all"] = Query("all"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_regional_summary(db, current_user.id, period)
