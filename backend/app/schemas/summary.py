@@ -24,7 +24,7 @@ class TicketingSiteShare(BaseModel):
     # 예매처 한 곳의 티켓 수와 비중
     name: str
     count: int
-    percent: int  # 예매처를 아는 티켓끼리 합 100
+    percent: int  # 예매처를 아는 티켓끼리, 같은 개수는 같은 퍼센트(합 99~100)
 
 
 class BusiestMonth(BaseModel):
@@ -38,6 +38,12 @@ class MonthlyStat(BaseModel):
     month: str  # "YYYY-MM"
     concert_count: int
     spent: int  # 가격 없는 티켓은 0으로 침
+
+
+class YearNewArtists(BaseModel):
+    # 그 해에 처음 본 아티스트 (전체 기간 조회에서만 채워짐)
+    year: int
+    artists: list[str]
 
 
 class TopSpendArtist(BaseModel):
@@ -79,8 +85,8 @@ class SummaryResponse(BaseModel):
     seated_count: int
     first_day_count: int
     last_day_count: int
-    # 합 100인 정수 퍼센트(대상 없으면 null) - 스탠딩/좌석은 seat_type이 있는 티켓끼리,
-    # 첫콘/막콘은 이틀짜리 공연 티켓끼리
+    # 정수 퍼센트(대상 없으면 null, 같은 개수는 같은 값이라 합이 99일 수 있음) -
+    # 스탠딩/좌석은 seat_type이 있는 티켓끼리, 첫콘/막콘은 이틀짜리 공연 티켓끼리
     standing_percent: int | None
     seated_percent: int | None
     first_day_percent: int | None
@@ -94,12 +100,13 @@ class SummaryResponse(BaseModel):
     photo_count: int                     # 사진 총 장수
     diary_count: int                     # 일기 쓴 공연 수
     busiest_month: BusiestMonth | None   # 한 달 최다 관람(동률이면 최근 달)
-    # 월별 관람 수/지출(오래된 달부터, 빈 달은 0). 6m/1y는 기간 시작 달부터라 7/13개월일 수 있음
+    # 월별 관람 수/지출(오래된 달부터, 빈 달은 0). 6m/1y는 이번 달 포함 정확히 6/12개월
     monthly_stats: list[MonthlyStat]
     top_spend_artist: TopSpendArtist | None  # 아티스트 1명인 공연 티켓 가격만 합산
     new_artist_count: int                # 선택 기간 이전 전체 기록에 없던 아티스트
     new_artists: list[str]
-    origin_domestic_percent: int | None  # 국내/해외 아티스트 공연(합 100, 미분류 제외)
+    new_artists_by_year: list[YearNewArtists]  # 전체 기간만, 오래된 해부터
+    origin_domestic_percent: int | None  # 국내/해외 아티스트 공연(미분류 제외)
     origin_foreign_percent: int | None
     origin_unknown_count: int
     most_heard_song: HeardSong | None    # 실제 셋리에서 2번 이상 들은 곡 중 최다

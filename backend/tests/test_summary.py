@@ -138,30 +138,38 @@ def test_is_standing_none_returns_false():
     assert _is_standing("") is False
 
 
-# 퍼센트 분배는 항상 합이 100
-def test_percent_split_sums_to_100():
-    assert _percent_split([1, 1, 1]) == [34, 33, 33]
+# 퍼센트 분배: 개수가 다르면 합 100, 같은 개수는 같은 퍼센트(남는 몫이 묶음에 안 맞으면 99까지 허용)
+def test_percent_split_equal_counts_get_equal_percent():
+    assert _percent_split([1, 1, 1]) == [33, 33, 33]
+    assert _percent_split([1, 1, 2]) == [25, 25, 50]
+    assert _percent_split([2, 2, 1]) == [40, 40, 20]
     assert _percent_split([2, 1]) == [67, 33]
     assert _percent_split([3, 0]) == [100, 0]
+    assert _percent_split([1, 1]) == [50, 50]
     assert _percent_split([0, 0]) is None
     for counts in ([5, 7], [1, 2, 4], [13, 29]):
-        assert sum(_percent_split(counts)) == 100
+        assert sum(_percent_split(counts)) == 100  # 모두 다른 개수면 항상 합 100
+    for counts in ([1, 1, 1], [3, 3, 3, 1], [2, 2, 2, 2, 2, 2, 2]):
+        percents = _percent_split(counts)
+        assert 100 - len(counts) < sum(percents) <= 100
+        assert all(p1 == p2 for (c1, p1) in zip(counts, percents) for (c2, p2) in zip(counts, percents) if c1 == c2)
 
 
 # _period_start 단위 테스트
 
-# 6m -> 183일 전 datetime 반환 테스트
+# 이번 달을 포함한 최근 N개월의 1일(한국 기준 현재 달) 반환 테스트
+def _months_back(months: int) -> datetime:
+    now = datetime.now(timezone(timedelta(hours=9)))
+    index = now.year * 12 + now.month - 1 - months
+    return datetime(index // 12, index % 12 + 1, 1, tzinfo=timezone.utc)
+
+
 def test_period_start_6m():
-    result = _period_start("6m")
-    expected = datetime.now(timezone.utc) - timedelta(days=183)
-    assert abs((result - expected).total_seconds()) < 5
+    assert _period_start("6m") == _months_back(5)
 
 
-# 1y -> 365일 전 datetime 반환 테스트
 def test_period_start_1y():
-    result = _period_start("1y")
-    expected = datetime.now(timezone.utc) - timedelta(days=365)
-    assert abs((result - expected).total_seconds()) < 5
+    assert _period_start("1y") == _months_back(11)
 
 
 # all -> None 반환 테스트

@@ -84,7 +84,18 @@ async def test_summary_artist_extras():
     assert new_artist in data["new_artists"] and fest_a in data["new_artists"]
     assert old_artist not in data["new_artists"]  # 6개월 전에 이미 봄
 
-    assert old_artist in (await _get_summary(token, "all"))["new_artists"]  # 전체 기간이면 전부 신규
+    all_data = await _get_summary(token, "all")
+    assert old_artist in all_data["new_artists"]  # 전체 기간이면 전부 신규
+
+    # 전체 기간은 처음 본 해별로 묶어서 내림(오래된 해부터), 6개월 조회에서는 비어 있음
+    year_of = lambda days: (date.today() - timedelta(days=days)).year
+    by_year = {y["year"]: y["artists"] for y in all_data["new_artists_by_year"]}
+    assert [y["year"] for y in all_data["new_artists_by_year"]] == sorted(by_year)
+    assert old_artist in by_year[year_of(300)]
+    assert old_artist not in by_year.get(year_of(20), []) or year_of(20) == year_of(300)  # 두 번째 관람은 첫 해에만
+    assert new_artist in by_year[year_of(10)]
+    assert sorted(a for artists in by_year.values() for a in artists) == sorted(all_data["new_artists"])
+    assert data["new_artists_by_year"] == []
 
 
 # 내한 vs 국내: MB 국가 우선, 국가 없으면 KOPIS visit, 둘 다 없으면 미분류
@@ -180,3 +191,20 @@ async def test_summary_monthly_stats():
 @pytest.mark.asyncio
 async def test_summary_monthly_stats_empty():
     assert (await _get_summary(await _get_token()))["monthly_stats"] == []
+
+
+# 6개월/1년은 이번 달을 포함해 정확히 6/12개월 막대(달력 기준), 막대 합이 관람 수와 같음
+@pytest.mark.asyncio
+async def test_summary_monthly_stats_calendar_window():
+    token = await _get_token()
+    ids = [await _create_concert(f"PF_EXW_{_uid()}", days_ago=d) for d in (5, 100, 200, 300)]
+    for cid in ids:
+        await _create_attended_ticket(cid, token)
+
+    for period, size in (("6m", 6), ("1y", 12)):
+        data = await _get_summary(token, period)
+        months = data["monthly_stats"]
+        assert len(months) == size
+        assert [m["month"] for m in months] == sorted(m["month"] for m in months)
+        assert sum(m["concert_count"] for m in months) == data["concert_count"]
+        assert months[-1]["month"] == date.today().strftime("%Y-%m")
