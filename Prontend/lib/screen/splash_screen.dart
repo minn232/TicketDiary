@@ -308,6 +308,12 @@ class _SplashScreenState extends State<SplashScreen>
       // 저장된 로그인 세션을 불러오거나(없으면) 게스트 세션을 새로 만듭니다.
       AuthService.instance.ensureSession(),
     ]).timeout(timeout, onTimeout: () => const []);
+    // [백엔드 수정]
+    // 세션이 준비된 뒤 티켓을 미리 불러옴. 느리면 3초만 기다리고 넘어감.
+    await DiaryScreen.preloadTickets().timeout(
+      const Duration(seconds: 3),
+      onTimeout: () {},
+    );
 
     // [백엔드 수정]
     // FCM 초기화를 fire-and-forget으로 분리 - 스플래시를 막지 않음.

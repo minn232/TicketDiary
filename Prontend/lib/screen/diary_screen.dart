@@ -225,6 +225,11 @@ class DiaryScreen extends StatefulWidget {
   final double? frameScaleOverride;
   final double? frameMarginOverride;
 
+  // [백엔드 수정]
+  // 스플래시가 애니메이션 중 티켓을 미리 불러와, 끝부분 미리보기가 빈 채로 나오지 않게 함.
+  static Future<void> preloadTickets() =>
+      _DiaryScreenState._loadTicketsFromBackend();
+
   @override
   State<DiaryScreen> createState() => _DiaryScreenState();
 }
@@ -380,7 +385,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     AppSettingsStore.instance.load();
     _registerAuthListenerOnce();
     TicketRefreshBus.tick.addListener(_onTicketsChangedElsewhere);
-    unawaited(_loadTicketsFromBackend());
+    _reloadTickets();
   }
 
   @override
@@ -396,7 +401,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
   void _onTicketsChangedElsewhere() {
     _backendTicketsLoaded = false;
     _backendTicketsLoadFuture = null;
-    unawaited(_loadTicketsFromBackend());
+    _reloadTickets();
+  }
+
+  // [백엔드 수정]
+  // 티켓은 static이라 다른 인스턴스(스플래시 미리보기 등)가 시작한 조회가 끝나도 이 화면은
+  // 모르므로, 조회가 끝나면 이 화면도 다시 그림.
+  void _reloadTickets() {
+    unawaited(
+      _loadTicketsFromBackend().then((_) {
+        if (mounted) setState(() {});
+      }),
+    );
   }
 
   /// 서버에 저장된 내 티켓 목록을 불러와 [_tickets]에 반영합니다.
@@ -414,10 +430,10 @@ class _DiaryScreenState extends State<DiaryScreen> {
   ///   헤더만 필요).
   /// - 실패(오프라인 등)하면 [TicketCacheStore]에 마지막으로 저장해둔 목록을
   ///   대신 읽기 전용으로 보여주고, 다음에 다이어리 탭을 다시 열면 재시도합니다.
-  bool get _hasCachedServerTickets =>
+  static bool get _hasCachedServerTickets =>
       _tickets.any((ticket) => ticket.info?.ticketId != null);
 
-  Future<void> _loadTicketsFromBackend() {
+  static Future<void> _loadTicketsFromBackend() {
     if (_backendTicketsLoaded && _hasCachedServerTickets) return Future.value();
     final inFlight = _backendTicketsLoadFuture;
     if (inFlight != null) return inFlight;
@@ -431,7 +447,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     });
   }
 
-  Future<void> _loadTicketsFromBackendOnce() async {
+  static Future<void> _loadTicketsFromBackendOnce() async {
     try {
       await AuthService.instance.ensureSession();
       if (!AuthService.instance.isLoggedIn) return;
@@ -439,17 +455,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
       // TicketData.fromBackend가 동기적으로 TornTicketStore를 읽으므로,
       // 티켓 목록을 변환하기 전에 먼저 다 불러와둡니다.
       await TornTicketStore.instance.ensureLoaded();
-      final tickets = await _ticketService.listTickets();
+      final tickets = await TicketService().listTickets();
       final nextTickets = tickets.map(TicketData.fromBackend).toList();
-      if (!mounted) return;
-      setState(() {
-        // 서버 조회에 성공했을 때만 기존 서버 티켓을 교체합니다.
-        // 핫 리로드/세션 복원 중 일시적으로 조회가 실패해도 화면의 티켓을
-        // 빈 목록으로 덮어쓰지 않게 하기 위함입니다.
-        _tickets.removeWhere((t) => t.info?.ticketId != null);
-        _tickets.addAll(nextTickets);
-        _usingCachedTickets = false;
-      });
+      // [백엔드 수정]
+      // 조회를 시작한 화면이 먼저 사라져도(스플래시 미리보기) static 목록은 채움.
+      // 서버 조회에 성공했을 때만 기존 서버 티켓을 교체(일시 실패가 빈 목록으로 덮지 않게).
+      _tickets.removeWhere((t) => t.info?.ticketId != null);
+      _tickets.addAll(nextTickets);
+      _usingCachedTickets = false;
       _loadedForUserId = AuthService.instance.userId;
       _backendTicketsLoaded = true;
       unawaited(
@@ -467,16 +480,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
   // [백엔드 수정]
   // 서버 조회 실패 시 [TicketCacheStore] 캐시로 폴백(읽기 전용). 이번
   // 세션에 이미 실제 서버 응답을 받았으면(캐시보다 최신) 건드리지 않음.
-  Future<void> _loadTicketsFromCache() async {
+  static Future<void> _loadTicketsFromCache() async {
     if (_tickets.any((t) => t.info?.ticketId != null)) return;
     final cached = await TicketCacheStore.instance.load(
       userId: AuthService.instance.userId,
     );
-    if (cached == null || cached.isEmpty || !mounted) return;
-    setState(() {
-      _tickets.addAll(cached.map(TicketData.fromBackend));
-      _usingCachedTickets = true;
-    });
+    if (cached == null || cached.isEmpty) return;
+    _tickets.addAll(cached.map(TicketData.fromBackend));
+    _usingCachedTickets = true;
   }
 
   /// 공연 시간이 이미 지난 "공연 전" 티켓인지 확인합니다.
