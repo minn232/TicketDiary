@@ -10,7 +10,7 @@ from sqlalchemy.orm import joinedload
 from app.models.ticket import Ticket, TicketStatus
 from app.models.concert import Concert
 from app.models.setlist import RealSetlist
-from app.models.artist_genre import ArtistGenre
+from app.services.artist_genre import get_artist_genres
 from app.services.setlist import resolve_performance_date
 
 _STANDING_KEYWORDS = {"스탠딩", "standing", "ga", "입석", "floor"}
@@ -99,7 +99,7 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
             song_count += len(setlist.songs)
 
     # 선호 장르(가장 많이 관람한 장르) - KOPIS의 Concert.genre는 앱 전체가 "대중음악" 한
-    # 값뿐이라 무의미해서 대신 씀(Last.fm 아티스트 태그를 정규화해 캐싱한 값). 아티스트 한
+    # 값뿐이라 무의미해서 대신 씀(MusicBrainz 장르 우선, 없으면 Last.fm 태그 정규화 캐시). 아티스트 한
     # 명이 여러 장르에 걸릴 수 있어(힙합+K-pop) 그 티켓에서 두 장르 다 표를 줌 - "1티켓
     # 1표"가 아니라 "아티스트가 가진 장르 개수만큼 표".
     ticket_artist_names: set[str] = {
@@ -108,15 +108,7 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
         if t.concert and t.concert.artist_name
         for artist in t.concert.artist_name
     }
-    genres_by_artist: dict[str, list[str]] = {}
-    if ticket_artist_names:
-        genre_result = await db.execute(
-            select(ArtistGenre.artist_name, ArtistGenre.genres).where(
-                ArtistGenre.artist_name.in_(ticket_artist_names),
-                ArtistGenre.genres.isnot(None),
-            )
-        )
-        genres_by_artist = dict(genre_result.all())
+    genres_by_artist = await get_artist_genres(db, ticket_artist_names)
 
     genre_counter: Counter = Counter()
     for t in tickets:

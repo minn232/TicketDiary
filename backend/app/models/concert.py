@@ -1,7 +1,7 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, DateTime, Text, Integer, text
+from sqlalchemy import Boolean, Column, String, DateTime, Text, Integer, text
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 
@@ -62,6 +62,9 @@ class Concert(Base):
     # 생성된 공연은 이 값이 None이라 artist_name이 비어 있어도 "진짜 출연진 없음"과 구분 못하므로,
     # 상세 조회 시 이 값 유무로 재조회 필요 여부를 판단함 (None이면 아직 상세 미조회)
     kopis_detail_synced_at = Column(DateTime(timezone=True), nullable=True)
+    # KOPIS 상세의 내한 공연 여부(visit Y/N). 일부 내한 공연이 N으로 올라와 있어 단독 근거로 쓰지 말고
+    # 아티스트 국가와 같이 볼 것. None이면 아직 상세를 못 받은 공연
+    visit = Column(Boolean, nullable=True)
     # 포스터를 VLM팀에 아티스트 추출 요청으로 보낸 시점(HTTP 전송 성공 여부만 뜻함, 콜백 도착
     # 여부는 모름). attempt_count와 같이 crawl_attempted_at식 쿨다운 재시도에 씀 - 포스터는
     # 내용이 안 바뀌므로 크롤링(30회)보다 상한은 낮게 잡음(crawler.py 참고)

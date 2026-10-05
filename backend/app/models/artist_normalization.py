@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -27,6 +27,12 @@ class CanonicalArtist(Base):
     # ("user" | "admin" | "musicbrainz" | "auto" | "none"=대표곡 해당 없음)
     itunes_artist_id = Column(String, nullable=True)
     anchor_confirmed_by = Column(String, nullable=True)
+    # MusicBrainz 장르 태그 원문(득표 순, 소문자)과 활동 국가(ISO 코드). 라벨 매핑은 읽을 때 하므로
+    # 원문을 저장해 매핑을 바꿔도 재조회가 필요 없음. mb_genres_fetched_at이 NULL이면 아직 조회 전
+    # (조회했는데 장르가 없으면 빈 배열 + 시각만 채워져 재조회 대상에서 빠짐)
+    mb_genres = Column(ARRAY(String), nullable=True)
+    mb_country = Column(String, nullable=True)
+    mb_genres_fetched_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     aliases = relationship("ArtistAlias", back_populates="canonical_artist", cascade="all, delete-orphan")

@@ -775,6 +775,16 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
     await db.commit()
 
 
+# KOPIS의 Y/N 플래그를 bool로 - 필드가 없거나 다른 값이면 None(미확인)
+def _parse_yes_no(value: str | None) -> bool | None:
+    value = (value or "").strip().upper()
+    if value == "Y":
+        return True
+    if value == "N":
+        return False
+    return None
+
+
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
 async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
     await _throttle_kopis_request()
@@ -832,6 +842,7 @@ async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> 
         "price": _parse_price(pcseguidance),
         "event_type": _classify_event_type(name),
         "ticketing_links": ticketing_links or None,
+        "visit": _parse_yes_no(elem.findtext("visit")),
         "kopis_detail_synced_at": datetime.now(timezone.utc),
     }
 

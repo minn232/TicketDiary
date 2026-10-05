@@ -193,6 +193,24 @@ async def fetch_artist_detail(mbid: str) -> dict | None:
     return _candidate_detail(data) if data.get("id") else None
 
 
+# mbid 하나의 장르 태그(득표 순)와 활동 국가를 한 번에 조회. 조회 실패(없는 항목/네트워크)면 None,
+# 장르가 없는 아티스트는 genres=[]로 구분해 호출부가 "조회했지만 없음"으로 기록할 수 있게 함
+async def fetch_artist_genres_and_country(mbid: str, client: httpx.AsyncClient | None = None) -> dict | None:
+    async def _fetch(c: httpx.AsyncClient) -> dict | None:
+        data = await _get_with_retry(
+            c, f"/artist/{mbid}", {"inc": "genres", "fmt": "json"}, f"genres mbid={mbid}"
+        )
+        if not data.get("id"):
+            return None
+        genres = sorted(data.get("genres") or [], key=lambda g: -(g.get("count") or 0))
+        return {"genres": [g["name"].lower() for g in genres if g.get("name")], "country": data.get("country")}
+
+    if client is not None:
+        return await _fetch(client)
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+        return await _fetch(c)
+
+
 # 병합돼 없어진 옛 mbid는 MusicBrainz가 병합 후 항목으로 301 리다이렉트해서, 따라간 응답의 id가
 # 현재 mbid임(실사례: Setlist.fm은 혁오를 옛 mbid로 들고 있음). 조회 실패 시 None
 async def fetch_current_mbid(mbid: str) -> str | None:

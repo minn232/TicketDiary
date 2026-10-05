@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.notification import process_pending_notifications
 from app.services.kopis import sync_daily_concerts
+from app.services.artist_genre import sync_musicbrainz_genres
 from app.services.artist_normalization import normalize_pending_artists
 from app.services.crawler import (
     retry_festival_lineup_checks,
@@ -197,6 +198,13 @@ async def _run_musicbrainz_normalize_then_warmup() -> None:
     await _run_preview_warmup()
 
 
+async def _run_musicbrainz_genre_sync() -> None:
+    try:
+        await sync_musicbrainz_genres()
+    except Exception:
+        logger.exception("[MB] 장르/국가 동기화 오류")
+
+
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
     # 스케줄러 시간대는 UTC라 hour는 KST-9 (KST 자정(00:00) = UTC 15:00)
@@ -232,6 +240,11 @@ def start_scheduler() -> None:
     # 콜백이 다 들어온 뒤에 처리되게 함 (KST 05:10 = UTC 20:10)
     scheduler.add_job(
         _run_musicbrainz_normalize_then_warmup, "cron", hour=20, minute=10, id="musicbrainz_normalize", max_instances=1
+    )
+    # canonical 아티스트의 MusicBrainz 장르/국가 채우기(결산 선호 장르 1순위 출처). 정규화와 같은 호출
+    # 제한기를 쓰므로 정규화+warmup이 끝났을 시각으로 떨어뜨림 (KST 06:30 = UTC 21:30)
+    scheduler.add_job(
+        _run_musicbrainz_genre_sync, "cron", hour=21, minute=30, id="musicbrainz_genre_sync", max_instances=1
     )
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")

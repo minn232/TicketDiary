@@ -120,6 +120,7 @@ _GENRE_TAG_MAP: dict[str, str] = {
     tag: label
     for label, tags in {
         "K-pop": ["k-pop", "kpop"],
+        "J-pop": ["j-pop", "jpop"],
         "발라드": ["ballad"],
         "힙합": ["hip hop", "hip-hop", "rap"],
         "알앤비/소울": ["r&b", "rnb", "soul"],
