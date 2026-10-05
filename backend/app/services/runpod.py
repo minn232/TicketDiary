@@ -214,7 +214,7 @@ async def run_start_script_via_ssh() -> bool:
         return False
 
 
-# pod 시작 + SSH 준비 대기 + start_vllm.sh 원격 실행까지 한 번에 처리. 스케줄러의 pod_start
+# pod 시작 + SSH 준비 대기 + start_vllm.sh 원격 실행까지 한 번에 처리. 스케줄러의 llm_attempt
 # job이 start_pod() 대신 이 함수를 호출한다
 async def start_pod_and_launch_services() -> bool:
     if not await start_pod():

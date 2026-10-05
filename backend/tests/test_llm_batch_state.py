@@ -63,13 +63,22 @@ async def test_reset_sets_last_send_at_to_now_and_clears_counters():
     assert await is_llm_batch_idle(idle_minutes=5.0) is False
 
 
-# 마지막 전송이 5분보다 오래 전이고 콜백도 없으면 유휴로 판단
+# 마지막 전송이 5분보다 오래 전이고 콜백도 없으면 유휴로 판단 (전송이 다 끝난 뒤여야 함)
 @pytest.mark.asyncio
 async def test_is_idle_true_after_threshold_with_no_callback():
     old = datetime.now(timezone.utc) - timedelta(minutes=10)
-    await _set_row(last_send_at=old)
+    await _set_row(last_send_at=old, all_sent_at=old)
     assert await is_llm_batch_idle(idle_minutes=5.0) is True
     assert await is_llm_batch_idle(idle_minutes=15.0) is False
+
+
+# 전송이 아직 안 끝났으면(all_sent_at 없음) last_send_at이 오래됐어도 유휴로 안 봄 - 콜드스타트
+# 중에 리셋 시각부터 유휴가 흘러 pod이 뜨자마자 꺼지는 걸 막음
+@pytest.mark.asyncio
+async def test_is_idle_false_before_all_sent_marked():
+    old = datetime.now(timezone.utc) - timedelta(minutes=10)
+    await _set_row(last_send_at=old)
+    assert await is_llm_batch_idle(idle_minutes=5.0) is False
 
 
 # 전송은 오래 전이었어도 콜백이 최근에 왔으면(pod이 아직 처리 중) 유휴가 아님
@@ -77,7 +86,7 @@ async def test_is_idle_true_after_threshold_with_no_callback():
 async def test_is_idle_false_when_recent_callback():
     old_send = datetime.now(timezone.utc) - timedelta(minutes=20)
     recent_callback = datetime.now(timezone.utc) - timedelta(minutes=1)
-    await _set_row(last_send_at=old_send, last_callback_at=recent_callback)
+    await _set_row(last_send_at=old_send, last_callback_at=recent_callback, all_sent_at=old_send)
     assert await is_llm_batch_idle(idle_minutes=5.0) is False
 
 
@@ -85,7 +94,7 @@ async def test_is_idle_false_when_recent_callback():
 @pytest.mark.asyncio
 async def test_is_idle_false_once_already_stopped_early():
     old = datetime.now(timezone.utc) - timedelta(minutes=10)
-    await _set_row(last_send_at=old)
+    await _set_row(last_send_at=old, all_sent_at=old)
     await mark_stopped_early()
     assert await is_llm_batch_idle(idle_minutes=5.0) is False
 

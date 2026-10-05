@@ -49,16 +49,45 @@ async def _run_daily_kopis_sync() -> None:
         logger.exception("KOPIS 일별 동기화 오류")
 
 
-async def _run_pod_start() -> None:
+# LLM 배치 한 번의 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/일기 전송을 한 job으로
+# 이어서 처리. 고정 시각 체인(pod_start 후 20~30분 뒤 전송)은 콜드스타트가 길어지면 어긋나서 묶음.
+# pod이 못 뜨거나 llm_server가 준비 안 되면 이번 시도는 포기하고 다음날 재시도(전송 대상은 DB 조건으로
+# 다시 잡힘). GPU가 잡혔는데 llm_server가 안 뜬 경우엔 켜진 채 과금되지 않게 바로 정지한다
+async def _run_llm_attempt() -> None:
     try:
-        # 그날 밤 LLM 조기정지 판단 기준을 초기화 (llm_batch_state.py) - start 성공/실패와
-        # 무관하게 초기화해도 무해함(실패하면 이후 전송 배치도 다 스킵되니 idle 판단이 쓰일 일이 없음)
+        # 그날 LLM 조기정지 판단 기준을 초기화 (llm_batch_state.py) - 실패해도 무해함
+        # (실패하면 아래에서 바로 return이라 idle 판단이 쓰일 일이 없음)
         await reset_llm_night_state()
         # pod 시작 + SSH 원격으로 start_vllm.sh 실행까지 한 번에 (LLM팀 Container Start
         # Command 자동화가 무산되면서 SSH 방식으로 대체함)
-        await start_pod_and_launch_services()
+        if not await start_pod_and_launch_services():
+            logger.warning("pod 시작/원격 실행 실패, 이번 LLM 배치는 건너뛰고 다음날 재시도")
+            # start 요청 자체가 실패한 경우엔 이미 꺼져있어 무해하고(멱등), SSH 단계 실패면 켜진 pod을 정리
+            await stop_pod()
+            return
+        # LLM_CRAWL_URL 미설정이면 준비 대기 불필요(전송 함수들이 알아서 건너뜀)
+        if settings.LLM_CRAWL_URL and not await wait_until_llm_server_ready():
+            logger.warning("llm_server 준비 안 됨, 이번 LLM 배치는 건너뛰고 다음날 재시도")
+            await stop_pod()
+            return
+        try:
+            await send_screenshots_to_llm()
+        except Exception:
+            logger.exception("크롤링 스크린샷 전송 오류")
+        try:
+            await send_posters_for_artist_extraction()
+        except Exception:
+            logger.exception("포스터 아티스트 추출 요청 전송 오류")
+        try:
+            await send_diary_requests_to_llm()
+        except Exception:
+            logger.exception("일기 생성 요청 전송 오류")
+        finally:
+            # 예정된 전송 3개 중 마지막 - 성공/실패 무관하게 "이번 전송은 이걸로 끝"을 표시해야
+            # 정확한 건수 매칭(llm_batch_state.py)이 조기 정지를 판단할 수 있음
+            await mark_all_sent_for_tonight()
     except Exception:
-        logger.exception("RunPod pod 시작 오류")
+        logger.exception("LLM 배치 시도 오류")
 
 
 async def _run_pod_stop() -> None:
@@ -68,31 +97,18 @@ async def _run_pod_stop() -> None:
         logger.exception("RunPod pod 정지 오류")
 
 
-# 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡은 밤을 위한 안전망 - 유휴 5분 감지되면 01시
-# 안전망보다 먼저 정지. stop_pod()이 실제 정지를 못 확인하면 다음 tick에서 재시도됨
+# 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡은 경우를 위한 안전망 - 유휴 5분 감지되면
+# 05시 정지보다 먼저 정지. stop_pod()이 실제 정지를 못 확인하면 다음 tick에서 재시도됨
 async def _run_llm_idle_check() -> None:
     try:
         if not await is_llm_batch_idle(idle_minutes=5.0):
             return
-        logger.info("야간 LLM 배치 유휴 5분 감지 - 조기 정지 시도")
+        logger.info("LLM 배치 유휴 5분 감지 - 조기 정지 시도")
         if await stop_pod():
             await mark_stopped_early()
-            logger.info("야간 배치 조기 완료로 pod 조기 정지 완료 (01시/02시 안전망은 그대로 유지됨)")
+            logger.info("LLM 배치 조기 완료로 pod 조기 정지 완료 (05시/06시 안전망은 그대로 유지됨)")
     except Exception:
         logger.exception("LLM 배치 유휴 감지/조기 정지 오류")
-
-
-async def _run_crawl_send() -> None:
-    try:
-        # LLM_CRAWL_URL 미설정이면 send_screenshots_to_llm()이 알아서 건너뛰므로 대기 불필요.
-        # 설정돼 있으면 pod이 막 깨어난 직후일 수 있어(모델 로딩 시간) 준비될 때까지 기다렸다가
-        # 전송 - 타임아웃 안에 준비 안 되면 이번 배치는 건너뛰고 다음날 재시도(기존 실패 처리와 동일)
-        if settings.LLM_CRAWL_URL and not await wait_until_llm_server_ready():
-            logger.warning("llm_server 준비 안 됨, 이번 크롤링 전송은 건너뛰고 다음날 재시도")
-            return
-        await send_screenshots_to_llm()
-    except Exception:
-        logger.exception("크롤링 스크린샷 전송 오류")
 
 
 async def _run_ticket_status_sync() -> None:
@@ -111,55 +127,31 @@ async def _run_concert_follow_cleanup() -> None:
         logger.exception("찜 공연 자동 해제 오류")
 
 
-async def _run_crawl_retry() -> None:
+# 크롤링 재시도 -> 페스티벌 라인업 재확인을 한 job으로 이음. 둘 다 브라우저를 동시 2개씩 띄우는데
+# 서버 RAM이 1.9GB/스왑 0이라, 앞 작업이 길어져 고정 시각이 겹치면 4개가 동시에 떠 OOM 위험이 있음.
+# 한 단계가 실패해도 다음 단계는 돌아야 해서 각각 따로 감쌈
+async def _run_crawl_group() -> None:
     try:
         await retry_pending_crawls()
     except Exception:
         logger.exception("크롤링 재시도 오류")
-
-
-async def _run_festival_lineup_check() -> None:
     try:
         await retry_festival_lineup_checks()
     except Exception:
         logger.exception("페스티벌 라인업 재확인 오류")
 
 
-async def _run_artist_similarity_sync() -> None:
+# Last.fm 유사 아티스트 -> 장르 캐싱을 한 job으로 이음. 고정 시각(20분/22분)일 땐 유사도가 22분을
+# 넘기면 두 작업이 Last.fm API를 동시에 호출했음(10/4 실측 약 1분 겹침). 한쪽이 실패해도 나머지는 진행
+async def _run_lastfm_sync() -> None:
     try:
         await sync_artist_similarities()
     except Exception:
         logger.exception("Last.fm 아티스트 유사도 동기화 오류")
-
-
-async def _run_artist_genre_sync() -> None:
     try:
         await sync_artist_genres()
     except Exception:
         logger.exception("Last.fm 아티스트 장르 동기화 오류")
-
-
-async def _run_artist_extraction_send() -> None:
-    try:
-        # crawl_send와 동일한 이유로 대기 - 이미 위에서 한 번 기다렸을 가능성이 높지만
-        # (같은 pod, 두 배치 사이 20분 텀) 짧게 재확인하는 정도라 비용 거의 없음
-        if settings.LLM_ARTIST_URL and not await wait_until_llm_server_ready():
-            logger.warning("llm_server 준비 안 됨, 이번 아티스트 추출 전송은 건너뛰고 다음날 재시도")
-            return
-        await send_posters_for_artist_extraction()
-    except Exception:
-        logger.exception("포스터 아티스트 추출 요청 전송 오류")
-
-
-async def _run_diary_send() -> None:
-    try:
-        await send_diary_requests_to_llm()
-    except Exception:
-        logger.exception("일기 생성 요청 전송 오류")
-    finally:
-        # 그날 밤 예정된 전송 배치 3개 중 마지막 - 성공/실패 무관하게 "오늘 밤 전송은 이걸로
-        # 끝"을 표시해야 정확한 건수 매칭(llm_batch_state.py)이 조기 정지를 판단할 수 있음
-        await mark_all_sent_for_tonight()
 
 
 async def _run_real_setlist_backfill() -> None:
@@ -176,57 +168,54 @@ async def _run_preview_warmup() -> None:
         logger.exception("미리듣기 곡 목록 미리 받기 오류")
 
 
-async def _run_musicbrainz_normalize() -> None:
+# 정규화가 끝난 뒤 미리듣기 캐시를 받아야 그날 LLM/정규화로 바뀐 아티스트 기준으로 받아짐 -
+# 정규화 소요 시간(MusicBrainz 초당 1건 제한)이 큐 크기에 따라 들쭉날쭉해 고정 시각 대신 한 job으로 이음.
+# 정규화가 실패해도 warmup은 돌아야 해서 각각 따로 감쌈
+async def _run_musicbrainz_normalize_then_warmup() -> None:
     try:
         stats = await normalize_pending_artists()
         logger.info(f"MusicBrainz 아티스트 정규화 배치 완료: {stats}")
     except Exception:
         logger.exception("MusicBrainz 아티스트 정규화 배치 오류")
+    await _run_preview_warmup()
 
 
 def start_scheduler() -> None:
     scheduler.add_job(_run_pending_notifications, "interval", minutes=1, id="push_notifications", max_instances=1)
-    # LLM팀 GPU pod을 배치 시작 10분 전에 미리 깨워둠 (KST 23:50 = UTC 14:50, 전날 기준).
-    # RUNPOD_API_KEY/RUNPOD_POD_ID 미설정이면 start_pod_and_launch_services()가 알아서 아무것도 안 함
-    scheduler.add_job(_run_pod_start, "cron", hour=14, minute=50, id="pod_start", max_instances=1)
-    # KST 자정(00:00) = UTC 15:00
+    # 스케줄러 시간대는 UTC라 hour는 KST-9 (KST 자정(00:00) = UTC 15:00)
     scheduler.add_job(_run_daily_kopis_sync, "cron", hour=15, minute=0, id="daily_kopis_sync", max_instances=1)
-    # KOPIS 동기화와 부하가 겹치지 않도록 5분 뒤로 미룸 (KST 00:05)
-    scheduler.add_job(_run_crawl_send, "cron", hour=15, minute=5, id="midnight_crawl_send", max_instances=1)
+    # 티켓 상태 자동 전환 (KST 00:10)
     scheduler.add_job(_run_ticket_status_sync, "cron", hour=15, minute=10, id="ticket_status_sync", max_instances=1)
     # 찜한 공연 중 이미 종료된 공연 자동 해제 (KST 00:12)
     scheduler.add_job(_run_concert_follow_cleanup, "cron", hour=15, minute=12, id="concert_follow_cleanup", max_instances=1)
-    # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 (KST 00:15)
-    scheduler.add_job(_run_crawl_retry, "cron", hour=15, minute=15, id="crawl_retry", max_instances=1)
-    # 신규 아티스트 Last.fm 유사 아티스트 캐싱 (KST 00:20)
-    scheduler.add_job(_run_artist_similarity_sync, "cron", hour=15, minute=20, id="artist_similarity_sync", max_instances=1)
-    # 신규 아티스트 Last.fm 장르 태그 캐싱 (결산 "선호 장르"용, KST 00:22)
-    scheduler.add_job(_run_artist_genre_sync, "cron", hour=15, minute=22, id="artist_genre_sync", max_instances=1)
-    # 아티스트 정보 없는 신규 공연의 포스터를 VLM팀에 아티스트 추출 요청으로 전송 (KST 00:25)
-    scheduler.add_job(_run_artist_extraction_send, "cron", hour=15, minute=25, id="artist_extraction_send", max_instances=1)
-    # 요청된 일기 생성 건을 LLM팀에 전송 (LLM팀 서버가 KST 00~01시 사이에만 떠있어 그 시간대로 맞춤, 00:30)
-    scheduler.add_job(_run_diary_send, "cron", hour=15, minute=30, id="diary_send", max_instances=1)
-    # 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡는 밤을 위한 유휴시간 안전망 - diary_send(30)
-    # 1분 뒤부터 01시 안전망 직전까지 3분 간격 확인. minute=31로 diary_send와 겹치지 않게 함
-    scheduler.add_job(
-        _run_llm_idle_check, "cron", hour=15, minute="31-59/3", id="llm_idle_check", max_instances=1
-    )
-    # event_type=FESTIVAL 공연들의 라인업(출연진) 변경 여부를 매일 재확인 (KST 00:35)
-    scheduler.add_job(_run_festival_lineup_check, "cron", hour=15, minute=35, id="festival_lineup_check", max_instances=1)
+    # 크롤 배치 2종(서버에서 9/12부터 정지 중 - LLM 배치 반영 끝난 뒤에만 주석 해제할 것):
+    # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
+    # 라인업(출연진) 변경 여부 재확인을 이어서 실행 (KST 00:15)
+    # scheduler.add_job(_run_crawl_group, "cron", hour=15, minute=15, id="crawl_group", max_instances=1)
+    # 신규 아티스트 Last.fm 유사 아티스트 캐싱 -> 장르 태그 캐싱(결산 "선호 장르"용)을 이어서 실행 (KST 00:20)
+    scheduler.add_job(_run_lastfm_sync, "cron", hour=15, minute=20, id="lastfm_sync", max_instances=1)
     # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)
     scheduler.add_job(_run_real_setlist_backfill, "cron", hour=15, minute=40, id="real_setlist_backfill", max_instances=1)
-    # 그날 배치 다 끝났으면 pod 정지 (KST 01:00 = UTC 16:00)
-    scheduler.add_job(_run_pod_stop, "cron", hour=16, minute=0, id="pod_stop", max_instances=1)
-    # stop 실패(네트워크 오류 등) 대비 백업 - 밤새 GPU 켜진 채 방치되는 비용 누수를 막는 게
-    # 목적이라 이미 꺼져있어도 다시 호출하는 게 안전함 (KST 02:00 = UTC 17:00)
-    scheduler.add_job(_run_pod_stop, "cron", hour=17, minute=0, id="pod_stop_backup", max_instances=1)
-    # 그날 웹훅들이 쌓아둔 아티스트 정규화 큐(pending)를 MusicBrainz로 확인 - pod_stop_backup
-    # 직후로 잡아서 그날 콜백이 다 들어온 뒤에 처리되게 함 (KST 02:10 = UTC 17:10)
+    # LLM 배치 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/일기 전송 (KST 03:00 = UTC 18:00).
+    # 00시대 배치(크롤 재시도/라인업 재확인 등)가 만든 새 스크린샷이 같은 날 바로 전송되는 시각.
+    # RUNPOD_API_KEY/RUNPOD_POD_ID 미설정이면 start_pod_and_launch_services()가 알아서 아무것도 안 함
+    scheduler.add_job(_run_llm_attempt, "cron", hour=18, minute=0, id="llm_attempt", max_instances=1)
+    # 정확한 건수 매칭(웹훅에서 즉시 정지)이 못 잡는 경우를 위한 유휴시간 안전망 - 3분 간격 확인
+    # (KST 03:00~04:57). 전송이 끝난 뒤(all_sent_at)에만 판정하므로 콜드스타트 중 오판은 없음
     scheduler.add_job(
-        _run_musicbrainz_normalize, "cron", hour=17, minute=10, id="musicbrainz_normalize", max_instances=1
+        _run_llm_idle_check, "cron", hour="18-19", minute="*/3", id="llm_idle_check", max_instances=1
     )
-    # 티켓이 있는 공연 아티스트의 iTunes 미리듣기 곡 목록을 미리 캐시(첫 재생 지연 방지, KST 03:00 = UTC 18:00)
-    scheduler.add_job(_run_preview_warmup, "cron", hour=18, minute=0, id="preview_warmup", max_instances=1)
+    # 안전망 정지 (KST 05:00 = UTC 20:00)
+    scheduler.add_job(_run_pod_stop, "cron", hour=20, minute=0, id="pod_stop", max_instances=1)
+    # stop 실패(네트워크 오류 등) 대비 백업 - GPU가 켜진 채 방치되는 비용 누수를 막는 게
+    # 목적이라 이미 꺼져있어도 다시 호출하는 게 안전함 (KST 06:00 = UTC 21:00)
+    scheduler.add_job(_run_pod_stop, "cron", hour=21, minute=0, id="pod_stop_backup", max_instances=1)
+    # 웹훅들이 쌓아둔 아티스트 정규화 큐(pending)를 MusicBrainz로 확인한 뒤, 이어서 티켓 있는
+    # 공연 아티스트의 iTunes 미리듣기 곡 목록을 미리 캐시(첫 재생 지연 방지) - pod_stop 직후로 잡아
+    # 콜백이 다 들어온 뒤에 처리되게 함 (KST 05:10 = UTC 20:10)
+    scheduler.add_job(
+        _run_musicbrainz_normalize_then_warmup, "cron", hour=20, minute=10, id="musicbrainz_normalize", max_instances=1
+    )
     scheduler.start()
     logger.info("알림 스케줄러 시작됨 (1분 간격)")
 

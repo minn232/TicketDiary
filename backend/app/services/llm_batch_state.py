@@ -83,13 +83,15 @@ async def is_llm_batch_fully_done() -> bool:
 
 
 # 마지막 전송/콜백 중 더 늦은 시각 기준 idle_minutes 이상 조용하면 "끝났다"고 판단 - 정확한
-# 건수 매칭이 콜백 유실 등으로 끝까지 0에 도달 못 할 때의 안전망. 이미 조기 정지했으면 재트리거 방지
+# 건수 매칭이 콜백 유실 등으로 끝까지 0에 도달 못 할 때의 안전망. 이미 조기 정지했으면 재트리거 방지.
+# 전송이 다 끝난 뒤(all_sent_at)에만 판정 - 시작~전송 사이 콜드스타트(수 분) 동안 last_send_at(리셋
+# 시각)부터 유휴로 잡혀 pod이 뜨자마자 꺼지는 걸 막음
 async def is_llm_batch_idle(idle_minutes: float = 5.0) -> bool:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(LlmNightBatchState).where(LlmNightBatchState.id == _SINGLETON_ID))
         row = result.scalar_one_or_none()
 
-    if row is None or row.last_send_at is None or row.early_stopped_at is not None:
+    if row is None or row.last_send_at is None or row.all_sent_at is None or row.early_stopped_at is not None:
         return False
 
     last_activity = max(row.last_send_at, row.last_callback_at or row.last_send_at)
