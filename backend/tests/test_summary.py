@@ -11,7 +11,7 @@ from app.models.artist_genre import ArtistGenre
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.models.setlist import RealSetlist
-from app.services.summary import _is_standing, _percent_split, _period_start
+from app.services.summary import _is_seated, _is_standing, _percent_split, _period_start
 from conftest import _get_token, kopis_mock
 
 
@@ -398,6 +398,21 @@ async def test_summary_standing_and_seated():
     assert data["standing_count"] == 2
     assert data["seated_count"] == 1
     assert (data["standing_percent"], data["seated_percent"]) == (67, 33)
+
+
+# 입장권 종류/테스트 값처럼 좌석이 아닌 구분은 스탠딩/좌석 비율 계산에서 빠짐
+@pytest.mark.asyncio
+async def test_summary_seat_ratio_ignores_unclear_seat_types():
+    token = await _get_token()
+    seat_types = ["스탠딩석", "지정석", "R석", "1일권", "테스트"]
+    for i, seat_type in enumerate(seat_types):
+        concert_id = await _create_concert(f"PF_SUM_SEATX_{i}_{uuid.uuid4().hex[:6]}")
+        await _create_attended_ticket(concert_id, token, seat_type=seat_type)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        data = (await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})).json()
+    assert (data["standing_count"], data["seated_count"]) == (1, 2)
+    assert (data["standing_percent"], data["seated_percent"]) == (33, 67)
 
 
 # 실제 셋리스트 등록 후 곡 수 합산 테스트

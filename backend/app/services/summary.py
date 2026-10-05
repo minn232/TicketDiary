@@ -41,6 +41,12 @@ _STANDING_PATTERN = re.compile(
 )
 
 
+# 좌석 구분이 확실히 지정/등급 좌석인지 판별하는 패턴. "1일권"/"테스트"처럼 좌석이 아닌 값이나
+# 비지정/자유석/잔디석처럼 스탠딩인지 좌석인지 모호한 값은 스탠딩도 좌석도 아닌 것으로 둠
+_SEATED_PATTERN = re.compile(r"지정|좌석|seat|[a-z가-힣0-9]석|\d\s*열|\d\s*층")
+_UNRESERVED_PATTERN = re.compile(r"비지정|자유|잔디")
+
+
 # 좌석 유형이 스탠딩인지 판별 (seat_type 키워드 기반)
 def _is_standing(seat_type: str | None) -> bool:
     if not seat_type:
@@ -54,6 +60,14 @@ def _usable_runtime(concert: Concert | None) -> int | None:
         return None
     minutes = concert.runtime_minutes
     return minutes if minutes and minutes <= _MAX_RUNTIME_MINUTES else None
+
+
+# 좌석 유형이 확실한 좌석(지정석/R석 등)인지 판별. 스탠딩이 아니라는 이유만으로 좌석으로 세지 않음
+def _is_seated(seat_type: str | None) -> bool:
+    if not seat_type or _is_standing(seat_type):
+        return False
+    text = seat_type.lower()
+    return _UNRESERVED_PATTERN.search(text) is None and _SEATED_PATTERN.search(text) is not None
 
 
 # 티켓의 관람일 기준 날짜 - 기간 필터/지역 결산과 같은 기준(관람일 우선, 없으면 공연 시작일)
@@ -231,13 +245,11 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
         for a in sorted(first_seen_order, key=lambda a: -artist_counter[a])
     ]
 
-    # 스탠딩 / 좌석 (seat_type이 있는 티켓만 집계)
+    # 스탠딩 / 좌석 (좌석 구분이 스탠딩 또는 지정/등급 좌석으로 확실한 티켓만 집계)
     standing_count = sum(1 for t in tickets if _is_standing(t.seat_type))
-    seated_count = sum(
-        1 for t in tickets if t.seat_type and not _is_standing(t.seat_type)
-    )
+    seated_count = sum(1 for t in tickets if _is_seated(t.seat_type))
 
-    # 스탠딩/좌석 선호 - seat_type으로 확실히 판별된 티켓끼리만 퍼센트
+    # 스탠딩/좌석 선호 - 위에서 확실히 판별된 티켓끼리만 퍼센트
     seat_split = _percent_split([standing_count, seated_count])
 
     # 첫콘 / 막콘
