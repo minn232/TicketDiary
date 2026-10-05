@@ -110,6 +110,7 @@ class _SummaryDebugScreenState extends State<SummaryDebugScreen> {
   @override
   void dispose() {
     _noticeTimer?.cancel();
+    _dismissBubble();
     super.dispose();
   }
 
@@ -282,6 +283,7 @@ class _Body extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final monthly = _list(data['monthly_stats']);
+    final tickets = _list(data['ticket_details']);
     final weekdays = (data['weekday_counts'] as List? ?? const [])
         .map(_int)
         .toList();
@@ -314,14 +316,44 @@ class _Body extends StatelessWidget {
           : parts[1];
     }
 
+    // 막대를 누르면 그 달에 본 공연을 말풍선으로 보여줌(지출 차트는 가격 포함)
+    void showMonth(String month, Offset pos, {required bool spend}) {
+      final items = [
+        for (final t in tickets)
+          if ((t['date'] as String? ?? '').startsWith(month)) t,
+      ];
+      final mm = int.tryParse(month.length >= 7 ? month.substring(5, 7) : '');
+      final label = mm == null ? month : '$mm월';
+      final total = items.fold<int>(0, (s, t) => s + _int(t['price']));
+      _showTickets(
+        context,
+        pos,
+        spend ? '$label · ${_manwon(total)}' : '$label · ${items.length}회',
+        items,
+        withPrice: spend,
+      );
+    }
+
+    // 도넛 조각/범례를 누르면 그 쪽 공연을 말풍선으로 보여줌
+    void showSegment(String field, String value, String label, Offset pos) {
+      final items = [
+        for (final t in tickets)
+          if (t[field] == value) t,
+      ];
+      _showTickets(context, pos, '$label · ${items.length}회', items);
+    }
+
     // 전체 기간은 연도 탭으로 골라 1~12월 차트를 보고, 6개월/1년은 이어서 한 차트로 그림
     Widget monthChart(String key, Color color, {String Function(int)? format}) {
+      final spend = key == 'spent';
       if (period != 'all') {
         return _Bars(
           values: [for (final m in monthly) _int(m[key])],
           labels: [for (final m in monthly) monthLabel(m)],
           color: color,
           format: format,
+          onBarTap: (i, pos) =>
+              showMonth('${monthly[i]['month']}', pos, spend: spend),
         );
       }
       final byYear = <String, List<int>>{};
@@ -344,6 +376,11 @@ class _Body extends StatelessWidget {
         maxValue: yearMax,
         selection: yearSelection,
         selectionKey: 'month_$key',
+        onBarTap: (year, monthIndex, pos) => showMonth(
+          '$year-${(monthIndex + 1).toString().padLeft(2, '0')}',
+          pos,
+          spend: spend,
+        ),
       );
     }
 
@@ -443,6 +480,12 @@ class _Body extends StatelessWidget {
                     data['standing_percent'],
                     '좌석',
                     data['seated_percent'],
+                    onSegmentTap: (i, pos) => showSegment(
+                      'seat',
+                      i == 0 ? 'standing' : 'seated',
+                      i == 0 ? '스탠딩' : '좌석',
+                      pos,
+                    ),
                   ),
                 ),
                 Expanded(
@@ -451,6 +494,12 @@ class _Body extends StatelessWidget {
                     data['first_day_percent'],
                     '막콘',
                     data['last_day_percent'],
+                    onSegmentTap: (i, pos) => showSegment(
+                      'day',
+                      i == 0 ? 'first' : 'last',
+                      i == 0 ? '첫콘' : '막콘',
+                      pos,
+                    ),
                   ),
                 ),
                 Expanded(
@@ -460,6 +509,12 @@ class _Body extends StatelessWidget {
                     '내한',
                     data['origin_foreign_percent'],
                     note: '미분류 ${_int(data['origin_unknown_count'])}장',
+                    onSegmentTap: (i, pos) => showSegment(
+                      'origin',
+                      i == 0 ? 'domestic' : 'foreign',
+                      i == 0 ? '국내' : '내한',
+                      pos,
+                    ),
                   ),
                 ),
               ],
@@ -771,6 +826,173 @@ class _Empty extends StatelessWidget {
   );
 }
 
+// ---- 그래프 탭 말풍선 ----
+
+typedef _TicketRow = Map<String, dynamic>;
+
+OverlayEntry? _bubbleEntry;
+
+void _dismissBubble() {
+  _bubbleEntry?.remove();
+  _bubbleEntry = null;
+}
+
+// 누른 자리 위(자리가 없으면 아래)에 간단한 말풍선을 띄우고, 바깥을 누르면 닫음
+void _showBubble(
+  BuildContext context,
+  Offset anchor,
+  String title,
+  List<String> lines,
+) {
+  _dismissBubble();
+  final overlay = Overlay.maybeOf(context);
+  if (overlay == null) return;
+  _bubbleEntry = OverlayEntry(
+    builder: (_) => _BubbleLayer(
+      anchor: anchor,
+      title: title,
+      lines: lines,
+      onDismiss: _dismissBubble,
+    ),
+  );
+  overlay.insert(_bubbleEntry!);
+}
+
+// 티켓 목록을 "제목 + 공연명 최대 3줄(+외 N건)"로 보여줌. 지출 차트는 공연명 옆에 가격도 표시
+void _showTickets(
+  BuildContext context,
+  Offset anchor,
+  String title,
+  List<_TicketRow> items, {
+  bool withPrice = false,
+}) {
+  if (items.isEmpty) return;
+  final lines = [
+    for (final t in items.take(3))
+      withPrice && t['price'] != null
+          ? '${t['concert_name']} · ${_won(_int(t['price']))}'
+          : '${t['concert_name']}',
+  ];
+  if (items.length > 3) lines.add('외 ${items.length - 3}건');
+  _showBubble(context, anchor, title, lines);
+}
+
+class _BubbleLayer extends StatelessWidget {
+  const _BubbleLayer({
+    required this.anchor,
+    required this.title,
+    required this.lines,
+    required this.onDismiss,
+  });
+
+  final Offset anchor;
+  final String title;
+  final List<String> lines;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final width = math.min(230.0, size.width - 24);
+    final left = (anchor.dx - width / 2).clamp(12.0, size.width - width - 12);
+    final above = anchor.dy > 170;
+    final tailX = (anchor.dx - left).clamp(18.0, width - 18);
+    final card = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: summaryInk,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: summaryPaper,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+          for (final line in lines)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                line,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: summaryPaper.withValues(alpha: .9),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    final tail = Padding(
+      padding: EdgeInsets.only(left: tailX - 7),
+      child: CustomPaint(
+        size: const Size(14, 7),
+        painter: _TailPainter(summaryInk, pointDown: above),
+      ),
+    );
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onDismiss,
+          ),
+        ),
+        Positioned(
+          left: left,
+          width: width,
+          top: above ? null : anchor.dy + 4,
+          bottom: above ? size.height - anchor.dy + 4 : null,
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: above ? [card, tail] : [tail, card],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TailPainter extends CustomPainter {
+  _TailPainter(this.color, {required this.pointDown});
+
+  final Color color;
+  final bool pointDown;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path();
+    if (pointDown) {
+      path
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(size.width / 2, size.height);
+    } else {
+      path
+        ..moveTo(0, size.height)
+        ..lineTo(size.width, size.height)
+        ..lineTo(size.width / 2, 0);
+    }
+    canvas.drawPath(path..close(), Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_TailPainter old) =>
+      old.color != color || old.pointDown != pointDown;
+}
+
 // ---- 숫자 타일 ----
 
 class _Tile extends StatelessWidget {
@@ -924,10 +1146,31 @@ class _DonutPainter extends CustomPainter {
 
 // 도넛 + 가운데 글자. 주어진 영역 안에서 가장 큰 정사각형으로 그림
 class _Donut extends StatelessWidget {
-  const _Donut({required this.values, required this.center});
+  const _Donut({required this.values, required this.center, this.onSegmentTap});
 
   final List<double> values;
   final Widget center;
+
+  // 도넛을 눌렀을 때 몇 번째 조각인지(시계 방향, 12시부터)와 화면 좌표를 알려줌
+  final void Function(int index, Offset globalPosition)? onSegmentTap;
+
+  void _handleTap(TapUpDetails d, double size) {
+    final total = values.fold<double>(0, (s, v) => s + v);
+    if (onSegmentTap == null || total <= 0) return;
+    final v = d.localPosition - Offset(size / 2, size / 2);
+    if (v.distance > size / 2) return;
+    final angle = (math.atan2(v.dy, v.dx) + math.pi / 2) % (math.pi * 2);
+    var fraction = angle / (math.pi * 2);
+    for (var i = 0; i < values.length; i++) {
+      final share = values[i] / total;
+      if (fraction < share) {
+        onSegmentTap!(i, d.globalPosition);
+        return;
+      }
+      fraction -= share;
+    }
+    onSegmentTap!(values.length - 1, d.globalPosition);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -938,14 +1181,18 @@ class _Donut extends StatelessWidget {
           math.min(box.maxWidth, box.maxHeight).toDouble(),
         );
         return Center(
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: CustomPaint(
-              painter: _DonutPainter(values, _palette),
-              child: Padding(
-                padding: EdgeInsets.all(size * 0.2),
-                child: Center(child: center),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapUp: (d) => _handleTap(d, size),
+            child: SizedBox(
+              width: size,
+              height: size,
+              child: CustomPaint(
+                painter: _DonutPainter(values, _palette),
+                child: Padding(
+                  padding: EdgeInsets.all(size * 0.2),
+                  child: Center(child: center),
+                ),
               ),
             ),
           ),
@@ -956,13 +1203,22 @@ class _Donut extends StatelessWidget {
 }
 
 class _LegendDot extends StatelessWidget {
-  const _LegendDot(this.color, this.text);
+  const _LegendDot(this.color, this.text, {this.onTapUp});
 
   final Color color;
   final String text;
+  final void Function(TapUpDetails)? onTapUp;
 
   @override
   Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: onTapUp,
+      child: _row(),
+    );
+  }
+
+  Widget _row() {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -991,13 +1247,21 @@ class _LegendDot extends StatelessWidget {
 
 // 두 값이 나뉘는 도넛 하나(대상이 없으면 빈 고리와 '-')
 class _DonutBlock extends StatelessWidget {
-  const _DonutBlock(this.labelA, this.a, this.labelB, this.b, {this.note});
+  const _DonutBlock(
+    this.labelA,
+    this.a,
+    this.labelB,
+    this.b, {
+    this.note,
+    this.onSegmentTap,
+  });
 
   final String labelA;
   final dynamic a;
   final String labelB;
   final dynamic b;
   final String? note;
+  final void Function(int index, Offset globalPosition)? onSegmentTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1014,6 +1278,7 @@ class _DonutBlock extends StatelessWidget {
           Expanded(
             child: _Donut(
               values: hasData ? [pa, pb] : const [],
+              onSegmentTap: onSegmentTap,
               center: hasData
                   ? FittedBox(
                       fit: BoxFit.scaleDown,
@@ -1045,9 +1310,21 @@ class _DonutBlock extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          _LegendDot(_palette[0], '$labelA ${_pct(a)}'),
+          _LegendDot(
+            _palette[0],
+            '$labelA ${_pct(a)}',
+            onTapUp: onSegmentTap == null
+                ? null
+                : (d) => onSegmentTap!(0, d.globalPosition),
+          ),
           const SizedBox(height: 2),
-          _LegendDot(_palette[1], '$labelB ${_pct(b)}'),
+          _LegendDot(
+            _palette[1],
+            '$labelB ${_pct(b)}',
+            onTapUp: onSegmentTap == null
+                ? null
+                : (d) => onSegmentTap!(1, d.globalPosition),
+          ),
           if (note != null)
             Text(
               note!,
@@ -1147,6 +1424,7 @@ class _Bars extends StatelessWidget {
     this.format,
     this.scroll = true,
     this.maxValue,
+    this.onBarTap,
   });
 
   final List<int> values;
@@ -1159,6 +1437,9 @@ class _Bars extends StatelessWidget {
 
   // 연도별 차트끼리 높이를 비교할 수 있게 같은 최댓값을 쓸 때 지정
   final int? maxValue;
+
+  // 막대를 눌렀을 때 몇 번째 막대인지와 화면 좌표를 알려줌
+  final void Function(int index, Offset globalPosition)? onBarTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1174,7 +1455,7 @@ class _Bars extends StatelessWidget {
             for (var i = 0; i < values.length; i++)
               SizedBox(
                 width: scroll && values.length > 8 ? 40 : null,
-                child: _bar(values[i], labels[i], maxV, chartH),
+                child: _bar(i, maxV, chartH, box.maxHeight),
               ),
           ],
         );
@@ -1187,7 +1468,7 @@ class _Bars extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   for (var i = 0; i < values.length; i++)
-                    Expanded(child: _bar(values[i], labels[i], maxV, chartH)),
+                    Expanded(child: _bar(i, maxV, chartH, box.maxHeight)),
                 ],
               );
         return SizedBox(height: box.maxHeight, child: chart);
@@ -1195,9 +1476,11 @@ class _Bars extends StatelessWidget {
     );
   }
 
-  Widget _bar(int v, String label, int maxV, double chartH) {
+  Widget _bar(int index, int maxV, double chartH, double fullHeight) {
+    final v = values[index];
+    final label = labels[index];
     final h = maxV == 0 ? 0.0 : chartH * v / maxV;
-    return Column(
+    final column = Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         // 폭이 좁아도 값 글자가 두 줄로 꺾여 높이가 늘지 않게 한 줄로 줄여 맞춤
@@ -1228,6 +1511,17 @@ class _Bars extends StatelessWidget {
           ),
         ),
       ],
+    );
+    // 막대가 낮아도 그 달 영역 어디를 눌러도 반응하도록 차트 전체 높이를 터치 영역으로 씀
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: onBarTap == null
+          ? null
+          : (d) => onBarTap!(index, d.globalPosition),
+      child: SizedBox(
+        height: fullHeight,
+        child: Align(alignment: Alignment.bottomCenter, child: column),
+      ),
     );
   }
 }
@@ -1319,6 +1613,7 @@ class _YearTabbedBars extends StatefulWidget {
     required this.selection,
     required this.selectionKey,
     this.format,
+    this.onBarTap,
   });
 
   final Map<String, List<int>> byYear;
@@ -1329,6 +1624,10 @@ class _YearTabbedBars extends StatefulWidget {
   // 선택한 연도를 화면 State의 맵에 기록해 두고, 다시 만들어질 때 거기서 복원
   final Map<String, String> selection;
   final String selectionKey;
+
+  // (선택한 연도, 0부터 시작하는 월 번호, 화면 좌표)
+  final void Function(String year, int monthIndex, Offset globalPosition)?
+  onBarTap;
 
   @override
   State<_YearTabbedBars> createState() => _YearTabbedBarsState();
@@ -1372,6 +1671,9 @@ class _YearTabbedBarsState extends State<_YearTabbedBars> {
             format: widget.format,
             scroll: false,
             maxValue: widget.maxValue,
+            onBarTap: widget.onBarTap == null
+                ? null
+                : (i, pos) => widget.onBarTap!(_selected, i, pos),
           ),
         ),
       ],

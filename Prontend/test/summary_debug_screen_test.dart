@@ -60,6 +60,32 @@ const _sample = <String, dynamic>{
     'concert_name': 'YOASOBI ASIA TOUR',
     'probability': 0.0,
   },
+  'ticket_details': [
+    {
+      'concert_name': 'Vaundy ASIA ARENA TOUR',
+      'date': '2026-04-10',
+      'price': 165000,
+      'seat': 'standing',
+      'day': 'first',
+      'origin': 'foreign',
+    },
+    {
+      'concert_name': 'YOASOBI ASIA TOUR',
+      'date': '2026-04-20',
+      'price': 150000,
+      'seat': 'seated',
+      'day': 'last',
+      'origin': 'foreign',
+    },
+    {
+      'concert_name': '장기하 단독 콘서트',
+      'date': '2026-07-05',
+      'price': 99000,
+      'seat': 'seated',
+      'day': null,
+      'origin': 'domestic',
+    },
+  ],
   'new_artist_count': 2,
   'new_artists': ['Vaundy', 'YOASOBI'],
   'new_artists_by_year': [
@@ -340,6 +366,82 @@ void main() {
     expect(find.textContaining('불러오지 못했어요'), findsOneWidget);
     await tester.pump(const Duration(seconds: 4)); // 안내가 사라짐
     expect(find.textContaining('불러오지 못했어요'), findsNothing);
+  });
+
+  testWidgets('월별 막대를 누르면 그 달 공연이 말풍선으로 뜨고, 바깥을 누르면 닫힌다', (tester) async {
+    await _pump(tester, _sample, width: 800);
+    await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
+    await tester.pumpAndSettle();
+
+    // 관람 수 차트(2026): 4월 막대 -> 4월 공연 2건, 공연명만
+    await tester.tap(find.text('4').first);
+    await tester.pumpAndSettle();
+    expect(find.text('4월 · 2회'), findsOneWidget);
+    expect(find.text('Vaundy ASIA ARENA TOUR'), findsOneWidget);
+    expect(find.text('YOASOBI ASIA TOUR'), findsOneWidget);
+    expect(find.textContaining('165,000원'), findsNothing);
+
+    await tester.tapAt(const Offset(5, 5)); // 바깥을 눌러 닫기
+    await tester.pumpAndSettle();
+    expect(find.text('4월 · 2회'), findsNothing);
+
+    // 지출 차트: 4월 합계와 공연별 가격이 보임
+    await tester.tap(find.text('4').last);
+    await tester.pumpAndSettle();
+    expect(find.text('4월 · 31.5만'), findsOneWidget);
+    expect(find.text('Vaundy ASIA ARENA TOUR · 165,000원'), findsOneWidget);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    // 공연이 없는 달은 말풍선이 뜨지 않음
+    await tester.tap(find.text('1').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('1월'), findsNothing);
+  });
+
+  testWidgets('도넛 범례를 누르면 그 쪽 공연이 말풍선으로 뜬다', (tester) async {
+    await _pump(tester, _sample, width: 800);
+    await tester.tap(find.text('스탠딩 67%'));
+    await tester.pumpAndSettle();
+    expect(find.text('스탠딩 · 1회'), findsOneWidget);
+    expect(
+      find.text('Vaundy ASIA ARENA TOUR'),
+      findsWidgets,
+    ); // 기록 카드에도 같은 공연명이 있음
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('막콘 60%'));
+    await tester.pumpAndSettle();
+    expect(find.text('막콘 · 1회'), findsOneWidget);
+    expect(find.text('YOASOBI ASIA TOUR'), findsOneWidget);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('국내 58%'));
+    await tester.pumpAndSettle();
+    expect(find.text('국내 · 1회'), findsOneWidget);
+    expect(find.text('장기하 단독 콘서트'), findsOneWidget);
+  });
+
+  testWidgets('도넛 조각을 직접 눌러도 해당 조각의 공연이 뜬다', (tester) async {
+    await _pump(tester, _sample, width: 800);
+    // 첫 번째 도넛(스탠딩 67% / 좌석 33%): 12시에서 시계 방향으로 67%가 스탠딩
+    final center = tester.getCenter(find.text('스탠딩').first);
+    await tester.tapAt(center + const Offset(0, -40)); // 도넛 위쪽 = 스탠딩 조각
+    await tester.pumpAndSettle();
+    expect(find.text('스탠딩 · 1회'), findsOneWidget);
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('티켓 목록이 없으면(이전 서버) 눌러도 아무 일 없다', (tester) async {
+    final old = {..._sample}..remove('ticket_details');
+    await _pump(tester, old, width: 800);
+    await tester.tap(find.text('스탠딩 67%'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('스탠딩 · '), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('값이 없는 기록 타일은 숨기고, 하나도 없으면 카드째 숨긴다', (tester) async {
