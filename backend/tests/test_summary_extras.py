@@ -208,3 +208,26 @@ async def test_summary_monthly_stats_calendar_window():
         assert [m["month"] for m in months] == sorted(m["month"] for m in months)
         assert sum(m["concert_count"] for m in months) == data["concert_count"]
         assert months[-1]["month"] == date.today().strftime("%Y-%m")
+
+
+# 그래프 탭 상세용 티켓 목록: 관람일 순, 분류 값은 퍼센트 통계와 같은 기준
+@pytest.mark.asyncio
+async def test_summary_ticket_details():
+    token = await _get_token()
+    jp, kr = f"일본_{_uid()}", f"한국_{_uid()}"
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(canonical_name=jp, mb_country="JP"))
+        db.add(CanonicalArtist(canonical_name=kr, mb_country="KR"))
+        await db.commit()
+    c1 = await _create_concert(f"PF_EXT_{_uid()}", days_ago=40, artists=jp)
+    c2 = await _create_concert(f"PF_EXT_{_uid()}", days_ago=10, artists=kr)
+    await _create_attended_ticket(c1, token, seat_type="스탠딩석", price=120000)
+    await _create_attended_ticket(c2, token, seat_type="1일권")
+
+    details = (await _get_summary(token))["ticket_details"]
+    assert len(details) == 2
+    assert [d["date"] for d in details] == sorted(d["date"] for d in details)
+    first, second = details
+    assert (first["seat"], first["origin"], first["price"]) == ("standing", "foreign", 120000)
+    assert (second["seat"], second["origin"], second["price"]) == (None, "domestic", None)  # 모호한 좌석은 null
+    assert first["day"] is None and first["concert_name"]

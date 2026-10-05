@@ -53,7 +53,7 @@ def kst_now() -> datetime:
     return datetime.now(timezone(timedelta(hours=9)))
 
 
-def _attended_day(t: Ticket) -> date:
+def attended_day(t: Ticket) -> date:
     return (t.attended_date or t.concert.start_date).date()
 
 
@@ -69,6 +69,7 @@ def empty_extras() -> dict:
         "busiest_month": None, "monthly_stats": [], "top_spend_artist": None, "new_artist_count": 0, "new_artists": [],
         "new_artists_by_year": [],
         "origin_domestic_percent": None, "origin_foreign_percent": None, "origin_unknown_count": 0,
+        "ticket_details": [],
         "most_heard_song": None, "rarest_song": None,
     }
 
@@ -81,7 +82,7 @@ def _monthly_stats(tickets: list[Ticket], period_start: datetime | None) -> list
     counts: Counter = Counter()
     spent: Counter = Counter()
     for t in tickets:
-        day = _attended_day(t)
+        day = attended_day(t)
         counts[(day.year, day.month)] += 1
         spent[(day.year, day.month)] += t.price or 0
     first = min(counts)
@@ -110,7 +111,7 @@ def compute_ticket_extras(tickets: list[Ticket], period_start: datetime | None =
         venue = (concert.venue or "").strip() if concert else ""
         if venue:
             venues[venue] += 1
-        day = _attended_day(t)
+        day = attended_day(t)
         weekdays[day.weekday()] += 1
         months[f"{day.year}-{day.month:02d}"] += 1
 
@@ -190,7 +191,7 @@ async def compute_artist_extras(
         first_year: dict[str, int] = {}
         for t in tickets:  # 관람일 순으로 정렬된 티켓
             for artist in ticket_artists[t.id]:
-                first_year.setdefault(artist, _attended_day(t).year)
+                first_year.setdefault(artist, attended_day(t).year)
         by_year: dict[int, list[str]] = defaultdict(list)
         for artist, year in first_year.items():
             by_year[year].append(artist)
@@ -200,20 +201,24 @@ async def compute_artist_extras(
     # 국가를 아는 아티스트가 없으면 KOPIS visit으로 보조, 그것도 없으면 미분류
     countries = await _artist_countries(db, set(period_artists))
     domestic = foreign = unknown = 0
+    origin_by_ticket: dict = {}  # 티켓별 분류(세부 목록용), 미분류는 넣지 않음
     for t in tickets:
         known = [countries[a] for a in ticket_artists[t.id] if a in countries]
         if known:
             foreign_n = sum(1 for c in known if c != "KR")
-            if foreign_n >= len(known) - foreign_n:
-                foreign += 1
-            else:
-                domestic += 1
+            kind = "foreign" if foreign_n >= len(known) - foreign_n else "domestic"
         elif t.concert and t.concert.visit is True:
-            foreign += 1
+            kind = "foreign"
         elif t.concert and t.concert.visit is False:
-            domestic += 1
+            kind = "domestic"
         else:
             unknown += 1
+            continue
+        origin_by_ticket[t.id] = kind
+        if kind == "foreign":
+            foreign += 1
+        else:
+            domestic += 1
     origin = percent_split([domestic, foreign])
 
     return {
@@ -224,6 +229,7 @@ async def compute_artist_extras(
         "origin_domestic_percent": origin[0] if origin else None,
         "origin_foreign_percent": origin[1] if origin else None,
         "origin_unknown_count": unknown,
+        "origin_by_ticket": origin_by_ticket,
     }
 
 

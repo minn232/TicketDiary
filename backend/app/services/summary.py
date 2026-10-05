@@ -19,6 +19,7 @@ from app.services.summary_extras import (
     compute_artist_extras,
     compute_song_extras,
     compute_ticket_extras,
+    attended_day,
     empty_extras,
     kst_now,
     percent_split as _percent_split,
@@ -271,10 +272,24 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
     for t in tickets:
         if t.id in ticket_keys:
             artists_by_key.setdefault(ticket_keys[t.id], attended_artists(t))
+    artist_extras = await compute_artist_extras(db, user_id, period_start, tickets, attended_artists)
+    origin_by_ticket = artist_extras.pop("origin_by_ticket")
     extras = {
         **compute_ticket_extras(tickets, period_start),
-        **await compute_artist_extras(db, user_id, period_start, tickets, attended_artists),
+        **artist_extras,
         **await compute_song_extras(db, setlists, concert_by_key, artists_by_key),
+        # 그래프를 눌렀을 때 보여줄 간단한 티켓 목록(분류는 위 통계와 같은 기준)
+        "ticket_details": [
+            {
+                "concert_name": t.concert.name if t.concert else "",
+                "date": attended_day(t).isoformat(),
+                "price": t.price,
+                "seat": "standing" if _is_standing(t.seat_type) else ("seated" if _is_seated(t.seat_type) else None),
+                "day": ("first" if t.is_first_day else "last" if t.is_last_day else None) if t in two_day else None,
+                "origin": origin_by_ticket.get(t.id),
+            }
+            for t in tickets
+        ],
     }
 
     return {

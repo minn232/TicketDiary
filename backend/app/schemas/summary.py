@@ -40,6 +40,17 @@ class MonthlyStat(BaseModel):
     spent: int  # 가격 없는 티켓은 0으로 침
 
 
+class TicketDetail(BaseModel):
+    # 그래프를 눌렀을 때 보여줄 티켓 한 장의 간단한 정보. 분류 값은 퍼센트/월별 통계와 같은 기준이고
+    # 판별이 안 된 값(좌석 모호, 이틀 공연 아님, 국가 모름)은 null
+    concert_name: str
+    date: str  # 관람일 "YYYY-MM-DD"
+    price: int | None
+    seat: Literal["standing", "seated"] | None
+    day: Literal["first", "last"] | None
+    origin: Literal["domestic", "foreign"] | None
+
+
 class YearNewArtists(BaseModel):
     # 그 해에 처음 본 아티스트 (전체 기간 조회에서만 채워짐)
     year: int
@@ -106,6 +117,7 @@ class SummaryResponse(BaseModel):
     new_artist_count: int                # 선택 기간 이전 전체 기록에 없던 아티스트
     new_artists: list[str]
     new_artists_by_year: list[YearNewArtists]  # 전체 기간만, 오래된 해부터
+    ticket_details: list[TicketDetail]  # 관람일 순 티켓 목록(그래프 탭 상세용)
     origin_domestic_percent: int | None  # 국내/해외 아티스트 공연(미분류 제외)
     origin_foreign_percent: int | None
     origin_unknown_count: int
