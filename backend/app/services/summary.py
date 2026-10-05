@@ -29,6 +29,9 @@ _MIN_GENRE_COVERAGE = 0.5
 # 셋리스트 없는 공연의 곡 수 어림용 곡당 분(멘트/앵콜 포함). 솔로 7건 중앙값이라 표본이 작음
 _MINUTES_PER_SONG = 5
 
+# 이보다 긴 러닝타임은 시리즈/하루 종일 일정이 섞인 값이라 관람 시간 계산에서 제외(워터밤처럼 SOLO로 분류된 것 포함)
+_MAX_RUNTIME_MINUTES = 300
+
 # ga/floor는 Garden, Gallery에 부분 일치하지 않게 영문자 경계로 매칭, 플로어석/Floor seat는 지정석이라 제외
 _STANDING_PATTERN = re.compile(
     r"스탠딩|입석|standing|スタンディング"
@@ -42,6 +45,14 @@ def _is_standing(seat_type: str | None) -> bool:
     if not seat_type:
         return False
     return _STANDING_PATTERN.search(seat_type.lower()) is not None
+
+
+# 결산에 쓸 수 있는 러닝타임(분) - 솔로 공연이고 값이 있으며 상한 이내일 때만, 아니면 None
+def _usable_runtime(concert: Concert | None) -> int | None:
+    if concert is None or concert.event_type != EventType.SOLO.value:
+        return None
+    minutes = concert.runtime_minutes
+    return minutes if minutes and minutes <= _MAX_RUNTIME_MINUTES else None
 
 
 # 티켓의 관람일 기준 날짜 - 기간 필터/지역 결산과 같은 기준(관람일 우선, 없으면 공연 시작일)
@@ -161,19 +172,19 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
     # 합칠지 정함. 페스티벌은 러닝타임이 하루 전체 일정이라 제외
     concert_by_key = {ticket_keys[t.id]: t.concert for t in tickets if t.id in ticket_keys and t.concert}
     song_count_estimated = sum(
-        round(c.runtime_minutes / _MINUTES_PER_SONG)
+        round(_usable_runtime(c) / _MINUTES_PER_SONG)
         for key, c in concert_by_key.items()
-        if key not in keys_with_songs and c.runtime_minutes and c.event_type == EventType.SOLO.value
+        if key not in keys_with_songs and _usable_runtime(c)
     )
 
-    # 총 관람 시간(분) - 공연 러닝타임 합(인터미션 포함 가능). 페스티벌/러닝타임 모르는 공연은
-    # 빼고 그 티켓 수를 runtime_missing_count로 알림
+    # 총 관람 시간(분) - 공연 러닝타임 합(인터미션 포함 가능). 페스티벌/러닝타임 모르거나 상한 초과
+    # 공연은 빼고 그 티켓 수를 runtime_missing_count로 알림
     total_runtime_minutes = 0
     runtime_missing_count = 0
     for t in tickets:
-        c = t.concert
-        if c and c.runtime_minutes and c.event_type == EventType.SOLO.value:
-            total_runtime_minutes += c.runtime_minutes
+        runtime = _usable_runtime(t.concert)
+        if runtime:
+            total_runtime_minutes += runtime
         else:
             runtime_missing_count += 1
 

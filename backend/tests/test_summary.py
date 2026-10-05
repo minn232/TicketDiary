@@ -646,3 +646,19 @@ async def test_summary_estimated_songs_skips_concert_with_setlist():
     assert data["song_count"] == 10
     assert data["song_count_estimated"] == 0
     assert data["total_runtime_minutes"] == 120
+
+
+# 러닝타임이 상한(300분)을 넘는 솔로 공연은 관람 시간/곡 수 어림치에서 빠지고 누락으로 셈
+@pytest.mark.asyncio
+async def test_summary_runtime_over_cap_excluded():
+    ok = await _create_concert(f"PF_SUM_CAP_{uuid.uuid4().hex[:6]}")
+    too_long = await _create_concert(f"PF_SUM_CAP_{uuid.uuid4().hex[:6]}")
+    await _set_runtime(ok, 300)
+    await _set_runtime(too_long, 301)
+    token = await _get_token()
+    for c in (ok, too_long):
+        await _create_attended_ticket(c, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        data = (await ac.get("/api/v1/summary", headers={"Authorization": f"Bearer {token}"})).json()
+    assert (data["total_runtime_minutes"], data["runtime_missing_count"], data["song_count_estimated"]) == (300, 1, 60)
