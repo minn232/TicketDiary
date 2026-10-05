@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -2448,13 +2449,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
                       ),
                     ),
                   ),
-            // 뜯긴 뒤: "공연전" 텍스트/바로가기 없이, 흰 배경도 없이 빈(투명)
-            // 영역만 남긴다. 눌러도 (오른쪽 포스터와 동일하게) 공연 후 페이지가 뜬다.
+            // 뜯긴 뒤: 현재 대표 이미지의 닫힌 다이어리 형태를 뜯긴 조각의
+            // 밝은 색감으로 윤곽선만 남긴다. 눌러도 (오른쪽 포스터와 동일하게)
+            // 공연 후 페이지가 뜬다.
             revealed: _hideWhileOverlayOpen(
               regionKey: overlayKey,
               child: KeyedSubtree(
                 key: overlayKey,
-                child: const SizedBox.expand(),
+                child: const _TornTicketLogoOutline(),
               ),
             ),
             onRevealedTap: _isAddTicketExpanded ? null : openAfter,
@@ -2844,6 +2846,157 @@ class _TicketStub extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TornTicketLogoOutline extends StatelessWidget {
+  const _TornTicketLogoOutline();
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      painter: _TornTicketLogoOutlinePainter(
+        color: Colors.white.withValues(alpha: 0.58),
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _TornTicketLogoOutlinePainter extends CustomPainter {
+  const _TornTicketLogoOutlinePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final shortest = math.min(size.width, size.height);
+    final stroke = (shortest * 0.0175).clamp(0.7, 1.6).toDouble();
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final book = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(size.width * 0.50, size.height * 0.50),
+        width: size.width * 0.58,
+        height: size.height * 0.62,
+      ),
+      Radius.circular(shortest * 0.08),
+    );
+    canvas.drawRRect(book, paint);
+
+    final stitch = Paint()
+      ..color = color.withValues(alpha: 0.58)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke * 0.55
+      ..strokeCap = StrokeCap.round;
+    final inset = shortest * 0.055;
+    final stitchRect = book.outerRect.deflate(inset);
+    _drawDashedRRect(
+      canvas,
+      RRect.fromRectAndRadius(stitchRect, Radius.circular(shortest * 0.05)),
+      stitch,
+      dash: shortest * 0.05,
+      gap: shortest * 0.035,
+    );
+
+    final bandX = book.outerRect.right - book.outerRect.width * 0.22;
+    final bandPaint = Paint()
+      ..color = color.withValues(alpha: 0.45)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke * 1.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(bandX, book.outerRect.top + shortest * 0.03),
+      Offset(bandX, book.outerRect.bottom - shortest * 0.03),
+      bandPaint,
+    );
+
+    final bookmark = RRect.fromRectAndRadius(
+      Rect.fromCenter(
+        center: Offset(bandX - shortest * 0.03, book.outerRect.bottom),
+        width: shortest * 0.08,
+        height: shortest * 0.16,
+      ).translate(0, shortest * 0.07),
+      Radius.circular(shortest * 0.025),
+    );
+    canvas.drawRRect(bookmark, paint);
+
+    final ticketRect = Rect.fromCenter(
+      center: book.outerRect.center,
+      width: shortest * 0.25,
+      height: shortest * 0.14,
+    );
+    final ticket = Path()
+      ..moveTo(ticketRect.left, ticketRect.top)
+      ..lineTo(ticketRect.right, ticketRect.top)
+      ..lineTo(ticketRect.right, ticketRect.center.dy - ticketRect.height * .18)
+      ..quadraticBezierTo(
+        ticketRect.right - ticketRect.width * .12,
+        ticketRect.center.dy,
+        ticketRect.right,
+        ticketRect.center.dy + ticketRect.height * .18,
+      )
+      ..lineTo(ticketRect.right, ticketRect.bottom)
+      ..lineTo(ticketRect.left, ticketRect.bottom)
+      ..lineTo(ticketRect.left, ticketRect.center.dy + ticketRect.height * .18)
+      ..quadraticBezierTo(
+        ticketRect.left + ticketRect.width * .12,
+        ticketRect.center.dy,
+        ticketRect.left,
+        ticketRect.center.dy - ticketRect.height * .18,
+      )
+      ..close();
+    canvas.drawPath(ticket, paint);
+
+    final star = _starPath(
+      ticketRect.center,
+      ticketRect.height * 0.30,
+      ticketRect.height * 0.13,
+    );
+    canvas.drawPath(star, paint);
+  }
+
+  void _drawDashedRRect(
+    Canvas canvas,
+    RRect rrect,
+    Paint paint, {
+    required double dash,
+    required double gap,
+  }) {
+    final path = Path()..addRRect(rrect);
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final end = math.min(distance + dash, metric.length);
+        canvas.drawPath(metric.extractPath(distance, end), paint);
+        distance += dash + gap;
+      }
+    }
+  }
+
+  Path _starPath(Offset center, double outer, double inner) {
+    final path = Path();
+    for (var i = 0; i < 10; i++) {
+      final angle = -math.pi / 2 + i * math.pi / 5;
+      final radius = i.isEven ? outer : inner;
+      final point = center + Offset(math.cos(angle), math.sin(angle)) * radius;
+      if (i == 0) {
+        path.moveTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+      }
+    }
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldRepaint(covariant _TornTicketLogoOutlinePainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
 // ===== [TEST-ONLY] 아래부터 파일 끝까지, "test 티켓 추가"의 숫자 날짜

@@ -84,6 +84,12 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _coverTitleGapRatio = 0.02266; // 10 / 441.3
 
   static const Duration _totalDuration = Duration(milliseconds: 4000);
+  static const Duration _brandIntroDuration = Duration(milliseconds: 1250);
+  static const Duration _brandLogoPopDelay = Duration(milliseconds: 260);
+  static const Duration _brandLogoPopDuration = Duration(milliseconds: 430);
+  static const Duration _brandDissolveDuration = Duration(milliseconds: 650);
+  static const String _brandLogoAsset = 'assets/icon/app_icon.png';
+  static const Color _brandBackgroundColor = Color(0xFF513624);
 
   // ---- 타임라인(전체 0.0~1.0 기준 구간) ----
   /// 0. 책이 화면 위에서 테이블로 깃털처럼 천천히 내려와 착지. 줌인/표지
@@ -153,6 +159,8 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _controller;
 
   bool _dataReady = false;
+  bool _brandLogoVisible = false;
+  bool _brandIntroDone = false;
   bool _navigated = false;
 
   // BentLeafPainter용 장별 텍스처(비동기 생성이라 준비 전엔 null - 그동안은
@@ -173,10 +181,21 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, duration: _totalDuration)
-      ..addListener(_onTick)
-      ..forward();
+      ..addListener(_onTick);
+    unawaited(_playBrandIntro());
     unawaited(_loadData());
     unawaited(_prepareLeafAssets());
+  }
+
+  Future<void> _playBrandIntro() async {
+    await Future<void>.delayed(_brandLogoPopDelay);
+    if (!mounted) return;
+    setState(() => _brandLogoVisible = true);
+
+    await Future<void>.delayed(_brandIntroDuration - _brandLogoPopDelay);
+    if (!mounted) return;
+    setState(() => _brandIntroDone = true);
+    _controller.forward();
   }
 
   /// 넘어가는 속지 5장의 텍스처를 준비합니다. 장마다 미묘하게 다른 톤
@@ -296,7 +315,9 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
     _dataReady = true;
     // 마지막 장이 넘어가길 기다리며 [_onTick]에서 멈춰뒀다면 이어서 재생.
-    if (!_controller.isAnimating && _controller.value < 1.0) {
+    if (_brandIntroDone &&
+        !_controller.isAnimating &&
+        _controller.value < 1.0) {
       _controller.forward();
     }
     _maybeNavigate();
@@ -362,7 +383,42 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: _brandDissolveDuration,
+      switchInCurve: Curves.easeInOut,
+      switchOutCurve: Curves.easeInOut,
+      child: _brandIntroDone
+          ? _buildDiarySplashScene(context)
+          : _buildBrandIntroScene(context),
+    );
+  }
+
+  Widget _buildBrandIntroScene(BuildContext context) {
     return Scaffold(
+      key: const ValueKey('brand-intro'),
+      backgroundColor: _brandBackgroundColor,
+      body: Center(
+        child: AnimatedOpacity(
+          opacity: _brandLogoVisible ? 1 : 0,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          child: AnimatedScale(
+            scale: _brandLogoVisible ? 1 : 0.72,
+            duration: _brandLogoPopDuration,
+            curve: Curves.elasticOut,
+            child: FractionallySizedBox(
+              widthFactor: 0.48,
+              child: Image.asset(_brandLogoAsset, fit: BoxFit.contain),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiarySplashScene(BuildContext context) {
+    return Scaffold(
+      key: const ValueKey('diary-splash'),
       // 만에 하나 장면이 채우지 못하는 틈이 생겨도 흰 배경 대신 테이블과 같은
       // 톤이 보이도록 해둡니다.
       backgroundColor: const Color(0xFF3A281B),

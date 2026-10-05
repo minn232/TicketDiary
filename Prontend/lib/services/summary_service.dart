@@ -1,3 +1,5 @@
+import 'dart:ui';
+import '../models/summary_map.dart';
 import 'api_client.dart';
 
 // [백엔드 수정]
@@ -68,9 +70,44 @@ class SummaryService {
 
   final ApiClient _client;
 
+  Future<RegionalSummary> fetchRegions({String period = 'all'}) async {
+    return RegionalSummary.fromJson(
+      await _client.get('/summary/regions?period=$period'),
+    );
+  }
+
   /// 결산 조회. [period]는 백엔드가 받는 값 그대로(`6m`/`1y`/`all`) 넘깁니다.
   Future<SummaryModel> fetchSummary({String period = 'all'}) async {
     final json = await _client.get('/summary?period=$period');
     return SummaryModel.fromJson(json);
   }
+}
+
+/// Coordinates are resolved on the server from the actual KOPIS facility.
+/// Unknown locations are explicit, so failed lookups never become fake visits.
+class RegionalSummary {
+  final List<SummaryMapVisit> visits;
+  final int total;
+  final int unresolved;
+  const RegionalSummary({
+    required this.visits,
+    required this.total,
+    required this.unresolved,
+  });
+  factory RegionalSummary.fromJson(Map<String, dynamic> json) =>
+      RegionalSummary(
+        total: json['concert_count'] as int,
+        unresolved: json['unresolved_count'] as int,
+        visits: (json['locations'] as List)
+            .map(
+              (v) => SummaryMapVisit(
+                Offset(
+                  (v['longitude'] as num).toDouble(),
+                  (v['latitude'] as num).toDouble(),
+                ),
+                v['count'] as int,
+              ),
+            )
+            .toList(),
+      );
 }
