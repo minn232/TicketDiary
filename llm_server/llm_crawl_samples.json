@@ -1,0 +1,1994 @@
+[
+  {
+    "concert_id": "3f79f8be-555b-4f86-ab15-7eac3f84b780",
+    "concert_name": "조용필 & 위대한탄생 콘서트 [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3f79f8be-555b-4f86-ab15-7eac3f84b780/yes24_1790587642.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-19",
+    "end_date": "2026-12-19"
+  },
+  {
+    "concert_id": "0040d24d-c471-4d4c-b92e-cf703092442e",
+    "concert_name": "이창섭 단독 콘서트: Unknown [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0040d24d-c471-4d4c-b92e-cf703092442e/yes24_1790587713.png",
+    "timetable_ranges": [
+      [
+        16912,
+        17212
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-29"
+  },
+  {
+    "concert_id": "a1257286-e211-4726-b03b-34fa6a6fbc89",
+    "concert_name": "AUTUMN LIVE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a1257286-e211-4726-b03b-34fa6a6fbc89/melon_1790162276.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-02",
+    "end_date": "2026-10-02"
+  },
+  {
+    "concert_id": "c793b93b-83e8-454a-aaa9-15b3ca912940",
+    "concert_name": "TONE Studio Stay-easy, 유정목",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/c793b93b-83e8-454a-aaa9-15b3ca912940/melon_1790161637.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "6f795158-8774-401a-a5b1-418cac82a9a3",
+    "concert_name": "All Family Music Festival (올패밀리 뮤직 페스티벌)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/6f795158-8774-401a-a5b1-418cac82a9a3/interpark_1789140969.png",
+    "timetable_ranges": [
+      [
+        8168,
+        8914
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "61389b77-1981-41c8-adcf-9b44acfee671",
+    "concert_name": "김건모. 35TH ANNIVERSARY LIVE TOUR [광주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/61389b77-1981-41c8-adcf-9b44acfee671/yes24_1789325704.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-05",
+    "end_date": "2026-12-05"
+  },
+  {
+    "concert_id": "d5c104ec-e78f-4678-9f02-4816fa3e039b",
+    "concert_name": "미라클라스 콘서트: GLORY [고양]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/d5c104ec-e78f-4678-9f02-4816fa3e039b/interpark_1788882238.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "19ceeacd-0f42-4b22-a946-f74fd307ce79",
+    "concert_name": "THE MAIN VOCALS: Season 1",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/19ceeacd-0f42-4b22-a946-f74fd307ce79/kopis_1788968117.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-23",
+    "end_date": "2026-10-23"
+  },
+  {
+    "concert_id": "0f43c204-0d8c-4e34-8524-eef5fa1db044",
+    "concert_name": "김건모. 35TH ANNIVERSARY LIVE TOUR [전주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0f43c204-0d8c-4e34-8524-eef5fa1db044/yes24_1789325762.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "b14d0487-9d94-4349-b29c-b455477df28f",
+    "concert_name": "POW CONCERT: COLOR ON [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/b14d0487-9d94-4349-b29c-b455477df28f/yes24_1789325954.png",
+    "timetable_ranges": [
+      [
+        18227,
+        18597
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "52388feb-09e6-4f4e-829c-9a16167256c5",
+    "concert_name": "Rain Tree Concert [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/52388feb-09e6-4f4e-829c-9a16167256c5/yes24_1789325810.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-20",
+    "end_date": "2026-12-20"
+  },
+  {
+    "concert_id": "5c5d6ef9-cded-4faa-9162-9f64e3c8d3ea",
+    "concert_name": "DEAD ROCK WORKING FEST. (데드락워킹페스트)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5c5d6ef9-cded-4faa-9162-9f64e3c8d3ea/interpark_1788881872.png",
+    "timetable_ranges": [
+      [
+        333,
+        551
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-09"
+  },
+  {
+    "concert_id": "8fd15285-285e-4511-a8d2-6bf144824934",
+    "concert_name": "숲세권 라이브, 양정훈 첫 팬 콘서트: 프리지아",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8fd15285-285e-4511-a8d2-6bf144824934/melon_1789727959.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "8c372f8e-5bbb-4545-a1e4-76949e548dac",
+    "concert_name": "브로콜리너마저의 전국 인디 교류 투어 [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8c372f8e-5bbb-4545-a1e4-76949e548dac/yes24_1789326014.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "7e017c9e-65a9-4877-9048-6e18da3dbcbb",
+    "concert_name": "Shye Return Asia Tour Live [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/7e017c9e-65a9-4877-9048-6e18da3dbcbb/melon_1789326057.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-11",
+    "end_date": "2026-10-11"
+  },
+  {
+    "concert_id": "ed841fb3-3f8f-4682-8da3-037e850aa486",
+    "concert_name": "인디스커버리: FESTA, TRACK 02",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/ed841fb3-3f8f-4682-8da3-037e850aa486/interpark_1788882052.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "9e7263ae-2a60-4f36-8d8e-f1cc7bc76df4",
+    "concert_name": "NOL FESTIVAL: DAY 1, EDM STAGE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9e7263ae-2a60-4f36-8d8e-f1cc7bc76df4/interpark_1789054535.png",
+    "timetable_ranges": [
+      [
+        978,
+        1111
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "263f75f0-b030-4f3d-b65a-cae4f9fcb2c8",
+    "concert_name": "김결 단독 콘서트: 술래잡기",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/263f75f0-b030-4f3d-b65a-cae4f9fcb2c8/melon_1789917326.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "930f8c2c-ddf2-4841-a4ac-8475ea12972c",
+    "concert_name": "Paloalto 단독공연: UNITE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/930f8c2c-ddf2-4841-a4ac-8475ea12972c/melon_1789326224.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "34609d6d-8774-4fae-96bd-085f62806281",
+    "concert_name": "FRankly 단독 공연: The Ghost Days [홍대 FF]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/34609d6d-8774-4fae-96bd-085f62806281/melon_1789727841.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-23",
+    "end_date": "2026-10-23"
+  },
+  {
+    "concert_id": "8da224e1-5ef8-4b70-8c80-80d9212a1d93",
+    "concert_name": "라틴 키친 루나의 연말 재즈 콘서트: 크리스마스 멜로디 [수원]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8da224e1-5ef8-4b70-8c80-80d9212a1d93/interpark_1789141285.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-19",
+    "end_date": "2026-12-19"
+  },
+  {
+    "concert_id": "98db9eae-6ab8-4d01-857e-ac693ab017a6",
+    "concert_name": "CUTIE STREET WINTER Live",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/98db9eae-6ab8-4d01-857e-ac693ab017a6/melon_1789326186.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2027-01-23",
+    "end_date": "2027-01-23"
+  },
+  {
+    "concert_id": "c82623bc-d850-438c-ae46-f0ba7e1b6956",
+    "concert_name": "브로콜리너마저의 전국 인디 교류 투어 [세종]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/c82623bc-d850-438c-ae46-f0ba7e1b6956/yes24_1789326383.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-18",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "4090cf36-886a-4683-87e5-730f59e9fc64",
+    "concert_name": "DKB FAN-CON, BF: Besties Forever",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4090cf36-886a-4683-87e5-730f59e9fc64/yes24_1790162413.png",
+    "timetable_ranges": [
+      [
+        12411,
+        12598
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-24"
+  },
+  {
+    "concert_id": "6b00090a-4529-4210-8960-0f31ef79ca84",
+    "concert_name": "영탁 단독 콘서트: TAK SHOW5 [전주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/6b00090a-4529-4210-8960-0f31ef79ca84/melon_1789325495.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-25"
+  },
+  {
+    "concert_id": "51aac685-6122-45ab-864f-b2d6bd77e312",
+    "concert_name": "FLOW NARUTO THE ROCK WORLD TOUR [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/51aac685-6122-45ab-864f-b2d6bd77e312/yes24_1789325590.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-28",
+    "end_date": "2026-10-28"
+  },
+  {
+    "concert_id": "730d6945-e37d-4f75-8fc1-78396a7d9ae0",
+    "concert_name": "EverBlue Festival 에버블루 페스티벌 [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/730d6945-e37d-4f75-8fc1-78396a7d9ae0/interpark_1789141100.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "cdc60380-7784-43ed-9552-b69ffce56159",
+    "concert_name": "WE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/cdc60380-7784-43ed-9552-b69ffce56159/interpark_1789140947.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "f66f48a2-c2a7-4a3b-9057-b1eebfbf9822",
+    "concert_name": "Touche Amore, Stage Four 10 Year Anniversary [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f66f48a2-c2a7-4a3b-9057-b1eebfbf9822/yes24_1789328086.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-07",
+    "end_date": "2026-11-07"
+  },
+  {
+    "concert_id": "0f1cf651-0c58-42ff-a45e-851509a79a98",
+    "concert_name": "김건모. 35TH ANNIVERSARY LIVE TOUR [고양]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0f1cf651-0c58-42ff-a45e-851509a79a98/yes24_1789916827.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-26",
+    "end_date": "2026-12-26"
+  },
+  {
+    "concert_id": "fc62946f-f756-4f01-9304-8b6d942d35d7",
+    "concert_name": "론 브랜튼의 재즈 크리스마스! [인천]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/fc62946f-f756-4f01-9304-8b6d942d35d7/yes24_1789325887.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-26",
+    "end_date": "2026-12-26"
+  },
+  {
+    "concert_id": "5e372e69-7086-4f62-8671-7765fa1f8a20",
+    "concert_name": "무명전설 전국투어 콘서트 [부산 (앵콜) ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5e372e69-7086-4f62-8671-7765fa1f8a20/interpark_1789141325.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-31",
+    "end_date": "2026-12-31"
+  },
+  {
+    "concert_id": "7fd22262-1e67-4a59-8b9f-63a1f3e6d571",
+    "concert_name": "GHOST 페스티벌 (경기한류 OST 페스티벌) [파주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/7fd22262-1e67-4a59-8b9f-63a1f3e6d571/interpark_1788882077.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-11"
+  },
+  {
+    "concert_id": "30d96668-b9f7-45d6-91fa-1e12d64d824a",
+    "concert_name": "EXO PLANET #6, EXhOrizon [dot]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/30d96668-b9f7-45d6-91fa-1e12d64d824a/melon_1789327821.png",
+    "timetable_ranges": [
+      [
+        18926,
+        19759
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-06",
+    "end_date": "2026-11-08"
+  },
+  {
+    "concert_id": "2ae3fed1-aaa4-4e26-bd3b-39462f0252fa",
+    "concert_name": "세종 보헤미안 뮤직 페스티벌 (SBMF)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2ae3fed1-aaa4-4e26-bd3b-39462f0252fa/interpark.png",
+    "timetable_ranges": [
+      [
+        3781,
+        4969
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-30",
+    "end_date": "2026-11-01"
+  },
+  {
+    "concert_id": "f5c0d2ef-151f-46c8-bc86-70c35c92a3ea",
+    "concert_name": "먼데이프로젝트 시즌9, 우예린 단독 콘서트: 화음 (花音) Ⅱ",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f5c0d2ef-151f-46c8-bc86-70c35c92a3ea/melon_1789326514.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-01"
+  },
+  {
+    "concert_id": "8bf7a733-5a33-4845-83fb-c52fe8e1f2c0",
+    "concert_name": "일단 달려봅니다, 그리고 윤성혁과 급한 노새와 채무자들",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8bf7a733-5a33-4845-83fb-c52fe8e1f2c0/melon_1789326466.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "90bcce60-2786-45b6-8c25-f564ce576ebf",
+    "concert_name": "SJF at the Theater, Christopher",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/90bcce60-2786-45b6-8c25-f564ce576ebf/yes24_1789326578.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-19",
+    "end_date": "2026-11-20"
+  },
+  {
+    "concert_id": "55c448d5-493e-4d1d-ae92-e737236faca5",
+    "concert_name": "Ｈ△Ｇ 1st One Man Live: 夏の在りか [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/55c448d5-493e-4d1d-ae92-e737236faca5/yes24_1789326821.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "8c25ad91-2197-4e58-9ce7-b1ebd16139d8",
+    "concert_name": "Andromeda Mega Express Orchestra (안드로메다 메가 익스프레스 오케스트라) [서울 마포]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8c25ad91-2197-4e58-9ce7-b1ebd16139d8/yes24_1789326943.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "4a97f72a-1618-46ec-9dc3-492c49f7b755",
+    "concert_name": "카와사키 타카야 내한공연 KAWASAKI TAKAYA LIVE [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4a97f72a-1618-46ec-9dc3-492c49f7b755/yes24_1789326999.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-20",
+    "end_date": "2026-12-20"
+  },
+  {
+    "concert_id": "660f4eb5-03c3-48c4-bc4c-9bae18dd8c68",
+    "concert_name": "Mass Of The Fermenting Dregs World Tour: Iwaou with Dabda [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/660f4eb5-03c3-48c4-bc4c-9bae18dd8c68/melon_1789482936.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-04",
+    "end_date": "2026-12-04"
+  },
+  {
+    "concert_id": "8cf7db77-6736-4ca4-bcdf-df8dbc52fb48",
+    "concert_name": "먼데이프로젝트 시즌9, 폴리아모리 정규 앨범 발매 공연: 균의 만연",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8cf7db77-6736-4ca4-bcdf-df8dbc52fb48/melon_1789483092.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-09-30",
+    "end_date": "2026-09-30"
+  },
+  {
+    "concert_id": "910d0a14-d035-4978-a7e8-4f092229891d",
+    "concert_name": "AKMU CONCERT: 소문의 낙원 (Paradise of Rumors) [강릉]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/910d0a14-d035-4978-a7e8-4f092229891d/yes24_1789483054.png",
+    "timetable_ranges": [
+      [
+        15590,
+        16839
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-11-07",
+    "end_date": "2026-11-07"
+  },
+  {
+    "concert_id": "7813e95e-8f78-4de2-abfa-a81635a8f35a",
+    "concert_name": "AKMU CONCERT: 소문의 낙원 (Paradise of Rumors) [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/7813e95e-8f78-4de2-abfa-a81635a8f35a/yes24_1789483320.png",
+    "timetable_ranges": [
+      [
+        15189,
+        16438
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-12-19",
+    "end_date": "2026-12-20"
+  },
+  {
+    "concert_id": "a0a85fb6-6093-4426-8fab-eb63233573a6",
+    "concert_name": "자라섬재즈페스티벌 [강릉]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a0a85fb6-6093-4426-8fab-eb63233573a6/kopis_1788449847.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-11"
+  },
+  {
+    "concert_id": "968a4e2c-b862-4fdf-a3f8-eca08ce25cb9",
+    "concert_name": "희규 단독 콘서트: 도시 라디오",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/968a4e2c-b862-4fdf-a3f8-eca08ce25cb9/melon_1789327210.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "6ba35d77-74d4-4b45-8507-fc94d2be2abc",
+    "concert_name": "SUPER! 수요콘서트, Enhoy by Bumhan: 전상근 x 박혜원 [창원]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/6ba35d77-74d4-4b45-8507-fc94d2be2abc/yes24_1789327167.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-28",
+    "end_date": "2026-10-28"
+  },
+  {
+    "concert_id": "f28dbb59-ea9c-4364-8fcf-8df865dc9932",
+    "concert_name": "ZAZEN BOYS MATSURI SESSION [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f28dbb59-ea9c-4364-8fcf-8df865dc9932/yes24_1789327108.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-06",
+    "end_date": "2026-12-06"
+  },
+  {
+    "concert_id": "0bc5e133-179e-4e84-8c6b-7637100e1aa1",
+    "concert_name": "nafla instinct tour",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0bc5e133-179e-4e84-8c6b-7637100e1aa1/yes24_1789520420.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "4dd43e5f-dd73-4252-9a1e-c7c0e0774de4",
+    "concert_name": "숲세권 라이브, 임세모 단독 공연: 코스모스",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4dd43e5f-dd73-4252-9a1e-c7c0e0774de4/melon_1789520475.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "14ffb164-737a-4118-a3df-42633e73af97",
+    "concert_name": "AKANE YONEZAWA, Black Pasta TOUR [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/14ffb164-737a-4118-a3df-42633e73af97/yes24_1789327267.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-07",
+    "end_date": "2026-11-07"
+  },
+  {
+    "concert_id": "03b39dac-c3cd-48ea-adf8-fb293774eb10",
+    "concert_name": "HEARTBEAT BY DUDUDO",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/03b39dac-c3cd-48ea-adf8-fb293774eb10/melon_1789325650.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "f453bdcf-34cd-4838-bd6e-d323af9d1d84",
+    "concert_name": "KT&G 상상마당 부산 루프탑 공연: 낭만도심",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f453bdcf-34cd-4838-bd6e-d323af9d1d84/melon_1789520514.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-18",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "f958f862-4efb-4b13-a64f-fc8096166c7a",
+    "concert_name": "82MAJOR 6th CONCERT, 82CLUB: out of control",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f958f862-4efb-4b13-a64f-fc8096166c7a/yes24_1789520302.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-25"
+  },
+  {
+    "concert_id": "a4672931-8a2d-47c1-bdef-9001e9512510",
+    "concert_name": "TONE STUDIO LIVE, 올드 잉글리쉬 쉽독",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a4672931-8a2d-47c1-bdef-9001e9512510/melon_1789520349.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "6e695ef6-00b0-4145-ae07-f86a256fddbf",
+    "concert_name": "OPCD STAGE: Universe (오피시디 스테이지)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/6e695ef6-00b0-4145-ae07-f86a256fddbf/melon_1789325531.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "3f2415f0-960d-4418-a6d1-44ca52f67141",
+    "concert_name": "웨이브투어스 서울 단독 콘서트",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3f2415f0-960d-4418-a6d1-44ca52f67141/melon_1789327304.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-18",
+    "end_date": "2026-12-20"
+  },
+  {
+    "concert_id": "924a2fe7-fcce-490e-a703-fa5a393cc75e",
+    "concert_name": "예빛 단독 콘서트: DEMO",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/924a2fe7-fcce-490e-a703-fa5a393cc75e/melon_1789327360.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "d09cc7a6-1522-45ba-93ac-0e47fa259e14",
+    "concert_name": "인순이 스페셜 콘서트 [창원 진해]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/d09cc7a6-1522-45ba-93ac-0e47fa259e14/yes24_1789327445.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "8418fb06-d927-46af-be88-cfd5b539b7d0",
+    "concert_name": "브로콜리너마저의 전국 인디 교류 투어 [춘천]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8418fb06-d927-46af-be88-cfd5b539b7d0/yes24_1789327553.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-24"
+  },
+  {
+    "concert_id": "2b5de818-99e4-4b6f-a7bc-a0a069a52fe1",
+    "concert_name": "HIGHLIGHT FAN CON: 18년차 아이돌인 내가 이세계에선 데뷔조 연습생?! [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2b5de818-99e4-4b6f-a7bc-a0a069a52fe1/yes24_1789327668.png",
+    "timetable_ranges": [
+      [
+        14392,
+        14602
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-16",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "08ff7f87-44a5-4667-91d4-48603fc078d7",
+    "concert_name": "nib.archive 단독콘서트: Set Change",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/08ff7f87-44a5-4667-91d4-48603fc078d7/melon_1789327720.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-09"
+  },
+  {
+    "concert_id": "2db68961-d9f5-4509-853f-167431f6a7af",
+    "concert_name": "제13회 해운대재즈페스티벌: 해운 That 재즈, 신관웅 퀸텟",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2db68961-d9f5-4509-853f-167431f6a7af/kopis_1788536100.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-23",
+    "end_date": "2026-10-23"
+  },
+  {
+    "concert_id": "13614501-a14d-4ef7-86e7-7aba3998786e",
+    "concert_name": "트랜스엠파이어 션 타이어스 내한",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/13614501-a14d-4ef7-86e7-7aba3998786e/kopis_1788449856.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-05-13",
+    "end_date": "2036-05-13"
+  },
+  {
+    "concert_id": "c175c578-92e6-4612-b045-ed7018a85153",
+    "concert_name": "김건모. 35TH ANNIVERSARY LIVE TOUR [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/c175c578-92e6-4612-b045-ed7018a85153/yes24_1789327777.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "3147aa61-a57f-4a7d-9bf9-e3fd70d8b800",
+    "concert_name": "BLU-SWING: Across the Blue [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3147aa61-a57f-4a7d-9bf9-e3fd70d8b800/yes24_1789327886.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-15",
+    "end_date": "2026-11-15"
+  },
+  {
+    "concert_id": "d86f40a6-4fab-4576-8441-4903eb0c22db",
+    "concert_name": "TAKASE TOYA ASIA TOUR: ∞ [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/d86f40a6-4fab-4576-8441-4903eb0c22db/yes24_1789328152.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-18",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "9a22219c-5f37-43f9-9ea1-ee633842112d",
+    "concert_name": "ACC 엑스뮤직페스티벌 (ACC XMF)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9a22219c-5f37-43f9-9ea1-ee633842112d/interpark.png",
+    "timetable_ranges": [
+      [
+        6596,
+        7542
+      ],
+      [
+        7548,
+        8913
+      ],
+      [
+        8925,
+        9866
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "7e99556b-a487-4814-9e91-67a17d407e1d",
+    "concert_name": "NOL FESTIVAL: DAY 2, K-POP STAGE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/7e99556b-a487-4814-9e91-67a17d407e1d/interpark_1789054544.png",
+    "timetable_ranges": [
+      [
+        978,
+        1112
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-18",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "9fdec3b4-15bf-4f08-9b01-871f8c77ff7d",
+    "concert_name": "데미소다 콘서트, DEMI-CON!",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9fdec3b4-15bf-4f08-9b01-871f8c77ff7d/yes24_1789328256.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-05",
+    "end_date": "2026-10-05"
+  },
+  {
+    "concert_id": "05098270-6126-4930-b37b-08ba1790cb43",
+    "concert_name": "체리블라썸 뮤직콘서트 인 윈터",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/05098270-6126-4930-b37b-08ba1790cb43/kopis.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-21",
+    "end_date": "2026-11-21"
+  },
+  {
+    "concert_id": "430615f1-739e-4789-877b-c4bd4624b360",
+    "concert_name": "후지이 카제 Prema 월드 투어 [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/430615f1-739e-4789-877b-c4bd4624b360/melon_1789331674.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2027-01-09",
+    "end_date": "2027-01-09"
+  },
+  {
+    "concert_id": "10fce110-42ad-49ea-a9a2-7bf3717b6e79",
+    "concert_name": "스카 페스티벌 10주년 기념공연 SKA FESTIVAL: Super-Swag",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/10fce110-42ad-49ea-a9a2-7bf3717b6e79/kopis_1788449799.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-24"
+  },
+  {
+    "concert_id": "28cb9f5a-6ac8-42e2-b17c-4172e8a52a42",
+    "concert_name": "WONDERLIVET (원더리벳)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/28cb9f5a-6ac8-42e2-b17c-4172e8a52a42/yes24_1789326689.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-11-20",
+    "end_date": "2026-11-22"
+  },
+  {
+    "concert_id": "1f617e91-4a99-42b0-bc10-3fe95b600296",
+    "concert_name": "마티네 콘서트, 그랜드 투어: 무대 위 세계여행 Ⅳ. 프랑스 [평택]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/1f617e91-4a99-42b0-bc10-3fe95b600296/yes24_1789326637.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-07",
+    "end_date": "2026-10-07"
+  },
+  {
+    "concert_id": "36a9e7ca-166d-4d83-8685-0dcbaade08eb",
+    "concert_name": "MEIYO DENSETSU 1st ONEMAN TOUR",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/36a9e7ca-166d-4d83-8685-0dcbaade08eb/melon_1789331733.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-06",
+    "end_date": "2026-11-06"
+  },
+  {
+    "concert_id": "a78d082b-59bd-4ca0-aa7d-cd16d50d4917",
+    "concert_name": "민트페스타 vol.87",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a78d082b-59bd-4ca0-aa7d-cd16d50d4917/interpark_1788968404.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "956c126e-ead3-42cf-b53f-43bb82f1eebf",
+    "concert_name": "레드 프라이즈 (RED FRYS) [강릉]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/956c126e-ead3-42cf-b53f-43bb82f1eebf/interpark_1788968223.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-24"
+  },
+  {
+    "concert_id": "db8d6492-b4a4-4624-bb0c-ce573b255432",
+    "concert_name": "AKMU CONCERT: 소문의 낙원 (Paradise of Rumors) [대전]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/db8d6492-b4a4-4624-bb0c-ce573b255432/yes24_1789483148.png",
+    "timetable_ranges": [
+      [
+        15267,
+        16513
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-05",
+    "end_date": "2026-12-06"
+  },
+  {
+    "concert_id": "1d7011a0-ca88-4024-bd3c-30547c9dc7f1",
+    "concert_name": "홈커밍스 내한 공연: You are you, even if no one fill in about you.",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/1d7011a0-ca88-4024-bd3c-30547c9dc7f1/melon_1789328336.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-13",
+    "end_date": "2026-12-13"
+  },
+  {
+    "concert_id": "1512adf7-3e20-41ea-89f2-89c25111aeb3",
+    "concert_name": "AKMU CONCERT: 소문의 낙원 (Paradise of Rumors) [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/1512adf7-3e20-41ea-89f2-89c25111aeb3/yes24_1789483216.png",
+    "timetable_ranges": [
+      [
+        15379,
+        16622
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-11-21",
+    "end_date": "2026-11-22"
+  },
+  {
+    "concert_id": "f0318a31-e197-4126-aba3-1e7dfde8f6f9",
+    "concert_name": "조슈아 레드먼 쿼텟 내한공연 [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f0318a31-e197-4126-aba3-1e7dfde8f6f9/interpark_1789141108.png",
+    "timetable_ranges": [
+      [
+        313,
+        553
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-23",
+    "end_date": "2026-10-23"
+  },
+  {
+    "concert_id": "7be6bcc6-fe11-49f0-963f-68e23e76627b",
+    "concert_name": "충주 파크뮤직페스티벌 WITH GUGAK",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/7be6bcc6-fe11-49f0-963f-68e23e76627b/interpark_1789141117.png",
+    "timetable_ranges": [
+      [
+        1798,
+        2631
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "b135e7a5-23f1-4eac-9abf-345bc90a24ce",
+    "concert_name": "낙동아트센터 마티네 콘서트, 재즈앙상블 시리즈 Ⅴ. 김민희 Her with jazz band [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/b135e7a5-23f1-4eac-9abf-345bc90a24ce/yes24_1789727599.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-21",
+    "end_date": "2026-10-21"
+  },
+  {
+    "concert_id": "0716a0cc-828a-4ca8-af77-9b391dbc7530",
+    "concert_name": "지역 아티스트와 함께하는 K-클래식 콘서트8: 홍순달밴드 [천안]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0716a0cc-828a-4ca8-af77-9b391dbc7530/interpark_1788882002.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-03",
+    "end_date": "2026-12-03"
+  },
+  {
+    "concert_id": "f7d700fd-16cf-47e8-9f9e-16ac5d1cf017",
+    "concert_name": "All Day, JAZZ SHOW! (올데이, 재즈쇼!) : LaLaLand in Seoul (라라랜드 인 서울) (1부+2부)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f7d700fd-16cf-47e8-9f9e-16ac5d1cf017/melon_1789727714.png",
+    "timetable_ranges": [
+      [
+        6237,
+        6508
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "f1926266-f1c7-483e-b332-ed254593fc07",
+    "concert_name": "FRankly 단독 공연: The Ghost Days [생기 스튜디오]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f1926266-f1c7-483e-b332-ed254593fc07/melon_1789727750.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-30",
+    "end_date": "2026-10-30"
+  },
+  {
+    "concert_id": "680fc6f4-31f3-4a41-9e24-a7ad50c0ca51",
+    "concert_name": "NOL FESTIVAL: DAY 2, SUPER LIVE STAGE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/680fc6f4-31f3-4a41-9e24-a7ad50c0ca51/interpark_1789141154.png",
+    "timetable_ranges": [
+      [
+        979,
+        1113
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-18",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "9d8601ea-db77-4592-8fda-11928c40bab3",
+    "concert_name": "김광석과 친구들 [화성]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9d8601ea-db77-4592-8fda-11928c40bab3/interpark_1788881932.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-28",
+    "end_date": "2026-10-28"
+  },
+  {
+    "concert_id": "1b4cca66-eb97-418d-8b35-b766fffcbf37",
+    "concert_name": "A tempo, #권나무 [춘천]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/1b4cca66-eb97-418d-8b35-b766fffcbf37/yes24_1789328397.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "4b6a8b41-505e-45ae-99f1-de2de8a4d0b5",
+    "concert_name": "A tempo, #여유와 설빈",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4b6a8b41-505e-45ae-99f1-de2de8a4d0b5/yes24_1789328549.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "8c9bf935-40b4-483a-a652-88a8edc42731",
+    "concert_name": "ELLEGARDEN, Bad For Education Tour Ⅱ",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8c9bf935-40b4-483a-a652-88a8edc42731/yes24_1789328496.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-29"
+  },
+  {
+    "concert_id": "dbca4f68-0629-4073-bd92-31ed898c0e84",
+    "concert_name": "TONE Studio Stay-easy, 최제니",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/dbca4f68-0629-4073-bd92-31ed898c0e84/melon_1789916777.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "f429ef4e-72b2-4d68-bea3-c3b2c17f2ea8",
+    "concert_name": "ONEW CONCERT: ONEW THE LIVE: Q [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f429ef4e-72b2-4d68-bea3-c3b2c17f2ea8/melon_1789727471.png",
+    "timetable_ranges": [
+      [
+        17376,
+        17841
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-30",
+    "end_date": "2026-11-01"
+  },
+  {
+    "concert_id": "4712ade3-0f4e-4683-b5ee-3188781968c4",
+    "concert_name": "HIPHOPPLAYA SHOW VOL.64",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4712ade3-0f4e-4683-b5ee-3188781968c4/yes24_1789916895.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-02",
+    "end_date": "2026-10-02"
+  },
+  {
+    "concert_id": "f08d88aa-5414-43c9-9bb1-981152af39d5",
+    "concert_name": "世代共感 세대공감6, 해리 빅버튼 X 더베인 X 나타샤",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f08d88aa-5414-43c9-9bb1-981152af39d5/melon_1789727519.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "0f9b6e84-7491-4734-a611-1c6de5f2b435",
+    "concert_name": "먼데이프로젝트 시즌9, 딕펑스 단독 콘서트: Browning",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0f9b6e84-7491-4734-a611-1c6de5f2b435/melon_1789727871.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-05",
+    "end_date": "2026-10-05"
+  },
+  {
+    "concert_id": "36073ea4-5790-4942-bbcd-2dd9fdc45009",
+    "concert_name": "TONE STUDIO LIVE, Asian Spice House",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/36073ea4-5790-4942-bbcd-2dd9fdc45009/melon_1789916985.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "0ed11a52-0231-4d69-894a-71be33527cc2",
+    "concert_name": "먼데이프로젝트 시즌9, 사공 단독 콘서트: 도피자",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0ed11a52-0231-4d69-894a-71be33527cc2/melon_1789916942.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-19",
+    "end_date": "2026-10-19"
+  },
+  {
+    "concert_id": "5ed3e835-6ef5-4aa8-a318-c4dcf0695310",
+    "concert_name": "LUCY 9TH CONCERT: ISLAND [서울 (앵콜) ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5ed3e835-6ef5-4aa8-a318-c4dcf0695310/melon_1789917152.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-23",
+    "end_date": "2026-10-25"
+  },
+  {
+    "concert_id": "2f4d1ff6-aeb4-4b62-b966-be3331897126",
+    "concert_name": "ASAC 콘서트: THE SOLUTIONS, 심아일랜드 [안산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2f4d1ff6-aeb4-4b62-b966-be3331897126/yes24_1789917240.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-07",
+    "end_date": "2026-11-07"
+  },
+  {
+    "concert_id": "50706301-60e2-47b6-b40c-4b48ef58e808",
+    "concert_name": "적란운 presents: The Curtain Rises vol.2",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/50706301-60e2-47b6-b40c-4b48ef58e808/melon_1789917289.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "175b1eb9-bb5a-4e4c-8e8d-b621c89a328f",
+    "concert_name": "ONE HOUR [부산] (10월)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/175b1eb9-bb5a-4e4c-8e8d-b621c89a328f/melon_1790161778.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-30"
+  },
+  {
+    "concert_id": "4c04541f-34e4-4ba7-9dfd-3a539b18398e",
+    "concert_name": "조용필 & 위대한 탄생 전국투어 콘서트 [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4c04541f-34e4-4ba7-9dfd-3a539b18398e/yes24_1790161829.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-27",
+    "end_date": "2026-11-29"
+  },
+  {
+    "concert_id": "9541ac9b-49a8-4a48-ad1a-8ce87f24d90b",
+    "concert_name": "명곡 팝, 재즈로 다시 듣다 [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9541ac9b-49a8-4a48-ad1a-8ce87f24d90b/yes24_1790161898.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "2247a58c-fb82-46c2-a216-d27633c6e13c",
+    "concert_name": "티어드랍, 네 번째 단독공연: TEARDROP IV",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2247a58c-fb82-46c2-a216-d27633c6e13c/melon_1790161992.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-25",
+    "end_date": "2026-10-25"
+  },
+  {
+    "concert_id": "65e4579e-fedc-47ea-8c4c-fb71a2d097ba",
+    "concert_name": "조이풀스 3주년 기념콘서트: FAR FROM HOME",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/65e4579e-fedc-47ea-8c4c-fb71a2d097ba/melon_1790162044.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-22",
+    "end_date": "2026-10-22"
+  },
+  {
+    "concert_id": "7e445696-68c9-4c46-b971-7e042404594b",
+    "concert_name": "펜트하우스 내한 공연: Penthouse ONE MAN LIVE TOUR Neon Garden in Seoul",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/7e445696-68c9-4c46-b971-7e042404594b/yes24_1789328689.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-19",
+    "end_date": "2026-12-19"
+  },
+  {
+    "concert_id": "5f8fbf85-8072-46b5-bf79-6da78b700f2d",
+    "concert_name": "이은하 콘서트 [서울 (앵콜) ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5f8fbf85-8072-46b5-bf79-6da78b700f2d/melon_1789328827.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-30",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "e87e083c-5386-48d9-8ad1-23f0c63760b8",
+    "concert_name": "바티멘토 듀오 내한공연, Batimento Dúo Tango Live Tour with Tanaka Shinji, Koh Sangji",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/e87e083c-5386-48d9-8ad1-23f0c63760b8/melon_1789328779.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "cdcd6b53-40d8-4a43-bd7a-ee99389a215b",
+    "concert_name": "보라미유 단독 콘서트: 눈부신 계절을 달려",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/cdcd6b53-40d8-4a43-bd7a-ee99389a215b/melon_1790162457.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-11"
+  },
+  {
+    "concert_id": "79b6f7ae-7770-4ea4-921a-f6017df17495",
+    "concert_name": "SARAH KANG in SEOUL",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/79b6f7ae-7770-4ea4-921a-f6017df17495/interpark_1788449773.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "877609a7-146a-4fdc-a119-3230fc00eab6",
+    "concert_name": "씨야 20주년 전국 투어 콘서트: THE FAN [인천]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/877609a7-146a-4fdc-a119-3230fc00eab6/interpark_1788881794.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "fd0d4297-8ce5-4ec6-bb9a-6982468c96fd",
+    "concert_name": "씨야 20주년 전국 투어 콘서트: THE FAN [고양]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/fd0d4297-8ce5-4ec6-bb9a-6982468c96fd/interpark_1789141221.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-04",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "c9655539-7c39-41e5-92ad-06b52f49533b",
+    "concert_name": "Phantom Voice 라포엠 in Concert",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/c9655539-7c39-41e5-92ad-06b52f49533b/interpark_1788968176.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-09-30",
+    "end_date": "2026-09-30"
+  },
+  {
+    "concert_id": "f56067d9-a7cb-451c-a6c0-bbf9a5998be6",
+    "concert_name": "지하침공!",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f56067d9-a7cb-451c-a6c0-bbf9a5998be6/melon_1790161585.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-15",
+    "end_date": "2026-10-15"
+  },
+  {
+    "concert_id": "f06a91fc-8e37-4d3e-af64-1c6da4c969c4",
+    "concert_name": "MOMENT FESTA: ONEWE X B1A4",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f06a91fc-8e37-4d3e-af64-1c6da4c969c4/melon_1790162171.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-30",
+    "end_date": "2026-10-30"
+  },
+  {
+    "concert_id": "3588e632-f643-43c7-a682-a22cc53c22d2",
+    "concert_name": "조용필 & 위대한탄생 콘서트 [인천]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3588e632-f643-43c7-a682-a22cc53c22d2/yes24_1790192202.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2027-01-09",
+    "end_date": "2027-01-09"
+  },
+  {
+    "concert_id": "dcaf1a89-180f-4fd5-917a-d33d56fd4383",
+    "concert_name": "하루 첫 팬 콘서트: 오늘, 하루: 처음 들려주는 이야기 [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/dcaf1a89-180f-4fd5-917a-d33d56fd4383/yes24_1789329006.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "3716812a-6d41-4bc9-bf2a-2fa534a57a5c",
+    "concert_name": "Coaltar of the Deepers 35th Anniversary Live in Seoul",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3716812a-6d41-4bc9-bf2a-2fa534a57a5c/yes24_1789329111.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-24"
+  },
+  {
+    "concert_id": "fa6a3a8d-bc49-49e6-be62-6574b0854947",
+    "concert_name": "KT&G 상상마당 부산 시리즈 기획 공연, 클로버 뮤직 스테이션 (CLOVER MUSIC STATION)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/fa6a3a8d-bc49-49e6-be62-6574b0854947/melon_1790192451.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "5a6d9177-57d8-4096-b8e8-4a6dd8133bd2",
+    "concert_name": "단편선 순간들 신작 연인들 발표 기념 쇼케이스",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5a6d9177-57d8-4096-b8e8-4a6dd8133bd2/melon_1790192246.png",
+    "timetable_ranges": [
+      [
+        7823,
+        8007
+      ],
+      [
+        9166,
+        9317
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "e7ade94a-b4b6-4b23-8cca-174c6efe0b96",
+    "concert_name": "진성 단독 토크콘서트: 진성쑈 [목포]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/e7ade94a-b4b6-4b23-8cca-174c6efe0b96/yes24_1790192020.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-14",
+    "end_date": "2026-11-14"
+  },
+  {
+    "concert_id": "a0a49f1a-4751-4f32-a276-10f91cffedd1",
+    "concert_name": "AKMU CONCERT: 소문의 낙원 (Paradise of Rumors) [전남 광주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a0a49f1a-4751-4f32-a276-10f91cffedd1/yes24_1789482992.png",
+    "timetable_ranges": [
+      [
+        15189,
+        16435
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-12-25",
+    "end_date": "2026-12-25"
+  },
+  {
+    "concert_id": "4042ae7c-fddd-4ac0-89b6-4dd73c60541b",
+    "concert_name": "Regallily Asia Tour: Dawn [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4042ae7c-fddd-4ac0-89b6-4dd73c60541b/yes24_1789329168.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-07",
+    "end_date": "2026-11-07"
+  },
+  {
+    "concert_id": "60d5f85d-49d4-473e-9811-18657131b9a0",
+    "concert_name": "경기인디뮤직페스티벌 (INMUFE)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/60d5f85d-49d4-473e-9811-18657131b9a0/interpark.png",
+    "timetable_ranges": [
+      [
+        3140,
+        4020
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-18"
+  },
+  {
+    "concert_id": "0e763df5-6641-4a63-a537-d9fa0defbef2",
+    "concert_name": "IDOL1ST KENTY ASIA TOUR [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0e763df5-6641-4a63-a537-d9fa0defbef2/yes24_1789329278.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "28a2c2a4-c519-4214-92b7-a4e2052abb03",
+    "concert_name": "Omoinotake One Man Tour in Seoul",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/28a2c2a4-c519-4214-92b7-a4e2052abb03/yes24_1789329223.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "fe40a299-62f4-461a-b12d-07042d80014e",
+    "concert_name": "FIREWORKS",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/fe40a299-62f4-461a-b12d-07042d80014e/melon_1789483448.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-08",
+    "end_date": "2026-10-08"
+  },
+  {
+    "concert_id": "a19ed675-f28e-4b38-bccd-fee46b870308",
+    "concert_name": "먼데이프로젝트 시즌9, My Universe: 고요 단독 콘서트",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a19ed675-f28e-4b38-bccd-fee46b870308/melon_1789483254.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-01",
+    "end_date": "2026-10-01"
+  },
+  {
+    "concert_id": "54bfc310-957f-4032-b6a5-f89bb436f553",
+    "concert_name": "에즈라 콜렉티브 첫 단독 내한공연 Ezra Collective Live [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/54bfc310-957f-4032-b6a5-f89bb436f553/yes24_1789329333.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-08",
+    "end_date": "2026-10-08"
+  },
+  {
+    "concert_id": "4f8b2f21-ae3c-400c-946d-14c8b9354dea",
+    "concert_name": "하은 생일 기념 첫 번째 단독 공연: 하은 날",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4f8b2f21-ae3c-400c-946d-14c8b9354dea/melon_1789727632.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-09"
+  },
+  {
+    "concert_id": "39d30ab2-ed21-49ac-919a-936fac79794f",
+    "concert_name": "하루 첫 팬 콘서트: 오늘, 하루: 처음 들려주는 이야기 [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/39d30ab2-ed21-49ac-919a-936fac79794f/yes24_1789329397.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "6c9792b2-c29c-4058-a393-be888043ccf4",
+    "concert_name": "Re.may 2nd Solo Concert: Road to Rockstar Vol.2",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/6c9792b2-c29c-4058-a393-be888043ccf4/melon_1789727554.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-16",
+    "end_date": "2026-10-16"
+  },
+  {
+    "concert_id": "98465f80-9682-4a87-999a-492f5f6b121e",
+    "concert_name": "먼데이 프로젝트 시즌9, 세진 앨범 발매 기념 단독 콘서트: Episode with 미러볼 뮤직",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/98465f80-9682-4a87-999a-492f5f6b121e/melon_1789727676.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-06",
+    "end_date": "2026-10-06"
+  },
+  {
+    "concert_id": "3f37da69-7332-467a-8c78-7084510a1132",
+    "concert_name": "(사) 희망나눔과 함께하는 희망나눔 열린음악회 [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3f37da69-7332-467a-8c78-7084510a1132/kopis.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "2d6acfb1-d152-4884-9786-fe2e3d17d538",
+    "concert_name": "FRankly 단독 공연: The Ghost Days [Vel.R 벨르]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2d6acfb1-d152-4884-9786-fe2e3d17d538/melon_1789727791.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "9a3fd2a9-4ee7-496b-b2c3-7e55dbec643a",
+    "concert_name": "FRankly 단독 공연: The Ghost Days [클럽 프리버드]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9a3fd2a9-4ee7-496b-b2c3-7e55dbec643a/melon_1789727917.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-24",
+    "end_date": "2026-10-24"
+  },
+  {
+    "concert_id": "1fb5ee26-466f-4784-9cab-02232510a77b",
+    "concert_name": "영탁 단독 콘서트: TAK SHOW5 [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/1fb5ee26-466f-4784-9cab-02232510a77b/melon_1789329566.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-05"
+  },
+  {
+    "concert_id": "3439bdcb-1cdf-406b-933f-633071c6bb99",
+    "concert_name": "KANA-BOON, CRITICAL HIT PARADE: Asian Adventure",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3439bdcb-1cdf-406b-933f-633071c6bb99/yes24_1789329627.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-05",
+    "end_date": "2026-12-05"
+  },
+  {
+    "concert_id": "4f0d8bef-eb84-440c-9745-1322d6a3c619",
+    "concert_name": "먼데이프로젝트 시즌9, Stardust: 발로 X 모우들",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4f0d8bef-eb84-440c-9745-1322d6a3c619/melon_1789917041.png",
+    "timetable_ranges": [
+      [
+        8321,
+        8550
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-06",
+    "end_date": "2026-10-06"
+  },
+  {
+    "concert_id": "3fbc8dc2-ad25-4526-a1d3-3f540be7a496",
+    "concert_name": "Aosaka: kurayamisaka & parannoul",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3fbc8dc2-ad25-4526-a1d3-3f540be7a496/yes24_1789917092.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2027-01-09",
+    "end_date": "2027-01-09"
+  },
+  {
+    "concert_id": "e3b4b490-80c9-4dd4-8941-c1b938563ceb",
+    "concert_name": "이승철 40주년 콘서트: THE VOICE: LEE SEUNG CHUL [대구]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/e3b4b490-80c9-4dd4-8941-c1b938563ceb/yes24_1789329689.png",
+    "timetable_ranges": [
+      [
+        2334,
+        2521
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-28"
+  },
+  {
+    "concert_id": "dfa6f966-1405-47a8-9167-b43f10678199",
+    "concert_name": "PM Kenobi (피엠 케노비) Live [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/dfa6f966-1405-47a8-9167-b43f10678199/melon_1790161953.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-28"
+  },
+  {
+    "concert_id": "afdf9017-a77a-456f-b4d9-899563b1f3ce",
+    "concert_name": "Film Take: 上淵展 상연전 (역)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/afdf9017-a77a-456f-b4d9-899563b1f3ce/yes24_1790162226.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "e383c03b-6f56-4bdb-b571-0f7d6be063d9",
+    "concert_name": "숲세권 라이브, 김영조 단독 공연: ROSARIUM",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/e383c03b-6f56-4bdb-b571-0f7d6be063d9/melon_1790162128.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "17ac1d7b-0cdc-4400-a305-53e9ab26e4a6",
+    "concert_name": "조용필 & 위대한탄생 콘서트 [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/17ac1d7b-0cdc-4400-a305-53e9ab26e4a6/yes24_1790162090.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-12",
+    "end_date": "2026-12-13"
+  },
+  {
+    "concert_id": "5116fe18-aef8-45eb-99dd-da6bdd89228a",
+    "concert_name": "DJMAX MIRACLE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5116fe18-aef8-45eb-99dd-da6bdd89228a/yes24_1790162350.png",
+    "timetable_ranges": [
+      [
+        7945,
+        8311
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "47893296-4a7f-4772-b367-dda0b8165949",
+    "concert_name": "PARK JINYOUNG 1ST CONCERT TOUR: CODE# [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/47893296-4a7f-4772-b367-dda0b8165949/melon_1790161544.png",
+    "timetable_ranges": [
+      [
+        15509,
+        15883
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-07",
+    "end_date": "2026-11-08"
+  },
+  {
+    "concert_id": "9d81659f-cb14-4629-bced-7c3505ebf4cc",
+    "concert_name": "조용필 & 위대한탄생 콘서트 [광주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9d81659f-cb14-4629-bced-7c3505ebf4cc/yes24_1790192093.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2027-01-02",
+    "end_date": "2027-01-02"
+  },
+  {
+    "concert_id": "3c9d4c63-eb97-4df6-96a1-699f3378649e",
+    "concert_name": "MAX CHANGMIN LIVE SESSION: RESONANCE in SEOUL",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3c9d4c63-eb97-4df6-96a1-699f3378649e/yes24_1790161721.png",
+    "timetable_ranges": [
+      [
+        20005,
+        20600
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-06",
+    "end_date": "2026-11-08"
+  },
+  {
+    "concert_id": "c49fea1d-b43a-4042-bd60-4b26c0784da9",
+    "concert_name": "벤치위레오 단독 콘서트: Black White La cuisine",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/c49fea1d-b43a-4042-bd60-4b26c0784da9/melon_1790192333.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-08",
+    "end_date": "2026-10-08"
+  },
+  {
+    "concert_id": "0eb12d43-d8f2-40fa-a31c-25c834929941",
+    "concert_name": "Born to be [ ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/0eb12d43-d8f2-40fa-a31c-25c834929941/melon_1790192290.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-23",
+    "end_date": "2026-10-23"
+  },
+  {
+    "concert_id": "bf517b29-2137-437b-b16e-14621c50572d",
+    "concert_name": "조용필 & 위대한탄생 콘서트 [대전]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/bf517b29-2137-437b-b16e-14621c50572d/yes24_1790192150.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-26",
+    "end_date": "2026-12-26"
+  },
+  {
+    "concert_id": "ae3eb45a-1479-4c0b-9a2c-c17ffc83e63f",
+    "concert_name": "Jane Remover: Live Exhibit in Seoul",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/ae3eb45a-1479-4c0b-9a2c-c17ffc83e63f/yes24_1790192399.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-11",
+    "end_date": "2026-12-11"
+  },
+  {
+    "concert_id": "2430667c-3e83-4f57-bccd-f781374ec04e",
+    "concert_name": "제1회 전주재즈쇼케이스",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2430667c-3e83-4f57-bccd-f781374ec04e/kopis_1788709265.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-06-13",
+    "end_date": "2026-12-12"
+  },
+  {
+    "concert_id": "2653d8af-3620-4e05-8850-f316341d7b74",
+    "concert_name": "미스트롯4 전국투어 콘서트: 트롯으로 세상을 홀려라 [서울 (앵콜) ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2653d8af-3620-4e05-8850-f316341d7b74/interpark_1789141354.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-31",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "8f1db59b-ba8e-4ea7-92af-dbe45207e289",
+    "concert_name": "부산국제록페스티벌",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8f1db59b-ba8e-4ea7-92af-dbe45207e289/yes24_1789329899.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-02",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "46d2831f-a257-43fa-bc21-d5639381edd8",
+    "concert_name": "인디스커버리: FESTA, TRACK 01",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/46d2831f-a257-43fa-bc21-d5639381edd8/interpark_1788881967.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-16",
+    "end_date": "2026-10-16"
+  },
+  {
+    "concert_id": "c9ceb1f7-1a88-4f75-9cd9-ca83cf129933",
+    "concert_name": "진미령 콘서트: 난생처음 50주년 되던 날",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/c9ceb1f7-1a88-4f75-9cd9-ca83cf129933/interpark_1789141405.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "2cea3add-83cd-4386-b54f-2ffa6f0f1c5d",
+    "concert_name": "원웨이 페스티벌",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2cea3add-83cd-4386-b54f-2ffa6f0f1c5d/melon_1789329952.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-26",
+    "end_date": "2026-12-27"
+  },
+  {
+    "concert_id": "98752b88-b268-480c-939f-2607a205ea21",
+    "concert_name": "옥탑재즈 Ⅴ, LUCA MINOR",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/98752b88-b268-480c-939f-2607a205ea21/interpark_1788968528.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-11-06",
+    "end_date": "2026-11-06"
+  },
+  {
+    "concert_id": "a5949fd1-7855-4f60-b742-fd2b483a902a",
+    "concert_name": "무명전설 전국투어 콘서트 [대구 (앵콜) ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a5949fd1-7855-4f60-b742-fd2b483a902a/interpark_1789141421.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-11-21",
+    "end_date": "2026-11-21"
+  },
+  {
+    "concert_id": "3d7b102a-e8d8-44e5-bf7c-3636958739c4",
+    "concert_name": "영등포아트홀 기획공연, 한글날 특집 콘서트: 주현미, 가요백년을 노래하다",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3d7b102a-e8d8-44e5-bf7c-3636958739c4/interpark_1788882115.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-09"
+  },
+  {
+    "concert_id": "12729fb7-e74c-491d-a780-d3c9372ee8a3",
+    "concert_name": "YUURI LIVE [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/12729fb7-e74c-491d-a780-d3c9372ee8a3/interpark.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-05",
+    "end_date": "2026-12-06"
+  },
+  {
+    "concert_id": "b76b4792-c673-4d1d-a4cf-baedbfc37e73",
+    "concert_name": "성남아트리움 모닝콘서트, 반도네온 고상지트리오 [성남]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/b76b4792-c673-4d1d-a4cf-baedbfc37e73/yes24_1789330016.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-09-30",
+    "end_date": "2026-09-30"
+  },
+  {
+    "concert_id": "2fb79484-16eb-4173-a781-e94e409f9d00",
+    "concert_name": "제5회 전주미니재즈페스티벌",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/2fb79484-16eb-4173-a781-e94e409f9d00/kopis_1788709277.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-04-18",
+    "end_date": "2026-10-31"
+  },
+  {
+    "concert_id": "b17077db-70bf-4294-bf8d-47b88419858e",
+    "concert_name": "동대문문화재단 기획공연, 와인et멜로디",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/b17077db-70bf-4294-bf8d-47b88419858e/kopis_1788709280.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-03-27",
+    "end_date": "2026-11-27"
+  },
+  {
+    "concert_id": "3ce223e7-f67b-4b72-97c8-746db6d569f8",
+    "concert_name": "&TEAM CONCERT TOUR: BLAZE THE WAY [서울 (앵콜) ]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3ce223e7-f67b-4b72-97c8-746db6d569f8/interpark.png",
+    "timetable_ranges": [
+      [
+        13780,
+        14070
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "020c795d-7682-4fcb-9b89-31453aff5793",
+    "concert_name": "Shi Shi, The Taste Of… World Tour [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/020c795d-7682-4fcb-9b89-31453aff5793/yes24_1789330213.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-11",
+    "end_date": "2026-10-11"
+  },
+  {
+    "concert_id": "a050a3e8-87b3-418d-abc4-25f1c32ea849",
+    "concert_name": "성남아트센터 오후의 콘서트: 수요재즈클럽 (11월)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/a050a3e8-87b3-418d-abc4-25f1c32ea849/yes24_1789330153.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-04",
+    "end_date": "2026-11-04"
+  },
+  {
+    "concert_id": "3ec3c7ad-71b7-4599-8d18-0afffbda713a",
+    "concert_name": "씨야 20주년 전국 투어 콘서트: THE FAN [수원]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/3ec3c7ad-71b7-4599-8d18-0afffbda713a/yes24_1789330283.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "6bb336eb-4196-4963-b942-e647442c2fc1",
+    "concert_name": "모닝콘서트, 홍대광의 하얀 겨울콘서트: 잘됐으면 좋겠다 [창원] (12월)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/6bb336eb-4196-4963-b942-e647442c2fc1/yes24_1789330335.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-08",
+    "end_date": "2026-12-08"
+  },
+  {
+    "concert_id": "1cdb37e7-f550-4e66-adb8-2459640e0dfe",
+    "concert_name": "씨야 20주년 전국 투어 콘서트: THE FAN [청주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/1cdb37e7-f550-4e66-adb8-2459640e0dfe/yes24_1789330392.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "bd03c480-b7f6-4db0-974f-838a3fd02320",
+    "concert_name": "모닝콘서트, 재즈뮤지션 마리아 킴의 재즈콜렉티브 [창원] (11월)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/bd03c480-b7f6-4db0-974f-838a3fd02320/yes24_1789330441.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-17",
+    "end_date": "2026-11-17"
+  },
+  {
+    "concert_id": "4d3d4587-cad5-47b5-b297-81cc5c3d7d7e",
+    "concert_name": "샤로수길 클럽데이",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4d3d4587-cad5-47b5-b297-81cc5c3d7d7e/interpark_1788968614.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "ff475de5-84d7-4e51-af34-6dffbc052a66",
+    "concert_name": "이승철 40주년 콘서트, THE VOICE: LEE SEUNG CHU [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/ff475de5-84d7-4e51-af34-6dffbc052a66/yes24_1789330497.png",
+    "timetable_ranges": [
+      [
+        2335,
+        2521
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-12-04",
+    "end_date": "2026-12-06"
+  },
+  {
+    "concert_id": "9a3be4be-3cc7-45c8-bc6f-881a7bc1294e",
+    "concert_name": "AKMU CONCERT: 소문의 낙원 (Paradise of Rumors)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9a3be4be-3cc7-45c8-bc6f-881a7bc1294e/yes24_1789330547.png",
+    "timetable_ranges": [
+      [
+        15767,
+        17097
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-11"
+  },
+  {
+    "concert_id": "abbff134-267d-49c7-ba49-7548a0478916",
+    "concert_name": "SJF at the Theater, Diana Krall",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/abbff134-267d-49c7-ba49-7548a0478916/yes24_1789330615.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-22",
+    "end_date": "2026-11-22"
+  },
+  {
+    "concert_id": "9787c55b-c88f-4152-af50-7497e5b290fd",
+    "concert_name": "빅3 시즌2, 행복한 만남: 강진, 김용임, 진성 [용인]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/9787c55b-c88f-4152-af50-7497e5b290fd/interpark_1788968629.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-09"
+  },
+  {
+    "concert_id": "af627ec5-13da-49b1-8aec-dadc7c9403e2",
+    "concert_name": "Two Worlds In One",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/af627ec5-13da-49b1-8aec-dadc7c9403e2/melon_1789330648.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-09",
+    "end_date": "2026-10-09"
+  },
+  {
+    "concert_id": "8a579b82-1d16-42a2-82f1-1344dd257b4b",
+    "concert_name": "모보 페스티벌 [파주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/8a579b82-1d16-42a2-82f1-1344dd257b4b/kopis_1788709334.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "bb44990a-fa6c-45dc-bacb-285681d79f86",
+    "concert_name": "XMF (Xnterstellar Music Festival)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/bb44990a-fa6c-45dc-bacb-285681d79f86/kopis.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-04"
+  },
+  {
+    "concert_id": "e3e7b047-d1bf-428e-9b8a-f8c08a1da79d",
+    "concert_name": "NOL FESTIVAL: DAY 1, SUPER LIVE STAGE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/e3e7b047-d1bf-428e-9b8a-f8c08a1da79d/interpark_1789054620.png",
+    "timetable_ranges": [
+      [
+        978,
+        1113
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "b21db221-827e-4313-8977-90a98e1d2dc8",
+    "concert_name": "EVERGREY LIVE (에버그레이 내한공연) [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/b21db221-827e-4313-8977-90a98e1d2dc8/interpark.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "4af97123-bab2-48a9-b9e3-a0b99dacff45",
+    "concert_name": "포크 포에버, 사랑과 낭만을 노래하는 포크음악축제 (10.03)",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4af97123-bab2-48a9-b9e3-a0b99dacff45/kopis_1788709409.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-03",
+    "end_date": "2026-10-03"
+  },
+  {
+    "concert_id": "f3a5f6bf-1ad4-4186-b010-6d6f105b9fc2",
+    "concert_name": "이승철 40주년 콘서트, THE VOICE: LEE SEUNG CHUL [인천]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f3a5f6bf-1ad4-4186-b010-6d6f105b9fc2/interpark.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-12-12",
+    "end_date": "2026-12-12"
+  },
+  {
+    "concert_id": "09b64731-55d3-4261-816f-099e16c7fc0a",
+    "concert_name": "NOL FESTIVAL: DAY 1, K-POP STAGE",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/09b64731-55d3-4261-816f-099e16c7fc0a/interpark_1789141575.png",
+    "timetable_ranges": [
+      [
+        978,
+        1112
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  },
+  {
+    "concert_id": "d000c1a0-b682-4c7f-8fe4-6487dbe5920b",
+    "concert_name": "이승철 40주년 콘서트, THE VOICE: LEE SEUNG CHUL [광주]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/d000c1a0-b682-4c7f-8fe4-6487dbe5920b/yes24_1789331009.png",
+    "timetable_ranges": [
+      [
+        2391,
+        2577
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-14",
+    "end_date": "2026-11-14"
+  },
+  {
+    "concert_id": "e24d6a99-35de-43bb-adc9-67e0d2d4c7ba",
+    "concert_name": "이승철 40주년 콘서트, THE VOICE: LEE SEUNG CHU [대전]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/e24d6a99-35de-43bb-adc9-67e0d2d4c7ba/yes24_1789331072.png",
+    "timetable_ranges": [
+      [
+        2334,
+        2521
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-11-22",
+    "end_date": "2026-11-22"
+  },
+  {
+    "concert_id": "eb2c6470-672a-4752-9955-a0e612658e0a",
+    "concert_name": "이승철 40주년 콘서트: THE VOICE: LEE SEUNG CHUL [부산]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/eb2c6470-672a-4752-9955-a0e612658e0a/yes24_1789331135.png",
+    "timetable_ranges": [
+      [
+        2334,
+        2520
+      ]
+    ],
+    "event_type": "SOLO",
+    "start_date": "2026-12-24",
+    "end_date": "2026-12-24"
+  },
+  {
+    "concert_id": "f46b1044-b080-434f-9215-35096e825ad3",
+    "concert_name": "힙합 콘서트, ASMBL CRSH: SEOUL",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/f46b1044-b080-434f-9215-35096e825ad3/kopis_1788709437.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-05",
+    "end_date": "2026-10-05"
+  },
+  {
+    "concert_id": "5a05c84a-9955-48d0-8910-cb30f7e4cccc",
+    "concert_name": "cero, Contemporary Seoul Cruise",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/5a05c84a-9955-48d0-8910-cb30f7e4cccc/yes24_1789331188.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-10-10",
+    "end_date": "2026-10-10"
+  },
+  {
+    "concert_id": "d1066aba-78f4-44b0-aeda-ae669b166319",
+    "concert_name": "대구 힙합 페스티벌",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/d1066aba-78f4-44b0-aeda-ae669b166319/melon_1789331228.png",
+    "timetable_ranges": [
+      [
+        5932,
+        6444
+      ],
+      [
+        13180,
+        13389
+      ]
+    ],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-12-25",
+    "end_date": "2026-12-26"
+  },
+  {
+    "concert_id": "28abff5e-0d2c-4015-8417-f28f76d684c6",
+    "concert_name": "ASIA METAL FESTIVAL [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/28abff5e-0d2c-4015-8417-f28f76d684c6/interpark_1789141597.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-11-14",
+    "end_date": "2026-11-14"
+  },
+  {
+    "concert_id": "4bc220d4-8617-4898-ad8d-186ab5460da1",
+    "concert_name": "SJF at the Theater, Kings of Convenience",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/4bc220d4-8617-4898-ad8d-186ab5460da1/yes24_1789331354.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-18",
+    "end_date": "2026-11-18"
+  },
+  {
+    "concert_id": "cbf3f528-19ff-4d51-9589-6c0b8f57c911",
+    "concert_name": "AKASAKI 1st WORLD TOUR: ONIGIRI [서울]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/cbf3f528-19ff-4d51-9589-6c0b8f57c911/interpark.png",
+    "timetable_ranges": [],
+    "event_type": "SOLO",
+    "start_date": "2026-11-21",
+    "end_date": "2026-11-21"
+  },
+  {
+    "concert_id": "09b7102a-0215-45a1-b516-a4f3abaf1bec",
+    "concert_name": "MIYAKO ISLAND ROCK FESTIVAL: SAVE THE SEA SAVE THE SKY [일본 오키나와]",
+    "screenshot_url": "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/09b7102a-0215-45a1-b516-a4f3abaf1bec/interpark_1788882374.png",
+    "timetable_ranges": [],
+    "event_type": "FESTIVAL",
+    "start_date": "2026-10-17",
+    "end_date": "2026-10-17"
+  }
+]
