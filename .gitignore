@@ -51,8 +51,12 @@ llm_server/batch_results_kor/
 .DS_Store
 Thumbs.db
 
-# Scripts
-backend/scripts/
+# Scripts - 코드는 추적하고 데이터/산출물만 제외(백테스트 입력·캐시·결과, 스크립트 출력)
+backend/scripts/backtest/cache/
+backend/scripts/backtest/input/
+backend/scripts/backtest/results/
+backend/scripts/backtest/alignment.json
+backend/scripts/ongoing/out/
 
 # 내부 문서
 docs/
