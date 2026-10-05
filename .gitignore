@@ -57,6 +57,7 @@ backend/scripts/backtest/input/
 backend/scripts/backtest/results/
 backend/scripts/backtest/alignment.json
 backend/scripts/ongoing/out/
+backend/out/
 
 # 내부 문서
 docs/
