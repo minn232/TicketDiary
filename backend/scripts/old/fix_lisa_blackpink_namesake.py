@@ -19,9 +19,9 @@ import httpx  # noqa: E402
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.artist_normalization import CanonicalArtist  # noqa: E402
 from app.services.artist_normalization import (  # noqa: E402
-    _get_or_create_canonical_by_mbid,
-    _register_artist_image,
-    _register_wikidata_korean_alias,
+    get_or_create_canonical_by_mbid,
+    register_artist_image,
+    register_wikidata_korean_alias,
     reassign_artist_to_canonical,
 )
 
@@ -34,7 +34,7 @@ _ARTIST_TEXT = "LISA"
 
 async def main() -> None:
     async with AsyncSessionLocal() as db:
-        canonical, created = await _get_or_create_canonical_by_mbid(db, _REAL_LISA_MBID, "LiSA")
+        canonical, created = await get_or_create_canonical_by_mbid(db, _REAL_LISA_MBID, "LiSA")
         await db.commit()
         canonical_id = canonical.id
         print(f"canonical: id={canonical_id} created={created}")
@@ -42,8 +42,8 @@ async def main() -> None:
     async with httpx.AsyncClient(timeout=10.0) as client:
         async with AsyncSessionLocal() as db:
             canonical = await db.get(CanonicalArtist, canonical_id)
-            await _register_wikidata_korean_alias(db, canonical, client)
-            await _register_artist_image(db, canonical, client)
+            await register_wikidata_korean_alias(db, canonical, client)
+            await register_artist_image(db, canonical, client)
             await db.commit()
             print(f"display_name={canonical.display_name} profile_image_url={canonical.profile_image_url}")
 

@@ -116,7 +116,7 @@ async def _clear_lastfm_failure(db: AsyncSession, artist_name: str, sync_type: s
 # "seen live"/"female vocalists"/아티스트 이름 자체 같은 비-장르 태그가 섞여 들어오는 걸 막기 위해,
 # getTopTags가 이미 커뮤니티 가중치(count) 내림차순으로 준 순서를 그대로 믿고 훑다가 이 목록에
 # 처음 걸리는 태그의 라벨을 채택한다(=Last.fm 순위 + 화이트리스트 교집합의 상위 1개).
-_GENRE_TAG_MAP: dict[str, str] = {
+GENRE_TAG_MAP: dict[str, str] = {
     tag: label
     for label, tags in {
         "K-pop": ["k-pop", "kpop"],
@@ -146,7 +146,7 @@ def resolve_genres(tags: list[str]) -> list[str]:
     matched: list[str] = []
     seen: set[str] = set()
     for tag in tags:
-        label = _GENRE_TAG_MAP.get(tag.strip().lower())
+        label = GENRE_TAG_MAP.get(tag.strip().lower())
         if label and label not in seen:
             seen.add(label)
             matched.append(label)

@@ -167,7 +167,7 @@ def _detect_format(image_bytes: bytes, content_type: str) -> str:
 
 
 # 여러 포맷 JPEG 변환
-def _to_jpeg(image_bytes: bytes, content_type: str) -> bytes:
+def to_jpeg(image_bytes: bytes, content_type: str) -> bytes:
     fmt = _detect_format(image_bytes, content_type)
 
     if fmt == "jpeg":
@@ -217,7 +217,7 @@ def _to_jpeg(image_bytes: bytes, content_type: str) -> bytes:
 # fullTextAnnotation.text(줄글)뿐 아니라 pages/blocks/paragraphs의 좌표(bbox)도
 # 같은 응답에 포함돼 있어서, 좌표 기반 레이아웃 파싱을 위해 API를 한 번 더 부르지 않고
 # 이 원본 응답을 그대로 재활용한다
-async def _call_vision(image_bytes: bytes) -> dict:
+async def call_vision(image_bytes: bytes) -> dict:
     payload = {
         "requests": [
             {
@@ -250,7 +250,7 @@ def _full_text_from_annotation(annotation: dict) -> str:
 
 # Google Vision API로 이미지에서 텍스트 추출 (fullTextAnnotation.text만 반환)
 async def _extract_raw_text(image_bytes: bytes) -> str:
-    annotation = await _call_vision(image_bytes)
+    annotation = await call_vision(image_bytes)
     return _full_text_from_annotation(annotation)
 
 
@@ -810,8 +810,12 @@ def _parse_ticket_fields(raw_text: str) -> dict:
 # 이미지 -> JPEG 변환 -> Vision OCR -> 좌표 기반 격자 파싱 시도 -> 실패 시 로컬 regex 파싱
 async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     loop = asyncio.get_running_loop()
-    jpeg_bytes = await loop.run_in_executor(None, _to_jpeg, image_bytes, content_type)
-    annotation = await _call_vision(jpeg_bytes)
+    try:
+        jpeg_bytes = await loop.run_in_executor(None, to_jpeg, image_bytes, content_type)
+    except (Image.UnidentifiedImageError, Image.DecompressionBombError, OSError) as e:
+        # 깨진 파일/이미지가 아닌 파일/픽셀 폭탄은 서버 오류가 아니라 입력 문제
+        raise HTTPException(status_code=422, detail="이미지를 읽을 수 없습니다.") from e
+    annotation = await call_vision(jpeg_bytes)
     raw_text = _full_text_from_annotation(annotation)
 
     fields = _parse_ticket_fields_from_layout(annotation, raw_text) or _parse_ticket_fields(raw_text)

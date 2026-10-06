@@ -16,7 +16,7 @@ from app.schemas.auth import (
     UserProfileUpdate,
     UserResponse,
 )
-from app.services.auth import guest_login, kakao_login, migrate_to_kakao, update_profile
+from app.services.auth import delete_account, guest_login, kakao_login, migrate_to_kakao, update_profile
 from app.services.refresh_token import issue_refresh_token, revoke_refresh_token, rotate_refresh_token
 from app.models.user import User, UserRole
 
@@ -109,5 +109,4 @@ async def delete_me(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await db.delete(current_user)
-    await db.commit()
+    await delete_account(db, current_user)

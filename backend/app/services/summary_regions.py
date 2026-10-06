@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.concert import Concert
 from app.models.ticket import Ticket, TicketStatus
-from app.services.kopis import _throttle_kopis_request
+from app.services.kopis import throttle_kopis_request
 from app.services.summary import _period_start
 
 # Bounded, process-local cache contains public facility coordinates only.
@@ -22,7 +22,7 @@ _lookup_limit = asyncio.Semaphore(3)
 
 
 async def _xml(client: httpx.AsyncClient, path: str) -> ET.Element:
-    await _throttle_kopis_request()
+    await throttle_kopis_request()
     response = await client.get(
         f"{settings.KOPIS_BASE_URL}/{path}",
         params={"service": settings.KOPIS_API_KEY},

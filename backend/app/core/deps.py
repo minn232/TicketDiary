@@ -1,7 +1,7 @@
 import logging
 import secrets
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -93,7 +93,7 @@ async def verify_admin_key(x_admin_key: str | None = Header(None)) -> None:
 # 유저별 요청 시각 기록 (인메모리 sliding window). 서버를 여러 인스턴스로 수평 확장하게 되면
 # 인스턴스마다 따로 카운트되어 실효 한도가 늘어나므로, 그땐 Redis 등 공유 저장소로 옮겨야 함.
 # 지금은 단일 EC2 인스턴스 배포라 인메모리로 충분
-_rate_limit_hits: dict[str, list[float]] = defaultdict(list)
+_rate_limit_hits: dict[str, deque[float]] = defaultdict(deque)
 
 # 한 번 온 유저/IP 키가 영영 안 지워지지 않도록 주기적으로 오래된 키를 정리. 보관 기간은 가장 긴
 # 한도 기간(1시간) - 그보다 오래된 기록은 어떤 한도 판단에도 안 쓰임
@@ -118,7 +118,7 @@ def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
     hits = _rate_limit_hits[key]
     cutoff = now - period_seconds
     while hits and hits[0] < cutoff:
-        hits.pop(0)
+        hits.popleft()
     if len(hits) >= max_calls:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -127,10 +127,8 @@ def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
     hits.append(now)
 
 
-# 게스트 로그인(device_id) 브루트포스 방지: IP당 시간당 20회. 아직 device_id가 프론트에서
-# 진짜 난수가 아니라 타임스탬프+객체해시로 생성되고 있어(추후 uuid로 교체 예정) 값 자체의
-# 추측 난이도가 낮으므로, 서버 쪽에서라도 무제한 시도를 막아야 함. IP 기준이라 여러 IP로
-# 분산하면 우회되지만, 최소한의 완화책 - 근본 해결은 프론트 device_id 생성 방식 교체
+# 게스트 로그인(device_id) 브루트포스 방지: IP당 시간당 20회. 프론트 device_id는 uuid v4라 추측은
+# 어렵지만, 무제한 시도와 게스트 계정 대량 생성은 막아야 함. IP 기준이라 여러 IP로 분산하면 우회됨
 async def rate_limit_guest_login(request: Request) -> None:
     client_ip = request.client.host if request.client else "unknown"
     _check_rate_limit(f"guest_login:{client_ip}", max_calls=20, period_seconds=3600)
@@ -158,7 +156,7 @@ def is_within_scan_cooldown(user_id: UUID) -> bool:
     hits = _rate_limit_hits[key]
     cutoff = now - _SCAN_COOLDOWN_SECONDS
     while hits and hits[0] < cutoff:
-        hits.pop(0)
+        hits.popleft()
     was_within_cooldown = len(hits) > 0
     hits.append(now)
     return was_within_cooldown
@@ -169,6 +167,22 @@ def is_within_scan_cooldown(user_id: UUID) -> bool:
 # 스캔 시도에 대해서만 세는 별도의 한도(원래 rate_limit_ticket_scan이 쓰던 값 유지)
 def record_meaningful_ticket_scan(user_id: UUID) -> None:
     _check_rate_limit(f"scan_meaningful:{user_id}", max_calls=10, period_seconds=3600)
+
+
+# 이미지 업로드(S3 비용) 남용 방지: 유저당 시간당 200회. 공연 후 사진 일괄 배치 업로드를 감안해 널널하게 잡음
+async def rate_limit_upload(current_user: User = Depends(get_current_user)) -> None:
+    _check_rate_limit(f"upload:{current_user.id}", max_calls=200, period_seconds=3600)
+
+
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 파일당 10MB
+
+
+# Content-Length(요청 전체 크기)로 다운로드 전 사전 거절 - 파일이 여러 개면 그 합이라 파일 수만큼 허용.
+# 숫자가 아닌 헤더 값은 검사만 건너뜀(본문을 읽는 쪽의 파일별 한도가 어차피 막음)
+def reject_oversized_request(request: Request, file_count: int = 1) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > _MAX_UPLOAD_BYTES * file_count:
+        raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
 
 # 일기 생성(LLM 호출, 비용 발생) 남용 방지: 유저당 시간당 10회

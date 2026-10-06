@@ -256,6 +256,19 @@ async def test_lastfm_name_lookup_other_script_rejected():
             assert await representative_songs_for_artist(db, "정규화안된대표곡가수", 20) == []
 
 
+# MusicBrainz에 Apple Music 링크가 없는 아티스트는 매번 다시 묻지 않고 하루 동안 기억함
+@pytest.mark.asyncio
+async def test_apple_link_miss_is_not_requeried():
+    await _add_canonical("링크없는가수", mbid="mbid-rep-nolink")
+    apple = AsyncMock(return_value=None)
+    with _lastfm("", []), patch(f"{_SERVICE}.fetch_apple_music_artist_id", new=apple):
+        for _ in range(2):
+            async with AsyncSessionLocal() as db:
+                await representative_songs_for_artist(db, "링크없는가수", 20)
+
+    assert apple.await_count == 1
+
+
 # iTunes 아티스트가 확정된 경우
 
 @pytest.mark.asyncio

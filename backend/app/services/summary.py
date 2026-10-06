@@ -263,6 +263,7 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
         t for t in tickets
         if t.concert and (t.concert.end_date.date() - t.concert.start_date.date()).days == 1
     ]
+    two_day_ids = {t.id for t in two_day}
     day_split = _percent_split(
         [sum(1 for t in two_day if t.is_first_day), sum(1 for t in two_day if t.is_last_day)]
     )
@@ -285,7 +286,7 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
                 "date": attended_day(t).isoformat(),
                 "price": t.price,
                 "seat": "standing" if _is_standing(t.seat_type) else ("seated" if _is_seated(t.seat_type) else None),
-                "day": ("first" if t.is_first_day else "last" if t.is_last_day else None) if t in two_day else None,
+                "day": ("first" if t.is_first_day else "last" if t.is_last_day else None) if t.id in two_day_ids else None,
                 "origin": origin_by_ticket.get(t.id),
             }
             for t in tickets

@@ -45,7 +45,7 @@ from app.models.concert import Concert  # noqa: E402
 from app.models.lineup import ConcertLineup  # noqa: E402
 from app.services.artist_matching import get_known_artist_names, merge_or_replace_solo_seed  # noqa: E402
 from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization  # noqa: E402
-from app.services.kopis import _create_news_feeds_for_concert  # noqa: E402
+from app.services.kopis import create_news_feeds_for_concert  # noqa: E402
 from app.services.lineup import upsert_concert_lineup  # noqa: E402
 from app.services.ticket import backfill_first_last_day_from_concert, upgrade_event_type_if_multi_artist  # noqa: E402
 from normalize import normalize_artist_list, normalize_event_type, normalize_lineup_entries  # noqa: E402
@@ -121,7 +121,7 @@ async def _process_one(db, concert: Concert, raw: dict, concert_name: str, known
 
     if "artist_name" in changed_fields:
         await db.refresh(concert)
-        await _create_news_feeds_for_concert(db, concert)
+        await create_news_feeds_for_concert(db, concert)
         await db.commit()
         if upgraded:
             await backfill_first_last_day_from_concert(db, concert.id)

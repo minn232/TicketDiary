@@ -21,7 +21,7 @@ from app.models.social import ConcertFollow
 from app.services.kopis import refresh_ticketing_links
 from app.services.llm_batch_state import mark_llm_sent
 from app.services.site_aliases import normalize_site_key
-from app.services.storage import _do_upload
+from app.services.storage import do_upload
 from app.services.timetable_ranges import compute_timetable_ranges
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,10 @@ _STEALTH = Stealth(
     navigator_languages_override=("ko-KR", "ko"),
     navigator_user_agent_override=_UA,
 )
+
+# 브라우저 동시 실행 상한(프로세스 전체 공통). 야간 배치는 자체 세마포어가 있지만 티켓 등록/찜
+# 트리거는 제한이 없어, 몰리면 RAM 1.9GB 서버에서 OOM이 남
+_BROWSER_SEMAPHORE = asyncio.Semaphore(2)
 
 
 # Playwright 브라우저 + 페이지 생성 (playwright-stealth로 봇 감지 우회)
@@ -403,7 +407,7 @@ async def _upload_screenshot(image_bytes: bytes, concert_id, site: str) -> str |
     key = f"crawls/{concert_id}/{site}.png"
     loop = asyncio.get_running_loop()
     try:
-        return await loop.run_in_executor(None, _do_upload, image_bytes, key, "image/png")
+        return await loop.run_in_executor(None, do_upload, image_bytes, key, "image/png")
     except Exception as e:
         logger.error(f"스크린샷 업로드 실패 ({site}): {e}")
         return None
@@ -802,15 +806,16 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         await db.commit()
 
         candidates = _pick_crawl_candidates(ticketing_site, concert.ticketing_links)
-        if not candidates:
-            # 티켓링크 전용 공연 → KOPIS 페이지로 폴백
-            logger.info(f"티켓링크 미지원 → KOPIS 폴백: {concert.name}")
-            image_bytes = await crawl_kopis(concert)
-            upload_key = "kopis"
-        else:
-            logger.info(f"크롤링 대상 후보: {[c[0] for c in candidates]}")
-            site_key, image_bytes = await _crawl_first_success(concert, candidates)
-            upload_key = site_key.lower() if site_key else None
+        async with _BROWSER_SEMAPHORE:
+            if not candidates:
+                # 티켓링크 전용 공연 → KOPIS 페이지로 폴백
+                logger.info(f"티켓링크 미지원 → KOPIS 폴백: {concert.name}")
+                image_bytes = await crawl_kopis(concert)
+                upload_key = "kopis"
+            else:
+                logger.info(f"크롤링 대상 후보: {[c[0] for c in candidates]}")
+                site_key, image_bytes = await _crawl_first_success(concert, candidates)
+                upload_key = site_key.lower() if site_key else None
 
         if image_bytes is None:
             return
@@ -883,6 +888,8 @@ async def save_manual_crawl_screenshot(
 
     concert.crawl_screenshot_url = url
     concert.timetable_ranges = await compute_timetable_ranges(image_bytes)
+    # 새 스크린샷이라 이전 LLM 분석 결과는 무효 - 안 비우면 send_screenshots_to_llm이 재전송을 건너뜀
+    concert.crawl_result_received_at = None
     concert.crawl_attempted_at = datetime.now(timezone.utc)
     concert.crawl_attempt_count += 1
     await db.commit()
@@ -951,14 +958,14 @@ async def send_screenshots_to_llm() -> int:
 # 콜백(/artist-result)이 타임아웃/522로 유실되면 attempted_at만 찍히고 영영 재시도가 안 되던
 # 구조적 갭 수정용 - 포스터 내용은 안 바뀌므로 crawl_and_save처럼 오래 재시도할 이유는 없어
 # 상한을 크롤링(24h/최대 30회)보다 훨씬 낮게 잡는다
-_ARTIST_EXTRACTION_RETRY_COOLDOWN = timedelta(hours=24)
-_MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
+ARTIST_EXTRACTION_RETRY_COOLDOWN = timedelta(hours=24)
+MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
 
 
 # send_posters_for_artist_extraction과 scripts/send_artist_extraction_now.py(대상 카운트
 # 미리보기)가 동일한 조건을 써야 해서 공유 함수로 뺌 - 둘 중 하나만 고치고 잊어버리는 걸 방지
 def artist_extraction_target_filter(now: datetime):
-    cutoff = now - _ARTIST_EXTRACTION_RETRY_COOLDOWN
+    cutoff = now - ARTIST_EXTRACTION_RETRY_COOLDOWN
     return and_(
         # admin이 이미 검수 완료로 표시한 공연은 재전송하지 않음 - LLM이 다른 결과를
         # 내면 artist_name이 바뀌어 admin_reviewed_at이 다시 NULL로 리셋되는 노이즈 방지.
@@ -969,7 +976,7 @@ def artist_extraction_target_filter(now: datetime):
             Concert.artist_extraction_attempted_at.is_(None),
             and_(
                 Concert.artist_extraction_attempted_at < cutoff,
-                Concert.artist_extraction_attempt_count < _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+                Concert.artist_extraction_attempt_count < MAX_ARTIST_EXTRACTION_ATTEMPTS,
             ),
         ),
     )
@@ -1144,13 +1151,14 @@ async def _check_festival_lineup(concert_id) -> None:
         concert.lineup_check_attempted_at = now
         await db.commit()
 
-        if candidates:
-            site_key, capture = await _crawl_first_success(concert, candidates, capture_lineup_snapshot=True)
-        else:
-            # 지원 사이트 링크가 하나도 없는 경우(티켓링크 전용 등) - crawl_and_save와 동일하게
-            # KOPIS 상세페이지로 폴백
-            site_key = "kopis"
-            capture = await crawl_kopis(concert, capture_lineup_snapshot=True)
+        async with _BROWSER_SEMAPHORE:
+            if candidates:
+                site_key, capture = await _crawl_first_success(concert, candidates, capture_lineup_snapshot=True)
+            else:
+                # 지원 사이트 링크가 하나도 없는 경우(티켓링크 전용 등) - crawl_and_save와 동일하게
+                # KOPIS 상세페이지로 폴백
+                site_key = "kopis"
+                capture = await crawl_kopis(concert, capture_lineup_snapshot=True)
         if capture is None:
             return
 

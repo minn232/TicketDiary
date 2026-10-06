@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
 from app.models.artist_genre import ArtistGenre
 from app.models.artist_normalization import CanonicalArtist
-from app.services.lastfm import _GENRE_TAG_MAP
+from app.services.lastfm import GENRE_TAG_MAP
 from app.services.musicbrainz import fetch_artist_genres_and_country
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ _MB_EXTRA_TAGS: dict[str, str] = {
     "dance-pop": "일렉트로닉/댄스",
     "contemporary r&b": "알앤비/소울",
 }
-_MB_GENRE_MAP: dict[str, str] = {**_GENRE_TAG_MAP, **_MB_EXTRA_TAGS}
+_MB_GENRE_MAP: dict[str, str] = {**GENRE_TAG_MAP, **_MB_EXTRA_TAGS}
 
 # 아티스트당 라벨 상한 - 장르가 많이 붙는 아티스트가 결산 표를 여러 장르로 흩뜨리는 걸 막음
 _MAX_MB_LABELS = 3

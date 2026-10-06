@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.concert import Concert
+from app.models.concert import Concert, EventType
 from app.models.social import ArtistFollow, NewsFeed
 from app.services.artist_matching import get_known_artist_names, normalize_artist_names
 from app.services.artist_normalization import expand_follow_index_with_group_relations
@@ -32,7 +32,7 @@ _kopis_last_request_at = 0.0
 
 
 # KOPIS로 나가는 모든 HTTP 요청 직전에 호출 -> IP당 초당 10회 제한을 넘지 않도록 간격 보장
-async def _throttle_kopis_request() -> None:
+async def throttle_kopis_request() -> None:
     global _kopis_last_request_at
     async with _kopis_request_lock:
         loop = asyncio.get_event_loop()
@@ -153,6 +153,9 @@ async def _upsert_concert(
         # 빈 배열로 기존 데이터 덮어쓰기 방지
         if isinstance(value, list) and not value and existing:
             continue
+        # 공연명 추측(SOLO)이 아티스트 수/LLM으로 승격된 FESTIVAL을 되돌리지 않게 함(강등 안 함 원칙)
+        if key == "event_type" and existing == EventType.FESTIVAL.value:
+            continue
         if value is not None:
             setattr(concert, key, value)
 
@@ -173,7 +176,7 @@ async def _fetch_and_upsert_concerts(
         **extra_params,
     }
 
-    await _throttle_kopis_request()
+    await throttle_kopis_request()
     async with _kopis_client(client) as c:
         response = await c.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
 
@@ -287,7 +290,7 @@ async def _resolve_venue_facility_code(
         for name in venue_candidates:
             if not name or len(name) < 2:
                 continue
-            await _throttle_kopis_request()
+            await throttle_kopis_request()
             response = await c.get(
                 f"{settings.KOPIS_BASE_URL}/prfplc",
                 params={"service": settings.KOPIS_API_KEY, "shprfnmfct": name, "rows": 1, "cpage": 1},
@@ -563,7 +566,7 @@ async def _build_follow_index(db: AsyncSession) -> dict[str, list[tuple]]:
 # follow_index를 넘기면 재조회 없이 재사용, 없으면 단발 호출로 간주해 직접 구축
 # 매칭된 (user_id, artist_name) 목록을 반환함 - 호출부에서 NEW_CONCERT 알림 생성 시
 # 아티스트 매칭을 다시 계산하지 않고 재사용하기 위함(신규 공연 배치 루프에서만 사용)
-async def _create_news_feeds_for_concert(
+async def create_news_feeds_for_concert(
     db: AsyncSession, concert: Concert, follow_index: dict[str, list[tuple]] | None = None
 ) -> list[tuple]:
     if not concert.artist_name:
@@ -606,7 +609,7 @@ async def _create_news_feeds_for_concert(
 _MAX_KOPIS_LIST_PAGES = 200
 
 # 공연장 규모로 대상을 좁히고 싶을 때 키워드를 채워 넣으면 됨 (비어있으면 필터 비활성화)
-# 속도 제한(_throttle_kopis_request) + 1회당 처리 상한(_MAX_NEW_CONCERTS_PER_RUN)으로
+# 속도 제한(throttle_kopis_request) + 1회당 처리 상한(_MAX_NEW_CONCERTS_PER_RUN)으로
 # API 이용제한 문제는 이미 방어되므로 현재는 필터링하지 않음
 _LARGE_VENUE_KEYWORDS: list[str] = []
 
@@ -643,7 +646,7 @@ async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date:
             "rows": 100,
             "cpage": cpage,
         }
-        await _throttle_kopis_request()
+        await throttle_kopis_request()
         try:
             response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
         except httpx.HTTPError as e:
@@ -697,7 +700,7 @@ async def _fetch_new_concert_data(
         last_error: Exception | None = None
         for attempt in range(_KOPIS_DETAIL_MAX_RETRIES):
             try:
-                return await _fetch_kopis_detail_data(client, kopis_id)
+                return await fetch_kopis_detail_data(client, kopis_id)
             except KopisNoData:
                 logger.warning(f"KOPIS 상세 없음 ({kopis_id})")
                 return None
@@ -763,7 +766,7 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
             if data is None:
                 continue
             concert = await _upsert_concert(db, data, known_artist_names)
-            matched = await _create_news_feeds_for_concert(db, concert, follow_index)
+            matched = await create_news_feeds_for_concert(db, concert, follow_index)
             # NEW_CONCERT 알림은 여기(진짜 신규 공연)에서만 생성 - 아래 기존 공연
             # 백필 루프나 온디맨드 상세조회에서는 생성하지 않음(schedule_new_concert_notifications 문서 참고)
             await schedule_new_concert_notifications(db, concert, matched)
@@ -774,7 +777,7 @@ async def sync_daily_concerts(db: AsyncSession) -> None:
     for kopis_id in kopis_ids:
         concert = existing.get(kopis_id)
         if concert is not None and concert.artist_name:
-            await _create_news_feeds_for_concert(db, concert, follow_index)
+            await create_news_feeds_for_concert(db, concert, follow_index)
     await db.commit()
 
 
@@ -805,8 +808,8 @@ class KopisNoData(HTTPException):
 
 
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
-async def _fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
-    await _throttle_kopis_request()
+async def fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
+    await throttle_kopis_request()
     response = await client.get(
         f"{settings.KOPIS_BASE_URL}/pblprfr/{kopis_id}",
         params={"service": settings.KOPIS_API_KEY},
@@ -877,7 +880,7 @@ async def get_concert_detail(
 ) -> Concert:
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            data = await _fetch_kopis_detail_data(client, kopis_id)
+            data = await fetch_kopis_detail_data(client, kopis_id)
         except KopisNoData:
             await db.execute(
                 update(Concert).where(Concert.kopis_id == kopis_id).values(kopis_missing_at=datetime.now(timezone.utc))
@@ -887,7 +890,7 @@ async def get_concert_detail(
 
     concert = await _upsert_concert(db, data)
     concert.kopis_missing_at = None
-    await _create_news_feeds_for_concert(db, concert, follow_index)
+    await create_news_feeds_for_concert(db, concert, follow_index)
     await db.commit()
     await db.refresh(concert)
     return concert
@@ -900,7 +903,7 @@ async def get_concert_detail(
 async def refresh_ticketing_links(concert: Concert) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            data = await _fetch_kopis_detail_data(client, concert.kopis_id)
+            data = await fetch_kopis_detail_data(client, concert.kopis_id)
     except KopisNoData:
         concert.kopis_missing_at = datetime.now(timezone.utc)
         return False

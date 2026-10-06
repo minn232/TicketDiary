@@ -113,6 +113,14 @@ async def test_search_concerts_empty_result():
     assert data == []
 
 
+# LIKE 와일드카드(%, _)는 문자 그대로 검색 - "___"가 모든 공연에 매치되면 안 됨
+@pytest.mark.asyncio
+async def test_search_concerts_does_not_treat_underscore_as_wildcard():
+    concert = await _make_concert(name=f"와일드카드없음{uuid.uuid4().hex[:8]}")
+    data = await _search("___")
+    assert all(c["id"] != str(concert.id) for c in data)
+
+
 # 종료된 공연은 찜할 의미가 없어 검색 결과에서 제외
 @pytest.mark.asyncio
 async def test_search_concerts_excludes_ended_concerts():

@@ -455,12 +455,14 @@ async def retry_real_setlist_generation() -> None:
         if not concerts:
             return
 
+        # 곡이 채워졌거나 유저가 편집한 행만 "이미 있음" - 조회 시점 확인이 남긴 빈 행(쿨다운 추적용)까지
+        # 빼면 14일 창 안인데도 매일 재시도가 영영 안 돔
         existing_result = await db.execute(
-            select(RealSetlist.concert_id, RealSetlist.performance_date).where(
-                RealSetlist.concert_id.in_([c.id for c in concerts])
-            )
+            select(
+                RealSetlist.concert_id, RealSetlist.performance_date, RealSetlist.songs, RealSetlist.is_user_edited
+            ).where(RealSetlist.concert_id.in_([c.id for c in concerts]))
         )
-        existing = {(row[0], row[1]) for row in existing_result.all()}
+        existing = {(row[0], row[1]) for row in existing_result.all() if row[2] or row[3]}
 
     targets: list[tuple[UUID, date]] = []
     for concert in concerts:

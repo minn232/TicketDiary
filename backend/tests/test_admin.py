@@ -822,7 +822,7 @@ async def test_try_link_canonical_sets_mbid_and_relations_on_match():
     ), patch(
         "app.services.artist_normalization.fetch_korean_label", new=AsyncMock(return_value=f"한글{name}")
     ), patch(
-        "app.services.artist_normalization._register_artist_image", new=AsyncMock(return_value=None)
+        "app.services.artist_normalization.register_artist_image", new=AsyncMock(return_value=None)
     ):
         await try_link_canonical_to_musicbrainz(canonical_id)
 
@@ -1640,6 +1640,10 @@ async def test_admin_crawl_targets_includes_concert_attempted_long_ago():
 @pytest.mark.asyncio
 async def test_admin_uploads_manual_crawl_screenshot():
     concert_id = await _create_concert(f"PF_CRAWLUP_{uuid.uuid4().hex[:6]}", "테스트가수")
+    async with AsyncSessionLocal() as db:
+        # 이전 스크린샷에 대한 LLM 결과가 이미 도착한 상태 - 새 스크린샷이 올라오면 비워져야 재전송됨
+        (await db.get(Concert, uuid.UUID(concert_id))).crawl_result_received_at = datetime.now(timezone.utc)
+        await db.commit()
     fake_url = "https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/crawls/x/yes24_1700000000.png"
 
     mock_upload = AsyncMock(return_value=fake_url)
@@ -1667,6 +1671,7 @@ async def test_admin_uploads_manual_crawl_screenshot():
         assert concert.crawl_screenshot_url == fake_url
         assert concert.crawl_attempted_at is not None
         assert concert.crawl_attempt_count == 1
+        assert concert.crawl_result_received_at is None
 
 
 @pytest.mark.asyncio

@@ -44,7 +44,7 @@ _CACHE_DIR = _DIR / "cache"
 # Setlist.fm은 초당 2회 제한이라 여유를 두고, 429가 오면 늘려가며 재시도
 _SETLISTFM_DELAY = 0.7
 _RETRY_DELAYS = (5, 15, 45)
-_ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
+ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 _HANGUL_RE = re.compile(r"[가-힣]")
 
 
@@ -111,7 +111,7 @@ async def _fetch_setlistfm(client: httpx.AsyncClient, mbid: str, pages: int) -> 
 # us 스토어 곡 원본(발매일 필요) + kr 스토어 제목. 피처링 참여 곡은 아티스트 ID로 거름
 async def _fetch_itunes(client: httpx.AsyncClient, itunes_artist_id: str) -> dict:
     response = await client.get(
-        _ITUNES_LOOKUP_URL, params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": "us"}
+        ITUNES_LOOKUP_URL, params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": "us"}
     )
     response.raise_for_status()
     tracks = [
@@ -121,7 +121,7 @@ async def _fetch_itunes(client: httpx.AsyncClient, itunes_artist_id: str) -> dic
     kr_titles: dict[str, str] = {}
     if tracks:
         ids = ",".join(str(t["trackId"]) for t in tracks if t.get("trackId"))
-        kr = await client.get(_ITUNES_LOOKUP_URL, params={"id": ids, "country": "kr"})
+        kr = await client.get(ITUNES_LOOKUP_URL, params={"id": ids, "country": "kr"})
         if kr.status_code == 200:
             kr_titles = {
                 str(r["trackId"]): r["trackName"]

@@ -309,9 +309,9 @@ async def test_change_to_musicbrainz_candidate_creates_canonical():
     detail = AsyncMock(return_value={"mbid": mbid, "name": f"{artist} (MB)", "country": "KR",
                                      "type": "Person", "disambiguation": None, "begin_year": None})
     with patch(f"{_SERVICE}.fetch_artist_detail", new=detail), patch(
-        f"{_SERVICE}._fetch_and_store_group_relations", new=AsyncMock()
-    ), patch(f"{_SERVICE}._register_wikidata_korean_alias", new=AsyncMock()), patch(
-        f"{_SERVICE}._register_artist_image", new=AsyncMock()
+        f"{_SERVICE}.fetch_and_store_group_relations", new=AsyncMock()
+    ), patch(f"{_SERVICE}.register_wikidata_korean_alias", new=AsyncMock()), patch(
+        f"{_SERVICE}.register_artist_image", new=AsyncMock()
     ):
         res = await _post_change(ticket_id, token, {"artist": artist, "mbid": mbid})
 

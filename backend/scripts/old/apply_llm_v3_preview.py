@@ -5,7 +5,7 @@
 실제 웹훅(app/api/v1/endpoints/crawl.py의 receive_artist_extraction_result)과 최대한
 동일한 로직(merge_artist_names/upgrade_event_type_if_multi_artist/upsert_concert_lineup)을
 그대로 재사용하되, 아래 두 부수효과는 "미리보기"라는 목적상 일부러 뺐다:
-  - _create_news_feeds_for_concert (팔로워 뉴스피드 생성) - 실험용/오탈자 있는 데이터로
+  - create_news_feeds_for_concert (팔로워 뉴스피드 생성) - 실험용/오탈자 있는 데이터로
     실제 유저 피드에 노출되는 걸 막기 위함
   - backfill_first_last_day_from_concert (기존 티켓 첫콘/막콘 재계산) - 실제 등록된
     티켓 데이터를 건드리지 않기 위함

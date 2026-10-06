@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artist_normalization import ArtistAlias, ArtistGroupMembership, CanonicalArtist
 from app.models.concert import Concert
+from app.services.text_utils import escape_like
 
 # 후보를 이 갯수만큼 SQL에서 가져온 뒤 파이썬에서 순위를 매겨 최종 limit만큼 자름
 _CANDIDATE_FETCH_LIMIT = 200
@@ -20,23 +21,25 @@ async def search_artists(db: AsyncSession, query: str, limit: int = 30) -> list[
     if not q:
         return []
 
+    like = f"%{escape_like(q)}%"
+
     name_unnested = (
         select(func.unnest(Concert.artist_name).label("name")).where(Concert.artist_name != []).subquery()
     )
     raw_result = await db.execute(
         select(name_unnested.c.name.distinct())
-        .where(name_unnested.c.name.ilike(f"%{q}%"))
+        .where(name_unnested.c.name.ilike(like, escape="\\"))
         .limit(_CANDIDATE_FETCH_LIMIT)
     )
     raw_names = [n for n in raw_result.scalars().all() if n]
 
     canonical_result = await db.execute(
-        select(CanonicalArtist).where(CanonicalArtist.canonical_name.ilike(f"%{q}%")).limit(_CANDIDATE_FETCH_LIMIT)
+        select(CanonicalArtist).where(CanonicalArtist.canonical_name.ilike(like, escape="\\")).limit(_CANDIDATE_FETCH_LIMIT)
     )
     alias_result = await db.execute(
         select(CanonicalArtist)
         .join(ArtistAlias, ArtistAlias.canonical_artist_id == CanonicalArtist.id)
-        .where(ArtistAlias.alias_text.ilike(f"%{q}%"))
+        .where(ArtistAlias.alias_text.ilike(like, escape="\\"))
         .limit(_CANDIDATE_FETCH_LIMIT)
     )
     canonicals: dict = {c.id: c for c in canonical_result.scalars().all()}

@@ -71,6 +71,14 @@ def _reset_rate_limits():
     yield
 
 
+# Apple Music 링크 없음 캐시(모듈 전역)가 테스트 사이에 새면, 같은 mbid로 링크를 mock하는 다음 테스트가 깨짐
+@pytest.fixture(autouse=True)
+def _reset_apple_link_miss_cache():
+    from app.services.representative_songs import _apple_link_missed_at
+    _apple_link_missed_at.clear()
+    yield
+
+
 # 티켓 등록(POST /tickets)이 백그라운드로 Last.fm 장르 즉시 캐싱(ensure_artist_genres_cached)을
 # 트리거하는데, 이걸 기본으로 막아두지 않으면 티켓을 만드는 모든 테스트가 로컬 .env의 진짜
 # LASTFM_API_KEY로 실제 네트워크 호출을 하게 됨(느려지고, 테스트용 아티스트명이 실제 캐시

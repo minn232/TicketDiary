@@ -3,7 +3,7 @@ import asyncio
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, rate_limit_upload, reject_oversized_request
 from app.models.user import User
 from app.services.storage import upload_image, ALLOWED_CONTENT_TYPES
 
@@ -16,14 +16,6 @@ class UploadResponse(BaseModel):
     url: str
     # 공연 사진에 썸네일을 같이 보냈을 때만 채워짐
     thumb_url: str | None = None
-
-
-# Content-Length(요청 전체 크기)로 다운로드 전 사전 거절 - 파일이 여러 개면 그 합이라 파일 수만큼 허용
-# (원본 9MB + 썸네일처럼 각각은 한도 안인데 합이 10MB를 넘어 거절되던 문제). 파일별 한도는 _read_and_validate
-def _reject_oversized_request(request: Request, file_count: int) -> None:
-    content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > _MAX_IMAGE_SIZE * file_count:
-        raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
 
 # 이미지 크기 및 형식 검증 후 바이트 반환
@@ -48,8 +40,9 @@ async def upload_ticket_image(
     request: Request,
     image: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(rate_limit_upload),
 ):
-    _reject_oversized_request(request, file_count=1)
+    reject_oversized_request(request, file_count=1)
     image_bytes = await _read_and_validate(image)
     url = await upload_image(image_bytes, "ticket-images", image.content_type or "image/jpeg")
     return UploadResponse(url=url)
@@ -63,8 +56,9 @@ async def upload_concert_photo(
     image: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     current_user: User = Depends(get_current_user),
+    _rate_limit: None = Depends(rate_limit_upload),
 ):
-    _reject_oversized_request(request, file_count=1 if thumbnail is None else 2)
+    reject_oversized_request(request, file_count=1 if thumbnail is None else 2)
     image_bytes = await _read_and_validate(image)
     if thumbnail is None:
         url = await upload_image(image_bytes, "concert-photos", image.content_type or "image/jpeg")

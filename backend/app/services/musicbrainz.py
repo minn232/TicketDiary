@@ -121,7 +121,7 @@ async def search_artist(name: str, client: httpx.AsyncClient | None = None) -> l
 
 
 # canonical 하나(mbid)가 Wikidata 항목과 연결돼 있으면 그 QID(예: "Q165193")를 반환. 관계가
-# 없거나 조회 실패 시 None - 호출부(artist_normalization._register_wikidata_korean_alias)가
+# 없거나 조회 실패 시 None - 호출부(artist_normalization.register_wikidata_korean_alias)가
 # 조용히 건너뛴다
 async def fetch_wikidata_qid(mbid: str, client: httpx.AsyncClient | None = None) -> str | None:
     async def _fetch(c: httpx.AsyncClient) -> str | None:
@@ -221,7 +221,7 @@ async def fetch_current_mbid(mbid: str) -> str | None:
 
 # canonical의 mbid로 MusicBrainz가 걸어둔 Spotify 아티스트 링크를 찾는다(fetch_wikidata_qid와
 # 같은 url-rels 관계에서 open.spotify.com/artist 링크만 골라냄). mbid 앵커라 이름 검색과
-# 달리 동명이인 위험 없음(_register_artist_image 참고).
+# 달리 동명이인 위험 없음(register_artist_image 참고).
 async def fetch_spotify_artist_url(mbid: str, client: httpx.AsyncClient | None = None) -> str | None:
     async def _fetch(c: httpx.AsyncClient) -> str | None:
         data = await _get_with_retry(

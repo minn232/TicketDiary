@@ -656,6 +656,31 @@ async def test_delete_ticket_cleans_up_s3_photos():
     mock_delete.assert_called_once_with(_s3_key(photo_url))
 
 
+# 회원 탈퇴하면 그 유저 티켓의 S3 사진(티켓 이미지 포함)도 같이 지워지는지 테스트
+@pytest.mark.asyncio
+async def test_delete_account_cleans_up_s3_photos():
+    concert_id = await _create_concert("PF_PHOTO_DEL_003")
+    headers = {"Authorization": f"Bearer {await _get_token()}"}
+    photo_url = _unique_s3_url("concert-photos")
+    image_url = _unique_s3_url("ticket-images")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        create_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        ticket_id = create_res.json()["id"]
+        await ac.patch(
+            f"/api/v1/tickets/{ticket_id}",
+            json={"concert_photo_urls": [photo_url], "ticket_image_url": image_url},
+            headers=headers,
+        )
+
+        with patch("app.services.storage._do_delete") as mock_delete:
+            res = await ac.delete("/api/v1/auth/me", headers=headers)
+
+    assert res.status_code == 204
+    deleted_keys = {call.args[0] for call in mock_delete.call_args_list}
+    assert deleted_keys == {_s3_key(photo_url), _s3_key(image_url)}
+
+
 # 남의 사진 URL을 내 티켓에 넣었다 빼거나 티켓째 지워도, 원래 주인 티켓이 참조 중이면 S3에서 안 지움
 @pytest.mark.asyncio
 async def test_ticket_photo_referenced_by_other_ticket_not_deleted():

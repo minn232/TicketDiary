@@ -94,7 +94,7 @@ def _png_bytes(height):
 @pytest.mark.asyncio
 async def test_compute_ranges_returns_lists():
     words = _time_row(1000) + _time_row(1100) + _time_row(1200)
-    with patch("app.services.timetable_ranges._call_vision", new=AsyncMock(return_value=_annotation(words, 5000))):
+    with patch("app.services.timetable_ranges.call_vision", new=AsyncMock(return_value=_annotation(words, 5000))):
         assert await compute_timetable_ranges(_png_bytes(5000)) == [[936, 1285]]
 
 
@@ -102,7 +102,7 @@ async def test_compute_ranges_returns_lists():
 @pytest.mark.asyncio
 async def test_compute_ranges_rescales_when_vision_downscaled():
     words = _time_row(500) + _time_row(550) + _time_row(600)
-    with patch("app.services.timetable_ranges._call_vision", new=AsyncMock(return_value=_annotation(words, 2500))):
+    with patch("app.services.timetable_ranges.call_vision", new=AsyncMock(return_value=_annotation(words, 2500))):
         [[top, bottom]] = await compute_timetable_ranges(_png_bytes(5000))
     assert top < 1000 and bottom > 1240
 
@@ -110,11 +110,11 @@ async def test_compute_ranges_rescales_when_vision_downscaled():
 # Vision 실패는 None(미계산)으로 - 스크린샷 저장 흐름을 막으면 안 됨
 @pytest.mark.asyncio
 async def test_compute_ranges_returns_none_on_vision_failure():
-    with patch("app.services.timetable_ranges._call_vision", new=AsyncMock(side_effect=Exception("quota"))):
+    with patch("app.services.timetable_ranges.call_vision", new=AsyncMock(side_effect=Exception("quota"))):
         assert await compute_timetable_ranges(_png_bytes(1000)) is None
 
 
 @pytest.mark.asyncio
 async def test_compute_ranges_empty_when_no_timetable():
-    with patch("app.services.timetable_ranges._call_vision", new=AsyncMock(return_value={})):
+    with patch("app.services.timetable_ranges.call_vision", new=AsyncMock(return_value={})):
         assert await compute_timetable_ranges(_png_bytes(1000)) == []

@@ -17,9 +17,9 @@ class CanonicalArtist(Base):
     mbid = Column(String, nullable=True, unique=True, index=True)
     canonical_name = Column(String, nullable=False)
     # 매칭 키(canonical_name)와 화면 표시를 분리하는 필드 - NULL이면 canonical_name 그대로 표시.
-    # Wikidata 한글 label 자동 채택(_register_wikidata_korean_alias) 또는 admin 수동 선택으로 채워짐
+    # Wikidata 한글 label 자동 채택(register_wikidata_korean_alias) 또는 admin 수동 선택으로 채워짐
     display_name = Column(String, nullable=True)
-    # 아티스트 사진 URL(_register_artist_image) - Spotify(mbid로 연결된 공식 링크) 우선, 없으면
+    # 아티스트 사진 URL(register_artist_image) - Spotify(mbid로 연결된 공식 링크) 우선, 없으면
     # Wikidata 대표 이미지로 대체. 둘 다 없으면 NULL(화면에서 플레이스홀더 아이콘으로 대체)
     profile_image_url = Column(String, nullable=True)
     # 대표곡(Setlist.fm에 셋리가 없을 때) 카탈로그용 iTunes 아티스트 ID - 이름 검색은 동명이인

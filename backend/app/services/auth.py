@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.user import User, UserRole
+from app.services.ticket import delete_unreferenced_images, list_user_image_urls
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,8 @@ async def kakao_login(db: AsyncSession, code: str) -> User:
     result = await db.execute(select(User).where(User.kakao_id == kakao_id))
     user = result.scalar_one_or_none()
 
-    # 기존 유저가 아니라면 생성, 맞다면 프로필 갱신
+    # 기존 유저가 아니라면 생성. 기존 유저는 비어 있는 프로필만 채움 - 앱에서 바꾼 닉네임/이미지를
+    # 재로그인마다 카카오 값으로 되돌리지 않기 위함
     if user is None:
         user = User(
             kakao_id=kakao_id,
@@ -102,8 +104,10 @@ async def kakao_login(db: AsyncSession, code: str) -> User:
         )
         db.add(user)
     else:
-        user.nickname = nickname
-        user.profile_image_url = profile_image_url
+        if not user.nickname:
+            user.nickname = nickname
+        if not user.profile_image_url:
+            user.profile_image_url = profile_image_url
 
     await db.commit()
     await db.refresh(user)
@@ -138,6 +142,14 @@ async def migrate_to_kakao(db: AsyncSession, current_user: User, code: str) -> U
 async def get_user_by_id(db: AsyncSession, user_id: str | UUID) -> User | None:
     result = await db.execute(select(User).where(User.id == user_id))
     return result.scalar_one_or_none()
+
+
+# 회원 탈퇴 - DB는 cascade로 지워지지만 S3 사진은 안 지워져서(공개 URL로 남음) 커밋 뒤 따로 정리
+async def delete_account(db: AsyncSession, user: User) -> None:
+    image_urls = await list_user_image_urls(db, user.id)
+    await db.delete(user)
+    await db.commit()
+    await delete_unreferenced_images(db, image_urls)
 
 
 # 회원 프로필(닉네임/프로필 이미지) 수정

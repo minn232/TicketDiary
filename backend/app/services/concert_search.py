@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.concert import Concert
-from app.services.text_utils import min_len_ok
+from app.services.text_utils import escape_like, min_len_ok
 
 _RESULT_LIMIT = 30
 
@@ -19,7 +19,7 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
         return []
 
     now = datetime.now(timezone.utc)
-    pattern = f"%{q}%"
+    pattern = f"%{escape_like(q)}%"
 
     name_unnested = (
         select(Concert.id.label("concert_id"), func.unnest(Concert.artist_name).label("name"))
@@ -29,7 +29,7 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
 
     # 1) 공연명 직접 매치
     title_result = await db.execute(
-        select(Concert.id).where(Concert.name.ilike(pattern), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
+        select(Concert.id).where(Concert.name.ilike(pattern, escape="\\"), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
     )
     matched_ids: set = set(title_result.scalars().all())
 
@@ -37,18 +37,18 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
     artist_result = await db.execute(
         select(name_unnested.c.concert_id.distinct())
         .join(Concert, Concert.id == name_unnested.c.concert_id)
-        .where(name_unnested.c.name.ilike(pattern), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
+        .where(name_unnested.c.name.ilike(pattern, escape="\\"), Concert.end_date > now, Concert.kopis_missing_at.is_(None))
     )
     matched_ids.update(artist_result.scalars().all())
 
     # 3) 별칭/원어 표기 매치 (멤버->그룹 확장 없이, 자기 표기가 등장하는 공연만)
     canonical_result = await db.execute(
-        select(CanonicalArtist).where(CanonicalArtist.canonical_name.ilike(pattern))
+        select(CanonicalArtist).where(CanonicalArtist.canonical_name.ilike(pattern, escape="\\"))
     )
     alias_result = await db.execute(
         select(CanonicalArtist)
         .join(ArtistAlias, ArtistAlias.canonical_artist_id == CanonicalArtist.id)
-        .where(ArtistAlias.alias_text.ilike(pattern))
+        .where(ArtistAlias.alias_text.ilike(pattern, escape="\\"))
     )
     canonicals = {c.id: c for c in canonical_result.scalars().all()}
     for c in alias_result.scalars().all():
@@ -77,5 +77,6 @@ async def search_concerts_db(db: AsyncSession, query: str, limit: int = _RESULT_
         select(Concert)
         .where(Concert.id.in_(matched_ids), Concert.kopis_missing_at.is_(None))
         .order_by(Concert.start_date)
+        .limit(limit)
     )
-    return list(result.scalars().all())[:limit]
+    return list(result.scalars().all())

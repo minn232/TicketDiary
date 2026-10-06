@@ -40,7 +40,7 @@ _MEDIALS_INFORMAL[6] = "yu"  # ㅕ
 _ROMANIZATION_MATCH_THRESHOLD = 95
 
 
-def _contains_hangul(text: str) -> bool:
+def contains_hangul(text: str) -> bool:
     return any(_HANGUL_BASE <= ord(ch) <= _HANGUL_END for ch in text)
 
 
@@ -59,7 +59,7 @@ def _romanize(text: str, initials: list[str], medials: list[str]) -> str:
 
 # 한글이 섞인 이름의 로마자 변환 후보 두 개(표준/통용) 반환, 한글이 없으면 빈 리스트
 def _romanized_variants(text: str) -> list[str]:
-    if not _contains_hangul(text):
+    if not contains_hangul(text):
         return []
     return [_romanize(text, _INITIALS, _MEDIALS), _romanize(text, _INITIALS_INFORMAL, _MEDIALS_INFORMAL)]
 
@@ -70,7 +70,7 @@ _NON_ALNUM_RE = re.compile(r"[^0-9a-z가-힣]+")
 # 로마자 변환 결과엔 공백이 없는데("김현정" -> "gimhyeonjeong") known 쪽 원문엔 공백이 있는
 # 경우가 많아서(예: "Jin Hyeon Jun") utils.default_process만으론 공백 차이가 유사도를 깎는다.
 # 공백/기호를 아예 없애고 비교(rapidfuzz의 default_process는 공백을 유지함)
-def _compact(text: str) -> str:
+def compact(text: str) -> str:
     return _NON_ALNUM_RE.sub("", text.lower())
 
 
@@ -80,18 +80,18 @@ def _compact(text: str) -> str:
 # 유사도 미달인데도 잘못 병합됨 - 둘 다 한글이면 이 함수 자체를 안 태움(원문 fuzz.ratio가
 # 이미 담당, 로마자 변환은 정보손실이라 오히려 위험함)
 def _romanization_match(name: str, known_names: set[str]) -> str | None:
-    name_has_hangul = _contains_hangul(name)
+    name_has_hangul = contains_hangul(name)
     name_variants = _romanized_variants(name) if name_has_hangul else [name]
 
     best_score, best_match = 0, None
     for known in known_names:
-        known_has_hangul = _contains_hangul(known)
+        known_has_hangul = contains_hangul(known)
         if name_has_hangul == known_has_hangul:
             continue  # 둘 다 한글이거나 둘 다 아니면 이 함수가 할 일이 없음(한→한은 원문 매칭이 이미 담당, 로마자 경유는 스크립트가 실제로 다를 때만 필요)
         known_variants = _romanized_variants(known) if known_has_hangul else [known]
         for a in name_variants:
             for b in known_variants:
-                score = fuzz.ratio(_compact(a), _compact(b))
+                score = fuzz.ratio(compact(a), compact(b))
                 if score > best_score:
                     best_score, best_match = score, known
 

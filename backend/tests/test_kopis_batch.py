@@ -185,7 +185,7 @@ def test_is_large_venue_passes_everything_when_keywords_empty():
         assert _is_large_venue("동네공연장")
 
 
-# _throttle_kopis_request 테스트
+# throttle_kopis_request 테스트
 
 # KOPIS IP당 초당 10회 제한(공식 정책)을 넘지 않도록 연속 호출 시 대기하는지 테스트
 @pytest.mark.asyncio
@@ -201,10 +201,10 @@ async def test_throttle_kopis_request_waits_when_called_too_soon():
         patch("asyncio.sleep", sleep_mock),
         patch("asyncio.get_event_loop", return_value=mock_loop),
     ):
-        await kopis_module._throttle_kopis_request()
+        await kopis_module.throttle_kopis_request()
         sleep_mock.assert_not_called()
 
-        await kopis_module._throttle_kopis_request()
+        await kopis_module.throttle_kopis_request()
         sleep_mock.assert_awaited_once()
         waited = sleep_mock.await_args[0][0]
         assert waited == pytest.approx(0.25, abs=0.01)
@@ -875,6 +875,24 @@ async def test_upsert_concert_concurrent_insert_creates_single_row():
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.kopis_id == kopis_id))
         assert len(result.scalars().all()) == 1
+
+
+# 검색/상세 upsert가 공연명으로 추측한 SOLO로 이미 FESTIVAL로 승격된 공연을 되돌리지 않는지 테스트
+@pytest.mark.asyncio
+async def test_upsert_concert_does_not_downgrade_festival():
+    kopis_id = f"PF_FEST_{uuid.uuid4().hex[:8]}"
+    base = {
+        "kopis_id": kopis_id,
+        "name": "워터밤",
+        "artist_name": [],
+        "start_date": datetime(2030, 6, 1, tzinfo=timezone.utc),
+        "end_date": datetime(2030, 6, 1, tzinfo=timezone.utc),
+    }
+    async with AsyncSessionLocal() as db:
+        await _upsert_concert(db, {**base, "event_type": "FESTIVAL"})
+        concert = await _upsert_concert(db, {**base, "event_type": "SOLO"})
+        await db.commit()
+        assert concert.event_type == "FESTIVAL"
 
 
 # KOPIS API 호출 자체가 실패해도 예외를 밖으로 던지지 않고 기존 링크를 유지하는지 테스트

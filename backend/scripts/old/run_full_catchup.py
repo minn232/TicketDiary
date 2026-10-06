@@ -29,7 +29,7 @@ from sqlalchemy import select  # noqa: E402
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.artist_normalization import CanonicalArtist  # noqa: E402
 from app.services.artist_normalization import (  # noqa: E402
-    _register_artist_image,
+    register_artist_image,
     normalize_pending_artists,
 )
 
@@ -70,7 +70,7 @@ async def _run_image_backfill() -> None:
             for i, canonical in enumerate(canonicals, start=1):
                 before = canonical.profile_image_url
                 try:
-                    await _register_artist_image(db, canonical, client)
+                    await register_artist_image(db, canonical, client)
                 except Exception as e:
                     logger.warning(f"사진 조회 실패, 건너뜀 (canonical={canonical.canonical_name!r}): {e}")
                     continue

@@ -5,7 +5,7 @@ import re
 
 from PIL import Image
 
-from app.services.ocr import _bounding_box, _call_vision, _to_jpeg
+from app.services.ocr import _bounding_box, call_vision, to_jpeg
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def find_timetable_ranges(annotation: dict, image_height: int) -> list[tuple[int
 
 # 원본 높이 + Vision 전송용 JPEG (동기, run_in_executor 전용 - 세로로 긴 스크린샷 디코딩이 이벤트 루프를 막음)
 def _prepare_image(image_bytes: bytes) -> tuple[int, bytes]:
-    return Image.open(io.BytesIO(image_bytes)).height, _to_jpeg(image_bytes, "image/png")
+    return Image.open(io.BytesIO(image_bytes)).height, to_jpeg(image_bytes, "image/png")
 
 
 # 크롤링 스크린샷(PNG)에서 시간표 구간 세로 범위를 계산해 LLM에 넘길 형태([[top, bottom], ...])로 반환.
@@ -96,7 +96,7 @@ async def compute_timetable_ranges(image_bytes: bytes) -> list[list[int]] | None
     try:
         loop = asyncio.get_running_loop()
         image_height, jpeg_bytes = await loop.run_in_executor(None, _prepare_image, image_bytes)
-        annotation = await _call_vision(jpeg_bytes)
+        annotation = await call_vision(jpeg_bytes)
     except Exception as e:
         logger.warning(f"시간표 구간 계산 실패(Vision): {e}")
         return None

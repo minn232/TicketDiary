@@ -13,11 +13,11 @@ from app.models.artist_normalization import ArtistAlias, CanonicalArtist
 from app.models.concert import Concert
 from app.models.user import User
 from app.services.artist_normalization import (
-    _alternate_lookup_names,
-    _fetch_and_store_group_relations,
-    _get_or_create_canonical_by_mbid,
-    _register_artist_image,
-    _register_wikidata_korean_alias,
+    alternate_lookup_names,
+    fetch_and_store_group_relations,
+    get_or_create_canonical_by_mbid,
+    register_artist_image,
+    register_wikidata_korean_alias,
     find_canonical_by_alias,
 )
 from app.services.musicbrainz import fetch_artist_detail, search_artist_detailed
@@ -94,7 +94,7 @@ async def identity_candidates(db: AsyncSession, concert_id: UUID, artist: str) -
     await _concert_with_artist(db, concert_id, artist)
     current, no_artist = await resolve_concert_artist(db, concert_id, artist)
 
-    lowered = [n.strip().lower() for n in [artist, *_alternate_lookup_names(artist)]]
+    lowered = [n.strip().lower() for n in [artist, *alternate_lookup_names(artist)]]
     alias_ids = select(ArtistAlias.canonical_artist_id).where(func.lower(ArtistAlias.alias_text).in_(lowered))
     db_rows = (
         await db.execute(
@@ -157,12 +157,12 @@ async def _canonical_from_mbid(db: AsyncSession, mbid: str) -> CanonicalArtist:
     detail = await fetch_artist_detail(mbid)
     if detail is None:
         raise HTTPException(status_code=400, detail="MusicBrainz 아티스트를 찾을 수 없습니다.")
-    canonical, created = await _get_or_create_canonical_by_mbid(db, detail["mbid"], detail["name"])
+    canonical, created = await get_or_create_canonical_by_mbid(db, detail["mbid"], detail["name"])
     async with httpx.AsyncClient(timeout=10.0) as client:
         if created:
-            await _fetch_and_store_group_relations(db, canonical, client)
-        await _register_wikidata_korean_alias(db, canonical, client)
-        await _register_artist_image(db, canonical, client)
+            await fetch_and_store_group_relations(db, canonical, client)
+        await register_wikidata_korean_alias(db, canonical, client)
+        await register_artist_image(db, canonical, client)
     return canonical
 
 

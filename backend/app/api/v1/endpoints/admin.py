@@ -70,8 +70,8 @@ from app.services.artist_normalization import (
     try_link_canonical_to_musicbrainz,
 )
 from app.services.crawler import (
-    _ARTIST_EXTRACTION_RETRY_COOLDOWN,
-    _MAX_ARTIST_EXTRACTION_ATTEMPTS,
+    ARTIST_EXTRACTION_RETRY_COOLDOWN,
+    MAX_ARTIST_EXTRACTION_ATTEMPTS,
     get_yes24_melon_crawl_targets,
     save_manual_crawl_screenshot,
 )
@@ -128,9 +128,9 @@ def _llm_exclusion_reasons(concert: Concert, now: datetime) -> list[str]:
         reasons.append("포스터 없음")
     attempted_at = concert.artist_extraction_attempted_at
     if attempted_at is not None:
-        if concert.artist_extraction_attempt_count >= _MAX_ARTIST_EXTRACTION_ATTEMPTS:
+        if concert.artist_extraction_attempt_count >= MAX_ARTIST_EXTRACTION_ATTEMPTS:
             reasons.append("재시도 상한 도달")
-        elif now - attempted_at < _ARTIST_EXTRACTION_RETRY_COOLDOWN:
+        elif now - attempted_at < ARTIST_EXTRACTION_RETRY_COOLDOWN:
             reasons.append("쿨다운 대기 중")
     return reasons
 

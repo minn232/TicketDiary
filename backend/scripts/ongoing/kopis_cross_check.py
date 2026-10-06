@@ -13,7 +13,7 @@ DB에 저장된 concert.artist_name(LLM 추출 결과가 반영된 최종값)을
 주의: concert.artist_name은 소규모 공연에서 LLM 결과가 오면 KOPIS 원본을 완전히
 덮어써서(artist_matching.py의 merge_artist_names replace=True 경로) DB엔 원본이 더 이상
 안 남아있다. 그래서 비교 시점마다 KOPIS 상세 API를 다시 호출해 prfcast를 즉석으로
-가져온다 - sync_daily_concerts와 동일한 전역 스로틀(kopis.py의 _throttle_kopis_request,
+가져온다 - sync_daily_concerts와 동일한 전역 스로틀(kopis.py의 throttle_kopis_request,
 초당 ~2.8회)을 그대로 재사용하므로 1,300건도 약 8분이면 끝나고 별도 레이트리밋 로직이
 필요 없다.
 
@@ -43,7 +43,7 @@ from sqlalchemy import func, select  # noqa: E402
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.concert import Concert  # noqa: E402
 from app.services.artist_matching import _romanization_match  # noqa: E402
-from app.services.kopis import _fetch_kopis_detail_data  # noqa: E402
+from app.services.kopis import fetch_kopis_detail_data  # noqa: E402
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -108,13 +108,13 @@ async def main(days: int, limit: int | None, out_path: Path) -> None:
     flagged: list[dict] = []
     failed: list[str] = []
 
-    # 상세 API는 kopis.py 내부 전역 스로틀(_throttle_kopis_request)을 이미 태우므로
+    # 상세 API는 kopis.py 내부 전역 스로틀(throttle_kopis_request)을 이미 태우므로
     # 여기서 별도 동시성 제어 없이 순차 호출 - concurrency를 올려도 스로틀 락 때문에
     # 처리량이 안 늘어남(초당 ~2.8건이 상한)
     async with httpx.AsyncClient(timeout=10.0) as client:
         for i, concert in enumerate(concerts, 1):
             try:
-                data = await _fetch_kopis_detail_data(client, concert.kopis_id)
+                data = await fetch_kopis_detail_data(client, concert.kopis_id)
             except HTTPException as e:
                 failed.append(f"{concert.kopis_id} ({e.detail})")
                 continue

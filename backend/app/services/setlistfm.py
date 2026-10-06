@@ -26,7 +26,7 @@ _ARTIST_MATCH_THRESHOLD = 70
 # 후보가 검색한 아티스트 본인인지 확인. Setlist.fm은 MusicBrainz 별칭(본명 포함)으로도 검색돼서
 # "김지수"→JISOO처럼 이름만 같은 사람이 섞이므로 canonical mbid를 알면 mbid로만 판정함. mbid를
 # 모르면 같은 문자 체계끼리만 유사도 비교("Nell" vs "Nell Mescal"), 한글↔로마자는 거절
-def _artist_matches(
+def artist_matches(
     query: str, candidate_name: str, candidate_mbid: str | None, expected_mbid: str | None
 ) -> bool:
     if not candidate_name:
@@ -65,7 +65,7 @@ async def _filter_matching(query: str, raw_list: list[dict], expected_mbid: str 
     for raw in raw_list:
         artist = raw.get("artist") or {}
         mbid = artist.get("mbid")
-        if _artist_matches(query, artist.get("name", ""), merged.get(mbid, mbid), expected_mbid):
+        if artist_matches(query, artist.get("name", ""), merged.get(mbid, mbid), expected_mbid):
             matched.append(raw)
     return matched
 

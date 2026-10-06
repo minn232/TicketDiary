@@ -14,9 +14,9 @@ from app.core.config import settings
 from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
 from app.services.artist_identity import get_concert_link, resolve_concert_artist
 from app.services.lastfm import fetch_top_tracks
-from app.services.music_resolve import _looks_like_alt_version
+from app.services.music_resolve import looks_like_alt_version
 from app.services.musicbrainz import fetch_apple_music_artist_id
-from app.services.setlistfm import _artist_matches
+from app.services.setlistfm import artist_matches
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ NO_ITUNES_ANCHOR = "none"
 
 # 검색/곡 순서는 us 스토어(kr은 검색이 0건, us 순서는 인기순에 가까움), 표시 제목은 kr 스토어
 # ID 재조회로 가져옴(us는 한국 곡도 "For Lovers Who Hesitate"처럼 영문 제목, kr은 한글 원제)
-_ITUNES_COUNTRY = "us"
+ITUNES_COUNTRY = "us"
 _ITUNES_TITLE_COUNTRY = "kr"
-_ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
+ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 _ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 
 # Last.fm만으로 대표곡을 채울 때의 품질 기준 - 무명 아티스트는 청취자 수십 명 이하에 잡음
@@ -47,9 +47,9 @@ def _title_key(title: str) -> str:
 _EXTRA_ALT_MARKERS = ("inst.", "(mr)", "반주")
 
 
-def _is_alt_version(title: str) -> bool:
+def is_alt_version(title: str) -> bool:
     lower = title.lower()
-    return _looks_like_alt_version(title) or any(marker in lower for marker in _EXTRA_ALT_MARKERS)
+    return looks_like_alt_version(title) or any(marker in lower for marker in _EXTRA_ALT_MARKERS)
 
 
 def _dedupe_titles(titles: list[str]) -> list[str]:
@@ -57,7 +57,7 @@ def _dedupe_titles(titles: list[str]) -> list[str]:
     result = []
     for title in titles:
         key = _title_key(title)
-        if key and key not in seen and not _is_alt_version(title):
+        if key and key not in seen and not is_alt_version(title):
             seen.add(key)
             result.append(title)
     return result
@@ -65,7 +65,7 @@ def _dedupe_titles(titles: list[str]) -> list[str]:
 
 # kr 스토어에서 같은 ID들(곡/아티스트)을 다시 조회해 (trackId -> 곡, artistId -> 아티스트).
 # 실패하거나 kr에 없는 항목은 호출부가 us 값을 그대로 씀
-async def _lookup_in_title_store(
+async def lookup_in_title_store(
     client: httpx.AsyncClient, track_ids: list[int], artist_ids: list[int] = ()
 ) -> tuple[dict[int, dict], dict[int, dict]]:
     ids = [*artist_ids, *track_ids]
@@ -73,7 +73,7 @@ async def _lookup_in_title_store(
         return {}, {}
     try:
         response = await client.get(
-            _ITUNES_LOOKUP_URL, params={"id": ",".join(map(str, ids)), "country": _ITUNES_TITLE_COUNTRY}
+            ITUNES_LOOKUP_URL, params={"id": ",".join(map(str, ids)), "country": _ITUNES_TITLE_COUNTRY}
         )
         response.raise_for_status()
         results = response.json().get("results", [])
@@ -99,15 +99,15 @@ async def fetch_itunes_artist_catalog(itunes_artist_id: str) -> list[tuple[str, 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                _ITUNES_LOOKUP_URL,
-                params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": _ITUNES_COUNTRY},
+                ITUNES_LOOKUP_URL,
+                params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": ITUNES_COUNTRY},
             )
             response.raise_for_status()
             tracks = [
                 r for r in response.json().get("results", [])
                 if r.get("wrapperType") == "track" and str(r.get("artistId")) == itunes_artist_id
             ]
-            titled, _ = await _lookup_in_title_store(client, [r["trackId"] for r in tracks if r.get("trackId")])
+            titled, _ = await lookup_in_title_store(client, [r["trackId"] for r in tracks if r.get("trackId")])
     except (httpx.HTTPError, ValueError) as e:
         logger.warning(f"iTunes 곡 목록 조회 실패 (artist_id={itunes_artist_id}): {e}")
         return []
@@ -145,7 +145,7 @@ async def fetch_itunes_artist_songs(itunes_artist_id: str) -> list[str]:
 # iTunes 아티스트 ID가 실제로 존재하는지 확인하고 그 이름을 반환(없으면 None)
 async def fetch_itunes_artist_name(itunes_artist_id: str) -> str | None:
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(_ITUNES_LOOKUP_URL, params={"id": itunes_artist_id, "country": _ITUNES_COUNTRY})
+        response = await client.get(ITUNES_LOOKUP_URL, params={"id": itunes_artist_id, "country": ITUNES_COUNTRY})
     if response.status_code != 200:
         return None
     artist = next((r for r in response.json().get("results", []) if r.get("wrapperType") == "artist"), None)
@@ -157,12 +157,12 @@ async def search_itunes_songs(term: str, limit: int = 25) -> list[dict]:
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(
             _ITUNES_SEARCH_URL,
-            params={"term": term, "media": "music", "entity": "song", "country": _ITUNES_COUNTRY, "limit": limit},
+            params={"term": term, "media": "music", "entity": "song", "country": ITUNES_COUNTRY, "limit": limit},
         )
         if response.status_code != 200:
             raise HTTPException(status_code=502, detail="iTunes 검색에 실패했습니다.")
         results = [r for r in response.json().get("results", []) if r.get("artistId") and r.get("trackName")]
-        titled, _ = await _lookup_in_title_store(client, [r["trackId"] for r in results if r.get("trackId")])
+        titled, _ = await lookup_in_title_store(client, [r["trackId"] for r in results if r.get("trackId")])
 
     candidates = []
     for r in results:
@@ -193,7 +193,7 @@ async def search_itunes_artists(artist: str, limit: int = 8) -> list[dict]:
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(
             _ITUNES_SEARCH_URL,
-            params={"term": artist, "entity": "musicArtist", "country": _ITUNES_COUNTRY, "limit": limit},
+            params={"term": artist, "entity": "musicArtist", "country": ITUNES_COUNTRY, "limit": limit},
         )
         if response.status_code != 200:
             raise HTTPException(status_code=502, detail="iTunes 검색에 실패했습니다.")
@@ -204,12 +204,12 @@ async def search_itunes_artists(artist: str, limit: int = 8) -> list[dict]:
 
         artist_ids = [a["artistId"] for a in found]
         songs_response = await client.get(
-            _ITUNES_LOOKUP_URL,
-            params={"id": ",".join(map(str, artist_ids)), "entity": "song", "limit": 6, "country": _ITUNES_COUNTRY},
+            ITUNES_LOOKUP_URL,
+            params={"id": ",".join(map(str, artist_ids)), "entity": "song", "limit": 6, "country": ITUNES_COUNTRY},
         )
         songs_response.raise_for_status()
         tracks = [r for r in songs_response.json().get("results", []) if r.get("wrapperType") == "track"]
-        titled, kr_artists = await _lookup_in_title_store(client, [t["trackId"] for t in tracks], artist_ids)
+        titled, kr_artists = await lookup_in_title_store(client, [t["trackId"] for t in tracks], artist_ids)
 
     candidates = []
     for a in found:
@@ -270,7 +270,7 @@ async def _lastfm_top_tracks(artist: str, mbid: str | None) -> list[tuple[str, i
         if tracks:
             return tracks
     resolved_name, tracks = await fetch_top_tracks(artist_name=artist)
-    return tracks if _artist_matches(artist, resolved_name, None, None) else []
+    return tracks if artist_matches(artist, resolved_name, None, None) else []
 
 
 _CANDIDATE_SONGS_CACHE_TTL = timedelta(days=1)
@@ -370,13 +370,24 @@ async def candidate_top_songs_for(pairs: list[tuple[str | None, str | None]], li
     return [r.songs[:limit] for r in results]
 
 
+# Apple Music 링크가 없는 mbid는 하루 동안 다시 안 물어봄 - 미리듣기를 열 때마다 아티스트마다
+# MusicBrainz(호출 간격 2초, 실패 시 재시도 대기)를 부르면 응답이 수십 초 걸림
+_APPLE_LINK_MISS_TTL = timedelta(days=1)
+_apple_link_missed_at: dict[str, datetime] = {}
+
+
 # 확정된 iTunes 아티스트가 없으면 MusicBrainz의 Apple Music 링크로 찾아서 canonical에 저장
 async def _resolve_itunes_artist_id(db: AsyncSession, canonical: CanonicalArtist | None) -> str | None:
     if canonical is None:
         return None
     if canonical.itunes_artist_id or not canonical.mbid:
         return canonical.itunes_artist_id
+    missed_at = _apple_link_missed_at.get(canonical.mbid)
+    if missed_at is not None and datetime.now(timezone.utc) - missed_at < _APPLE_LINK_MISS_TTL:
+        return None
     itunes_artist_id = await fetch_apple_music_artist_id(canonical.mbid)
+    if itunes_artist_id is None:
+        _apple_link_missed_at[canonical.mbid] = datetime.now(timezone.utc)
     if itunes_artist_id:
         canonical.itunes_artist_id = itunes_artist_id
         canonical.anchor_confirmed_by = "musicbrainz"

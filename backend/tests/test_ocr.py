@@ -492,6 +492,16 @@ def test_extract_title_from_layout_skips_status_bar():
     assert _extract_title_from_layout(rows, None)[0] == "YUURI ARENA LIVE 2025 at SEOUL"
 
 
+# 이미지가 아닌 파일은 서버 오류(500)가 아니라 422로 응답
+@pytest.mark.asyncio
+async def test_extract_ticket_info_unreadable_image_is_422():
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        await extract_ticket_info(b"this is not an image", "image/png")
+    assert exc.value.status_code == 422
+
+
 # _extract_ticket_info 통합 테스트 (Vision 응답 1회 안에서 격자 파싱과 폴백이 갈리는지)
 
 @pytest.mark.asyncio

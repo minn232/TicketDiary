@@ -859,6 +859,39 @@ async def test_retry_real_setlist_generation_skips_already_filled():
     assert [s["name"] for s in row.songs] == ["이미있는곡"]
 
 
+# 조회 시점 확인이 남긴 빈 행(쿨다운 추적용)은 "이미 채워짐"이 아니라서 백필이 계속 재시도하는지 테스트
+@pytest.mark.asyncio
+async def test_retry_real_setlist_generation_retries_empty_attempt_row():
+    artist = "테스트아티스트"
+    concert_id = await _create_concert("PF_SL_BACKFILL_005", artist=artist)
+    headers = {"Authorization": f"Bearer {await _get_token()}"}
+
+    show_date = (datetime.now(timezone.utc) - timedelta(days=3)).date()
+    show_dt = datetime.combine(show_date, datetime.min.time(), tzinfo=timezone.utc)
+    await _set_concert_dates(concert_id, show_dt, show_dt)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+
+    async with AsyncSessionLocal() as db:
+        db.add(
+            RealSetlist(
+                concert_id=uuid.UUID(concert_id),
+                performance_date=show_date,
+                songs=[],
+                attempted_at=datetime.now(timezone.utc) - timedelta(days=2),
+            )
+        )
+        await db.commit()
+
+    search_data = _make_setlistfm_search("SF_BACKFILL_005", artist=artist)
+    with _setlistfm_search_mock_multi({artist: search_data}):
+        await retry_real_setlist_generation()
+
+    row = await _get_real_setlist_row(concert_id, show_date)
+    assert len(row.songs) == 3
+
+
 # ---- 조회 시점 실제 셋리스트 확인 (check_real_setlist_on_view) ----
 # 자동 백필(14일 창)을 놓친 공연도, 사용자가 "공연 후" 화면을 열 때마다(티켓 기준 실제
 # 셋리스트 GET) 비어있으면 백그라운드로 한 번 더 채워보기를 시도하는 기능.

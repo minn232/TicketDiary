@@ -15,7 +15,7 @@ from app.schemas.venue_layout import CrawlResultRequest, CrawlResultResponse
 from app.models.lineup import ConcertLineup
 from app.services.artist_matching import get_known_artist_names, merge_crawl_artist_names, merge_or_replace_solo_seed
 from app.services.artist_normalization import normalize_specific_artists, queue_for_normalization
-from app.services.kopis import _create_news_feeds_for_concert
+from app.services.kopis import create_news_feeds_for_concert
 from app.services.lineup import upsert_concert_lineup
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
 from app.services.notification import schedule_ticketing_day_notifications
@@ -39,6 +39,16 @@ _WHITESPACE_RE = re.compile(r"\s+")
 # 목적이라 이미 있는 값을 크롤링 쪽 표기로 바꿔치기하면 안 됨 - 비교에만 쓰고 버리는 값)
 def _normalize_seat_type(seat_type: str) -> str:
     return _WHITESPACE_RE.sub("", seat_type).upper()
+
+
+# 정규화 큐에 넣을 표기 - concert.artist_name에 방금 upsert된 concert_lineups 표기까지 합쳐 둘이
+# 어긋나는 경우를 놓치지 않음 (두 웹훅 공용)
+async def _names_to_queue(db: AsyncSession, concert: Concert, include_lineup: bool) -> set[str]:
+    names = set(concert.artist_name or [])
+    if include_lineup:
+        lineup_result = await db.execute(select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert.id))
+        names |= set(lineup_result.scalars().all())
+    return names
 
 
 # 콜백 내용 중 의심스러운 값을 로그로만 남김(저장 동작은 안 바꿈) - llm_server가 못 거른 가짜 날짜나
@@ -199,12 +209,7 @@ async def receive_crawl_result(
     # MusicBrainz 정규화 큐잉 - pending row만 적립(외부 호출 없음, 응답 시간과 무관). 원래 이
     # 웹훅은 아티스트명 병합만 하고 큐잉을 안 해서, 크롤링/KOPIS로만 들어온 표기가 정규화 기회를
     # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견).
-    queue_names = set(concert.artist_name or [])
-    if body.lineup:
-        lineup_result = await db.execute(
-            select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert_id)
-        )
-        queue_names |= set(lineup_result.scalars().all())
+    queue_names = await _names_to_queue(db, concert, include_lineup=bool(body.lineup))
     if queue_names:
         # updated가 비어있어도(이번 호출로 바뀐 건 없지만 concert.artist_name엔 이미 값이 있는
         # 경우) 큐잉이 유실되지 않도록 독립적으로 커밋(commit=True, 기본값) - 아래 "if updated"
@@ -230,7 +235,7 @@ async def receive_crawl_result(
     # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성 (artist-result 웹훅과 동일)
     if "artist_name" in updated:
         await db.refresh(concert)
-        await _create_news_feeds_for_concert(db, concert)
+        await create_news_feeds_for_concert(db, concert)
         await db.commit()
 
     # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
@@ -277,7 +282,7 @@ async def receive_artist_extraction_result(
             await db.commit()
             await db.refresh(concert)
             # 새로 채워진 아티스트가 이미 존재하는 팔로워와 매칭되면 뉴스피드 소급 생성
-            await _create_news_feeds_for_concert(db, concert)
+            await create_news_feeds_for_concert(db, concert)
             await db.commit()
             # event_type이 SOLO->FESTIVAL로 승격된 경우, 이미 등록된 티켓들의 첫콘/막콘 값 재계산
             if upgraded_to_festival:
@@ -294,12 +299,7 @@ async def receive_artist_extraction_result(
     # MusicBrainz 정규화 큐잉 - pending row만 적립하고 끝(외부 호출 없음, 콜백 타임아웃과 무관).
     # 실제 조회/치환은 별도 배치(services/artist_normalization.py)가 수행. concert.artist_name뿐
     # 아니라 방금 upsert된 concert_lineups 표기도 같이 큐잉해 둘이 어긋나는 경우를 놓치지 않음
-    queue_names = set(concert.artist_name or [])
-    if body.lineup:
-        lineup_result = await db.execute(
-            select(ConcertLineup.artist).where(ConcertLineup.concert_id == concert_id)
-        )
-        queue_names |= set(lineup_result.scalars().all())
+    queue_names = await _names_to_queue(db, concert, include_lineup=bool(body.lineup))
     if queue_names:
         await queue_for_normalization(db, concert_id, list(queue_names))
         # 다음날 밤 정기 배치를 기다리지 않고 바로 시도 - 응답 이후 백그라운드로 실행되므로

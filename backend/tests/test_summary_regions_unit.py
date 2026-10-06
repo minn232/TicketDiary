@@ -19,7 +19,7 @@ class RegionalSummaryTests(unittest.IsolatedAsyncioTestCase):
             xml = '<dbs><db><mt10id>FC1</mt10id></db></dbs>' if 'pblprfr' in request.url.path else '<dbs><db><la>37.5209</la><lo>127.1273</lo></db></dbs>'
             return httpx.Response(200, text=xml)
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-            with patch.object(regions.settings, 'KOPIS_API_KEY', 'test'), patch.object(regions, '_throttle_kopis_request', AsyncMock()):
+            with patch.object(regions.settings, 'KOPIS_API_KEY', 'test'), patch.object(regions, 'throttle_kopis_request', AsyncMock()):
                 first = await regions._coordinates(client, 'PF1')
                 second = await regions._coordinates(client, 'PF1')
         self.assertEqual(first, (37.5209, 127.1273))
@@ -29,12 +29,12 @@ class RegionalSummaryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_facility_does_not_guess_from_venue_name(self):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text='<dbs><db><fcltynm>문화회관</fcltynm></db></dbs>'))) as client:
-            with patch.object(regions.settings, 'KOPIS_API_KEY', 'test'), patch.object(regions, '_throttle_kopis_request', AsyncMock()):
+            with patch.object(regions.settings, 'KOPIS_API_KEY', 'test'), patch.object(regions, 'throttle_kopis_request', AsyncMock()):
                 self.assertIsNone(await regions._coordinates(client, 'PF2'))
 
     async def test_unavailable_provider_is_unresolved(self):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(503))) as client:
-            with patch.object(regions.settings, 'KOPIS_API_KEY', 'test'), patch.object(regions, '_throttle_kopis_request', AsyncMock()):
+            with patch.object(regions.settings, 'KOPIS_API_KEY', 'test'), patch.object(regions, 'throttle_kopis_request', AsyncMock()):
                 self.assertIsNone(await regions._coordinates(client, 'PF3'))
 
     async def test_attendance_count_and_unknown_locations(self):

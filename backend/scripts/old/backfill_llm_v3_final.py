@@ -14,7 +14,7 @@ MusicBrainz 정규화를 거치지 않았다(정규화 배치가 별도의 Artis
     라인업 표기를 MusicBrainz 정규화 대기열(pending)에 적립 → 이후 매일 17:10 배치
     (normalize_pending_artists, 하루 500건)가 실제 MusicBrainz 매칭/fuzzy 정리를 수행함.
     이게 이번 백필의 핵심 - 이 큐잉이 없으면 정규화가 영원히 실행되지 않는다.
-  - _create_news_feeds_for_concert (app/services/kopis.py) - 팔로워 뉴스피드 생성
+  - create_news_feeds_for_concert (app/services/kopis.py) - 팔로워 뉴스피드 생성
   - backfill_first_last_day_from_concert (app/services/ticket.py) - 티켓 첫콘/막콘 재계산
 
 대상 콘서트 목록은 apply_llm_v3_preview.py가 실제로 변경했던 콘서트만 기록해둔 백업
@@ -51,7 +51,7 @@ from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.concert import Concert  # noqa: E402
 from app.models.lineup import ConcertLineup  # noqa: E402
 from app.services.artist_normalization import queue_for_normalization  # noqa: E402
-from app.services.kopis import _build_follow_index, _create_news_feeds_for_concert  # noqa: E402
+from app.services.kopis import _build_follow_index, create_news_feeds_for_concert  # noqa: E402
 from app.services.ticket import backfill_first_last_day_from_concert  # noqa: E402
 
 _IMPORT_DIR = Path(__file__).resolve().parent / "v3_import"
@@ -92,7 +92,7 @@ async def run(backup_path: Path, dry_run: bool) -> None:
                 queued_concerts += 1
                 queued_names_total += len(queue_names)
 
-            matched = await _create_news_feeds_for_concert(db, concert, follow_index=follow_index)
+            matched = await create_news_feeds_for_concert(db, concert, follow_index=follow_index)
             if matched:
                 feed_created_concerts += 1
                 feed_entries_total += len(matched)

@@ -19,7 +19,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from app.core.config import settings  # noqa: E402
-from app.services.ocr import _detect_format, _to_jpeg  # noqa: E402
+from app.services.ocr import _detect_format, to_jpeg  # noqa: E402
 
 _IMAGE_DIR = Path(__file__).resolve().parent / "Image"
 _RESULT_FILE = _IMAGE_DIR / "ocr_results.txt"
@@ -30,7 +30,7 @@ async def process_file(path: Path) -> dict:
     image_bytes = path.read_bytes()
     content_type = f"image/{path.suffix.lstrip('.').lower()}"
     fmt = _detect_format(image_bytes, content_type)
-    jpeg_bytes = _to_jpeg(image_bytes, content_type)
+    jpeg_bytes = to_jpeg(image_bytes, content_type)
 
     payload = {
         "requests": [{

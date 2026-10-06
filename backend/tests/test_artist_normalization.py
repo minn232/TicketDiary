@@ -19,7 +19,7 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.models.social import NewsFeed
 from app.services.artist_normalization import (
-    _alternate_lookup_names,
+    alternate_lookup_names,
     apply_canonical_replacement,
     decide_match,
     expand_follow_index_with_group_relations,
@@ -30,7 +30,7 @@ from app.services.artist_normalization import (
     queue_for_normalization,
     set_display_name,
 )
-from app.services.kopis import _build_follow_index, _create_news_feeds_for_concert
+from app.services.kopis import _build_follow_index, create_news_feeds_for_concert
 from app.services.musicbrainz import ArtistCandidate, BandRelation
 from conftest import _get_token, kopis_mock
 
@@ -257,7 +257,7 @@ async def test_apply_canonical_replacement_dedups_lineup_conflict():
 # 조회하지 않도록 - 그 동작 자체를 검증하는 테스트가 아니면 빈 결과로 무력화해서 테스트가
 # 네트워크에 의존하지 않고 빠르게 끝나게 함(_create_concert의 KOPIS 목킹과는 별개 지점)
 def _no_kopis_supplement():
-    return patch("app.services.kopis._fetch_kopis_detail_data", new=AsyncMock(return_value={"artist_name": []}))
+    return patch("app.services.kopis.fetch_kopis_detail_data", new=AsyncMock(return_value={"artist_name": []}))
 
 
 # 새로 매치된 canonical마다 _process_one이 관계 조회(fetch_member_of_band_relations)를 같이
@@ -267,18 +267,18 @@ def _no_relation_fetch():
     return patch("app.services.artist_normalization.fetch_member_of_band_relations", new=AsyncMock(return_value=[]))
 
 
-# matched될 때마다 _process_one이 Wikidata 한글 별칭 보강(_register_wikidata_korean_alias)도
+# matched될 때마다 _process_one이 Wikidata 한글 별칭 보강(register_wikidata_korean_alias)도
 # 같이 트리거하는데, 그 자체를 검증하지 않는 테스트에서 안 막아두면 매번 실제 MusicBrainz/Wikidata에
 # 조회를 나가서 테스트가 느려짐 - _no_relation_fetch와 같은 이유
 def _no_wikidata_lookup():
-    return patch("app.services.artist_normalization._register_wikidata_korean_alias", new=AsyncMock(return_value=None))
+    return patch("app.services.artist_normalization.register_wikidata_korean_alias", new=AsyncMock(return_value=None))
 
 
-# matched될 때마다 _process_one이 아티스트 사진 보강(_register_artist_image)도 같이 트리거하는데,
+# matched될 때마다 _process_one이 아티스트 사진 보강(register_artist_image)도 같이 트리거하는데,
 # 그 자체를 검증하지 않는 테스트에서 안 막아두면 매번 실제 MusicBrainz/Wikidata/Spotify에 조회를
 # 나가서 테스트가 느려짐 - _no_wikidata_lookup과 같은 이유
 def _no_artist_image_lookup():
-    return patch("app.services.artist_normalization._register_artist_image", new=AsyncMock(return_value=None))
+    return patch("app.services.artist_normalization.register_artist_image", new=AsyncMock(return_value=None))
 
 
 @pytest.mark.asyncio
@@ -870,7 +870,7 @@ async def test_normalize_pending_artists_backfills_group_roster_from_member_side
         assert set(member_names) == {member_a_name, member_b_name}
 
 
-# Wikidata 한글 별칭 보강 (_register_wikidata_korean_alias) - mbid로 확정된 아티스트의
+# Wikidata 한글 별칭 보강 (register_wikidata_korean_alias) - mbid로 확정된 아티스트의
 # Wikidata 한글 label을 alias로 등록해서, "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어
 # 영구 unconfirmed로 남던 케이스(스즈키 코노미 실측 사례)를 구제하는 게 목적
 
@@ -1332,7 +1332,7 @@ async def test_expand_follow_index_excludes_former_members():
     assert former_member_name.lower() not in index
 
 
-# _create_news_feeds_for_concert 종단 테스트 - 밴드명을 팔로우했는데 콘서트엔 멤버명만 있어도 매칭돼야 함
+# create_news_feeds_for_concert 종단 테스트 - 밴드명을 팔로우했는데 콘서트엔 멤버명만 있어도 매칭돼야 함
 
 @pytest.mark.asyncio
 async def test_news_feed_matches_group_follow_against_member_only_concert():
@@ -1357,7 +1357,7 @@ async def test_news_feed_matches_group_follow_against_member_only_concert():
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, concert_id)
         follow_index = await _build_follow_index(db)
-        matched = await _create_news_feeds_for_concert(db, concert, follow_index)
+        matched = await create_news_feeds_for_concert(db, concert, follow_index)
         await db.commit()
 
     assert (user_id, band_name) in matched
@@ -1394,7 +1394,7 @@ async def test_news_feed_dedupes_when_multiple_group_members_in_lineup():
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, concert_id)
         follow_index = await _build_follow_index(db)
-        matched = await _create_news_feeds_for_concert(db, concert, follow_index)
+        matched = await create_news_feeds_for_concert(db, concert, follow_index)
         await db.commit()
 
     assert matched.count((user_id, band_name)) == 1
@@ -1426,7 +1426,7 @@ async def test_normalize_pending_artists_supplements_missing_kopis_members():
 
     kopis_detail_mock = AsyncMock(return_value={"artist_name": [m1, m2, m3]})
     with patch(
-        "app.services.kopis._fetch_kopis_detail_data", new=kopis_detail_mock
+        "app.services.kopis.fetch_kopis_detail_data", new=kopis_detail_mock
     ), _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(side_effect=lambda name, client=None: [_kr_candidate(name, score=100)]),
@@ -1467,7 +1467,7 @@ async def test_normalize_pending_artists_dry_run_does_not_persist_kopis_suppleme
         await queue_for_normalization(db, concert_id, [m1])
 
     with patch(
-        "app.services.kopis._fetch_kopis_detail_data", new=AsyncMock(return_value={"artist_name": [m1, m2]})
+        "app.services.kopis.fetch_kopis_detail_data", new=AsyncMock(return_value={"artist_name": [m1, m2]})
     ), _no_relation_fetch(), _no_wikidata_lookup(), _no_artist_image_lookup(), patch(
         "app.services.artist_normalization.search_artist",
         new=AsyncMock(side_effect=lambda name, client=None: [_kr_candidate(name, score=100)]),
@@ -1488,20 +1488,20 @@ async def test_normalize_pending_artists_dry_run_does_not_persist_kopis_suppleme
 # 괄호 병기 표기("넬 (NELL)", "내귀에도청장치 (Wiretap in my ear)") - 괄호 밖/병기 이름으로도 찾음
 
 def test_alternate_lookup_names_parenthetical_patterns():
-    assert _alternate_lookup_names("넬 (NELL)") == ["넬", "NELL"]
-    assert _alternate_lookup_names("YB (YB)") == ["YB"]
+    assert alternate_lookup_names("넬 (NELL)") == ["넬", "NELL"]
+    assert alternate_lookup_names("YB (YB)") == ["YB"]
     # 동명이인 구분/설명은 이름이 아니라 괄호 밖만
-    assert _alternate_lookup_names("김광진 (1964년)") == ["김광진"]
-    assert _alternate_lookup_names("새소년 (음악 그룹)") == ["새소년"]
-    assert _alternate_lookup_names("김민규 (엘리스파이스, 스윗피) (KIM MIN KYU)") == ["김민규", "KIM MIN KYU"]
-    assert _alternate_lookup_names("EFFLORE (Taiwan)") == ["EFFLORE"]
-    assert _alternate_lookup_names("KOKESHI (japan)") == ["KOKESHI"]
-    assert _alternate_lookup_names("Nosaj Thing (us/kr)") == ["Nosaj Thing"]
-    assert _alternate_lookup_names("안지 Angie (Acoustic)") == ["안지 Angie"]
-    assert _alternate_lookup_names("DK (디케이)") == ["DK", "디케이"]
+    assert alternate_lookup_names("김광진 (1964년)") == ["김광진"]
+    assert alternate_lookup_names("새소년 (음악 그룹)") == ["새소년"]
+    assert alternate_lookup_names("김민규 (엘리스파이스, 스윗피) (KIM MIN KYU)") == ["김민규", "KIM MIN KYU"]
+    assert alternate_lookup_names("EFFLORE (Taiwan)") == ["EFFLORE"]
+    assert alternate_lookup_names("KOKESHI (japan)") == ["KOKESHI"]
+    assert alternate_lookup_names("Nosaj Thing (us/kr)") == ["Nosaj Thing"]
+    assert alternate_lookup_names("안지 Angie (Acoustic)") == ["안지 Angie"]
+    assert alternate_lookup_names("DK (디케이)") == ["DK", "디케이"]
     # 이름 속 괄호는 그대로
-    assert _alternate_lookup_names("(X)PIDER") == []
-    assert _alternate_lookup_names("NELL") == []
+    assert alternate_lookup_names("(X)PIDER") == []
+    assert alternate_lookup_names("NELL") == []
 
 
 async def _concert_with_artists(names: list[str]) -> uuid.UUID:

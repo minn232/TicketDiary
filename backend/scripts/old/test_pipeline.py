@@ -33,11 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.services.ocr import (  # noqa: E402
-    _call_vision,
+    call_vision,
     _full_text_from_annotation,
     _parse_ticket_fields,
     _parse_ticket_fields_from_layout,
-    _to_jpeg,
+    to_jpeg,
 )
 from app.services.kopis import search_concerts_multi, get_concert_detail  # noqa: E402
 from app.services.crawler import (  # noqa: E402
@@ -167,8 +167,8 @@ async def run_pipeline(image_path: Path, verbose: bool, refresh: bool = False) -
     else:
         try:
             loop = asyncio.get_running_loop()
-            jpeg_bytes = await loop.run_in_executor(None, _to_jpeg, image_bytes, content_type)
-            annotation = await _call_vision(jpeg_bytes)
+            jpeg_bytes = await loop.run_in_executor(None, to_jpeg, image_bytes, content_type)
+            annotation = await call_vision(jpeg_bytes)
         except Exception as e:
             _fail(f"OCR 실패: {e}")
         ocr_cache[image_hash] = annotation

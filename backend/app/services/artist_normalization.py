@@ -17,7 +17,7 @@ from app.models.artist_normalization import (
 from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.services.artist_blocklist import is_blocklisted_artist_name
-from app.services.artist_matching import _compact, _contains_hangul, normalize_artist_names
+from app.services.artist_matching import compact, contains_hangul, normalize_artist_names
 from app.services.musicbrainz import (
     ArtistCandidate,
     fetch_member_of_band_relations,
@@ -84,9 +84,9 @@ async def _register_alias_if_new(db: AsyncSession, canonical: CanonicalArtist, a
 
 
 # created=True를 반환하면 호출부가 "이 canonical은 이번에 처음 만들어졌다"고 판단해서 관계
-# 조회(_fetch_and_store_group_relations)를 딱 한 번만 트리거하는 데 씀 - 이미 있던 canonical은
+# 조회(fetch_and_store_group_relations)를 딱 한 번만 트리거하는 데 씀 - 이미 있던 canonical은
 # 예전에 만들어졌을 때 이미 관계 조회를 거쳤을 것이므로 다시 조회하지 않음
-async def _get_or_create_canonical_by_mbid(
+async def get_or_create_canonical_by_mbid(
     db: AsyncSession, mbid: str, canonical_name: str
 ) -> tuple[CanonicalArtist, bool]:
     result = await db.execute(select(CanonicalArtist).where(CanonicalArtist.mbid == mbid))
@@ -116,7 +116,7 @@ async def _register_membership_if_new(
 # 새로 매치된 canonical 1건의 "member of band" 관계를 딱 1단계만 조회해서 저장 - 상대방도
 # canonical로 등록하되 상대방의 관계까지 연쇄 조회하지는 않음(API 호출량 방지). 조회 자체가
 # 실패해도(네트워크 오류 등) 예외를 삼키고 넘어간다 - 본체 매치는 이미 확정됐고 관계는 보강 데이터일 뿐
-async def _fetch_and_store_group_relations(
+async def fetch_and_store_group_relations(
     db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient
 ) -> None:
     try:
@@ -128,14 +128,14 @@ async def _fetch_and_store_group_relations(
     for rel in relations:
         if not rel.is_current:
             continue  # 탈퇴 멤버는 저장만 하지 않고 통째로 건너뜀(정책: 현역 멤버만 매칭에 사용)
-        related, related_created = await _get_or_create_canonical_by_mbid(db, rel.mbid, rel.name)
+        related, related_created = await get_or_create_canonical_by_mbid(db, rel.mbid, rel.name)
         if rel.type == "Group":
             await _register_membership_if_new(db, canonical.id, related.id)
             if related_created:
                 # 멤버 쪽에서 발견한 그룹은 아직 그 그룹의 "전체" 로스터를 모름(이 관계 1건만
                 # 앎) - 그룹 표기 통합(멤버 전원 있으면 그룹명으로) 판단에 전체 로스터가 필요해서
                 # 그룹당 1회만 추가로 조회. created 플래그로 막아서 무한 연쇄는 안 됨
-                await _fetch_and_store_group_relations(db, related, client)
+                await fetch_and_store_group_relations(db, related, client)
         else:
             await _register_membership_if_new(db, related.id, canonical.id)
 
@@ -257,7 +257,7 @@ async def _supplement_from_kopis_originals(db: AsyncSession, kopis_client, conce
 
     # 순환 임포트 방지: kopis.py가 이미 이 모듈(expand_follow_index_with_group_relations)을
     # 가져다 쓰고 있어서, 모듈 최상단에서 반대 방향으로 가져오면 순환 임포트가 됨
-    from app.services.kopis import _fetch_kopis_detail_data
+    from app.services.kopis import fetch_kopis_detail_data
 
     result = await db.execute(
         select(Concert.id, Concert.kopis_id).where(
@@ -266,7 +266,7 @@ async def _supplement_from_kopis_originals(db: AsyncSession, kopis_client, conce
     )
     for concert_id, kopis_id in result.all():
         try:
-            data = await _fetch_kopis_detail_data(kopis_client, kopis_id)
+            data = await fetch_kopis_detail_data(kopis_client, kopis_id)
         except Exception as e:
             logger.warning(f"KOPIS 원본 라인업 보강 조회 실패, 건너뜀 (kopis_id={kopis_id}): {e}")
             continue
@@ -279,9 +279,9 @@ async def _supplement_from_kopis_originals(db: AsyncSession, kopis_client, conce
 # 차이가 크면 의심스러운 매치로 본다(성이 빠지거나 장르/일반명사가 유명 아티스트에 우연히 걸리는
 # 패턴). 스크립트가 다르면 정상 별칭 매치(권지용->G-DRAGON 등)일 수 있어 검사하지 않는다
 def _is_suspicious_fragment_match(query: str, candidate_name: str) -> bool:
-    if _contains_hangul(query) != _contains_hangul(candidate_name):
+    if contains_hangul(query) != contains_hangul(candidate_name):
         return False
-    q, c = _compact(query), _compact(candidate_name)
+    q, c = compact(query), compact(candidate_name)
     if not q or not c or q == c or not (q in c or c in q):
         return False
     shorter_len, longer_len = sorted([len(q), len(c)])
@@ -715,9 +715,9 @@ async def try_link_canonical_to_musicbrainz(canonical_id) -> None:
                     return
                 canonical.mbid = winner.mbid
                 await _register_alias_if_new(db, canonical, winner.name, source="musicbrainz")
-                await _fetch_and_store_group_relations(db, canonical, client)
-                await _register_wikidata_korean_alias(db, canonical, client)
-                await _register_artist_image(db, canonical, client)
+                await fetch_and_store_group_relations(db, canonical, client)
+                await register_wikidata_korean_alias(db, canonical, client)
+                await register_artist_image(db, canonical, client)
         except Exception as e:
             logger.warning(f"관리자 추가 아티스트 MusicBrainz 연결 실패, 건너뜀 ({canonical.canonical_name}): {e}")
             return
@@ -1014,7 +1014,7 @@ async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None
 # "스즈키 코노미"). KOPIS 원본이 같은 한글 표기로 큐잉돼 있으면 재검색 없이 이 alias로
 # 바로 matched됨 - "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어 영구 unconfirmed로 남던
 # 케이스 구제용. 이미 alias 있으면 재조회 안 함, 조회 실패는 조용히 건너뜀(보강 데이터라 무해).
-async def _register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
+async def register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid:
         return
     existing = await db.execute(
@@ -1046,7 +1046,7 @@ async def _register_wikidata_korean_alias(db: AsyncSession, canonical: Canonical
 # canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 연결해둔 Spotify 링크
 # 우선(앨범아트 수준), 없으면 Wikidata 대표 이미지(P18)로 대체 - 둘 다 mbid 앵커라 이름
 # 검색(Deezer 등, 오매칭 실측 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함.
-async def _register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
+async def register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid or canonical.profile_image_url:
         return
 
@@ -1080,7 +1080,7 @@ _DISAMBIGUATION_RE = re.compile(
 # "넬 (NELL)"처럼 끝에 괄호가 붙은 표기에서 추가로 찾아볼 이름들(원래 표기 다음 순서). 괄호 밖은
 # 항상, 괄호 안은 밖과 문자 체계가 다른 병기(한글↔로마자)일 때만 - "(1964년)", "(japan)",
 # "(엘리스파이스, 스윗피)" 같은 구분/나라/설명은 이름이 아님
-def _alternate_lookup_names(artist_text: str) -> list[str]:
+def alternate_lookup_names(artist_text: str) -> list[str]:
     base, inners = artist_text.strip(), []
     while match := _TRAILING_PAREN_RE.search(base):
         inners.insert(0, match.group(1).strip())
@@ -1091,7 +1091,7 @@ def _alternate_lookup_names(artist_text: str) -> list[str]:
     for inner in inners:
         if not inner or "," in inner or "/" in inner or _DISAMBIGUATION_RE.match(inner):
             continue
-        if base and _contains_hangul(inner) == _contains_hangul(base):
+        if base and contains_hangul(inner) == contains_hangul(base):
             continue
         names.append(inner)
     return [n for n in dict.fromkeys(names) if n.casefold() != artist_text.casefold()]
@@ -1100,7 +1100,7 @@ def _alternate_lookup_names(artist_text: str) -> list[str]:
 async def _process_one(
     db: AsyncSession, client: httpx.AsyncClient, row: ArtistNormalizationStatus
 ) -> str:
-    lookup_names = [row.artist_text, *_alternate_lookup_names(row.artist_text)]
+    lookup_names = [row.artist_text, *alternate_lookup_names(row.artist_text)]
     canonical = None
     for name in lookup_names:
         canonical = await find_canonical_by_alias(db, name)
@@ -1114,8 +1114,8 @@ async def _process_one(
             row.status = "suggested"
             row.suggested_canonical_id = canonical.id
             return "suggested"
-        await _register_wikidata_korean_alias(db, canonical, client)
-        await _register_artist_image(db, canonical, client)
+        await register_wikidata_korean_alias(db, canonical, client)
+        await register_artist_image(db, canonical, client)
         await apply_canonical_replacement(
             db, row.concert_id, row.artist_text, _display_value(canonical), clear_admin_review=True
         )
@@ -1135,7 +1135,7 @@ async def _process_one(
         # 괄호 밖/안 이름은 짧거나 읽는 소리("GR2N! (그린)")라 엉뚱한 1순위가 잡힘(그린→Green Cacao
         # 실측) - 결과 이름이 검색한 이름과 정확히 같을 때만 인정
         if i > 0 and name_winner is not None and (
-            not _compact(name) or _compact(name_winner.name) != _compact(name)
+            not compact(name) or compact(name_winner.name) != compact(name)
         ):
             continue
         if name_status == "matched":
@@ -1144,12 +1144,12 @@ async def _process_one(
     row.status = status
 
     if status == "matched" and winner is not None:
-        canonical, created = await _get_or_create_canonical_by_mbid(db, winner.mbid, winner.name)
+        canonical, created = await get_or_create_canonical_by_mbid(db, winner.mbid, winner.name)
         await _register_alias_if_new(db, canonical, row.artist_text, source="musicbrainz")
         if created:
-            await _fetch_and_store_group_relations(db, canonical, client)
-        await _register_wikidata_korean_alias(db, canonical, client)
-        await _register_artist_image(db, canonical, client)
+            await fetch_and_store_group_relations(db, canonical, client)
+        await register_wikidata_korean_alias(db, canonical, client)
+        await register_artist_image(db, canonical, client)
         await apply_canonical_replacement(
             db, row.concert_id, row.artist_text, _display_value(canonical), clear_admin_review=True
         )
@@ -1210,7 +1210,7 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
         # 표기가 먼저 matched되면 그 자리에서 Wikidata 한글 alias가 등록되니, 한글 probe(KOPIS
         # 원본) 표기가 그 뒤에 처리되면 재검색 없이 바로 그 alias로 matched됨. 순서를 안 바꾸면
         # 한글 쪽이 먼저 뽑혀서 이 회차엔 놓치고 unconfirmed로 영구 고정될 수 있음(재시도 없음)
-        rows = sorted(rows, key=lambda r: _contains_hangul(r.artist_text))
+        rows = sorted(rows, key=lambda r: contains_hangul(r.artist_text))
 
         logger.info(f"MusicBrainz 정규화 대상 {len(rows)}건")
         async with httpx.AsyncClient(timeout=10.0) as client:

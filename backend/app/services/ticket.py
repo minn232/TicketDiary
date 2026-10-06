@@ -2,6 +2,7 @@ from uuid import UUID
 from datetime import datetime, timezone, timedelta
 import asyncio
 import difflib
+import json
 import logging
 import re
 
@@ -294,25 +295,45 @@ def _owned_photo_urls(ticket: Ticket) -> set[str]:
 
 # 사진 URL은 클라이언트가 보낸 값이라 남의 사진일 수 있음 - 유저 업로드 폴더 안이고 어떤 티켓도
 # 참조하지 않는 것만 S3에서 지움(DB 커밋 뒤 호출). 남이 내 URL을 자기 티켓에 넣었다 빼도 내 티켓이
-# 참조 중이라 안 지워짐
-async def _delete_unreferenced_images(db: AsyncSession, urls: list[str]) -> None:
-    deletable = []
-    for url in dict.fromkeys(urls):
-        if not is_user_upload_url(url):
-            continue
-        referenced = await db.scalar(
-            select(Ticket.id)
-            .where(or_(
-                Ticket.ticket_image_url == url,
-                Ticket.concert_photo_urls.contains([url]),
-                cast(Ticket.page_layout, Text).contains(url, autoescape=True),
+# 참조 중이라 안 지워짐. URL마다 쿼리하지 않고 한 번에 조회해 참조 중인 URL만 파이썬에서 걸러냄
+async def delete_unreferenced_images(db: AsyncSession, urls: list[str]) -> None:
+    candidates = [u for u in dict.fromkeys(urls) if is_user_upload_url(u)]
+    if not candidates:
+        return
+
+    result = await db.execute(
+        select(Ticket.ticket_image_url, Ticket.concert_photo_urls, Ticket.page_layout).where(
+            or_(*(
+                or_(
+                    Ticket.ticket_image_url == url,
+                    Ticket.concert_photo_urls.contains([url]),
+                    cast(Ticket.page_layout, Text).contains(url, autoescape=True),
+                )
+                for url in candidates
             ))
-            .limit(1)
         )
-        if referenced is None:
-            deletable.append(url)
+    )
+    referenced: set[str] = set()
+    for image_url, photo_urls, page_layout in result.all():
+        layout_text = json.dumps(page_layout) if page_layout else ""
+        for url in candidates:
+            if url == image_url or url in (photo_urls or []) or url in layout_text:
+                referenced.add(url)
+
+    deletable = [u for u in candidates if u not in referenced]
     if deletable:
         await asyncio.gather(*(delete_image(u) for u in deletable))
+
+
+# 회원 탈퇴 전에 호출 - 유저 티켓이 가진 S3 이미지 URL 전부(티켓 이미지 포함)
+async def list_user_image_urls(db: AsyncSession, user_id: UUID) -> list[str]:
+    result = await db.execute(select(Ticket).where(Ticket.user_id == user_id))
+    urls: list[str] = []
+    for ticket in result.scalars().all():
+        urls.extend(_owned_photo_urls(ticket))
+        if ticket.ticket_image_url:
+            urls.append(ticket.ticket_image_url)
+    return urls
 
 
 # 티켓 수정
@@ -367,7 +388,7 @@ async def update_ticket(
         and old_image_url != ticket.ticket_image_url
     ):
         removed_urls.append(old_image_url)
-    await _delete_unreferenced_images(db, removed_urls)
+    await delete_unreferenced_images(db, removed_urls)
 
     return ticket
 
@@ -389,14 +410,13 @@ async def delete_ticket(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Non
     await db.delete(ticket)
     await db.commit()
 
-    await _delete_unreferenced_images(db, orphaned_urls)
+    await delete_unreferenced_images(db, orphaned_urls)
 
 
 # 유저 알림 설정에서 delivery/day_before/concert_day 활성화 여부 반환
 def _get_notif_flags(user: User) -> tuple[bool, bool, bool]:
     settings = user.notification_settings
     if isinstance(settings, str):
-        import json
         settings = json.loads(settings)
     if not isinstance(settings, dict):
         return True, True, True

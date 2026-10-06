@@ -1,4 +1,4 @@
-"""아티스트 사진 소급 백필 - _register_artist_image(mbid -> Spotify/Wikidata 사진) 기능이
+"""아티스트 사진 소급 백필 - register_artist_image(mbid -> Spotify/Wikidata 사진) 기능이
 배포되기 전에 이미 matched된 canonical_artists는 자동으로 혜택을 못 받는다(재매치 트리거가
 없어서). mbid가 있는 canonical_artists 전부 순회하며 사진을 채워준다. 이미 확정된 mbid를
 그대로 조회하는 것뿐이라 새로운 오매칭 위험은 없음(이름 검색 아님).
@@ -24,7 +24,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.artist_normalization import CanonicalArtist  # noqa: E402
-from app.services.artist_normalization import _register_artist_image  # noqa: E402
+from app.services.artist_normalization import register_artist_image  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ async def main(dry_run: bool) -> None:
             added = 0
             for i, canonical in enumerate(canonicals, start=1):
                 before = canonical.profile_image_url
-                await _register_artist_image(db, canonical, client)
+                await register_artist_image(db, canonical, client)
                 if before is None and canonical.profile_image_url is not None:
                     added += 1
                     print(f"  + {canonical.canonical_name} -> {canonical.profile_image_url}")

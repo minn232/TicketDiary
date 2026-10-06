@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 
 from app.services.setlistfm import (
-    _artist_matches,
+    artist_matches,
     search_setlists,
     search_setlists_by_artist,
 )
@@ -21,42 +21,42 @@ _NELL_MBID = "e156615d-3ddd-4491-9584-4b9d971472c4"
 # 사례 기반 - mbid 모를 때의 이름 비교
 
 def test_artist_matches_same_script_correct_match():
-    assert _artist_matches("Nell", "NELL", None, None) is True  # 대소문자만 다름
+    assert artist_matches("Nell", "NELL", None, None) is True  # 대소문자만 다름
 
 
 def test_artist_matches_same_script_different_artist():
-    assert _artist_matches("Nell", "Nell Mescal", None, None) is False
-    assert _artist_matches("Nell", "Nellie McKay", None, None) is False
-    assert _artist_matches("Nell", "Nell Davies", None, None) is False
+    assert artist_matches("Nell", "Nell Mescal", None, None) is False
+    assert artist_matches("Nell", "Nellie McKay", None, None) is False
+    assert artist_matches("Nell", "Nell Davies", None, None) is False
 
 
 def test_artist_matches_cross_script_without_mbid_rejected():
     # 본명 별칭으로 검색된 다른 아티스트(김현정→SEOLA)를 이름으로는 구분할 수 없어서 거절
-    assert _artist_matches("김현정", "SEOLA", "d6c7983b-3a92-4418-a6f4-b3f8d7525d5c", None) is False
-    assert _artist_matches("넬", "NELL", _NELL_MBID, None) is False
+    assert artist_matches("김현정", "SEOLA", "d6c7983b-3a92-4418-a6f4-b3f8d7525d5c", None) is False
+    assert artist_matches("넬", "NELL", _NELL_MBID, None) is False
 
 
 def test_artist_matches_empty_candidate_rejected():
-    assert _artist_matches("Nell", "", None, None) is False
-    assert _artist_matches("넬", "", None, _NELL_MBID) is False
+    assert artist_matches("Nell", "", None, None) is False
+    assert artist_matches("넬", "", None, _NELL_MBID) is False
 
 
 # 우리 canonical mbid를 알면 이름과 무관하게 mbid로만 판정
 
 def test_artist_matches_mbid_same_person_across_scripts():
-    assert _artist_matches("넬", "NELL", _NELL_MBID, _NELL_MBID) is True
+    assert artist_matches("넬", "NELL", _NELL_MBID, _NELL_MBID) is True
 
 
 def test_artist_matches_mbid_rejects_real_name_alias_of_other_artist():
     # 김지수(다른 가수)로 검색하면 본명이 같은 JISOO가 나옴
-    assert _artist_matches("김지수", "JISOO", _JISOO_MBID, _OUR_KIM_JISOO_MBID) is False
+    assert artist_matches("김지수", "JISOO", _JISOO_MBID, _OUR_KIM_JISOO_MBID) is False
     # 김종현은 Kim Jonghyeon만 본인, 같은 본명의 JONGHYUN은 제외
-    assert _artist_matches("김종현", "Kim Jonghyeon", _KIM_JONGHYEON_MBID, _KIM_JONGHYEON_MBID) is True
-    assert _artist_matches("김종현", "JONGHYUN", _JONGHYUN_MBID, _KIM_JONGHYEON_MBID) is False
+    assert artist_matches("김종현", "Kim Jonghyeon", _KIM_JONGHYEON_MBID, _KIM_JONGHYEON_MBID) is True
+    assert artist_matches("김종현", "JONGHYUN", _JONGHYUN_MBID, _KIM_JONGHYEON_MBID) is False
 
 
 def test_artist_matches_mbid_rejects_candidate_without_mbid():
-    assert _artist_matches("Nell", "Nell", None, _NELL_MBID) is False
+    assert artist_matches("Nell", "Nell", None, _NELL_MBID) is False
 
 
 # search_setlists/search_setlists_by_artist가 실제로 이 필터를 적용해서 오염된 후보를

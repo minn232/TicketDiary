@@ -12,6 +12,7 @@ from app.core.deps import (
     is_within_scan_cooldown,
     rate_limit_ticket_scan,
     record_meaningful_ticket_scan,
+    reject_oversized_request,
 )
 from app.models.concert import Concert
 from app.models.user import User
@@ -47,10 +48,7 @@ async def scan_ticket(
     db: AsyncSession = Depends(get_db),
     _rate_limit: None = Depends(rate_limit_ticket_scan),
 ):
-    # Content-Length 헤더로 다운로드 전 사전 거절
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_IMAGE_SIZE:
-        raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
+    reject_oversized_request(request)
 
     # 최대 10MB+1 바이트만 읽어 초과 여부 판단
     image_bytes = await image.read(_MAX_IMAGE_SIZE + 1)

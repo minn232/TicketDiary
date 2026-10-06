@@ -15,7 +15,7 @@ _SMALL_JPEG = b"\xff\xd8\xff\xe0" + b"x" * 100  # 최소 JPEG 헤더 포함 더�
 
 # S3 업로드 mock (실제 S3 호출 없이 URL 반환)
 def _s3_mock(url: str = _FAKE_S3_URL):
-    return patch("app.services.storage._do_upload", return_value=url)
+    return patch("app.services.storage.do_upload", return_value=url)
 
 
 # 티켓 이미지 업로드 테스트
@@ -151,7 +151,7 @@ async def test_upload_ticket_image_s3_failure_502():
     from fastapi import HTTPException
     token = await _get_token()
 
-    with patch("app.services.storage._do_upload", side_effect=HTTPException(status_code=502, detail="이미지 업로드에 실패했습니다.")):
+    with patch("app.services.storage.do_upload", side_effect=HTTPException(status_code=502, detail="이미지 업로드에 실패했습니다.")):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
                 "/api/v1/upload/ticket-image",
@@ -171,7 +171,7 @@ async def test_upload_concert_photo_with_thumbnail():
     def fake_upload(image_bytes, key, content_type):
         return f"https://ticketdiary-images.s3.ap-northeast-2.amazonaws.com/{key}"
 
-    with patch("app.services.storage._do_upload", side_effect=fake_upload) as mock_upload:
+    with patch("app.services.storage.do_upload", side_effect=fake_upload) as mock_upload:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             response = await ac.post(
                 "/api/v1/upload/concert-photo",

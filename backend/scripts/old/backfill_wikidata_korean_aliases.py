@@ -1,4 +1,4 @@
-"""Wikidata 한글 별칭 소급 백필 - _register_wikidata_korean_alias(mbid -> Wikidata ko label을
+"""Wikidata 한글 별칭 소급 백필 - register_wikidata_korean_alias(mbid -> Wikidata ko label을
 alias로 등록) 기능이 배포되기 전에 이미 matched된 canonical_artists는 자동으로 혜택을 못
 받는다(재매치 트리거가 없어서). 1회성으로 2단계에 걸쳐 직접 채워준다:
 
@@ -29,7 +29,7 @@ from sqlalchemy import select, update
 
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.artist_normalization import ArtistAlias, ArtistNormalizationStatus, CanonicalArtist  # noqa: E402
-from app.services.artist_normalization import _register_wikidata_korean_alias  # noqa: E402
+from app.services.artist_normalization import register_wikidata_korean_alias  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ async def _step1_backfill_aliases(dry_run: bool) -> None:
                     )
                 ).scalar_one_or_none()
 
-                await _register_wikidata_korean_alias(db, canonical, client)
+                await register_wikidata_korean_alias(db, canonical, client)
 
                 if before is None:
                     after = (

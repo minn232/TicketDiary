@@ -278,7 +278,7 @@ async def resolve_apple_music_track(
         # 같은 곡의 라이브/인스트루멘탈/리믹스 버전이 스튜디오 버전보다 먼저 나오는 경우가
         # 있어서(실측: "BTS Dynamite" 1등이 "Dynamite (Live)"), 그런 표시가 없는 버전을
         # 우선 채택하고 없으면 그냥 1등 그대로 씀.
-        studio = next((m for m in matches if not _looks_like_alt_version(m.get("trackName", ""))), None)
+        studio = next((m for m in matches if not looks_like_alt_version(m.get("trackName", ""))), None)
         return (studio or matches[0]).get("trackViewUrl")
     except Exception as e:
         # 위 유튜브와 같은 이유로 그대로 던짐(캐싱 방지).
@@ -289,7 +289,7 @@ async def resolve_apple_music_track(
 _ALT_VERSION_MARKERS = ("live", "instrumental", "remix", "acoustic", "karaoke")
 
 
-def _looks_like_alt_version(track_name: str) -> bool:
+def looks_like_alt_version(track_name: str) -> bool:
     lower = track_name.lower()
     return any(marker in lower for marker in _ALT_VERSION_MARKERS)
 

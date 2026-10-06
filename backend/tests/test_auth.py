@@ -110,9 +110,9 @@ async def test_kakao_login_invalid_code():
     assert response.status_code == 400
 
 
-# 카카오 로그인 재로그인 시 프로필 갱신 테스트
+# 카카오 재로그인은 이미 채워진 닉네임을 덮어쓰지 않고 비어 있는 프로필 이미지만 채움
 @pytest.mark.asyncio
-async def test_kakao_login_updates_profile():
+async def test_kakao_login_keeps_existing_nickname_fills_empty_image():
     kakao_id = 33333333
     first_info = {
         "id": kakao_id,
@@ -133,7 +133,8 @@ async def test_kakao_login_updates_profile():
             me2 = await ac.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {res2.json()['access_token']}"},)
 
     assert me1.json()["nickname"] == "첫번째닉네임"
-    assert me2.json()["nickname"] == "변경된닉네임"
+    assert me2.json()["nickname"] == "첫번째닉네임"
+    assert me2.json()["profile_image_url"] == "https://example.com/new.jpg"
     assert res1.json()["user_id"] == res2.json()["user_id"]
 
 

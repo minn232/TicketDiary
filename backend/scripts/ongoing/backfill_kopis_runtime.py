@@ -26,7 +26,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app.core.database import AsyncSessionLocal  # noqa: E402
 from app.models.concert import Concert  # noqa: E402
-from app.services.kopis import KopisNoData, _fetch_kopis_detail_data  # noqa: E402
+from app.services.kopis import KopisNoData, fetch_kopis_detail_data  # noqa: E402
 
 
 async def main(limit: int | None, dry_run: bool) -> None:
@@ -47,7 +47,7 @@ async def main(limit: int | None, dry_run: bool) -> None:
     async with httpx.AsyncClient(timeout=10.0) as client:
         for i, (concert_id, kopis_id) in enumerate(targets, 1):
             try:
-                data = await _fetch_kopis_detail_data(client, kopis_id)
+                data = await fetch_kopis_detail_data(client, kopis_id)
             except KopisNoData:
                 missing += 1
                 async with AsyncSessionLocal() as db:

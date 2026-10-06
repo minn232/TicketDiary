@@ -20,10 +20,10 @@ from app.models.setlist import PreSetlist, RealSetlist
 from app.models.ticket import Ticket
 from app.services.lineup import get_lineup_artists_for_date
 from app.services.representative_songs import (
-    _ITUNES_COUNTRY,
-    _ITUNES_LOOKUP_URL,
-    _is_alt_version,
-    _lookup_in_title_store,
+    ITUNES_COUNTRY,
+    ITUNES_LOOKUP_URL,
+    is_alt_version,
+    lookup_in_title_store,
     _title_key,
     resolve_itunes_artist_id_for,
 )
@@ -58,8 +58,8 @@ async def _fetch_catalog(itunes_artist_id: str) -> list[dict] | None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                _ITUNES_LOOKUP_URL,
-                params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": _ITUNES_COUNTRY},
+                ITUNES_LOOKUP_URL,
+                params={"id": itunes_artist_id, "entity": "song", "limit": 200, "country": ITUNES_COUNTRY},
             )
             response.raise_for_status()
             # 피처링으로만 참여한 남의 곡도 같이 오므로 아티스트 ID가 같은 곡만 씀
@@ -68,7 +68,7 @@ async def _fetch_catalog(itunes_artist_id: str) -> list[dict] | None:
                 if r.get("wrapperType") == "track" and str(r.get("artistId")) == itunes_artist_id
                 and r.get("trackId") and r.get("trackName") and r.get("previewUrl")
             ]
-            titled, _ = await _lookup_in_title_store(client, [r["trackId"] for r in tracks])
+            titled, _ = await lookup_in_title_store(client, [r["trackId"] for r in tracks])
     except (httpx.HTTPError, ValueError) as e:
         logger.warning(f"iTunes 미리듣기 곡 목록 조회 실패 (artist_id={itunes_artist_id}): {e}")
         return None
@@ -78,7 +78,7 @@ async def _fetch_catalog(itunes_artist_id: str) -> list[dict] | None:
     for r in tracks:
         kr_name = (titled.get(r["trackId"]) or r).get("trackName") or r["trackName"]
         key = _title_key(kr_name)
-        if not key or key in seen or _is_alt_version(kr_name) or _is_alt_version(r["trackName"]):
+        if not key or key in seen or is_alt_version(kr_name) or is_alt_version(r["trackName"]):
             continue
         seen.add(key)
         result.append({
