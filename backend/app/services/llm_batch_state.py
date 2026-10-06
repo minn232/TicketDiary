@@ -76,6 +76,19 @@ async def describe_llm_batch_state() -> str:
     )
 
 
+# 최근 hours 시간 안에 전송이 끝났는지(all_sent_at) - 03시 시도가 성공했는지 07시 재시도가 판단하는 데 씀.
+# 시도가 시작되면 reset_llm_night_state()가 all_sent_at을 비우므로, 03시에 pod/서버 준비에 실패하면
+# 여기서 False가 된다(시도 자체가 안 돌았어도 어제 값은 hours보다 오래돼 False)
+async def llm_sent_recently(hours: float = 5.0) -> bool:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(LlmNightBatchState).where(LlmNightBatchState.id == _SINGLETON_ID))
+        row = result.scalar_one_or_none()
+
+    if row is None or row.all_sent_at is None:
+        return False
+    return datetime.now(timezone.utc) - row.all_sent_at < timedelta(hours=hours)
+
+
 async def mark_stopped_early() -> None:
     async with AsyncSessionLocal() as db:
         row = await _get_or_create_row(db)

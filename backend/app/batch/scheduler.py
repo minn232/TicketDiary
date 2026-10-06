@@ -24,6 +24,7 @@ from app.services.lastfm import sync_artist_similarities, sync_artist_genres
 from app.services.llm_batch_state import (
     describe_llm_batch_state,
     is_llm_batch_idle,
+    llm_sent_recently,
     mark_all_sent_for_tonight,
     mark_stopped_early,
     reset_llm_night_state,
@@ -105,6 +106,19 @@ async def _run_llm_attempt() -> None:
         )
     except Exception:
         logger.exception("[LLM] 배치 시도 오류")
+
+
+# 03시 시도가 실패했을 때만 도는 07시 재시도(GPU 부족 등으로 pod이 안 뜬 경우). 03시에 전송까지
+# 끝났으면(all_sent_at이 최근) 건너뜀. 재시도도 같은 _run_llm_attempt라 실패하면 다음날 03시로 넘어감
+async def _run_llm_retry() -> None:
+    try:
+        if await llm_sent_recently():
+            logger.info("[LLM] 07시 재시도 건너뜀 - 03시 시도에서 전송 완료됨")
+            return
+        logger.info("[LLM] 03시 시도가 전송까지 끝나지 못해 07시 재시도 시작")
+        await _run_llm_attempt()
+    except Exception:
+        logger.exception("[LLM] 07시 재시도 오류")
 
 
 async def _run_pod_stop() -> None:
@@ -230,6 +244,14 @@ def start_scheduler() -> None:
     scheduler.add_job(
         _run_llm_idle_check, "cron", hour="18-19", minute="*/3", id="llm_idle_check", max_instances=1
     )
+    # 03시 시도가 실패했을 때만 도는 재시도 (KST 07:00 = UTC 22:00). 03시에 전송이 끝났으면 건너뜀.
+    # 유휴 체크(KST 07:00~08:57)와 정지(KST 09:00 안전망, 10:00 백업)도 같이 둠
+    scheduler.add_job(_run_llm_retry, "cron", hour=22, minute=0, id="llm_retry", max_instances=1)
+    scheduler.add_job(
+        _run_llm_idle_check, "cron", hour="22-23", minute="*/3", id="llm_idle_check_retry", max_instances=1
+    )
+    scheduler.add_job(_run_pod_stop, "cron", hour=0, minute=0, id="pod_stop_retry", max_instances=1)
+    scheduler.add_job(_run_pod_stop, "cron", hour=1, minute=0, id="pod_stop_retry_backup", max_instances=1)
     # 안전망 정지 (KST 05:00 = UTC 20:00)
     scheduler.add_job(_run_pod_stop, "cron", hour=20, minute=0, id="pod_stop", max_instances=1)
     # stop 실패(네트워크 오류 등) 대비 백업 - GPU가 켜진 채 방치되는 비용 누수를 막는 게

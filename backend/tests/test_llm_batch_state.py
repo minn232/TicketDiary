@@ -9,6 +9,7 @@ from app.models.llm_batch_state import LlmNightBatchState
 from app.services.llm_batch_state import (
     is_llm_batch_fully_done,
     is_llm_batch_idle,
+    llm_sent_recently,
     mark_all_sent_for_tonight,
     mark_llm_callback_received,
     mark_llm_sent,
@@ -210,3 +211,28 @@ async def test_try_stop_pod_if_done_does_not_mark_when_stop_unconfirmed():
         await try_stop_pod_if_done()
     row = await _get_row()
     assert row.early_stopped_at is None
+
+
+# ---- 07시 재시도 판단(llm_sent_recently) ----
+
+# 03시 시도가 전송까지 끝냈으면(all_sent_at이 최근) 재시도 불필요
+@pytest.mark.asyncio
+async def test_llm_sent_recently_true_after_recent_all_sent():
+    await reset_llm_night_state()
+    await mark_all_sent_for_tonight()
+    assert await llm_sent_recently() is True
+
+
+# 시도가 시작됐지만 전송 전에 실패했으면(reset이 all_sent_at을 비움) 재시도 대상
+@pytest.mark.asyncio
+async def test_llm_sent_recently_false_after_reset_without_send():
+    await _set_row(all_sent_at=datetime.now(timezone.utc) - timedelta(hours=20))
+    await reset_llm_night_state()
+    assert await llm_sent_recently() is False
+
+
+# 어제 값이 남아 있어도(시도 자체가 안 돈 경우) 기준 시간보다 오래됐으면 재시도 대상
+@pytest.mark.asyncio
+async def test_llm_sent_recently_false_when_all_sent_is_old():
+    await _set_row(all_sent_at=datetime.now(timezone.utc) - timedelta(hours=20))
+    assert await llm_sent_recently() is False
