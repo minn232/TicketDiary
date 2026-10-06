@@ -344,7 +344,12 @@ class _Body extends StatelessWidget {
     }
 
     // 전체 기간은 연도 탭으로 골라 1~12월 차트를 보고, 6개월/1년은 이어서 한 차트로 그림
-    Widget monthChart(String key, Color color, {String Function(int)? format}) {
+    Widget monthChart(
+      String title,
+      String key,
+      Color color, {
+      String Function(int)? format,
+    }) {
       final spend = key == 'spent';
       if (period != 'all') {
         return _Bars(
@@ -352,6 +357,7 @@ class _Body extends StatelessWidget {
           labels: [for (final m in monthly) monthLabel(m)],
           color: color,
           format: format,
+          scroll: false,
           onBarTap: (i, pos) =>
               showMonth('${monthly[i]['month']}', pos, spend: spend),
         );
@@ -370,6 +376,7 @@ class _Body extends StatelessWidget {
           .expand((v) => v)
           .reduce((a, b) => a > b ? a : b);
       return _YearTabbedBars(
+        title: title,
         byYear: byYear,
         color: color,
         format: format,
@@ -389,30 +396,39 @@ class _Body extends StatelessWidget {
         : weekdays.reduce((a, b) => a > b ? a : b);
 
     final summaryTiles = <Widget>[
-      _Tile('관람', '${_int(data['concert_count'])}회'),
-      _Tile('총 지출', _won(_int(data['total_spent']))),
+      _Tile(inline: true, '관람', '${_int(data['concert_count'])}회'),
+      _Tile(inline: true, '총 지출', _won(_int(data['total_spent']))),
       _Tile(
+        inline: true,
         '평균 티켓값',
         data['avg_ticket_price'] == null
             ? '-'
             : _won((_int(data['avg_ticket_price']) ~/ 1000) * 1000),
       ),
-      _Tile('가장 많이 본 장르', genres.isEmpty ? '-' : genres.join(', ')),
       _Tile(
+        inline: true,
+        '가장 많이 본 장르',
+        genres.isEmpty ? '-' : genres.join(', '),
+      ),
+      _Tile(
+        inline: true,
         '총 관람 시간',
         _hours(_int(data['total_runtime_minutes'])),
         sub: '시간 모름 ${_int(data['runtime_missing_count'])}장',
       ),
       _Tile(
+        inline: true,
         '들은 곡',
         '${_int(data['song_count'])}곡',
         sub: '+ 어림 ${_int(data['song_count_estimated'])}곡',
       ),
       _Tile(
+        inline: true,
         '사진 / 일기',
         '${_int(data['photo_count'])}장 / ${_int(data['diary_count'])}개',
       ),
       _Tile(
+        inline: true,
         '한 달 최다',
         busiest == null ? '-' : '${busiest['count']}회',
         sub: busiest == null ? null : '${busiest['month']}',
@@ -444,9 +460,19 @@ class _Body extends StatelessWidget {
           '가장 희귀한 곡',
           '${rare['name']}',
           sub:
-              '${rare['concert_name']} · 예상 ${_pct((rare['probability'] as num) * 100)}',
+              '예상 ${_pct((rare['probability'] as num) * 100)} · ${rare['concert_name']}',
         ),
     ];
+
+    // 전체 기간의 연도 선택 차트는 칩이 제목 줄에 들어가므로 카드 전체를 차트가 그림
+    _CardSpec monthSpec(String title, Widget chart) => _CardSpec(
+      title: title,
+      flex: 3,
+      minHeight: 230,
+      narrowMinHeight: 175,
+      fullCard: chart is _YearTabbedBars ? chart : null,
+      child: chart,
+    );
 
     final pages = <Widget>[
       // 1페이지: 요약 / 기록 / 선호 비율(도넛 3개)
@@ -454,15 +480,17 @@ class _Body extends StatelessWidget {
         cards: [
           _CardSpec(
             title: '요약',
-            flex: 3,
+            flex: 27,
             minHeight: 250,
+            narrowMinHeight: 270,
             child: _TileGrid(tiles: summaryTiles),
           ),
           if (recordTiles.isNotEmpty)
             _CardSpec(
               title: '기록',
-              flex: 3,
+              flex: 20,
               minHeight: recordTiles.length > 2 ? 190 : 120,
+              narrowMinHeight: recordTiles.length > 2 ? 200 : 120,
               child: _TileGrid(
                 columns: recordTiles.length == 4 ? 2 : recordTiles.length,
                 tiles: recordTiles,
@@ -470,8 +498,9 @@ class _Body extends StatelessWidget {
             ),
           _CardSpec(
             title: '선호 비율',
-            flex: 4,
+            flex: 17,
             minHeight: 210,
+            narrowMinHeight: 165,
             child: Row(
               children: [
                 Expanded(
@@ -508,7 +537,6 @@ class _Body extends StatelessWidget {
                     data['origin_domestic_percent'],
                     '내한',
                     data['origin_foreign_percent'],
-                    note: '미분류 ${_int(data['origin_unknown_count'])}장',
                     onSegmentTap: (i, pos) => showSegment(
                       'origin',
                       i == 0 ? 'domestic' : 'foreign',
@@ -525,22 +553,16 @@ class _Body extends StatelessWidget {
       // 2페이지: 월별 관람 / 월별 지출 / 요일별
       _PageOfCards(
         cards: [
-          _CardSpec(
-            title: '월별 관람 수',
-            flex: 3,
-            minHeight: 230,
-            child: monthChart('concert_count', _accent),
-          ),
-          _CardSpec(
-            title: '월별 지출',
-            flex: 3,
-            minHeight: 230,
-            child: monthChart('spent', _accent2, format: _manwon),
+          monthSpec('월별 관람 수', monthChart('월별 관람 수', 'concert_count', _accent)),
+          monthSpec(
+            '월별 지출',
+            monthChart('월별 지출', 'spent', _accent2, format: _manwon),
           ),
           _CardSpec(
             title: '요일별 공연 수',
             flex: 3,
             minHeight: 230,
+            narrowMinHeight: 175,
             child: weekdays.isEmpty
                 ? const _Empty()
                 : _HBars(
@@ -564,12 +586,14 @@ class _Body extends StatelessWidget {
             note: '예매처 모름 ${_int(data['ticketing_site_unknown_count'])}장 제외',
             flex: 3,
             minHeight: 190,
+            narrowMinHeight: 150,
             child: _SitesDonut(sites: sites),
           ),
           _CardSpec(
             title: '가장 많이 간 공연장',
             flex: 2,
             minHeight: 130,
+            narrowMinHeight: 110,
             child: _HBars(
               items: [
                 for (final v in venues)
@@ -581,6 +605,7 @@ class _Body extends StatelessWidget {
             title: '관람 아티스트',
             flex: 3,
             minHeight: 200,
+            narrowMinHeight: 160,
             child: _HBars(
               items: [
                 for (final a in artists)
@@ -591,19 +616,22 @@ class _Body extends StatelessWidget {
           // 전체 기간은 모두가 "처음"이라 의미가 없어서, 처음 본 해별로 나눠 보여줌
           if (period == 'all' && newArtistsByYear.isNotEmpty)
             _CardSpec(
-              title: '해마다 처음 본 아티스트',
+              title: '처음 본 아티스트',
               flex: 3,
               minHeight: 150,
-              child: _YearNewArtists(
+              narrowMinHeight: 130,
+              fullCard: _YearNewArtists(
                 byYear: newArtistsByYear,
                 selection: yearSelection,
               ),
+              child: const SizedBox.shrink(),
             )
           else
             _CardSpec(
               title: '처음 본 아티스트 ${_int(data['new_artist_count'])}명',
               flex: 3,
               minHeight: 130,
+              narrowMinHeight: 110,
               child: _NewArtists(names: newArtists),
             ),
         ],
@@ -713,6 +741,8 @@ class _CardSpec {
     required this.child,
     required this.flex,
     required this.minHeight,
+    this.narrowMinHeight,
+    this.fullCard,
     this.note,
   });
 
@@ -723,6 +753,12 @@ class _CardSpec {
   // 페이지 높이가 충분하면 flex 비율로 남는 공간을 나눠 채우고, 모자라면 minHeight로 스크롤
   final int flex;
   final double minHeight;
+
+  // 폭이 좁아 타일이 2열로 쌓이는 화면(폰)에서 쓸 높이. 없으면 minHeight
+  final double? narrowMinHeight;
+
+  // 제목 줄까지 직접 그리는 카드(있으면 _Card 대신 이것을 씀)
+  final Widget? fullCard;
 }
 
 class _PageOfCards extends StatelessWidget {
@@ -735,35 +771,51 @@ class _PageOfCards extends StatelessWidget {
     const gap = 10.0;
     return LayoutBuilder(
       builder: (context, box) {
+        // _TileGrid가 2열로 접히는 폭(안쪽 폭 480 미만)이면 좁은 화면용 높이를 씀
+        final narrow = box.maxWidth - 8 - 28 < 480;
+        double heightOf(_CardSpec c) =>
+            narrow ? (c.narrowMinHeight ?? c.minHeight) : c.minHeight;
         final need =
-            cards.fold<double>(0, (sum, c) => sum + c.minHeight) +
+            cards.fold<double>(0, (sum, c) => sum + heightOf(c)) +
             gap * (cards.length - 1) +
             8;
-        if (box.maxHeight >= need) {
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
-            child: Column(
-              children: [
-                for (var i = 0; i < cards.length; i++) ...[
-                  if (i > 0) const SizedBox(height: gap),
-                  Expanded(
-                    flex: cards[i].flex,
-                    child: _Card(spec: cards[i]),
-                  ),
-                ],
-              ],
+        // 모자라면 스크롤 대신 가상의 큰 화면에 그려 통째로 줄여 맞춤(너무 작아지면 스크롤)
+        final scale = math.min(1.0, (box.maxHeight / need));
+        if (scale >= 0.65) {
+          final w = box.maxWidth / scale;
+          final h = box.maxHeight / scale;
+          return FittedBox(
+            fit: BoxFit.fill,
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: w,
+              height: h,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < cards.length; i++) ...[
+                      if (i > 0) const SizedBox(height: gap),
+                      Expanded(
+                        flex: cards[i].flex,
+                        child: cards[i].fullCard ?? _Card(spec: cards[i]),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
           );
         }
         return ListView(
-          padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
+          padding: const EdgeInsets.fromLTRB(0, 0, 8, 16),
           children: [
             for (final c in cards)
               Padding(
                 padding: const EdgeInsets.only(bottom: gap),
                 child: SizedBox(
-                  height: c.minHeight,
-                  child: _Card(spec: c),
+                  height: heightOf(c),
+                  child: c.fullCard ?? _Card(spec: c),
                 ),
               ),
           ],
@@ -779,7 +831,34 @@ class _Card extends StatelessWidget {
   final _CardSpec spec;
 
   @override
+  Widget build(BuildContext context) =>
+      _CardShell(title: spec.title, note: spec.note, child: spec.child);
+}
+
+// 카드 바탕 + 제목 줄(오른쪽에 trailing을 둘 수 있음) + 내용
+class _CardShell extends StatelessWidget {
+  const _CardShell({
+    required this.title,
+    required this.child,
+    this.note,
+    this.trailing,
+  });
+
+  final String title;
+  final String? note;
+  final Widget? trailing;
+  final Widget child;
+
+  @override
   Widget build(BuildContext context) {
+    final titleText = Text(
+      title,
+      style: const TextStyle(
+        color: summaryInk,
+        fontWeight: FontWeight.w800,
+        fontSize: 15,
+      ),
+    );
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -790,19 +869,20 @@ class _Card extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            spec.title,
-            style: const TextStyle(
-              color: summaryInk,
-              fontWeight: FontWeight.w800,
-              fontSize: 15,
-            ),
-          ),
-          if (spec.note != null)
+          trailing == null
+              ? titleText
+              : Row(
+                  children: [
+                    titleText,
+                    const SizedBox(width: 8),
+                    Expanded(child: trailing!),
+                  ],
+                ),
+          if (note != null)
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text(
-                spec.note!,
+                note!,
                 style: TextStyle(
                   color: summaryInk.withValues(alpha: .6),
                   fontSize: 11,
@@ -810,7 +890,7 @@ class _Card extends StatelessWidget {
               ),
             ),
           const SizedBox(height: 8),
-          Expanded(child: spec.child),
+          Expanded(child: child),
         ],
       ),
     );
@@ -996,69 +1076,95 @@ class _TailPainter extends CustomPainter {
 // ---- 숫자 타일 ----
 
 class _Tile extends StatelessWidget {
-  const _Tile(this.label, this.value, {this.sub});
+  const _Tile(this.label, this.value, {this.sub, this.inline = false});
 
   final String label;
   final String value;
   final String? sub;
 
+  // true면 타일이 낮을 때 값 옆에 보조 글자를 같은 줄로 붙여 값이 보이게 함
+  final bool inline;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: .35),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
+    return LayoutBuilder(
+      builder: (context, box) {
+        // 타일이 클수록(태블릿) 글자도 같이 키우고, 높이가 넉넉하면 보조 글자를 값 아래 줄에 둠
+        final k = math
+            .min(box.maxHeight / 64, box.maxWidth / 135)
+            .clamp(1.0, 1.5);
+        final roomy = box.maxHeight >= 74 * k.clamp(1.0, 1.2);
+        final sideBySide = inline && !roomy;
+        final valueText = FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: summaryInk.withValues(alpha: .7),
-              fontSize: 11,
+              color: summaryInk,
+              fontWeight: FontWeight.w800,
+              fontSize: (sideBySide ? 18 : 20) * k,
             ),
           ),
-          const SizedBox(height: 2),
-          // 타일이 낮아도 넘치지 않게 값/보조 글자가 남는 높이 안에서 줄어듦
-          Flexible(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                value,
-                maxLines: 1,
-                style: const TextStyle(
-                  color: summaryInk,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 20,
-                ),
-              ),
-            ),
-          ),
-          if (sub != null)
-            Flexible(
-              child: Text(
+        );
+        final subText = sub == null
+            ? null
+            : Text(
                 sub!,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: summaryInk.withValues(alpha: .6),
-                  fontSize: 10,
+                  fontSize: 11 * k,
+                ),
+              );
+        return Container(
+          padding: EdgeInsets.symmetric(horizontal: 10 * k, vertical: 5 * k),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .35),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: summaryInk.withValues(alpha: .7),
+                  fontSize: 12 * k,
                 ),
               ),
-            ),
-        ],
-      ),
+              if (sideBySide)
+                Flexible(
+                  child: Row(
+                    children: [
+                      Flexible(child: valueText),
+                      if (subText != null) ...[
+                        const SizedBox(width: 6),
+                        Flexible(child: subText),
+                      ],
+                    ],
+                  ),
+                )
+              else ...[
+                SizedBox(height: 2 * k),
+                // 타일이 낮아도 넘치지 않게 값이 남는 높이 안에서 줄어듦
+                Flexible(child: valueText),
+                if (subText != null) Flexible(child: subText),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
-// 타일들을 주어진 높이를 꽉 채우는 격자로 배치(폭이 좁으면 2열)
+// 타일들을 주어진 높이를 꽉 채우는 격자로 배치(영역 모양에 따라 2열/4열)
 class _TileGrid extends StatelessWidget {
   const _TileGrid({required this.tiles, this.columns});
 
@@ -1069,7 +1175,11 @@ class _TileGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, box) {
-        final cols = columns ?? (box.maxWidth >= 480 ? 4 : 2);
+        // 넓고 낮은 영역이면 4열, 폰이나 태블릿 세로처럼 좁고 높으면 2열(타일이 길쭉해지지 않게)
+        final wide4 =
+            box.maxWidth >= 480 &&
+            (box.maxWidth - 24) / 4 >= (box.maxHeight - 8) / 2 * 0.9;
+        final cols = columns ?? (wide4 ? 4 : 2);
         final rows = (tiles.length / cols).ceil();
         return Column(
           children: [
@@ -1252,7 +1362,6 @@ class _DonutBlock extends StatelessWidget {
     this.a,
     this.labelB,
     this.b, {
-    this.note,
     this.onSegmentTap,
   });
 
@@ -1260,7 +1369,6 @@ class _DonutBlock extends StatelessWidget {
   final dynamic a;
   final String labelB;
   final dynamic b;
-  final String? note;
   final void Function(int index, Offset globalPosition)? onSegmentTap;
 
   @override
@@ -1325,14 +1433,6 @@ class _DonutBlock extends StatelessWidget {
                 ? null
                 : (d) => onSegmentTap!(1, d.globalPosition),
           ),
-          if (note != null)
-            Text(
-              note!,
-              style: TextStyle(
-                color: summaryInk.withValues(alpha: .55),
-                fontSize: 10,
-              ),
-            ),
         ],
       ),
     );
@@ -1490,7 +1590,7 @@ class _Bars extends StatelessWidget {
             v == 0 ? '' : (format?.call(v) ?? '$v'),
             maxLines: 1,
             softWrap: false,
-            style: const TextStyle(color: summaryInk, fontSize: 10),
+            style: const TextStyle(color: summaryInk, fontSize: 11),
           ),
         ),
         const SizedBox(height: 2),
@@ -1503,11 +1603,15 @@ class _Bars extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            color: summaryInk.withValues(alpha: .75),
-            fontSize: 10,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            label,
+            maxLines: 1,
+            style: TextStyle(
+              color: summaryInk.withValues(alpha: .75),
+              fontSize: 11,
+            ),
           ),
         ),
       ],
@@ -1604,9 +1708,52 @@ class _HBars extends StatelessWidget {
   }
 }
 
+// 카드 제목 오른쪽 끝에 붙는 연도 칩 줄(해가 많으면 가로로 밀어서 봄)
+class _YearChips extends StatelessWidget {
+  const _YearChips({
+    required this.years,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final List<String> years;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: true,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final year in years)
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: ChoiceChip(
+                  label: Text(year, style: const TextStyle(fontSize: 12)),
+                  selected: selected == year,
+                  showCheckmark: false,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 0),
+                  onSelected: (_) => onSelected(year),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // 연도 칩으로 한 해씩 골라 보는 1~12월 막대 차트(높이 비교를 위해 모든 연도가 같은 최댓값을 씀)
 class _YearTabbedBars extends StatefulWidget {
   const _YearTabbedBars({
+    required this.title,
     required this.byYear,
     required this.color,
     required this.maxValue,
@@ -1616,6 +1763,7 @@ class _YearTabbedBars extends StatefulWidget {
     this.onBarTap,
   });
 
+  final String title;
   final Map<String, List<int>> byYear;
   final Color color;
   final int maxValue;
@@ -1644,66 +1792,47 @@ class _YearTabbedBarsState extends State<_YearTabbedBars> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 8,
-          children: [
-            for (final year in _years)
-              ChoiceChip(
-                label: Text(year),
-                selected: _selected == year,
-                visualDensity: VisualDensity.compact,
-                onSelected: (_) {
-                  widget.selection[widget.selectionKey] = year;
-                  setState(() => _selected = year);
-                },
-              ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Expanded(
-          child: _Bars(
-            values: widget.byYear[_selected]!,
-            labels: [for (var m = 1; m <= 12; m++) '$m'],
-            color: widget.color,
-            format: widget.format,
-            scroll: false,
-            maxValue: widget.maxValue,
-            onBarTap: widget.onBarTap == null
-                ? null
-                : (i, pos) => widget.onBarTap!(_selected, i, pos),
-          ),
-        ),
-      ],
+    return _CardShell(
+      title: widget.title,
+      trailing: _YearChips(
+        years: _years,
+        selected: _selected,
+        onSelected: (year) {
+          widget.selection[widget.selectionKey] = year;
+          setState(() => _selected = year);
+        },
+      ),
+      child: _Bars(
+        values: widget.byYear[_selected]!,
+        labels: [for (var m = 1; m <= 12; m++) '$m'],
+        color: widget.color,
+        format: widget.format,
+        scroll: false,
+        maxValue: widget.maxValue,
+        onBarTap: widget.onBarTap == null
+            ? null
+            : (i, pos) => widget.onBarTap!(_selected, i, pos),
+      ),
     );
   }
 }
 
-// 처음 본 아티스트 이름표(많으면 일부만 보이고 나머지는 +N명)
+// 처음 본 아티스트 이름표(많으면 위아래로 스크롤)
 class _NewArtists extends StatelessWidget {
   const _NewArtists({required this.names});
 
   final List<String> names;
 
-  static const _limit = 12;
-
   @override
   Widget build(BuildContext context) {
     if (names.isEmpty) return const _Empty();
-    final shown = names.take(_limit).toList();
-    final rest = names.length - shown.length;
-    return ClipRect(
+    return SingleChildScrollView(
       child: Align(
         alignment: Alignment.topLeft,
         child: Wrap(
           spacing: 6,
           runSpacing: 6,
-          children: [
-            for (final n in shown) _Pill(n),
-            if (rest > 0) _Pill('+$rest명', filled: true),
-          ],
+          children: [for (final n in names) _Pill(n)],
         ),
       ),
     );
@@ -1711,23 +1840,22 @@ class _NewArtists extends StatelessWidget {
 }
 
 class _Pill extends StatelessWidget {
-  const _Pill(this.text, {this.filled = false});
+  const _Pill(this.text);
 
   final String text;
-  final bool filled;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: filled ? summaryInk : Colors.white.withValues(alpha: .5),
+        color: Colors.white.withValues(alpha: .5),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Text(
         text,
         style: TextStyle(
-          color: filled ? summaryPaper : summaryInk,
+          color: summaryInk,
           fontSize: 12,
           fontWeight: FontWeight.w600,
         ),
@@ -1819,35 +1947,30 @@ class _YearNewArtistsState extends State<_YearNewArtists> {
   @override
   Widget build(BuildContext context) {
     final names = widget.byYear[_selected] ?? const <String>[];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 8,
-          children: [
-            for (final year in _years)
-              ChoiceChip(
-                label: Text('$year'),
-                selected: _selected == year,
-                visualDensity: VisualDensity.compact,
-                onSelected: (_) {
-                  widget.selection[_YearNewArtists.selectionKey] = '$year';
-                  setState(() => _selected = year);
-                },
-              ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          '${names.length}명',
-          style: TextStyle(
-            color: summaryInk.withValues(alpha: .7),
-            fontSize: 11,
+    return _CardShell(
+      title: '처음 본 아티스트',
+      trailing: _YearChips(
+        years: [for (final y in _years) '$y'],
+        selected: '$_selected',
+        onSelected: (year) {
+          widget.selection[_YearNewArtists.selectionKey] = year;
+          setState(() => _selected = int.parse(year));
+        },
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${names.length}명',
+            style: TextStyle(
+              color: summaryInk.withValues(alpha: .7),
+              fontSize: 11,
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Expanded(child: _NewArtists(names: names)),
-      ],
+          const SizedBox(height: 4),
+          Expanded(child: _NewArtists(names: names)),
+        ],
+      ),
     );
   }
 }
