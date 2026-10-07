@@ -13,7 +13,9 @@ test_batch_extract.py(아티스트 추출 쪽)와 동일한 근거.
 건별 결과는 <out-dir>/<run-name>/ 아래 <concert_id>.raw.json(모델 원본 응답,
 extract_poster_info 반환값 그대로), <concert_id>.callback.json(normalize_crawl_result를 거친
 값 - 백엔드가 실제로 받을 콜백 바디)로 저장되고, summary.csv에 건별 한 줄 요약 + 경고 코드가
-모인다.
+모인다. report.html은 공연마다 포스터 이미지와 추출 결과를 나란히 보여주는 한 장짜리 리포트라,
+파일을 일일이 열지 않고 이미지와 값을 바로 대조할 수 있다(실패/경고 있는 건이 위로 올라오고
+검색/경고 코드 필터가 있음). 브라우저로 열면 되고, 이미지는 screenshot_url을 그대로 불러온다.
 
 경고(C1~C7)는 "여기 요청 1/2/3을 반영했는지"를 보는 게 아니라, 프롬프트나 병합 로직을 어떻게
 바꾸든 항상 적용되는 일반 점검이다. 코드 기준은 파일 하단 _evaluate_warnings 근처 주석 참고.
@@ -31,12 +33,14 @@ extract_poster_info 반환값 그대로), <concert_id>.callback.json(normalize_c
     /workspace/venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --resume                     # 이미 끝난 건 건너뛰고 나머지만
     /workspace/venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --out-dir crawl_test_results/failed.csv  # 실패건만 재시도
     /workspace/venv/bin/python server/test_crawl_extract.py --compare before after                    # 두 run 결과 비교(추출 없이)
+    /workspace/venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --report-only --run-name before  # 저장된 결과로 report.html만 다시 만들기
 
     
 """
 
 import argparse
 import csv
+import html
 import json
 import re
 import sys
@@ -60,6 +64,16 @@ _CONTENT_FIELDS = (
     "artist_name",
     "food_allowed",
 )
+
+_WARNING_LABELS = {
+    "C1": "거의 빈 결과",
+    "C2": "아티스트 없음",
+    "C3": "아티스트명 이상",
+    "C4": "시간표 이상",
+    "C5": "가격 이상",
+    "C6": "날짜 이상",
+    "C7": "오래 걸림",
+}
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -224,6 +238,23 @@ def _process_row(
     }
 
 
+def _row_from_disk(sample: dict, out_dir: Path) -> dict | None:
+    """--resume으로 건너뛴 건을 리포트에 넣기 위해, 저장된 callback.json으로 행을 복원한다.
+    경고는 규칙 기반이라 다시 계산하면 되고, 걸린 시간은 알 수 없어 None."""
+    path = out_dir / f"{sample['concert_id']}.callback.json"
+    if not path.exists():
+        return None
+    callback = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "concert_id": sample["concert_id"],
+        "sample": sample,
+        "callback": callback,
+        "warnings": _evaluate_warnings(callback, sample),
+        "elapsed": None,
+        "error": None,
+    }
+
+
 def _summary_line(row: dict) -> str:
     cb = row["callback"]
     name = row["sample"].get("concert_name") or row["concert_id"]
@@ -234,6 +265,197 @@ def _summary_line(row: dict) -> str:
         f"아티스트 {cb.get('artist_name') or []}",
     ]
     return f"{name}  ({row['elapsed']:.1f}초)  " + " | ".join(parts)
+
+
+# ── report.html: 포스터 이미지와 추출 결과를 공연별 카드로 나란히 보여주는 한 장짜리 리포트 ──
+_REPORT_CSS = """
+:root{--bg:#f6f4f0;--card:#fff;--ink:#222;--sub:#777;--line:#e4e0d8;--warn:#b45309;--warnbg:#fef3c7;--err:#b91c1c;--errbg:#fee2e2;--ok:#166534;--okbg:#dcfce7;--chip:#eee9df}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1b19;--card:#262522;--ink:#eee;--sub:#aaa;--line:#3a3834;--warn:#fbbf24;--warnbg:#44340f;--err:#fca5a5;--errbg:#451a1a;--ok:#86efac;--okbg:#14351f;--chip:#34322e}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,"Malgun Gothic",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:12px 16px}
+h1{font-size:17px;margin:0 0 6px}.meta{color:var(--sub);font-size:13px}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.bar input{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);min-width:200px}
+.pill{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:3px 10px;border-radius:14px;cursor:pointer;font-size:13px}
+.pill.on{background:var(--ink);color:var(--bg)}
+main{max-width:1100px;margin:0 auto;padding:12px 16px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:14px 0;overflow:hidden}
+.card.err{border-color:var(--err)}.card.warned{border-color:var(--warn)}
+.head{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.head b{font-size:15px}.sub{color:var(--sub);font-size:12px}
+.badge{font-size:12px;padding:1px 8px;border-radius:10px;background:var(--warnbg);color:var(--warn)}
+.badge.err{background:var(--errbg);color:var(--err)}.badge.ok{background:var(--okbg);color:var(--ok)}
+.body{display:grid;grid-template-columns:minmax(220px,38%) 1fr;gap:14px;padding:14px}
+.poster img{width:100%;border-radius:6px;border:1px solid var(--line);display:block}
+.poster .nolink{color:var(--sub);font-size:12px}
+@media(max-width:720px){.body{grid-template-columns:1fr}}
+h3{font-size:13px;margin:12px 0 4px;color:var(--sub)}h3:first-child{margin-top:0}
+.warnlist{margin:0 0 4px;padding:8px 10px 8px 26px;background:var(--warnbg);color:var(--warn);border-radius:6px}
+.chips span{display:inline-block;background:var(--chip);border-radius:12px;padding:1px 9px;margin:2px 4px 2px 0}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid var(--line);padding:3px 8px;text-align:left}
+th{color:var(--sub);font-weight:600}td.bad{color:var(--err);font-weight:600}.empty{color:var(--sub)}
+.scroll{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:6px}
+pre{white-space:pre-wrap;word-break:break-all;background:var(--errbg);color:var(--err);padding:8px;border-radius:6px;margin:0}
+"""
+
+_REPORT_JS = """
+const cards=[...document.querySelectorAll('.card')];
+let code='',onlyWarn=false;
+const q=document.getElementById('q');
+function apply(){const t=q.value.trim().toLowerCase();let n=0;
+cards.forEach(c=>{const ok=(!t||c.dataset.name.includes(t))&&(!onlyWarn||c.dataset.codes||c.dataset.err)&&(!code||c.dataset.codes.split(' ').includes(code)||(code==='ERR'&&c.dataset.err));
+c.style.display=ok?'':'none';if(ok)n++});document.getElementById('shown').textContent=n}
+q.oninput=apply;
+document.querySelectorAll('.pill').forEach(b=>b.onclick=()=>{
+if(b.dataset.code!==undefined){code=code===b.dataset.code?'':b.dataset.code}else{onlyWarn=!onlyWarn}
+document.querySelectorAll('.pill').forEach(x=>x.classList.toggle('on',x.dataset.code!==undefined?x.dataset.code===code:onlyWarn));apply()});
+"""
+
+
+def _e(value) -> str:
+    return html.escape("" if value is None else str(value))
+
+
+def _table(headers: list[str], rows: list[list], bad_cols: dict[int, set] | None = None) -> str:
+    if not rows:
+        return '<div class="empty">없음</div>'
+    out = ["<table><tr>" + "".join(f"<th>{_e(h)}</th>" for h in headers) + "</tr>"]
+    for row in rows:
+        cells = []
+        for i, v in enumerate(row):
+            bad = bad_cols and v in bad_cols.get(i, ())
+            cells.append(f'<td class="bad">{_e(v)}</td>' if bad else f"<td>{_e(v)}</td>")
+        out.append("<tr>" + "".join(cells) + "</tr>")
+    out.append("</table>")
+    return "".join(out)
+
+
+def _card_html(row: dict) -> str:
+    sample = row["sample"]
+    name = sample.get("concert_name") or row["concert_id"]
+    url = sample.get("screenshot_url")
+    poster = (
+        f'<a href="{_e(url)}" target="_blank" rel="noopener"><img loading="lazy" src="{_e(url)}" alt="포스터"></a>'
+        if url
+        else '<div class="nolink">이미지 URL 없음</div>'
+    )
+    meta = [sample.get("event_type"), f"{sample.get('start_date') or '?'} ~ {sample.get('end_date') or '?'}"]
+    ranges = sample.get("timetable_ranges")
+    if ranges:
+        meta.append(f"구간 {len(ranges)}개")
+    if row["elapsed"] is not None:
+        meta.append(f"{row['elapsed']:.1f}초")
+    head = f'<b>{_e(name)}</b><span class="sub">{_e(" · ".join(str(m) for m in meta if m))}</span>'
+
+    if row["error"] is not None:
+        return (
+            f'<section class="card err" data-name="{_e(name.lower())}" data-codes="" data-err="1">'
+            f'<div class="head">{head}<span class="badge err">실패</span></div>'
+            f'<div class="body"><div class="poster">{poster}</div>'
+            f"<div><h3>오류</h3><pre>{_e(row['error'])}</pre></div></div></section>"
+        )
+
+    cb = row["callback"]
+    warnings = row["warnings"]
+    codes = sorted({c for c, _ in warnings})
+    badges = "".join(f'<span class="badge">{c} {_e(_WARNING_LABELS.get(c, ""))}</span>' for c in codes)
+    if not warnings:
+        badges = '<span class="badge ok">경고 없음</span>'
+
+    parts = []
+    if warnings:
+        items = "".join(f"<li><b>{_e(c)}</b> {_e(d)}</li>" for c, d in warnings)
+        parts.append(f'<h3>경고</h3><ul class="warnlist">{items}</ul>')
+
+    artists = cb.get("artist_name") or []
+    chips = "".join(f"<span>{_e(a)}</span>" for a in artists)
+    parts.append(
+        f"<h3>아티스트 ({len(artists)})</h3>" + (f'<div class="chips">{chips}</div>' if chips else '<div class="empty">없음</div>')
+    )
+
+    start, end = _parse_date(sample.get("start_date")), _parse_date(sample.get("end_date"))
+    timetable = cb.get("timetable") or []
+    bad_dates = {
+        e.get("date")
+        for e in timetable
+        if (d := _parse_date(e.get("date"))) and start and end and not (start <= d <= end)
+    }
+    bad_times = {e.get("time") for e in timetable if e.get("time") and not _TIME_RE.match(e["time"])}
+    tt_rows = [[e.get("date"), e.get("time"), e.get("stage"), e.get("event")] for e in timetable]
+    parts.append(
+        f"<h3>시간표 ({len(timetable)})</h3>"
+        '<div class="scroll">'
+        + _table(["날짜", "시간", "스테이지", "아티스트/이벤트"], tt_rows, {0: bad_dates, 1: bad_times, 3: {"라인업 미공개"}})
+        + "</div>"
+    )
+
+    prices = cb.get("prices") or []
+    bad_prices = {p.get("price") for p in prices if p.get("price") is not None and not (1000 <= p["price"] <= 1_000_000)}
+    parts.append(
+        f"<h3>가격 ({len(prices)})</h3>"
+        + _table(["좌석", "가격"], [[p.get("seat_type"), p.get("price")] for p in prices], {1: bad_prices})
+    )
+
+    phases = cb.get("ticketing_phases") or []
+    info_rows = [["예매 시작(가장 이른)", cb.get("ticketing_date") or "-"]]
+    info_rows += [[f"· {p.get('phase')}", p.get("date") or "-"] for p in phases]
+    info_rows += [["티켓 배송일", cb.get("delivery_date") or "-"], ["음식 반입", cb.get("food_allowed") or "-"]]
+    parts.append("<h3>예매/기타</h3>" + _table(["항목", "값"], info_rows))
+
+    lineup = cb.get("lineup") or []
+    if lineup:
+        parts.append(
+            f"<h3>라인업 ({len(lineup)})</h3>"
+            '<div class="scroll">'
+            + _table(["아티스트", "출연일"], [[x.get("artist"), x.get("performance_date")] for x in lineup])
+            + "</div>"
+        )
+
+    cls = "card warned" if warnings else "card"
+    return (
+        f'<section class="{cls}" data-name="{_e(name.lower())}" data-codes="{" ".join(codes)}" data-err="">'
+        f'<div class="head">{head}{badges}</div>'
+        f'<div class="body"><div class="poster">{poster}</div><div>{"".join(parts)}</div></div></section>'
+    )
+
+
+def _write_report_html(out_dir: Path, run_name: str, rows: list[dict]) -> None:
+    # 실패 → 경고 많은 순 → 경고 없음 순으로 올려 확인할 건을 앞에 둔다(같은 그룹은 입력 순서 유지)
+    def key(item: tuple[int, dict]) -> tuple:
+        i, r = item
+        if r["error"] is not None:
+            return (0, 0, i)
+        return (1, -len(r["warnings"]), i) if r["warnings"] else (2, 0, i)
+
+    ordered = [r for _, r in sorted(enumerate(rows), key=key)]
+    counts: dict[str, int] = {}
+    for r in rows:
+        if r["error"] is None:
+            for code in {c for c, _ in r["warnings"]}:
+                counts[code] = counts.get(code, 0) + 1
+    failed = sum(1 for r in rows if r["error"] is not None)
+    warned = sum(1 for r in rows if r["error"] is None and r["warnings"])
+
+    pills = '<button class="pill" type="button">경고 있는 건만</button>'
+    if failed:
+        pills += f'<button class="pill" type="button" data-code="ERR">실패 {failed}</button>'
+    for code in sorted(counts):
+        label = _e(_WARNING_LABELS.get(code, ""))
+        pills += f'<button class="pill" type="button" data-code="{code}">{code} {label} {counts[code]}</button>'
+    legend = " · ".join(f"{c} {label}" for c, label in _WARNING_LABELS.items())
+
+    doc = (
+        '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"<title>크롤 추출 리포트 {_e(run_name)}</title><style>{_REPORT_CSS}</style></head><body>"
+        f"<header><h1>크롤 추출 리포트 · {_e(run_name)}</h1>"
+        f'<div class="meta">총 {len(rows)}건 · 실패 {failed} · 경고 {warned} · 표시 <span id="shown">{len(rows)}</span>건</div>'
+        f'<div class="meta">{_e(legend)} (경고는 채점이 아니라 확인 힌트, 빨간 값은 규칙에 걸린 값)</div>'
+        f'<div class="bar"><input id="q" placeholder="공연명 검색">{pills}</div></header>'
+        f'<main>{"".join(_card_html(r) for r in ordered)}</main><script>{_REPORT_JS}</script></body></html>'
+    )
+    (out_dir / "report.html").write_text(doc, encoding="utf-8")
+    print(f"리포트: {out_dir}/report.html (브라우저로 열기)")
 
 
 def _run_extraction(args: argparse.Namespace) -> None:
@@ -257,10 +479,23 @@ def _run_extraction(args: argparse.Namespace) -> None:
     out_dir = Path(args.out_dir) / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.resume:
+    # 이번에 안 돌리고 저장된 결과로 리포트에만 넣을 건(--resume으로 건너뛴 건, --report-only 전체)
+    carried: list[dict] = []
+    if args.resume or args.report_only:
         before = len(samples)
-        samples = [s for s in samples if not (out_dir / f"{s['concert_id']}.callback.json").exists()]
-        print(f"--resume: {before}건 중 {before - len(samples)}건은 이미 완료돼 건너뜀, {len(samples)}건만 실행")
+        pending = []
+        for s in samples:
+            row = _row_from_disk(s, out_dir)
+            if row is not None:
+                carried.append(row)
+            else:
+                pending.append(s)
+        if args.report_only:
+            print(f"--report-only: 저장된 {len(carried)}건으로 리포트만 만듦({before - len(carried)}건은 결과 없음)")
+            _write_report_html(out_dir, run_name, carried)
+            return
+        samples = pending
+        print(f"--resume: {before}건 중 {len(carried)}건은 이미 완료돼 건너뜀, {len(samples)}건만 실행")
 
     print(
         f"{len(samples)}건 테스트 시작 (동시 {args.concurrency}건, base_url={args.base_url}, "
@@ -305,6 +540,7 @@ def _run_extraction(args: argparse.Namespace) -> None:
     print(f"\n완료. 결과는 {out_dir}/ 에 저장됨")
     _write_summary_csv(out_dir, results)
     _write_failed_csv(out_dir, results)
+    _write_report_html(out_dir, run_name, carried + results)
     _print_totals(results)
 
 
@@ -431,6 +667,9 @@ def main():
     parser.add_argument("--event-type", default=None, choices=["SOLO", "FESTIVAL", "UNKNOWN"], help="이 event_type만")
     parser.add_argument("--filter", default=None, help="공연명에 이 문자열이 포함된 것만 (대소문자 무시)")
     parser.add_argument("--limit", type=int, default=None, help="필터링 후 앞에서 N건만")
+    parser.add_argument(
+        "--report-only", action="store_true", help="추출 없이 out-dir/run-name에 저장된 결과로 report.html만 다시 만듦"
+    )
     parser.add_argument("--no-ranges", action="store_true", help="timetable_ranges를 무시하고 돌려서 구간 효과 비교")
     # config.py는 import 안 함(LLM_EXTRACT_API_KEY 등 필수 환경변수가 없으면 .env 없이 실행이
     # 막힘 - test_batch_extract.py와 같은 이유). 기본값은 config.py의 값과 동일하게 맞춤
