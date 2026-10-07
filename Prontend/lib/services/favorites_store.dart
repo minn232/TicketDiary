@@ -71,10 +71,30 @@ class FavoritesStore extends ChangeNotifier {
   int get revision => _revision;
 
   List<ArtistModel> get favoriteArtists => _artists.values.toList();
-  List<ConcertModel> get favoriteConcerts => _concerts.values.toList();
+  List<ConcertModel> get favoriteConcerts =>
+      _concerts.values.where((c) => !_isEnded(c)).toList();
 
   bool isArtistFavorited(String name) => _artists.containsKey(name);
   bool isConcertFavorited(String name) => _concerts.containsKey(name);
+
+  // [백엔드 수정]
+  // 종료 기준은 서버 자동 해제(end_date + 15시간)와 동일. 날짜를 모르면 종료로 보지 않음.
+  static bool _isEnded(ConcertModel c, [DateTime? now]) {
+    final end = c.endDate ?? c.startDate;
+    if (end == null) return false;
+    return end
+        .toUtc()
+        .add(const Duration(hours: 15))
+        .isBefore((now ?? DateTime.now()).toUtc());
+  }
+
+  /// 종료된 찜 공연을 로컬 목록에서 지우고, 지운 게 있으면 true.
+  bool _removeEndedConcerts() {
+    final now = DateTime.now();
+    final before = _concerts.length;
+    _concerts.removeWhere((_, c) => _isEnded(c, now));
+    return _concerts.length != before;
+  }
 
   /// 앱 로컬에 저장된 찜 목록을 불러옵니다. 여러 번 호출해도 한 번만 실제로 로드합니다.
   Future<void> load() async {
@@ -85,6 +105,7 @@ class FavoritesStore extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _restoreArtists(prefs.getString(_artistsPrefsKey));
       _restoreConcerts(prefs.getString(_concertsPrefsKey));
+      if (_removeEndedConcerts()) await _persistConcerts();
       notifyListeners();
     } catch (_) {
       // 로컬 저장소를 못 읽어도 빈 상태로 시작합니다.
@@ -174,10 +195,14 @@ class FavoritesStore extends ChangeNotifier {
           // 개별 공연 복원 실패는 건너뜁니다.
         }
       }
+      // [백엔드 수정]
+      // 서버에서 되살린 항목까지 포함해 종료된 찜을 지우고, 서버에도 반영.
+      final prunedEnded = _removeEndedConcerts();
+      if (prunedEnded) changed = true;
       // 서버가 비어 있거나 새 브랜치/새 DB에서 아직 동기화되지 않은 상태라면,
       // 기기에 남아 있는 로컬 찜 공연을 먼저 서버로 올립니다. 서버 응답에 없는
       // 값을 곧바로 지우면, 백엔드가 잠시 꺼져 있었던 뒤에도 로컬 찜이 사라집니다.
-      if (_concerts.values.any((c) => c.id.isNotEmpty)) {
+      if (prunedEnded || _concerts.values.any((c) => c.id.isNotEmpty)) {
         await _pushConcertsToServer();
       }
     } catch (_) {

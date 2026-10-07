@@ -24,10 +24,11 @@ class SummaryModel {
   final int songCount;
   final String favoriteGenre;
   final List<ArtistVisit> visitedArtists;
-  final double standingRatio;
-  final double seatRatio;
-  final double firstConcertRatio;
-  final double lastConcertRatio;
+  // 0~1, 대상 티켓이 없으면 null(화면엔 '-')
+  final double? standingRatio;
+  final double? seatRatio;
+  final double? firstConcertRatio;
+  final double? lastConcertRatio;
 
   SummaryModel({
     required this.concertCount,
@@ -41,25 +42,31 @@ class SummaryModel {
     required this.lastConcertRatio,
   });
 
-  /// 백엔드는 스탠딩/좌석/첫콘/막콘을 비율이 아닌 개수(`standing_count` 등)로
-  /// 주기 때문에, 여기서 `concert_count` 대비 비율로 변환합니다.
+  // [백엔드 수정]
+  // 스탠딩/좌석, 첫콘/막콘을 `*_percent`(대상 없으면 null)로 받음.
   factory SummaryModel.fromJson(Map<String, dynamic> json) {
     final concertCount = json['concert_count'] as int? ?? 0;
-    double ratio(dynamic count) =>
-        concertCount == 0 ? 0.0 : (count as int? ?? 0) / concertCount;
+    double? ratio(dynamic percent) => percent is int ? percent / 100 : null;
+    // [백엔드 수정] 동률이면 `top_genres` 전부 표시.
+    final topGenres = (json['top_genres'] as List? ?? const [])
+        .whereType<String>()
+        .toList();
+    final favoriteGenre = topGenres.isNotEmpty
+        ? topGenres.join(', ')
+        : (json['top_genre'] as String? ?? '-');
 
     return SummaryModel(
       concertCount: concertCount,
       totalSpending: json['total_spent'] as int? ?? 0,
       songCount: json['song_count'] as int? ?? 0,
-      favoriteGenre: json['top_genre'] as String? ?? '-',
+      favoriteGenre: favoriteGenre,
       visitedArtists: (json['artists'] as List? ?? const [])
           .map((e) => ArtistVisit.fromJson(e as Map<String, dynamic>))
           .toList(),
-      standingRatio: ratio(json['standing_count']),
-      seatRatio: ratio(json['seated_count']),
-      firstConcertRatio: ratio(json['first_day_count']),
-      lastConcertRatio: ratio(json['last_day_count']),
+      standingRatio: ratio(json['standing_percent']),
+      seatRatio: ratio(json['seated_percent']),
+      firstConcertRatio: ratio(json['first_day_percent']),
+      lastConcertRatio: ratio(json['last_day_percent']),
     );
   }
 }

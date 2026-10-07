@@ -126,7 +126,8 @@ class _SummaryReportDrawerState extends State<SummaryReportDrawer> {
                     );
                   }
                   final data = snapshot.data!;
-                  String ratio(double value) => '${(value * 100).round()}%';
+                  String ratio(double? value) =>
+                      value == null ? '-' : '${(value * 100).round()}%';
                   final spending = data.totalSpending
                       .toString()
                       .replaceAllMapped(
