@@ -43,8 +43,11 @@ def test_percent_split_helper_shared():
 @pytest.mark.asyncio
 async def test_summary_ticket_field_extras():
     token = await _get_token()
-    c1 = await _create_concert(f"PF_EX_{_uid()}", days_ago=10)
-    c2 = await _create_concert(f"PF_EX_{_uid()}", days_ago=11)
+    # 최다 월 검증용 두 공연은 같은 달이어야 함 - "10일/11일 전"은 실행일에 따라 달이 갈려서
+    # 지난달 15·16일로 고정(월 경계/시차 영향 없음)
+    days_ago = (date.today() - (date.today().replace(day=1) - timedelta(days=1)).replace(day=16)).days
+    c1 = await _create_concert(f"PF_EX_{_uid()}", days_ago=days_ago)
+    c2 = await _create_concert(f"PF_EX_{_uid()}", days_ago=days_ago + 1)
     c3 = await _create_concert(f"PF_EX_{_uid()}", days_ago=400)
     t1 = await _create_attended_ticket(c1, token, price=100000)
     t2 = await _create_attended_ticket(c2, token, price=50000)

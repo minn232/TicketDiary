@@ -68,7 +68,7 @@ async def _run_llm_attempt() -> None:
         # Command 자동화가 무산되면서 SSH 방식으로 대체함)
         if not await start_pod_and_launch_services():
             logger.warning(
-                f"[LLM] 배치 시도 실패(pod 시작/원격 실행, {time.monotonic() - started:.0f}초) - 다음날 재시도"
+                f"[LLM] 배치 시도 실패(pod 시작/원격 실행/서버 준비, {time.monotonic() - started:.0f}초) - 다음날 재시도"
             )
             # start 요청 자체가 실패한 경우엔 이미 꺼져있어 무해하고(멱등), SSH 단계 실패면 켜진 pod을 정리
             await stop_pod()

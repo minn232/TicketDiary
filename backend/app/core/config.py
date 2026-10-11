@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # LLM팀 GPU pod을 매일 켜고 끄기 위한 RunPod REST API 인증 정보 (비용 절감용, 미설정 시 트리거 안 함)
     RUNPOD_API_KEY: str = ""
     RUNPOD_POD_ID: str = ""
+    # RUNPOD_POD_ID가 GPU 부족/SSH 실패 등으로 못 뜰 때 순서대로 시도할 보조 pod ID들(쉼표 구분).
+    # 같은 RunPod 계정(RUNPOD_API_KEY)·같은 서버 SSH 키·같은 cloudflared 터널이어야 함
+    RUNPOD_FALLBACK_POD_IDS: str = ""
     # pod을 깨운 뒤 SSH로 접속해서 start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 원격
     # 실행하기 위한 정보. RUNPOD_SSH_KEY_PATH 미설정이면 pod만 켜고 원격 실행은 건너뜀.
     # host/port는 여기 없음 - pod stop/start마다 RunPod이 SSH 외부포트를 바꿔버려서(실측

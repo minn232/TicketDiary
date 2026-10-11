@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.runpod import _wait_until_actually_stopped, stop_pod
+from app.services.runpod import (
+    _wait_until_actually_stopped,
+    candidate_pod_ids,
+    start_pod_and_launch_services,
+    stop_pod,
+)
 
 _SETTINGS_PATCH = {
     "app.services.runpod.settings.RUNPOD_API_KEY": "test-key",
@@ -92,7 +97,7 @@ async def test_wait_until_actually_stopped_true_immediately():
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"), \
          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
-        result = await _wait_until_actually_stopped(timeout_seconds=1.0, interval_seconds=0.01)
+        result = await _wait_until_actually_stopped("test-pod", timeout_seconds=1.0, interval_seconds=0.01)
     assert result is True
 
 
@@ -103,7 +108,7 @@ async def test_wait_until_actually_stopped_true_after_polling():
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"), \
          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
-        result = await _wait_until_actually_stopped(timeout_seconds=1.0, interval_seconds=0.01)
+        result = await _wait_until_actually_stopped("test-pod", timeout_seconds=1.0, interval_seconds=0.01)
     assert result is True
     assert mock_client.get.call_count == 2
 
@@ -115,5 +120,69 @@ async def test_wait_until_actually_stopped_false_on_timeout():
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"), \
          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
-        result = await _wait_until_actually_stopped(timeout_seconds=0.05, interval_seconds=0.01)
+        result = await _wait_until_actually_stopped("test-pod", timeout_seconds=0.05, interval_seconds=0.01)
     assert result is False
+
+
+# 기본 pod 먼저, 보조 pod은 쉼표 순서대로 - 공백/빈 값/중복은 걸러냄
+def test_candidate_pod_ids_order_and_dedupe():
+    with patch("app.services.runpod.settings.RUNPOD_POD_ID", "pod-a"), \
+         patch("app.services.runpod.settings.RUNPOD_FALLBACK_POD_IDS", " pod-b, ,pod-a,pod-c "):
+        assert candidate_pod_ids() == ["pod-a", "pod-b", "pod-c"]
+
+
+# 정지는 어느 후보가 떠 있는지 모르므로 후보 전부에 보내고, 하나라도 확인 실패면 False
+@pytest.mark.asyncio
+async def test_stop_pod_stops_every_candidate():
+    stop_one = AsyncMock(side_effect=[True, False])
+    with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
+         patch("app.services.runpod.settings.RUNPOD_POD_ID", "pod-a"), \
+         patch("app.services.runpod.settings.RUNPOD_FALLBACK_POD_IDS", "pod-b"), \
+         patch("app.services.runpod._stop_one_pod", stop_one):
+        result = await stop_pod()
+    assert result is False
+    assert [c.args[0] for c in stop_one.call_args_list] == ["pod-a", "pod-b"]
+
+
+def _launch_patches(start_results, launch_results):
+    return (
+        patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"),
+        patch("app.services.runpod.settings.RUNPOD_POD_ID", "pod-a"),
+        patch("app.services.runpod.settings.RUNPOD_FALLBACK_POD_IDS", "pod-b"),
+        patch("app.services.runpod.settings.RUNPOD_SSH_KEY_PATH", "/key"),
+        patch("app.services.runpod.start_pod", AsyncMock(side_effect=start_results)),
+        patch("app.services.runpod._launch_services", AsyncMock(side_effect=launch_results)),
+        patch("app.services.runpod._stop_one_pod", AsyncMock(return_value=True)),
+    )
+
+
+# 기본 pod start가 실패(GPU 부족)하면 정지 없이 보조 pod으로 넘어가 성공
+@pytest.mark.asyncio
+async def test_start_falls_back_when_primary_start_fails():
+    p = _launch_patches([False, True], [True])
+    with p[0], p[1], p[2], p[3], p[4] as start, p[5] as launch, p[6] as stop_one:
+        result = await start_pod_and_launch_services()
+    assert result is True
+    assert [c.args[0] for c in start.call_args_list] == ["pod-a", "pod-b"]
+    assert [c.args[0] for c in launch.call_args_list] == ["pod-b"]
+    assert not stop_one.called
+
+
+# 기본 pod은 켜졌지만 SSH/서버 기동에 실패하면 그 pod을 정지하고 보조 pod으로 넘어감
+@pytest.mark.asyncio
+async def test_start_stops_primary_and_falls_back_when_launch_fails():
+    p = _launch_patches([True, True], [False, True])
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6] as stop_one:
+        result = await start_pod_and_launch_services()
+    assert result is True
+    assert [c.args[0] for c in stop_one.call_args_list] == ["pod-a"]
+
+
+# 후보 전부 실패하면 False (켜졌다 실패한 pod은 각각 정지됨)
+@pytest.mark.asyncio
+async def test_start_returns_false_when_all_candidates_fail():
+    p = _launch_patches([True, False], [False])
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6] as stop_one:
+        result = await start_pod_and_launch_services()
+    assert result is False
+    assert [c.args[0] for c in stop_one.call_args_list] == ["pod-a"]
