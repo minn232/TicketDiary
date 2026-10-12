@@ -6,6 +6,7 @@ import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
 import 'package:ticketdiary/services/news_cache_store.dart';
 import 'package:ticketdiary/services/social_service.dart';
+import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/screen/diary_screen.dart'
     show buildUpcomingTicketLandscapePanel;
 import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
@@ -91,6 +92,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   // ─── 풀탭 전환 상태 ───────────────────────────────────────────────
   /// 풀탭 위치이자 체커보드 진행도의 원천. 0.0=소식/왼쪽, 1.0=찜/오른쪽.
   late final AnimationController _slide;
+  SoundPlayback? _pageShiftSound;
 
   /// 로딩 중 풀탭 하트에 보여주는 시계방향 쐐기 반복 애니메이션(한 바퀴가
   /// "사라짐 절반 + 나타남 절반"). 로딩이 아닐 때는 그냥 0에서 멈춰 있어
@@ -121,6 +123,8 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// "로딩 중"으로 시작해(다음 프레임에야 데이터로 갱신) — 소식으로 돌아온
   /// 직후 카드들이 아주 잠깐 사라졌다 나타나는 깜빡임의 원인이었습니다.
   final GlobalKey _newsBodyKey = GlobalKey();
+  PageController? _newsPageController;
+  int? _newsPageTarget;
 
   /// 복귀 시 최신 소식 로딩이 너무 오래 걸리면(백엔드 오류 등) 기존
   /// 데이터로라도 소식으로 되돌아오게 하는 안전 타임아웃.
@@ -181,6 +185,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _pageShiftSound?.stop();
     _returnTimeout?.cancel();
     TabNavCoordinator.instance.currentTab.removeListener(_onCurrentTabChanged);
     TabNavCoordinator.instance.isTransitioning.removeListener(
@@ -191,6 +196,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     _heartWipe.dispose();
     _glassReveal.dispose();
     _pullTabReveal.dispose();
+    _newsPageController?.dispose();
     super.dispose();
   }
 
@@ -226,6 +232,15 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   }
 
   void _onSlideStatus(AnimationStatus status) {
+    if (status == AnimationStatus.forward ||
+        status == AnimationStatus.reverse) {
+      _pageShiftSound?.stop();
+      _pageShiftSound = SoundEffectService.instance.start(
+        SoundEffect.pageShift,
+      );
+    } else {
+      _pageShiftSound?.stop();
+    }
     if (status == AnimationStatus.completed) {
       // 오른쪽 끝 도착 → 찜 패널만 남김.
       if (_phase == _FlipPhase.toFav) {
@@ -688,7 +703,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // [constraints]보다 좌우 12씩(총 24) 더 좁다. 이걸 빼지 않고 계산하면
     // 카드 2열의 실제 폭이 창보다 24 더 커져 오른쪽 카드가 잘려 보인다.
     const outerPadding = 12.0;
-    final availableWidth = constraints.maxWidth - outerPadding * 2;
+    final availableHeight = constraints.maxHeight - outerPadding * 2;
 
     // 카드를 세로가 아니라 "가로로" 넘겨봅니다(오른쪽으로 스크롤). 창 안에
     // 2행 × 2열 = 4개가 한 화면에 온전히 보이도록, 카드 한 장의 가로폭을
@@ -698,44 +713,79 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       crossAxisCount: rowCount,
       crossAxisSpacing: spacing,
       mainAxisSpacing: spacing,
-      mainAxisExtent: (availableWidth - spacing) / 2,
+      // The inner grid is vertical. Its main axis is therefore the card
+      // height; using the width here made every card only about half as tall
+      // as the available page and left the lower half empty.
+      mainAxisExtent: (availableHeight - spacing) / 2,
     );
 
-    return GridView.builder(
-      scrollDirection: Axis.horizontal,
-      padding: EdgeInsets.zero,
-      physics: const BouncingScrollPhysics(),
-      gridDelegate: gridDelegate,
-      itemCount: items.length < firstPageVisualOrder.length
-          ? firstPageVisualOrder.length
-          : items.length,
-      itemBuilder: (context, index) {
-        final itemIndex = index < firstPageVisualOrder.length
-            ? firstPageVisualOrder[index]
-            : index;
-        if (itemIndex >= items.length) return const SizedBox.shrink();
-        final item = items[itemIndex];
-        final angle = switch (index % 4) {
-          0 => -0.02,
-          1 => 0.015,
-          2 => 0.012,
-          _ => -0.015,
-        };
-        final cardKey = _cardKeyFor(item);
+    final ordered = [
+      for (final index in firstPageVisualOrder)
+        if (index < items.length) items[index],
+      ...items.skip(firstPageVisualOrder.length),
+    ];
+    final pageCount = (ordered.length / 4).ceil();
+    final pendingId = TabNavCoordinator.instance.pendingNewsConcertId;
+    final pendingName = TabNavCoordinator.instance.pendingNewsConcertName;
+    final targetIndex = pendingId == null
+        ? -1
+        : ordered.indexWhere((item) => item.concertId == pendingId);
+    final resolvedIndex = targetIndex >= 0
+        ? targetIndex
+        : pendingName == null
+        ? -1
+        : ordered.indexWhere((item) => item.concert == pendingName);
+    final targetPage = resolvedIndex < 0 ? 0 : resolvedIndex ~/ 4;
+    if (_newsPageController == null || _newsPageTarget != targetPage) {
+      _newsPageController?.dispose();
+      _newsPageTarget = targetPage;
+      _newsPageController = PageController(initialPage: targetPage);
+      if ((pendingId != null || pendingName != null) && resolvedIndex >= 0) {
+        TabNavCoordinator.instance.pendingNewsConcertId = null;
+        TabNavCoordinator.instance.pendingNewsConcertName = null;
+      }
+    }
 
-        return PressableScale(
-          onTap: () => unawaited(_openNewsDetail(item, cardKey, angle)),
-          pressScale: 0.97,
-          tapScale: 1.02,
-          child: _hideWhileOverlayOpen(
-            regionKey: cardKey,
-            child: KeyedSubtree(
-              key: cardKey,
-              child: _PolaroidCard(data: item, angle: angle),
-            ),
-          ),
-        );
-      },
+    return SizedBox.expand(
+      child: PageView.builder(
+        key: ValueKey('news-page-$targetPage'),
+        controller: _newsPageController,
+        itemCount: pageCount,
+        physics: const PageScrollPhysics(),
+        itemBuilder: (context, page) {
+          final pageItems = ordered.skip(page * 4).take(4).toList();
+          return GridView.builder(
+            padding: EdgeInsets.zero,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: gridDelegate,
+            itemCount: pageItems.length,
+            itemBuilder: (context, index) {
+              final item = pageItems[index];
+              final angle = switch (index % 4) {
+                0 => -0.02,
+                1 => 0.015,
+                2 => 0.012,
+                _ => -0.015,
+              };
+              final cardKey = _cardKeyFor(item);
+
+              return PressableScale(
+                soundEffect: SoundEffect.bookSip,
+                onTap: () => unawaited(_openNewsDetail(item, cardKey, angle)),
+                pressScale: 0.97,
+                tapScale: 1.02,
+                child: _hideWhileOverlayOpen(
+                  regionKey: cardKey,
+                  child: KeyedSubtree(
+                    key: cardKey,
+                    child: _PolaroidCard(data: item, angle: angle),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -753,7 +803,7 @@ class _NewsFrame extends StatelessWidget {
   /// 기본(22)보다 50% 키워(33) "뚫려 보이는" 창을 세로로 더 작게 만듭니다 —
   /// 창 높이가 줄면 아래 소식 카드 그리드도 그만큼 자동으로 작아집니다
   /// ([_buildNewsGrid]가 창 높이에 맞춰 카드 크기를 계산).
-  static const EdgeInsets _insets = EdgeInsets.fromLTRB(30, 33, 22, 33);
+  static const EdgeInsets _insets = EdgeInsets.fromLTRB(30, 16, 22, 16);
   static const double _windowRadius = 6;
 
   @override

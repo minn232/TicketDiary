@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../services/sound_effect_service.dart';
+
 /// 눌렀을 때 살짝 "커졌다가"(팝) "원래 크기"로 돌아오는 클릭 애니메이션.
 ///
 /// 사용 예:
@@ -15,6 +17,7 @@ import 'package:flutter/material.dart';
 /// - 손을 떼는 순간: 약간 확대([tapScale]) 후 원래 크기(1.0)로 복귀
 class PressableScale extends StatefulWidget {
   final Widget child;
+  final SoundEffect soundEffect;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -41,6 +44,7 @@ class PressableScale extends StatefulWidget {
     super.key,
     required this.child,
     this.onTap,
+    this.soundEffect = SoundEffect.click,
     this.onLongPress,
     this.pressScale = 0.97,
     this.tapScale = 1.04,
@@ -56,7 +60,8 @@ class PressableScale extends StatefulWidget {
   State<PressableScale> createState() => _PressableScaleState();
 }
 
-class _PressableScaleState extends State<PressableScale> with SingleTickerProviderStateMixin {
+class _PressableScaleState extends State<PressableScale>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -80,7 +85,11 @@ class _PressableScaleState extends State<PressableScale> with SingleTickerProvid
     super.dispose();
   }
 
-  Future<void> _animateTo(double value, {required Duration duration, required Curve curve}) async {
+  Future<void> _animateTo(
+    double value, {
+    required Duration duration,
+    required Curve curve,
+  }) async {
     if (!mounted) return;
     try {
       await _controller.animateTo(value, duration: duration, curve: curve);
@@ -92,13 +101,21 @@ class _PressableScaleState extends State<PressableScale> with SingleTickerProvid
   void _onTapDown(TapDownDetails _) {
     if (!widget.enabled) return;
     _controller.stop();
-    _animateTo(widget.pressScale, duration: widget.pressDuration, curve: Curves.easeOutCubic);
+    _animateTo(
+      widget.pressScale,
+      duration: widget.pressDuration,
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void _onTapCancel() {
     if (!widget.enabled) return;
     _controller.stop();
-    _animateTo(1.0, duration: widget.popOutDuration, curve: Curves.easeOutCubic);
+    _animateTo(
+      1.0,
+      duration: widget.popOutDuration,
+      curve: Curves.easeOutCubic,
+    );
   }
 
   void _onTapUp(TapUpDetails _) {
@@ -107,8 +124,16 @@ class _PressableScaleState extends State<PressableScale> with SingleTickerProvid
 
     // 눌림(축소) -> 팝(확대) -> 원래 크기
     () async {
-      await _animateTo(widget.tapScale, duration: widget.popInDuration, curve: Curves.easeOut);
-      await _animateTo(1.0, duration: widget.popOutDuration, curve: Curves.easeOutBack);
+      await _animateTo(
+        widget.tapScale,
+        duration: widget.popInDuration,
+        curve: Curves.easeOut,
+      );
+      await _animateTo(
+        1.0,
+        duration: widget.popOutDuration,
+        curve: Curves.easeOutBack,
+      );
     }();
   }
 
@@ -136,20 +161,22 @@ class _PressableScaleState extends State<PressableScale> with SingleTickerProvid
       onTapDown: _onTapDown,
       onTapUp: _onTapUp,
       onTapCancel: _onTapCancel,
-      onTap: widget.onTap,
+      onTap: widget.onTap == null
+          ? null
+          : () {
+              SoundEffectService.instance.play(widget.soundEffect);
+              widget.onTap!();
+            },
       onLongPress: widget.onLongPress,
       child: current,
     );
 
-    if (kIsWeb || defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.windows) {
-      current = MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: current,
-      );
+    if (kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows) {
+      current = MouseRegion(cursor: SystemMouseCursors.click, child: current);
     }
 
     return current;
   }
 }
-
-

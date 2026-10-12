@@ -19,6 +19,7 @@ import 'package:ticketdiary/services/ticket_refresh_bus.dart';
 import 'package:ticketdiary/services/ticket_scan_service.dart';
 import 'package:ticketdiary/services/ticket_service.dart';
 import 'package:ticketdiary/services/torn_ticket_store.dart';
+import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/widgets/offline_banner.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
@@ -1824,6 +1825,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         unawaited(TicketPreviewPlayer.instance.prepare(ticket.info?.ticketId));
         final isDue = _isDueForPromotion(ticket);
         final ticketWidget = PressableScale(
+          soundEffect: SoundEffect.bookSip,
           onTap: _isAddTicketExpanded
               ? null
               : isDue
@@ -1897,6 +1899,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
             ),
             onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
+              unawaited(SoundEffectService.instance.play(SoundEffect.tear));
               setState(() => ticket.tornRevealed = true);
               // 서버(게스트는 로컬 저장소)에 torn_at을 기록해 재설치/다른
               // 기기에서도 유지되게 합니다. TornTicketStore(기기 로컬)에도
@@ -2497,6 +2500,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
         Expanded(
           flex: 27,
           child: PressableScale(
+            soundEffect: SoundEffect.bookSip,
             onTap: _isAddTicketExpanded ? null : openAfter,
             pressScale: 0.985,
             tapScale: 1.03,

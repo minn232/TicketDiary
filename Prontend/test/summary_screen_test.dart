@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ticketdiary/screen/summary_debug_screen.dart';
+import 'package:ticketdiary/screen/summary_screen.dart';
 
 const _sample = <String, dynamic>{
   'concert_count': 12,
@@ -111,9 +111,11 @@ Future<void> _pump(
   addTearDown(tester.view.resetPhysicalSize);
   await tester.pumpWidget(
     MaterialApp(
-      home: SummaryDebugScreen(key: UniqueKey(), loader: (_) async => data),
+      home: SummaryScreen(key: UniqueKey(), loader: (_) async => data),
     ),
   );
+  await tester.pumpAndSettle();
+  await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
   await tester.pumpAndSettle();
 }
 
@@ -174,24 +176,23 @@ void main() {
       expect(find.text('가장 많이 간 공연장'), findsOneWidget);
       // 가장 최근 해가 기본 선택, 2025 칩을 누르면 그 해에 처음 본 아티스트가 보임
       expect(find.text('Yuuri'), findsOneWidget);
-      // 스크롤 모드에서는 3페이지 목록 안의 칩을, 꽉 채우는 모드에서는 마지막 칩을 누름
-      final chip = find.byType(ListView).evaluate().isEmpty
-          ? find.text('2025').last
-          : find
-                .descendant(
-                  of: find.byType(ListView).last,
-                  matching: find.text('2025'),
-                )
-                .last;
-      await tester.ensureVisible(chip);
-      await tester.pumpAndSettle();
+      final chip = find.descendant(
+        of: find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_YearNewArtists',
+        ),
+        matching: find.text('2025'),
+      );
       await tester.tap(chip);
       await tester.pumpAndSettle();
       expect(find.text('Yuuri'), findsNothing);
       expect(find.text('Vaundy'), findsWidgets);
       // 순환: 3페이지에서 왼쪽으로 넘기면 1페이지, 1페이지에서 오른쪽으로 넘기면 다시 3페이지
       await swipeLeft(tester);
+      expect(find.byTooltip('이전 달'), findsOneWidget);
+      await swipeLeft(tester);
       expect(find.text('106,000원'), findsOneWidget);
+      await tester.fling(find.byType(PageView), const Offset(300, 0), 1500);
+      await tester.pumpAndSettle();
       await tester.fling(find.byType(PageView), const Offset(300, 0), 1500);
       await tester.pumpAndSettle();
       expect(find.text('예매처 비중'), findsOneWidget);
@@ -206,7 +207,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
       MaterialApp(
-        home: SummaryDebugScreen(
+        home: SummaryScreen(
           loader: (period) async {
             requested.add(period);
             return _sample;
@@ -217,7 +218,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('전체'), findsOneWidget);
     for (final label in ['6개월', '1년', '전체']) {
-      await tester.tap(find.byType(InkWell).last);
+      await tester.tap(
+        find
+            .ancestor(
+              of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
       await tester.pumpAndSettle();
       expect(find.text(label), findsOneWidget);
     }
@@ -229,7 +237,14 @@ void main() {
     await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
     await tester.pumpAndSettle();
     expect(find.text('월별 관람 수'), findsOneWidget); // 2페이지
-    await tester.tap(find.byType(InkWell).last); // 기간 변경 -> 다시 불러옴
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    ); // 기간 변경 -> 다시 불러옴
     await tester.pumpAndSettle();
     expect(find.text('월별 관람 수'), findsOneWidget); // 여전히 2페이지
     expect(find.text('106,000원'), findsNothing); // 1페이지로 돌아가지 않음
@@ -248,7 +263,7 @@ void main() {
     expect(selected(chips().first), isTrue);
 
     // 2 -> 3 -> 1 -> 2페이지로 한 바퀴 돌아옴(그 사이 2페이지는 화면에서 사라져 새로 만들어짐)
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < 4; i++) {
       await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
       await tester.pumpAndSettle();
     }
@@ -262,10 +277,19 @@ void main() {
     tester.view.devicePixelRatio = 2.0;
     addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
-      MaterialApp(home: SummaryDebugScreen(loader: (_) async => _sample)),
+      MaterialApp(home: SummaryScreen(loader: (_) async => _sample)),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(InkWell).last); // 전체 -> 6개월
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    ); // 전체 -> 6개월
+    await tester.pumpAndSettle();
+    await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
     await tester.pumpAndSettle();
     await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
     await tester.pumpAndSettle();
@@ -304,11 +328,11 @@ void main() {
     tester.view.physicalSize = const Size(1600, 6000);
     tester.view.devicePixelRatio = 2.0;
     addTearDown(tester.view.resetPhysicalSize);
-    await tester.pumpWidget(
-      MaterialApp(home: SummaryDebugScreen(loader: loader)),
-    );
+    await tester.pumpWidget(MaterialApp(home: SummaryScreen(loader: loader)));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    await tester.fling(find.byType(PageView), const Offset(-300, 0), 1500);
+    await tester.pumpAndSettle();
   }
 
   testWidgets('기간을 바꾸는 동안 이전 내용을 그대로 두고 값만 교체한다', (tester) async {
@@ -316,7 +340,14 @@ void main() {
     await pumpControlled(tester, c.loader);
     expect(find.text('106,000원'), findsOneWidget);
 
-    await tester.tap(find.byType(InkWell).last); // 전체 -> 6개월
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    ); // 전체 -> 6개월
     await tester.pump();
     // 불러오는 중: 이전 값이 그대로 보이고, 위쪽 진행 막대만 나타남
     expect(find.text('106,000원'), findsOneWidget);
@@ -334,9 +365,23 @@ void main() {
   testWidgets('연달아 눌러도 마지막 요청의 결과만 반영한다', (tester) async {
     final c = controlledLoader();
     await pumpControlled(tester, c.loader);
-    await tester.tap(find.byType(InkWell).last); // 6개월 요청
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    ); // 6개월 요청
     await tester.pump();
-    await tester.tap(find.byType(InkWell).last); // 1년 요청
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    ); // 1년 요청
     await tester.pump();
 
     c.pending['1y']!.complete({..._sample, 'avg_ticket_price': 200000});
@@ -355,7 +400,14 @@ void main() {
   testWidgets('새 값을 못 불러오면 이전 값과 이전 기간을 유지하고 안내만 띄운다', (tester) async {
     final c = controlledLoader();
     await pumpControlled(tester, c.loader);
-    await tester.tap(find.byType(InkWell).last);
+    await tester.tap(
+      find
+          .ancestor(
+            of: find.textContaining(RegExp(r'^(전체|6개월|1년)$')),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    );
     await tester.pump();
     c.pending['6m']!.completeError(Exception('network'));
     await tester.pump();
