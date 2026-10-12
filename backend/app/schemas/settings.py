@@ -27,6 +27,7 @@ class UserSettingsResponse(BaseModel):
     # 유저 설정 조회 응답
     fcm_token: str | None
     show_predicted_setlist: bool
+    share_next_concert: bool
     notification_settings: NotificationSettings
 
     # users.notification_settings 컬럼이 NOT NULL이라(마이그레이션 d4e5f6a7b8c9로 확정) v가
@@ -48,4 +49,5 @@ class FcmTokenUpdate(BaseModel):
 class UserSettingsUpdate(BaseModel):
     # 유저 설정 수정 요청
     show_predicted_setlist: bool | None = None
+    share_next_concert: bool | None = None
     notification_settings: NotificationSettingsUpdate | None = None

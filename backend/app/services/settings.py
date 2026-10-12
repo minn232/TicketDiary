@@ -28,6 +28,9 @@ async def update_user_settings(db: AsyncSession, user: User, body: UserSettingsU
     if body.show_predicted_setlist is not None:
         user.show_predicted_setlist = body.show_predicted_setlist
 
+    if body.share_next_concert is not None:
+        user.share_next_concert = body.share_next_concert
+
     if body.notification_settings is not None:
         old_settings = user.notification_settings or {}
         # 보낸 필드만 반영 (model_dump 그대로 대입하면 안 보낸 필드가 pydantic 기본값으로

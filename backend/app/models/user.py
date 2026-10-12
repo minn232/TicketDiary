@@ -26,6 +26,8 @@ class User(Base):
     role = Column(SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]), default=UserRole.KAKAO_USER)
     fcm_token = Column(String, nullable=True)
     show_predicted_setlist = Column(Boolean, nullable=False, server_default=text("true"))
+    # 연결 카드에서 상대에게 내 다음 공연(내 단독 기록)을 보여줄지 - 겹치는 기록은 이 값과 무관하게 보임
+    share_next_concert = Column(Boolean, nullable=False, server_default=text("true"))
     notification_settings = Column(
         JSONB,
         nullable=False,
