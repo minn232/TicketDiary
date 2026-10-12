@@ -28,6 +28,17 @@ _SIGHTING_MAX_FUTURE = timedelta(minutes=5)
 _PAIR_WINDOW = timedelta(seconds=60)
 # 확인 화면을 띄운 채 오래 방치된 요청은 무효 (다시 맞대면 새로 시작)
 _PENDING_TTL = timedelta(minutes=10)
+# 맞댐 판정 RSSI(1초 평균) - 기기마다 송신 세기가 달라(태블릿↔폰 8~9dB) 한쪽은 강하게, 다른 쪽은
+# 조금 약하게 받아도 인정. 폰끼리 5cm(-60~-62)는 강한 쪽이 없어 탈락
+_RSSI_STRONG = -55
+_RSSI_WEAK = -62
+
+
+def _rssi_pair_ok(mine: int | None, theirs: int | None) -> bool:
+    # RSSI 없이 올린 판정(구버전 앱)은 기준 검사 없이 인정
+    if mine is None or theirs is None:
+        return True
+    return max(mine, theirs) >= _RSSI_STRONG and min(mine, theirs) >= _RSSI_WEAK
 
 
 def _now() -> datetime:
@@ -125,15 +136,13 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
     db.add(NearbySighting(observer_user_id=user_id, observed_user_id=peer_id, rssi=body.rssi, seen_at=seen_at))
 
     reverse = await db.execute(
-        select(NearbySighting.id)
-        .where(
+        select(NearbySighting.rssi).where(
             NearbySighting.observer_user_id == peer_id,
             NearbySighting.observed_user_id == user_id,
             NearbySighting.seen_at.between(seen_at - _PAIR_WINDOW, seen_at + _PAIR_WINDOW),
         )
-        .limit(1)
     )
-    if reverse.first() is None:
+    if not any(_rssi_pair_ok(body.rssi, theirs) for theirs in reverse.scalars().all()):
         await db.commit()
         return NearbySightingResponse(status="waiting")
 

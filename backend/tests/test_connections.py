@@ -299,3 +299,38 @@ async def test_account_deletion_removes_connection():
         listed = await ac.get("/api/v1/social/connections", headers=_auth(token_b))
     assert deleted.status_code == 204
     assert listed.json() == []
+
+
+# 기기마다 송신 세기가 달라 한쪽 -55 이상 + 다른 쪽 -62 이상이면 짝지음, 둘 다 약하면 대기
+async def test_pairing_rssi_rule():
+    async def pair(rssi_a: int | None, rssi_b: int | None) -> str:
+        token_a, token_b = await _get_token(), await _get_token()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+            await ac.post(
+                "/api/v1/social/nearby/sightings", headers=_auth(token_a),
+                json={"code": code_b, "rssi": rssi_a, "seen_at": _iso(datetime.now(timezone.utc))},
+            )
+            res = await ac.post(
+                "/api/v1/social/nearby/sightings", headers=_auth(token_b),
+                json={"code": code_a, "rssi": rssi_b, "seen_at": _iso(datetime.now(timezone.utc))},
+            )
+        return res.json()["status"]
+
+    assert await pair(-44, -52) == "pending"  # 태블릿 윗변
+    assert await pair(-51, -60) == "pending"  # 태블릿 왼변 - 한쪽만 강함
+    assert await pair(-60, -61) == "waiting"  # 폰끼리 5cm - 강한 쪽 없음
+    assert await pair(-50, -64) == "waiting"  # 약한 쪽이 너무 약함
+    assert await pair(None, -60) == "pending"  # RSSI 없는 구버전 판정은 기준 검사 없이
+
+
+# 같은 접촉에서 처음엔 약하게, 이어서 강하게 올리면 강한 판정으로 짝지어짐
+async def test_pairing_uses_stronger_follow_up_sighting():
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        await _sight(ac, token_a, code_b, rssi=-61)
+        weak = await _sight(ac, token_b, code_a, rssi=-60)
+        strong = await _sight(ac, token_a, code_b, rssi=-50)
+    assert weak.json()["status"] == "waiting"
+    assert strong.json()["status"] == "pending"
