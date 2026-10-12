@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/sound_effect_service.dart';
 
 import 'diary_route.dart';
 
@@ -22,8 +23,8 @@ class TabNavCoordinator {
     required this.navigatorKey,
     required this.routeBuilder,
     required DiaryTab initialTab,
-  })  : currentTab = ValueNotifier(initialTab),
-        isTransitioning = ValueNotifier(false);
+  }) : currentTab = ValueNotifier(initialTab),
+       isTransitioning = ValueNotifier(false);
 
   static TabNavCoordinator? _instance;
 
@@ -65,6 +66,10 @@ class TabNavCoordinator {
   /// 지금 보여주고 있거나(유휴 상태) 향하고 있는(전환 중) 탭.
   final ValueNotifier<DiaryTab> currentTab;
   final ValueNotifier<bool> isTransitioning;
+
+  /// 결산 캘린더에서 소식탭으로 이동할 때 열어둘 공연 식별자.
+  String? pendingNewsConcertId;
+  String? pendingNewsConcertName;
 
   /// 전환 중에 새로 요청된, 아직 처리 못 한 다음 목적지. 여러 번 요청되면
   /// 마지막 것만 남습니다(중간 탭들은 건너뜀).
@@ -141,12 +146,14 @@ class TabNavCoordinator {
     // 처리되므로 스택 깊이에 의존하지 않음), 비워도 push가 곧장 새
     // 라우트를 넣어주므로 안전합니다.
     navigator.pushAndRemoveUntil(route, (r) => false);
+    final tabSound = SoundEffectService.instance.start(SoundEffect.tabPages);
 
     // 전환(진입) 애니메이션이 고정 시간만 재생되고 끝나면 곧바로 잠금을
     // 풀고, 그 사이 대기 중이던 다음 탭이 있으면 이어서 시작합니다. 소식
     // 탭도 더 이상 로딩을 기다리지 않으므로(진입 즉시 목적지를 드러냄)
     // 특별 취급 없이 모든 탭이 동일하게 애니메이션 완료 시점에 풀립니다.
     void unlockAndMaybeAdvance() {
+      tabSound.stop();
       isTransitioning.value = false;
       final next = _queuedTab;
       if (next != null && next != tab) {

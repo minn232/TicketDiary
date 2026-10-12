@@ -283,6 +283,7 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
         "ticket_details": [
             {
                 "concert_name": t.concert.name if t.concert else "",
+                "poster_url": t.concert.poster_url if t.concert else None,
                 "date": attended_day(t).isoformat(),
                 "price": t.price,
                 "seat": "standing" if _is_standing(t.seat_type) else ("seated" if _is_seated(t.seat_type) else None),

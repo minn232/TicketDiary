@@ -9,6 +9,7 @@ import 'package:just_audio/just_audio.dart';
 
 import '../models/preview_track.dart';
 import 'app_settings_store.dart';
+import 'audio_volume_store.dart';
 import 'concert_detail_service.dart';
 
 /// 티켓을 열 때 iTunes 30초 미리듣기를 랜덤 재생(곡 사이는 크로스페이드).
@@ -16,9 +17,23 @@ import 'concert_detail_service.dart';
 class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   TicketPreviewPlayer._() {
     WidgetsBinding.instance.addObserver(this);
+    AudioVolumeStore.instance.addListener(_updateVolume);
   }
 
   static final TicketPreviewPlayer instance = TicketPreviewPlayer._();
+  void _updateVolume() {
+    for (final player in _players) {
+      unawaited(
+        player
+            .setVolume(
+              _muted
+                  ? 0
+                  : (_levels[player] ?? 0) * AudioVolumeStore.instance.music,
+            )
+            .catchError((Object _) {}),
+      );
+    }
+  }
 
   static const _fadeIn = Duration(milliseconds: 400);
   static const _fadeOut = Duration(milliseconds: 600);
@@ -248,7 +263,9 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     for (final player in _players) {
       try {
-        await player.setVolume(_muted ? 0 : (_levels[player] ?? 0));
+        await player.setVolume(
+          _muted ? 0 : (_levels[player] ?? 0) * AudioVolumeStore.instance.music,
+        );
       } catch (_) {}
     }
   }
@@ -258,11 +275,15 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
     final artistCount = tracks.map((t) => t.artistName).toSet().length;
     final avoidCount = min(artistCount - 1, 3);
     final avoid = avoidCount > 0
-        ? _recentArtists.skip(max(0, _recentArtists.length - avoidCount)).toSet()
+        ? _recentArtists
+              .skip(max(0, _recentArtists.length - avoidCount))
+              .toSet()
         : <String>{};
     var pool = tracks
         .where(
-          (t) => !avoid.contains(t.artistName) && t.previewUrl != _last?.previewUrl,
+          (t) =>
+              !avoid.contains(t.artistName) &&
+              t.previewUrl != _last?.previewUrl,
         )
         .toList();
     if (pool.isEmpty) {
@@ -357,6 +378,7 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _ensureSession() async {
+    await AudioVolumeStore.instance.load();
     if (_sessionConfigured) return;
     _sessionConfigured = true;
     try {
@@ -379,7 +401,9 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _setLevel(AudioPlayer player, double level) async {
     _levels[player] = level;
     _fadeGenerations[player] = (_fadeGenerations[player] ?? 0) + 1;
-    await player.setVolume(_muted ? 0 : level);
+    await player.setVolume(
+      _muted ? 0 : level * AudioVolumeStore.instance.music,
+    );
   }
 
   // 다른 앱이 음악 재생 중인지 확인(우리 재생 중엔 건너뜀)
@@ -411,7 +435,9 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
       final level = from + (target - from) * i / steps;
       _levels[player] = level;
       try {
-        await player.setVolume(_muted ? 0 : level);
+        await player.setVolume(
+          _muted ? 0 : level * AudioVolumeStore.instance.music,
+        );
       } catch (_) {
         return false;
       }

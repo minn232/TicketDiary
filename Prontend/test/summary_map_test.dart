@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -8,8 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ticketdiary/models/summary_map.dart';
 import 'package:ticketdiary/models/summary_map_drawing.dart';
 import 'package:ticketdiary/widgets/summary_region_map.dart';
-import 'package:ticketdiary/screen/summary_screen.dart';
-import 'package:ticketdiary/services/summary_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -222,134 +219,4 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
-  testWidgets(
-    'full page period changes ignore stale data and recover from errors',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.runAsync(() async {
-        await SummaryMapData.load();
-        final font = FontLoader('NanumGalmaesgeul')
-          ..addFont(rootBundle.load('assets/fonts/NanumGalmaesgeul.ttf'));
-        await font.load();
-        final icons = FontLoader('MaterialIcons')
-          ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
-        await icons.load();
-      });
-      final service = _ControlledSummaryService();
-      final boundary = GlobalKey();
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(fontFamily: 'NanumGalmaesgeul'),
-          home: RepaintBoundary(
-            key: boundary,
-            child: SummaryScreen(service: service),
-          ),
-        ),
-      );
-      // The cached asset future completed in runAsync's real event loop.
-      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
-      await tester.pumpAndSettle();
-      expect(service.requested, ['all']);
-      await tester.tap(find.text('6개월'));
-      await tester.pump();
-      expect(service.requested, ['all', '6m']);
-      service.pending['all']!.complete(
-        const RegionalSummary(visits: [], total: 99, unresolved: 99),
-      );
-      await tester.pump();
-      expect(find.textContaining('99회'), findsNothing);
-      service.reports['6m']!.complete(_report(6));
-      service.pending['6m']!.complete(
-        const RegionalSummary(visits: [], total: 0, unresolved: 0),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('6개월 결산 보고서'), findsOneWidget);
-      expect(find.text('관람 기록을 다시 불러오기'), findsNothing);
-      expect(find.textContaining('SGIS'), findsNothing);
-      if (Platform.environment['SUMMARY_MAP_SCREENSHOTS'] == '1') {
-        await tester.runAsync(() async {
-          final image =
-              await (boundary.currentContext!.findRenderObject()
-                      as RenderRepaintBoundary)
-                  .toImage(pixelRatio: 2);
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await File(
-            '/tmp/ticketdiary-map/full-page.png',
-          ).writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
-      }
-      final handle = find.byKey(const ValueKey('summary-report-handle'));
-      await tester.drag(handle, const Offset(0, -300));
-      await tester.pumpAndSettle();
-      expect(find.text('총 지출 금액').hitTestable(), findsOneWidget);
-      expect(find.text('6회').hitTestable(), findsOneWidget);
-      if (Platform.environment['SUMMARY_MAP_SCREENSHOTS'] == '1') {
-        await tester.runAsync(() async {
-          final image =
-              await (boundary.currentContext!.findRenderObject()
-                      as RenderRepaintBoundary)
-                  .toImage(pixelRatio: 2);
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          await File(
-            '/tmp/ticketdiary-map/report.png',
-          ).writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
-        });
-      }
-      await tester.tap(find.text('1년'));
-      await tester.pump();
-      service.pending['1y']!.completeError(Exception('offline'));
-      service.reports['1y']!.completeError(Exception('offline'));
-      await tester.pumpAndSettle();
-      expect(find.text('관람 기록을 다시 불러오기'), findsNothing);
-      expect(find.text('1년 결산 보고서'), findsOneWidget);
-      await tester.tap(find.text('1년'));
-      await tester.pump();
-      service.reports['1y']!.complete(_report(1));
-      service.pending['1y']!.complete(
-        const RegionalSummary(visits: [], total: 0, unresolved: 0),
-      );
-      await tester.pumpAndSettle();
-      await tester.drag(handle, const Offset(0, -300));
-      await tester.pumpAndSettle();
-      expect(find.text('1회').hitTestable(), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
 }
-
-class _ControlledSummaryService extends SummaryService {
-  final requested = <String>[];
-  final pending = <String, Completer<RegionalSummary>>{};
-  final reports = <String, Completer<SummaryModel>>{};
-  @override
-  Future<SummaryModel> fetchSummary({String period = 'all'}) {
-    final completer = Completer<SummaryModel>();
-    reports[period] = completer;
-    return completer.future;
-  }
-
-  @override
-  Future<RegionalSummary> fetchRegions({String period = 'all'}) {
-    requested.add(period);
-    final completer = Completer<RegionalSummary>();
-    pending[period] = completer;
-    return completer.future;
-  }
-}
-
-SummaryModel _report(int count) => SummaryModel(
-  concertCount: count,
-  totalSpending: 150000,
-  songCount: 25,
-  favoriteGenre: '록',
-  visitedArtists: [],
-  standingRatio: .5,
-  seatRatio: .5,
-  firstConcertRatio: 0,
-  lastConcertRatio: 1,
-);

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/audio_volume_store.dart';
 
 import 'notifications_screen.dart';
-import 'summary_debug_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
@@ -36,7 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       NotificationSettingsService();
 
   // 하위 알림 5개를 바로 볼 수 있도록 기본값을 펼친 상태로 둡니다.
-  bool pushExpanded = true;
+  bool pushExpanded = false;
   bool pushDayBefore = false;
   bool pushOnTheDay = false;
   bool pushTicketDelivery = false;
@@ -250,21 +250,125 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onTap: () => _openMemberSettingsSheet(context),
                       ),
                       _divider,
-                      _SwitchRow(
-                        title: '예상 셋리 노출 여부',
-                        value: _appSettings.showExpectedSetlist,
-                        onChanged: _setShowExpectedSetlist,
+                      FutureBuilder<void>(
+                        future: AudioVolumeStore.instance.load(),
+                        builder: (context, snapshot) => AnimatedBuilder(
+                          animation: AudioVolumeStore.instance,
+                          builder: (context, _) {
+                            final volumes = AudioVolumeStore.instance;
+                            return Theme(
+                              data: Theme.of(context).copyWith(
+                                dividerColor: Colors.transparent,
+                                splashColor: Colors.transparent,
+                                highlightColor: Colors.transparent,
+                              ),
+                              child: ExpansionTile(
+                                key: const PageStorageKey(
+                                  'audio-volume-settings',
+                                ),
+                                tilePadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                childrenPadding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  8,
+                                ),
+                                title: Builder(
+                                  builder: (innerContext) => Text(
+                                    '소리 설정',
+                                    style: TextStyle(
+                                      fontSize: innerContext.sp(15),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                children: [
+                                  for (final isMusic in [false, true]) ...[
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            isMusic ? '음악 재생 볼륨' : '효과음 볼륨',
+                                          ),
+                                        ),
+                                        Text(
+                                          '${((isMusic ? volumes.music : volumes.effects) * 100).round()}%',
+                                        ),
+                                      ],
+                                    ),
+                                    Slider(
+                                      activeColor: const Color(0xFF8B5E3C),
+                                      value: isMusic
+                                          ? volumes.music
+                                          : volumes.effects,
+                                      divisions: 100,
+                                      semanticFormatterCallback: (v) =>
+                                          '${(v * 100).round()}%',
+                                      onChanged:
+                                          snapshot.connectionState !=
+                                              ConnectionState.done
+                                          ? null
+                                          : (v) {
+                                              volumes.setVolume(
+                                                v,
+                                                isMusic: isMusic,
+                                              );
+                                            },
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          },
+                        ),
                       ),
                       _divider,
-                      _SwitchRow(
-                        title: '티켓 열 때 노래 재생',
-                        value: _appSettings.playTicketPreview,
-                        onChanged: _setPlayTicketPreview,
-                      ),
-                      _divider,
-                      _MusicServiceRow(
-                        value: _appSettings.preferredMusicService,
-                        onChanged: _setPreferredMusicService,
+                      Theme(
+                        data: Theme.of(context).copyWith(
+                          dividerColor: Colors.transparent,
+                          splashColor: Colors.transparent,
+                          highlightColor: Colors.transparent,
+                        ),
+                        child: ExpansionTile(
+                          key: const PageStorageKey(
+                            'concert-listening-settings',
+                          ),
+                          tilePadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                          ),
+                          childrenPadding: EdgeInsets.zero,
+                          title: Builder(
+                            builder: (innerContext) => Text(
+                              '공연 감상 설정',
+                              style: TextStyle(
+                                fontSize: innerContext.sp(15),
+                                fontWeight: FontWeight.w800,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          children: [
+                            _SwitchRow(
+                              title: '예상 셋리 노출 여부',
+                              value: _appSettings.showExpectedSetlist,
+                              onChanged: _setShowExpectedSetlist,
+                            ),
+                            _divider,
+                            _SwitchRow(
+                              title: '티켓 열 때 노래 재생',
+                              value: _appSettings.playTicketPreview,
+                              onChanged: _setPlayTicketPreview,
+                            ),
+                            _divider,
+                            _MusicServiceRow(
+                              value: _appSettings.preferredMusicService,
+                              onChanged: _setPreferredMusicService,
+                            ),
+                          ],
+                        ),
                       ),
                       _divider,
 
@@ -355,18 +459,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             frameScale:
                                 DiaryFrameScale.maybeOf(menuContext) ??
                                 diaryScaleFromMediaQuery(menuContext),
-                          ),
-                        ),
-                      ),
-                      // [임시] 결산 응답 확인용 디버그 화면. 결산탭 개편 후 삭제.
-                      _divider,
-                      Builder(
-                        builder: (menuContext) => _MenuRow(
-                          title: '[임시] 결산 디버그',
-                          onTap: () => Navigator.of(menuContext).push(
-                            MaterialPageRoute(
-                              builder: (_) => const SummaryDebugScreen(),
-                            ),
                           ),
                         ),
                       ),

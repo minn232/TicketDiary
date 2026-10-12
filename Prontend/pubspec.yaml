@@ -90,6 +90,7 @@ dev_dependencies:
 flutter:
   assets:
     - assets/
+    - assets/sounds/
     - assets/images/vendors/
     - assets/images/streaming/
     - assets/images/share/

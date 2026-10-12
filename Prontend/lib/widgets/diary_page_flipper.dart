@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import 'diary_page_frame.dart' show DiaryPageFrame;
+import '../services/sound_effect_service.dart';
 
 /// 페이지 넘김 방향(한 번의 드래그 제스처 동안 유지).
 enum _FlipDirection { forward, backward }
@@ -101,6 +102,10 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
   late AnimationController _controller;
   late AnimationController _backController;
   bool _isAutoFlipping = false;
+  SoundPlayback? _pageSound;
+  final Stopwatch _dragClock = Stopwatch();
+  bool _fastFlip = false;
+  bool _soundStarted = false;
 
   /// 이번 드래그 제스처가 어느 방향 넘김인지. 제스처가 끝나면 초기화됩니다.
   _FlipDirection? _dragDirection;
@@ -196,6 +201,26 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
   /// 있게 합니다. 정지 상태(둘 다 0)는 앞으로 넘기기 쪽(0, 양수 분기)과
   /// 같은 값이라 항상 "보이는" 쪽으로 자연스럽게 귀결됩니다.
   void _syncFlipProgress() {
+    final backwards = _backController.value > 0;
+    final controller = backwards ? _backController : _controller;
+    if ((_isAutoFlipping || _dragDirection != null) &&
+        controller.value >= .25 &&
+        !_soundStarted) {
+      _fastFlip = _fastFlip || _dragClock.elapsedMilliseconds < 180;
+      _soundStarted = true;
+      _pageSound?.stop();
+      _pageSound = SoundEffectService.instance.start(
+        backwards ? SoundEffect.pageFlipBack : SoundEffect.pageFlip,
+        from: _fastFlip ? .5 : 0,
+        fitDuration: Duration(
+          microseconds: (420000 * (1 - controller.value)).round().clamp(
+            1,
+            420000,
+          ),
+        ),
+      );
+    }
+
     final notifier = widget.flipProgressNotifier;
     if (notifier == null) return;
     final progress = _controller.value != 0.0
@@ -301,8 +326,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
     if (_isAutoFlipping) return;
     _isAutoFlipping = true;
 
+    _fastFlip = _fastFlip || _dragClock.elapsedMilliseconds < 180;
+    _syncFlipProgress();
     _controller.forward().then((_) {
       if (!mounted) return;
+      _pageSound?.stop();
       widget.onFlipForward?.call();
       // onFlipForward가 상위(diary_screen.dart)의 쿨다운(_flipCooldown)에
       // 걸려 _currentPageIndex를 바꾸지 않고 조용히 반환하는 경우가 있는데,
@@ -324,8 +352,11 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
     if (_isAutoFlipping) return;
     _isAutoFlipping = true;
 
+    _fastFlip = _fastFlip || _dragClock.elapsedMilliseconds < 180;
+    _syncFlipProgress();
     _backController.forward().then((_) {
       if (!mounted) return;
+      _pageSound?.stop();
       widget.onFlipBackward?.call();
       // 위 _handleForwardFlip과 동일한 이유로, 쿨다운에 막혀 페이지가 안
       // 바뀌어도 제스처가 영구히 멈추지 않도록 항상 정지 상태로 되돌립니다.
@@ -428,6 +459,12 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
           }
           // 곡면 렌더링용 스냅샷. 아직 정지 화면(캡처 원본이 그려진 상태)
           // 이므로 이 시점에 찍어야 합니다.
+          _pageSound?.stop();
+          _soundStarted = false;
+          _fastFlip = false;
+          _dragClock
+            ..reset()
+            ..start();
           unawaited(_captureLeaf(_dragDirection!));
         }
 
@@ -435,19 +472,26 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
           // 왼쪽으로 스와이프 (음수) -> value 증가 (0.0 -> 1.0)
           _controller.value -= delta;
 
-          // 90도(0.5)를 넘어가면 자동으로 페이지를 넘김
-          if (_controller.value > 0.5) {
+          // 25% 이상 넘기면 자동으로 다음 페이지로 이동
+          if (_controller.value >= 0.25) {
             _handleForwardFlip();
           }
         } else {
           // 오른쪽으로 스와이프 (양수) -> value 증가 (0.0 -> 1.0)
           _backController.value += delta;
 
-          // 절반(0.5)을 넘어가면 자동으로 이전 페이지로 복귀
-          if (_backController.value > 0.5) {
+          // 25% 이상 넘기면 자동으로 이전 페이지로 이동
+          if (_backController.value >= 0.25) {
             _handleBackwardFlip();
           }
         }
+      },
+      onHorizontalDragCancel: () {
+        if (_isAutoFlipping) return;
+        _pageSound?.stop();
+        _dragDirection = null;
+        _controller.animateTo(0);
+        _backController.animateTo(0);
       },
       onHorizontalDragEnd: (details) {
         final direction = _dragDirection;
@@ -455,13 +499,15 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
         if (_isAutoFlipping) return;
 
         final velocity = details.primaryVelocity ?? 0.0;
+        _fastFlip = velocity.abs() > 300;
 
         if (direction == _FlipDirection.backward) {
-          // 오른쪽으로 빠르게 스와이프(velocity > 0) 혹은 이미 절반 이상 넘긴 경우
-          if (_backController.value > 0.5 || velocity > 300) {
+          // 오른쪽으로 빠르게 스와이프하거나 이미 25% 이상 넘긴 경우
+          if (_backController.value >= 0.25 || velocity > 300) {
             _handleBackwardFlip();
           } else {
             // 제자리 복귀
+            _pageSound?.stop();
             _backController.animateTo(0.0);
           }
           return;
@@ -469,11 +515,12 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
 
         if (!_canFlipForward) return;
 
-        // 왼쪽으로 빠르게 스와이프(velocity < 0) 혹은 이미 절반 이상 넘긴 경우
-        if (_controller.value > 0.5 || velocity < -300) {
+        // 왼쪽으로 빠르게 스와이프하거나 이미 25% 이상 넘긴 경우
+        if (_controller.value >= 0.25 || velocity < -300) {
           _handleForwardFlip();
         } else {
           // 제자리 복귀
+          _pageSound?.stop();
           _controller.animateTo(0.0);
         }
       },
@@ -750,6 +797,7 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
 
   @override
   void dispose() {
+    _pageSound?.stop();
     _disposeLeafImage();
     _controller.dispose();
     _backController.dispose();

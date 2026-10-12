@@ -9,6 +9,7 @@ import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
 import 'package:ticketdiary/services/fcm_service.dart';
+import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart'
     show BentLeafPainter, DiaryPageFlipper;
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
@@ -162,6 +163,8 @@ class _SplashScreenState extends State<SplashScreen>
   bool _brandLogoVisible = false;
   bool _brandIntroDone = false;
   bool _navigated = false;
+  SoundPlayback? _splashSound;
+  bool _splashSoundFinished = false;
 
   // BentLeafPainter용 장별 텍스처(비동기 생성이라 준비 전엔 null - 그동안은
   // 기존 단순 회전으로 폴백). 인덱스는 cols/rows에만 의존해 전체 장이
@@ -195,6 +198,23 @@ class _SplashScreenState extends State<SplashScreen>
     await Future<void>.delayed(_brandIntroDuration - _brandLogoPopDelay);
     if (!mounted) return;
     setState(() => _brandIntroDone = true);
+    _splashSound = SoundEffectService.instance.start(
+      SoundEffect.splashPages,
+      // 파일 앞의 무음을 100ms 건너뛰어 종이 소리를 먼저 들려줍니다.
+      startOffset: const Duration(milliseconds: 100),
+    );
+    unawaited(
+      _splashSound!.finished
+          .timeout(
+            const Duration(seconds: 6),
+            onTimeout: () => _splashSound?.stop(),
+          )
+          .then((_) {
+            if (!mounted) return;
+            _splashSoundFinished = true;
+            _maybeNavigate();
+          }),
+    );
     _controller.forward();
   }
 
@@ -349,7 +369,10 @@ class _SplashScreenState extends State<SplashScreen>
   void _maybeNavigate() {
     if (_navigated || !mounted) return;
     if (!_dataReady || _controller.value < _navigateAt) return;
+    // 마지막에 덧붙인 종이 소리가 끝날 때까지 마지막 프레임을 유지합니다.
+    if (!_splashSoundFinished) return;
     _navigated = true;
+    _splashSound?.stop();
     // [백엔드 수정]
     // pushReplacement -> pushAndRemoveUntil(false). pushReplacement는 새 라우트
     // 진입 중 스플래시 라우트를 한 프레임 남겨둬서, 둘이 동시에 그려져 바인더
@@ -376,6 +399,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    _splashSound?.stop();
     _controller.dispose();
     for (final image in _leafImages) {
       image?.dispose();
