@@ -16,6 +16,9 @@ import 'package:sensors_plus/sensors_plus.dart';
 const probeServiceUuid = '7d2a0e1c-5b3f-4c8e-9a61-3f0b2d4c6e81';
 // 0xFFFF는 블루투스 SIG가 테스트용으로 비워둔 제조사 ID
 const probeManufacturerId = 0xFFFF;
+// iOS는 광고에 제조사 데이터를 못 실어서(서비스 UUID·로컬 이름만 가능) 같은 4바이트를 로컬 이름에 hex 8자로 실음
+// 플래그 3 + 서비스 UUID 18 + 이름 10 = 31바이트로 광고 패킷에 딱 들어감
+final _iosNamePattern = RegExp(r'^[0-9A-F]{8}$');
 
 const distanceLabels = ['맞댐', '10cm', '30cm', '1m', '3m', '5m'];
 
@@ -64,6 +67,8 @@ class PeerState {
   // 한 번 연결 판정이 나면 멀어졌다(기준-5dB 아래) 다시 올 때까지 재판정 안 함
   bool holdMatched = false;
   int matches = 0;
+  // 마지막 패킷을 어디서 읽었는지 - mfr(안드로이드 광고) / name·cache·unknown(iOS 광고)
+  String source = '';
   // 이번 접근에서 패킷 하나가 처음 기준을 넘은 시각 - 연결까지 걸린 시간 측정용
   DateTime? approachStart;
   DateTime? lastAboveAt;
@@ -112,6 +117,9 @@ class Probe extends ChangeNotifier {
 
   String model = '';
   int sdkInt = 0;
+  final bool isIOS = Platform.isIOS;
+  // 화면·CSV 표시용 OS 정보 (안드로이드 SDK 29, iOS18.1)
+  String osLabel = '';
   String? setupError;
   bool advertising = false;
   bool scanning = false;
@@ -159,12 +167,26 @@ class Probe extends ChangeNotifier {
 
   String get myIdHex => _hex(myId);
   bool get recording => recordingUntil != null && DateTime.now().isBefore(recordingUntil!);
-  String get txPowerName => txPowerNames[txPower]!;
+  // iOS는 송신 세기를 앱에서 못 바꿔서 고정값으로 표시
+  String get txPowerName => isIOS ? 'IOS_DEFAULT' : txPowerNames[txPower]!;
+
+  // 광고 끝 바이트: 최상위 비트=맞대기 모드, 나머지 7비트=충격 카운터
+  int get _flagByte => (_bumpCounter & 0x7F) | (holdMode ? 0x80 : 0);
+
+  // 이름 없이 온 패킷(스캔 응답이 빠진 경우 등)은 같은 기기의 직전 해석값을 씀
+  final _decodedByDevice = <String, (String, int)>{};
 
   Future<void> init() async {
-    final info = await DeviceInfoPlugin().androidInfo;
-    model = info.model;
-    sdkInt = info.version.sdkInt;
+    if (isIOS) {
+      final info = await DeviceInfoPlugin().iosInfo;
+      model = info.modelName;
+      osLabel = 'iOS${info.systemVersion}';
+    } else {
+      final info = await DeviceInfoPlugin().androidInfo;
+      model = info.model;
+      sdkInt = info.version.sdkInt;
+      osLabel = 'SDK $sdkInt';
+    }
     notifyListeners();
 
     setupError = await _ensurePermissions();
@@ -187,6 +209,16 @@ class Probe extends ChangeNotifier {
   }
 
   Future<String?> _ensurePermissions() async {
+    if (isIOS) {
+      // iOS는 블루투스를 처음 쓸 때 시스템이 권한 창을 띄움 - 사용자가 누를 때까지 기다림
+      final status = await _bleStatus(timeout: const Duration(seconds: 30));
+      return switch (status) {
+        BleStatus.ready => null,
+        BleStatus.unauthorized => '설정 > 개인정보 보호 > 블루투스에서 이 앱을 허용해야 함',
+        BleStatus.poweredOff => '블루투스를 켜야 함 (켠 뒤 앱 재실행)',
+        _ => '블루투스 상태 확인 실패: ${status.name}',
+      };
+    }
     if (sdkInt >= 31) {
       final result = await [
         Permission.bluetoothScan,
@@ -211,9 +243,8 @@ class Probe extends ChangeNotifier {
     return null;
   }
 
-  Future<BleStatus> _bleStatus() => _ble.statusStream
-      .firstWhere((s) => s != BleStatus.unknown)
-      .timeout(const Duration(seconds: 5), onTimeout: () => BleStatus.unknown);
+  Future<BleStatus> _bleStatus({Duration timeout = const Duration(seconds: 5)}) =>
+      _ble.statusStream.firstWhere((s) => s != BleStatus.unknown).timeout(timeout, onTimeout: () => BleStatus.unknown);
 
   // 선형가속도(중력 제거) 센서가 없는 기기(A15)는 일반 가속도에서 중력을 저역통과로 추정해 빼서 씀
   void _startAccel() {
@@ -237,13 +268,14 @@ class Probe extends ChangeNotifier {
   Future<void> _startAdvertising() async {
     try {
       await _peripheral.start(
-        advertiseData: AdvertiseDataCore(
-          serviceUuid: probeServiceUuid,
-          manufacturerId: probeManufacturerId,
-          // [내 ID 3바이트, 충격 카운터] - 상대는 카운터가 바뀌는 순간을 내 충격 신호로 봄
-          // 마지막 바이트: 최상위 비트=맞대기 모드, 나머지 7비트=충격 카운터
-          manufacturerData: Uint8List.fromList([...myId, (_bumpCounter & 0x7F) | (holdMode ? 0x80 : 0)]),
-        ),
+        advertiseData: isIOS
+            ? AdvertiseDataCore(serviceUuid: probeServiceUuid, localName: _hex([...myId, _flagByte]))
+            : AdvertiseDataCore(
+                serviceUuid: probeServiceUuid,
+                manufacturerId: probeManufacturerId,
+                // [내 ID 3바이트, 충격 카운터] - 상대는 카운터가 바뀌는 순간을 내 충격 신호로 봄
+                manufacturerData: Uint8List.fromList([...myId, _flagByte]),
+              ),
         androidSettings: AndroidAdvertiseSettings(
           advertiseSettings: AdvertiseSettings(
             advertiseMode: AdvertiseMode.advertiseModeLowLatency,
@@ -335,7 +367,8 @@ class Probe extends ChangeNotifier {
   Future<void> _autosaveCsv() async {
     if (rows.length == _savedRowCount) return;
     try {
-      final dir = await getExternalStorageDirectory();
+      // iOS는 문서 폴더 - Info.plist 파일 공유 설정으로 파일 앱 > 나의 iPhone > BLE 실측에 보임
+      final dir = isIOS ? await getApplicationDocumentsDirectory() : await getExternalStorageDirectory();
       if (dir == null) return;
       _sessionStamp ??= _fileStamp(DateTime.now());
       final file = File('${dir.path}/rssi_${model.replaceAll(' ', '_')}_${myIdHex}_$_sessionStamp.csv');
@@ -355,7 +388,7 @@ class Probe extends ChangeNotifier {
         .scanForDevices(
           withServices: [Uuid.parse(probeServiceUuid)],
           scanMode: ScanMode.lowLatency,
-          requireLocationServicesEnabled: sdkInt < 31,
+          requireLocationServicesEnabled: !isIOS && sdkInt < 31,
         )
         .listen(
           _onDiscovered,
@@ -368,20 +401,37 @@ class Probe extends ChangeNotifier {
     scanning = true;
   }
 
-  void _onDiscovered(DiscoveredDevice r) {
+  // 광고에서 (상대 ID, 끝 바이트)와 어디서 읽었는지를 꺼냄
+  // 안드로이드 광고는 제조사 데이터, iOS 광고는 로컬 이름 - 스캔하는 쪽은 OS 상관없이 둘 다 읽음
+  (String, int, String) _decode(DiscoveredDevice r) {
     // reactive_ble은 제조사 데이터 앞에 제조사 ID 2바이트(리틀엔디언)를 붙여서 줌
     final raw = r.manufacturerData;
-    if (raw.length < 6 || (raw[0] | raw[1] << 8) != probeManufacturerId) return;
-    final data = raw.sublist(2);
-    final peerId = _hex(data.sublist(0, 3));
+    if (raw.length >= 6 && (raw[0] | raw[1] << 8) == probeManufacturerId) {
+      return (_hex(raw.sublist(2, 5)), raw[5], 'mfr');
+    }
+    if (_iosNamePattern.hasMatch(r.name)) {
+      final decoded = (r.name.substring(0, 6), int.parse(r.name.substring(6), radix: 16));
+      _decodedByDevice[r.id] = decoded;
+      return (decoded.$1, decoded.$2, 'name');
+    }
+    final cached = _decodedByDevice[r.id];
+    if (cached != null) return (cached.$1, cached.$2, 'cache');
+    // 이름을 한 번도 못 받은 iOS 기기 - RSSI는 남기도록 기기 ID로 임시 구분 (모드·충격은 모름)
+    final fallback = 'X${r.id.replaceAll(RegExp('[^0-9A-Fa-f]'), '').toUpperCase().padLeft(5, '0').substring(0, 5)}';
+    return (fallback, 0, 'unknown');
+  }
+
+  void _onDiscovered(DiscoveredDevice r) {
+    final (peerId, flags, source) = _decode(r);
     if (peerId == myIdHex) return;
 
     final now = DateTime.now();
     final peer = peers.putIfAbsent(peerId, () => PeerState(peerId));
     peer.add(now, r.rssi);
+    peer.source = source;
 
-    final counter = data[3] & 0x7F;
-    peer.holdMode = data[3] & 0x80 != 0;
+    final counter = flags & 0x7F;
+    peer.holdMode = flags & 0x80 != 0;
     if (peer.lastBumpCounter != null && peer.lastBumpCounter != counter) {
       // 같은 시계(내 폰)로 잰 "내 충격 → 상대 충격 알림 수신" 간격
       // 두 폰 시계를 맞추지 않아도 오프라인 매칭에 걸리는 시간을 볼 수 있음
@@ -414,7 +464,8 @@ class Probe extends ChangeNotifier {
     }
     peer.lastBumpCounter = counter;
 
-    if (recording) rows.add(_row('rssi', peerId: peerId, rssi: r.rssi));
+    // iOS 광고에서 온 패킷은 출처를 남김 - 이름 없이 온(cache) 비율로 iOS 광고가 잘 읽히는지 봄
+    if (recording) rows.add(_row('rssi', peerId: peerId, rssi: r.rssi, note: source == 'mfr' ? '' : source));
     _checkHold(peer, now, r.rssi);
   }
 
@@ -588,6 +639,14 @@ class Probe extends ChangeNotifier {
   // 앱 전용 폴더는 다른 앱에서 안 보여서, 내 파일 > 다운로드 > BLE실측 에 따로 저장
   Future<String> saveToDownloads() async {
     final name = 'rssi_${model.replaceAll(' ', '_')}_${myIdHex}_${_fileStamp(DateTime.now())}.csv';
+    if (isIOS) {
+      // iOS는 다운로드 폴더 개념이 없어서 문서 폴더에 저장 (파일 앱에서 보임)
+      final dir = await getApplicationDocumentsDirectory();
+      await File('${dir.path}/$name').writeAsString(_csvContent());
+      final shown = '파일 > 나의 iPhone > BLE 실측 > $name';
+      rows.add(_row('saved', note: shown));
+      return shown;
+    }
     final path = await _saveChannel.invokeMethod<String>('saveToDownloads', {
       'name': name,
       'bytes': Uint8List.fromList(utf8.encode(_csvContent())),
@@ -620,7 +679,8 @@ class Probe extends ChangeNotifier {
           r.type,
           myIdHex,
           model,
-          sdkInt,
+          // 안드로이드는 예전 CSV와 같게 숫자만, iOS는 iOS18.1 형태
+          isIOS ? osLabel : sdkInt,
           r.txPower,
           r.label,
           _csv(r.memo),

@@ -55,7 +55,7 @@ class _ProbeScreenState extends State<ProbeScreen> with WidgetsBindingObserver {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final path = await probe.saveToDownloads();
-      messenger.showSnackBar(SnackBar(content: Text('저장됨: 내 파일 > $path')));
+      messenger.showSnackBar(SnackBar(content: Text(probe.isIOS ? '저장됨: $path' : '저장됨: 내 파일 > $path')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('저장 실패: $e')));
     }
@@ -113,7 +113,7 @@ class _ProbeScreenState extends State<ProbeScreen> with WidgetsBindingObserver {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '${probe.model} · SDK ${probe.sdkInt} · 광고 ${probe.advertising ? 'ON' : 'OFF'} · 스캔 ${probe.scanning ? 'ON' : 'OFF'} · ${probe.accelSource}',
+          '${probe.model} · ${probe.osLabel} · 광고 ${probe.advertising ? 'ON' : 'OFF'} · 스캔 ${probe.scanning ? 'ON' : 'OFF'} · ${probe.accelSource}',
         ),
         Text('스캔 재시작 ${probe.scanRestarts}회 · 광고 재시작 실패 ${probe.advRestartFailures}회'),
         if (probe.autosavePath != null) Text('자동 저장: ${probe.autosavePath}', style: const TextStyle(fontSize: 11)),
@@ -123,17 +123,21 @@ class _ProbeScreenState extends State<ProbeScreen> with WidgetsBindingObserver {
             child: Text(probe.setupError!, style: TextStyle(color: theme.colorScheme.error)),
           ),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          children: [
-            for (final entry in txPowerNames.entries)
-              ChoiceChip(
-                label: Text(entry.value),
-                selected: probe.txPower == entry.key,
-                onSelected: (_) => probe.setTxPower(entry.key),
-              ),
-          ],
-        ),
+        // iOS는 송신 세기를 앱에서 못 바꿈
+        if (probe.isIOS)
+          const Text('송신 세기: iOS 기본값 (변경 불가)')
+        else
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final entry in txPowerNames.entries)
+                ChoiceChip(
+                  label: Text(entry.value),
+                  selected: probe.txPower == entry.key,
+                  onSelected: (_) => probe.setTxPower(entry.key),
+                ),
+            ],
+          ),
       ],
     );
   }
@@ -191,7 +195,7 @@ class _ProbeScreenState extends State<ProbeScreen> with WidgetsBindingObserver {
               title: Text('상대 ${peer.id}${peer.holdMatched ? ' · 연결 유지 중' : ''}'),
               subtitle: Text(
                 '초당 ${peer.packetsLastSecond(now)}개 · 마지막 ${peer.lastRssi ?? '-'} dBm\n'
-                '상대 모드 ${peer.holdMode ? 'ON' : 'OFF'} · 연결 ${peer.matches}회',
+                '상대 모드 ${peer.holdMode ? 'ON' : 'OFF'} · 연결 ${peer.matches}회 · ${peer.source == 'mfr' ? '안드로이드' : 'iOS(${peer.source})'}',
               ),
               trailing: Text(
                 peer.averageSince(now, const Duration(seconds: 1))?.toStringAsFixed(1) ?? '-',
