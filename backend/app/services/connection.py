@@ -180,13 +180,16 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
     )
 
 
-async def _get_my_connection(db: AsyncSession, user_id: UUID, connection_id: UUID) -> UserConnection:
-    result = await db.execute(
-        select(UserConnection).where(
-            UserConnection.id == connection_id,
-            or_(UserConnection.user_a_id == user_id, UserConnection.user_b_id == user_id),
-        )
+async def _get_my_connection(
+    db: AsyncSession, user_id: UUID, connection_id: UUID, *, for_update: bool = False
+) -> UserConnection:
+    query = select(UserConnection).where(
+        UserConnection.id == connection_id,
+        or_(UserConnection.user_a_id == user_id, UserConnection.user_b_id == user_id),
     )
+    if for_update:
+        query = query.with_for_update()
+    result = await db.execute(query)
     row = result.scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="연결 요청을 찾을 수 없습니다.")
@@ -222,7 +225,9 @@ async def list_connection_requests(db: AsyncSession, user_id: UUID) -> list[Conn
 async def confirm_connection_request(
     db: AsyncSession, user_id: UUID, connection_id: UUID
 ) -> ConnectionConfirmResponse:
-    row = await _get_my_connection(db, user_id, connection_id)
+    # 두 사람이 거의 동시에 확인하면 서로 상대 확인을 못 본 채 각자 커밋해 연결이 안 됐음(10/13 실기기,
+    # 6ms 차이) → 행을 잠가 나중 확인이 먼저 확인을 보고 연결하게 함
+    row = await _get_my_connection(db, user_id, connection_id, for_update=True)
     now = _now()
     if row.connected_at is None:
         if _pending_expired(row, now):

@@ -38,6 +38,11 @@ void main() {
       duration: const Duration(milliseconds: 1100),
     );
     addTearDown(controller.dispose);
+    final exit = AnimationController(
+      vsync: const TestVSync(),
+      duration: const Duration(milliseconds: 950),
+    );
+    addTearDown(exit.dispose);
     final key = GlobalKey();
     await tester.pumpWidget(
       MaterialApp(
@@ -53,6 +58,7 @@ void main() {
               color: Colors.black.withValues(alpha: 0.45),
               child: NearbyPeerReveal(
                 animation: controller,
+                exit: exit,
                 color: const Color(0xFF8B5E3C),
                 cardColor: const Color(0xFFF4F1E1),
                 child: const Column(
@@ -95,5 +101,25 @@ void main() {
           .first,
     );
     expect(opacity.opacity, 1);
+
+    // 연결 완료 뒤 카드가 물방울로 오므라들어 화면 아래로 떨어짐
+    final cardMaterial = find
+        .ancestor(
+          of: find.text('민지님 맞나요?'),
+          matching: find.byType(DecoratedBox),
+        )
+        .first;
+    final cardWidth = tester.getRect(cardMaterial).width;
+    for (final e in [0.2, 0.42, 0.6, 0.8, 1.0]) {
+      exit.value = e;
+      await tester.pump();
+      await _capture(tester, key, 'exit_${(e * 100).round()}');
+      if (e == 0.42) {
+        // 다 오므라들면 물방울 크기(지름 54)
+        expect(tester.getRect(cardMaterial).width, closeTo(54, 1));
+      }
+    }
+    expect(cardWidth, greaterThan(300));
+    expect(tester.getRect(cardMaterial).top, greaterThan(844));
   });
 }

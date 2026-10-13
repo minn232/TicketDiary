@@ -334,3 +334,32 @@ async def test_pairing_uses_stronger_follow_up_sighting():
         strong = await _sight(ac, token_a, code_b, rssi=-50)
     assert weak.json()["status"] == "waiting"
     assert strong.json()["status"] == "pending"
+
+
+# 두 사람이 거의 동시에 확인해도 연결됨 (10/13 실기기에서 6ms 차이로 둘 다 "확인 기다리는 중"에 멈춤)
+async def test_simultaneous_confirm_connects():
+    from app.services.connection import confirm_connection_request
+
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        user_a, user_b = await _user_id(ac, token_a), await _user_id(ac, token_b)
+        code_b = await _code(ac, token_b)
+        code_a = await _code(ac, token_a)
+        await _sight(ac, token_a, code_b)
+        pending = await _sight(ac, token_b, code_a)
+    connection_id = uuid.UUID(pending.json()["connection_id"])
+
+    barrier = asyncio.Barrier(2)
+
+    async def confirm(user_id: uuid.UUID):
+        async with AsyncSessionLocal() as db:
+            await db.execute(select(1))  # 연결을 미리 맺어 두 확인이 실제로 겹치게
+            await barrier.wait()
+            return await confirm_connection_request(db, user_id, connection_id)
+
+    results = await asyncio.gather(confirm(user_a), confirm(user_b))
+
+    assert "connected" in {r.status for r in results}
+    async with AsyncSessionLocal() as db:
+        row = await db.get(UserConnection, connection_id)
+    assert row.connected_at is not None
