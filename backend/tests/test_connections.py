@@ -404,3 +404,42 @@ async def test_late_offline_upload_still_pairs():
 
     assert late_b.json()["status"] == "waiting"
     assert late_a.json()["status"] == "pending"
+
+
+# 정리 배치: 72시간 넘은 판정·만료된 지 72시간 넘은 코드·하루 넘게 방치된 요청만 지우고 나머지는 둠
+async def test_cleanup_nearby_records():
+    from app.models.connection import NearbySighting
+    from app.services.connection import cleanup_nearby_records
+
+    token_a, token_b = await _get_token(), await _get_token()
+    now = datetime.now(timezone.utc)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        user_a, user_b = await _user_id(ac, token_a), await _user_id(ac, token_b)
+        code_b = await _code(ac, token_b)
+        fresh = await _sight(ac, token_a, code_b)
+    assert fresh.status_code == 200
+    a, b = sorted([user_a, user_b], key=str)
+    async with AsyncSessionLocal() as db:
+        old_code = NearbyCode(
+            user_id=user_a, code=uuid.uuid4().hex[:8],
+            valid_from=now - timedelta(days=6), valid_until=now - timedelta(days=5),
+        )
+        old_sighting = NearbySighting(
+            observer_user_id=user_b, observed_user_id=user_a, rssi=-50, seen_at=now - timedelta(days=4)
+        )
+        stale_request = UserConnection(user_a_id=a, user_b_id=b, requested_at=now - timedelta(days=2))
+        db.add_all([old_code, old_sighting, stale_request])
+        await db.commit()
+        ids = (old_code.id, old_sighting.id, stale_request.id)
+
+        await cleanup_nearby_records(db)
+
+        assert await db.get(NearbyCode, ids[0]) is None
+        assert await db.get(NearbySighting, ids[1]) is None
+        assert await db.get(UserConnection, ids[2]) is None
+        # 방금 올린 판정과 지금 쓰는 코드는 남음
+        remaining = (await db.execute(
+            select(NearbySighting).where(NearbySighting.observer_user_id == user_a)
+        )).scalars().all()
+        assert len(remaining) == 1
+        assert (await db.execute(select(NearbyCode).where(NearbyCode.code == code_b))).first() is not None

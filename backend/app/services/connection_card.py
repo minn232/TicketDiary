@@ -359,11 +359,10 @@ async def _next(
             for c in upcoming[:_MAX_INTERESTED]
         ]
 
-    # 추천은 관심 공연과 별개로 항상 - 공통 아티스트의 다가오는 공연, 없으면 둘 다 좋아하는 장르 공연.
-    # 둘 중 누가 이미 예매/찜한 공연은 뺌 (상대 단독 기록은 안 드러남)
+    # 추천은 관심 공연과 별개로 항상 - 공통 아티스트의 다가오는 공연을 먼저, 남는 자리는 둘 다 좋아하는
+    # 장르 공연으로 채움. 둘 중 누가 이미 예매/찜한 공연은 뺌 (상대 단독 기록은 안 드러남)
     exclude = set(my_status) | set(peer_status)
-    suggestions: list[CardConcert] = []
-    suggestion_basis = None
+    picked: list[Concert] = []
     if common_display:
         rows = (
             await db.execute(
@@ -373,11 +372,21 @@ async def _next(
                 .limit(_MAX_SUGGESTIONS + len(exclude))
             )
         ).scalars().all()
-        suggestions = [_card_concert(c) for c in rows if c.id not in exclude][:_MAX_SUGGESTIONS]
-        suggestion_basis = "artist" if suggestions else None
-    if not suggestions and shared_genre:
-        suggestions = [_card_concert(c) for c in await _genre_suggestions(db, shared_genre, exclude)]
-        suggestion_basis = "genre" if suggestions else None
+        picked = [c for c in rows if c.id not in exclude][:_MAX_SUGGESTIONS]
+    by_artist = len(picked)
+    if len(picked) < _MAX_SUGGESTIONS and shared_genre:
+        exclude |= {c.id for c in picked}
+        picked += (await _genre_suggestions(db, shared_genre, exclude))[: _MAX_SUGGESTIONS - len(picked)]
+    suggestions = [_card_concert(c) for c in picked]
+    suggestion_basis = (
+        None
+        if not picked
+        else "artist"
+        if by_artist == len(picked)
+        else "genre"
+        if by_artist == 0
+        else "mixed"
+    )
 
     return CardNext(
         my_next=_card_concert(my_next.concert, my_next) if my_next else None,

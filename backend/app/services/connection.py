@@ -309,3 +309,25 @@ async def delete_connection(db: AsyncSession, user_id: UUID, peer_user_id: UUID)
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="연결된 상대가 아닙니다.")
     await db.commit()
+
+
+# 만료된 요청을 지우기 전 여유 - 만료(10분) 직후 확인 버튼을 누른 쪽이 410을 받을 수 있게 하루 남겨 둠
+_EXPIRED_REQUEST_KEEP = timedelta(days=1)
+
+
+# 오래된 맞대기 기록 정리(매일) - 판정은 늦은 업로드 허용(72시간)+짝짓기 창이 지나면 짝지을 일이 없고,
+# 코드는 그 기간 안의 판정 해석·코드 중복 확인에만 쓰임. 확인 안 된 채 만료된 연결 요청도 지움
+async def cleanup_nearby_records(db: AsyncSession) -> dict[str, int]:
+    now = _now()
+    sightings = await db.execute(
+        delete(NearbySighting).where(NearbySighting.seen_at < now - _SIGHTING_MAX_AGE - _PAIR_WINDOW)
+    )
+    codes = await db.execute(delete(NearbyCode).where(NearbyCode.valid_until < now - _SIGHTING_MAX_AGE))
+    requests = await db.execute(
+        delete(UserConnection).where(
+            UserConnection.connected_at.is_(None),
+            UserConnection.requested_at < now - _PENDING_TTL - _EXPIRED_REQUEST_KEEP,
+        )
+    )
+    await db.commit()
+    return {"sightings": sightings.rowcount, "codes": codes.rowcount, "requests": requests.rowcount}

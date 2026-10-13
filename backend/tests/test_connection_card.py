@@ -387,3 +387,26 @@ async def test_card_genre_suggestions_without_common_artist():
     assert "록공연" in names
     assert "팝공연" not in names
     assert nxt["suggestion_basis"] == "genre"
+
+
+# 공통 아티스트 공연이 모자라면 남는 자리를 둘 다 좋아하는 장르 공연으로 채움
+async def test_card_suggestions_filled_with_genre():
+    shared, other_rock = _artist("공통록"), _artist("다른록")
+    await _canonical(shared, None, ["rock"])
+    await _canonical(other_rock, None, ["rock"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        token_a, user_a = await _user(ac)
+        _, user_b = await _user(ac)
+        await _connect(user_a, user_b)
+        await _follow(user_a, [shared])
+        await _follow(user_b, [shared])
+        await _concert("공통록콘", [shared], start=1)
+        await _concert("다른록콘", [other_rock], start=1)
+
+        nxt = (await _card(ac, token_a, user_b)).json()["next"]
+
+    names = [c["name"] for c in nxt["suggestions"]]
+    assert names[0] == "공통록콘"  # 공통 아티스트 공연이 먼저
+    assert "다른록콘" in names
+    assert nxt["suggestion_basis"] == "mixed"

@@ -132,9 +132,10 @@ class CardNext(BaseModel):
     together_next: CardConcert | None
     peer_next_hidden: bool
     both_interested: list[InterestedConcert]
-    # 같이 가볼 만한 다가오는 공연 - 공통 아티스트 공연("artist"), 없으면 둘 다 좋아하는 장르 공연("genre")
+    # 같이 가볼 만한 다가오는 공연 - 공통 아티스트 공연 먼저, 남는 자리는 둘 다 좋아하는 장르 공연.
+    # 근거: 전부 아티스트 "artist" / 전부 장르 "genre" / 섞임 "mixed"
     suggestions: list[CardConcert]
-    suggestion_basis: Literal["artist", "genre"] | None = None
+    suggestion_basis: Literal["artist", "genre", "mixed"] | None = None
 
 
 class ConnectionCardResponse(BaseModel):
