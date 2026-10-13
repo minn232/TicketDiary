@@ -96,7 +96,7 @@ class CardUs(BaseModel):
 
 
 class SharedSong(BaseModel):
-    # 둘 다 라이브로 들은 곡 - times는 두 사람이 들은 횟수 합
+    # 둘 다 라이브로 들은 곡 - times는 둘 중 누구든 들은 공연(회차) 수 (같이 본 공연은 1번)
     name: str
     artist: str | None
     times: int

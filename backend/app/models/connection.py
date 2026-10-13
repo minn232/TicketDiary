@@ -16,6 +16,8 @@ class NearbyCode(Base):
     code = Column(String, nullable=False, index=True)
     valid_from = Column(DateTime(timezone=True), nullable=False)
     valid_until = Column(DateTime(timezone=True), nullable=False)
+    # 이 코드로 맞대기 화면을 마지막으로 연 시각 - 이번 시도 판정만 짝짓는 기준
+    session_started_at = Column(DateTime(timezone=True), nullable=True)
 
 
 # 맞댐 판정 기록 - 각 폰이 "이 코드를 맞댐 수준으로 봤다"고 올린 것.

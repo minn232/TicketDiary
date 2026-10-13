@@ -363,3 +363,44 @@ async def test_simultaneous_confirm_connects():
     async with AsyncSessionLocal() as db:
         row = await db.get(UserConnection, connection_id)
     assert row.connected_at is not None
+
+
+# 이미 연결된 사이가 연달아 맞대도 직전 시도 판정과는 짝짓지 않음 - 이번 시도에서 둘 다 봐야 다시 만남
+async def test_previous_attempt_sighting_not_paired():
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await _connect(ac, token_a, token_b)
+        # 1회차 다시 만남
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        await _sight(ac, token_b, code_a)
+        first = await _sight(ac, token_a, code_b)
+        # 2회차: 둘 다 화면을 다시 엶 → 1회차 판정은 무효
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        only_a = await _sight(ac, token_a, code_b)
+        both = await _sight(ac, token_b, code_a)
+
+    assert first.json()["status"] == "connected"
+    assert only_a.json()["status"] == "waiting"  # 상대의 1회차 판정과 짝지어지면 안 됨
+    assert both.json()["status"] == "connected"
+
+
+# 오프라인 때 모아 늦게 올린 판정은 상대가 화면을 다시 열었어도 짝지어짐
+async def test_late_offline_upload_still_pairs():
+    token_a, token_b = await _get_token(), await _get_token()
+    met_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        # 방금 발급한 테스트 코드라 5분 전 판정도 풀리게 유효 시작을 앞당김
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(NearbyCode)
+                .where(NearbyCode.code.in_([code_a, code_b]))
+                .values(valid_from=met_at - timedelta(minutes=1))
+            )
+            await db.commit()
+        late_b = await _sight(ac, token_b, code_a, seen_at=met_at)
+        await _code(ac, token_b)  # B가 그 뒤 화면을 다시 열어도
+        late_a = await _sight(ac, token_a, code_b, seen_at=met_at + timedelta(seconds=3))
+
+    assert late_b.json()["status"] == "waiting"
+    assert late_a.json()["status"] == "pending"

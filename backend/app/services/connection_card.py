@@ -69,8 +69,8 @@ class _Side:
     attended_artists: set[str] = field(default_factory=set)
     followed_artists: set[str] = field(default_factory=set)
     followed_concert_ids: set[UUID] = field(default_factory=set)
-    # 정규화한 (아티스트, 곡) -> 들은 횟수 / 표시용 이름
-    songs: Counter = field(default_factory=Counter)
+    # 정규화한 (아티스트, 곡) -> 들은 공연(회차) 키들 / 표시용 이름
+    songs: dict[tuple[str, str], set[tuple[UUID, date]]] = field(default_factory=lambda: defaultdict(set))
     song_labels: dict[tuple[str, str], tuple[str, str | None]] = field(default_factory=dict)
 
     @property
@@ -157,7 +157,7 @@ async def _load_side(db: AsyncSession, user_id: UUID) -> _Side:
                 continue
             artist = song.get("artist") or default_artist
             song_id = (_norm(artist), _norm(name))
-            side.songs[song_id] += 1
+            side.songs[song_id].add(key)
             side.song_labels.setdefault(song_id, (name, artist))
 
     artist_follow = (await db.execute(select(ArtistFollow).where(ArtistFollow.user_id == user_id))).scalar_one_or_none()
@@ -290,11 +290,14 @@ def _history(me: _Side, peer: _Side) -> tuple[list[tuple[Ticket, Ticket]], list[
     return together, other_days
 
 
+# 둘 다 라이브로 들은 곡 - 횟수는 들은 공연(회차) 수라 같이 간 공연에서 함께 들었으면 1번
+# (두 사람 횟수를 더하면 같이 본 공연의 곡이 2번으로 세졌음)
 def _shared_songs(me: _Side, peer: _Side) -> tuple[int, list[SharedSong]]:
     shared = [s for s in me.songs if s in peer.songs]
-    shared.sort(key=lambda s: (-(me.songs[s] + peer.songs[s]), me.song_labels[s][0]))
+    times = {s: len(me.songs[s] | peer.songs[s]) for s in shared}
+    shared.sort(key=lambda s: (-times[s], me.song_labels[s][0]))
     top = [
-        SharedSong(name=me.song_labels[s][0], artist=me.song_labels[s][1], times=me.songs[s] + peer.songs[s])
+        SharedSong(name=me.song_labels[s][0], artist=me.song_labels[s][1], times=times[s])
         for s in shared[:_MAX_SHARED_SONGS]
     ]
     return len(shared), top

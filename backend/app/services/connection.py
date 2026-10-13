@@ -26,6 +26,8 @@ _SIGHTING_MAX_AGE = timedelta(hours=72)
 _SIGHTING_MAX_FUTURE = timedelta(minutes=5)
 # 두 폰 시계 차이 + 맞대고 있던 시간 - 실측상 판정은 1초 안에 나지만 시계가 어긋난 폰을 감안
 _PAIR_WINDOW = timedelta(seconds=60)
+# 판정 시각보다 이만큼 넘게 늦게 올라온 판정은 오프라인 때 모아둔 것 - 이번 시도 제한을 안 받음
+_LATE_UPLOAD = timedelta(seconds=30)
 # 확인 화면을 띄운 채 오래 방치된 요청은 무효 (다시 맞대면 새로 시작)
 _PENDING_TTL = timedelta(minutes=10)
 # 맞댐 판정 RSSI(1초 평균) - 기기마다 송신 세기가 달라(태블릿↔폰 8~9dB) 한쪽은 강하게, 다른 쪽은
@@ -86,6 +88,9 @@ async def get_or_issue_nearby_code(db: AsyncSession, user_id: UUID) -> NearbyCod
     )
     row = result.scalar_one_or_none()
     if row is not None:
+        # 화면을 열 때마다 불리므로 여기서 이번 시도 시작을 기록
+        row.session_started_at = now
+        await db.commit()
         return NearbyCodeResponse(code=row.code, valid_until=row.valid_until)
 
     # 늦게 올라오는 오프라인 판정이 다른 사람 코드로 풀리지 않게, 그 기간 안에 쓰인 코드와 겹치지 않게 뽑음
@@ -101,7 +106,9 @@ async def get_or_issue_nearby_code(db: AsyncSession, user_id: UUID) -> NearbyCod
     else:
         raise HTTPException(status_code=503, detail="코드 발급에 실패했습니다. 다시 시도해주세요.")
 
-    row = NearbyCode(user_id=user_id, code=code, valid_from=now, valid_until=now + _CODE_TTL)
+    row = NearbyCode(
+        user_id=user_id, code=code, valid_from=now, valid_until=now + _CODE_TTL, session_started_at=now
+    )
     db.add(row)
     await db.commit()
     return NearbyCodeResponse(code=row.code, valid_until=row.valid_until)
@@ -135,13 +142,25 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
     )
     db.add(NearbySighting(observer_user_id=user_id, observed_user_id=peer_id, rssi=body.rssi, seen_at=seen_at))
 
-    reverse = await db.execute(
-        select(NearbySighting.rssi).where(
-            NearbySighting.observer_user_id == peer_id,
-            NearbySighting.observed_user_id == user_id,
-            NearbySighting.seen_at.between(seen_at - _PAIR_WINDOW, seen_at + _PAIR_WINDOW),
-        )
+    # 상대의 이번 시도(맞대기 화면을 마지막으로 연 뒤) 판정만 짝지음 - 이미 연결된 사이가 연달아 맞대면
+    # 직전 시도 판정과 짝지어져 한쪽만 바로 끝나고(광고도 꺼짐) 상대는 계속 찾는 중으로 남았음(10/13 실기기).
+    # 오프라인 때 모아 늦게 올린 판정은 화면을 연 뒤에 올라오므로 예외
+    peer_session = (
+        await db.execute(select(func.max(NearbyCode.session_started_at)).where(NearbyCode.user_id == peer_id))
+    ).scalar_one_or_none()
+    reverse_query = select(NearbySighting.rssi).where(
+        NearbySighting.observer_user_id == peer_id,
+        NearbySighting.observed_user_id == user_id,
+        NearbySighting.seen_at.between(seen_at - _PAIR_WINDOW, seen_at + _PAIR_WINDOW),
     )
+    if peer_session is not None:
+        reverse_query = reverse_query.where(
+            or_(
+                NearbySighting.created_at >= peer_session,
+                NearbySighting.created_at - NearbySighting.seen_at > _LATE_UPLOAD,
+            )
+        )
+    reverse = await db.execute(reverse_query)
     if not any(_rssi_pair_ok(body.rssi, theirs) for theirs in reverse.scalars().all()):
         await db.commit()
         return NearbySightingResponse(status="waiting")

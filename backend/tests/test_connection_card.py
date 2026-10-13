@@ -106,7 +106,7 @@ async def test_card_together_concert_and_shared_songs():
     assert body["us"]["compatibility"]["score"] == 100
     assert [c["name"] for c in body["history"]["together_concerts"]] == ["함께콘"]
     assert body["history"]["shared_song_count"] == 2
-    assert body["history"]["shared_songs"][0]["times"] == 2
+    assert body["history"]["shared_songs"][0]["times"] == 1  # 같이 본 공연에서 함께 들었으니 1번
 
 
 # 여러 날 공연을 서로 다른 날 봤으면 같이 간 공연이 아니라 "같은 공연 다른 날"
@@ -148,6 +148,7 @@ async def test_card_shared_songs_across_different_concerts():
     assert body["us"]["together_count"] == 0
     assert body["history"]["shared_song_count"] == 1
     assert body["history"]["shared_songs"][0]["name"] == "대표곡"
+    assert body["history"]["shared_songs"][0]["times"] == 2  # 서로 다른 공연에서 각자 들어 2번
 
 
 # 다음 공연: 서로 다르면 각자, 같으면 together_next 하나로 합침
