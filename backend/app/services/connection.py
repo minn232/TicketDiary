@@ -142,9 +142,8 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
     )
     db.add(NearbySighting(observer_user_id=user_id, observed_user_id=peer_id, rssi=body.rssi, seen_at=seen_at))
 
-    # 상대의 이번 시도(맞대기 화면을 마지막으로 연 뒤) 판정만 짝지음 - 이미 연결된 사이가 연달아 맞대면
-    # 직전 시도 판정과 짝지어져 한쪽만 바로 끝나고(광고도 꺼짐) 상대는 계속 찾는 중으로 남았음(10/13 실기기).
-    # 오프라인 때 모아 늦게 올린 판정은 화면을 연 뒤에 올라오므로 예외
+    # 상대의 이번 시도(화면을 마지막으로 연 뒤) 판정만 짝지음 - 직전 시도 판정과 짝지어지면 한쪽만 바로
+    # 끝나고 상대는 계속 찾는 중으로 남았음. 오프라인 때 모아 늦게 올린 판정은 예외
     peer_session = (
         await db.execute(select(func.max(NearbyCode.session_started_at)).where(NearbyCode.user_id == peer_id))
     ).scalar_one_or_none()
@@ -244,8 +243,8 @@ async def list_connection_requests(db: AsyncSession, user_id: UUID) -> list[Conn
 async def confirm_connection_request(
     db: AsyncSession, user_id: UUID, connection_id: UUID
 ) -> ConnectionConfirmResponse:
-    # 두 사람이 거의 동시에 확인하면 서로 상대 확인을 못 본 채 각자 커밋해 연결이 안 됐음(10/13 실기기,
-    # 6ms 차이) → 행을 잠가 나중 확인이 먼저 확인을 보고 연결하게 함
+    # 거의 동시에 확인하면 서로 상대 확인을 못 본 채 각자 커밋해 연결이 안 됐음 → 행을 잠가
+    # 나중 확인이 먼저 확인을 보고 연결하게 함
     row = await _get_my_connection(db, user_id, connection_id, for_update=True)
     now = _now()
     if row.connected_at is None:

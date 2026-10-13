@@ -88,7 +88,7 @@ async def delete_connection(
     await connection_service.delete_connection(db, current_user.id, peer_user_id)
 
 
-# 연결 카드 3장 (우리 사이 / 함께한 기록 / 다음에 같이)
+# 연결 카드 (우리 사이 / 함께한 기록 / 다음에 같이)
 @router.get("/connections/{peer_user_id}/card", response_model=ConnectionCardResponse)
 async def get_connection_card(
     peer_user_id: UUID,

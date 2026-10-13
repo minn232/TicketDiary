@@ -1,4 +1,4 @@
-"""연결 카드 - 연결된 두 사람의 티켓/찜/셋리를 겹쳐 3장(우리 사이 / 함께한 기록 / 다음에 같이)을 계산.
+"""연결 카드 - 연결된 두 사람의 티켓/찜/셋리를 겹쳐 우리 사이 / 함께한 기록 / 다음에 같이를 계산
 
 상대 단독 기록은 내리지 않고 겹치는 것과 집계만 내림 (예외: 상대가 공개를 켠 다음 공연 1개)
 """
@@ -290,8 +290,7 @@ def _history(me: _Side, peer: _Side) -> tuple[list[tuple[Ticket, Ticket]], list[
     return together, other_days
 
 
-# 둘 다 라이브로 들은 곡 - 횟수는 들은 공연(회차) 수라 같이 간 공연에서 함께 들었으면 1번
-# (두 사람 횟수를 더하면 같이 본 공연의 곡이 2번으로 세졌음)
+# 둘 다 라이브로 들은 곡 - 횟수는 들은 공연(회차) 수 (두 사람 횟수를 더하면 같이 본 공연 곡이 2번으로 세졌음)
 def _shared_songs(me: _Side, peer: _Side) -> tuple[int, list[SharedSong]]:
     shared = [s for s in me.songs if s in peer.songs]
     times = {s: len(me.songs[s] | peer.songs[s]) for s in shared}
@@ -399,7 +398,7 @@ async def _next(
     )
 
 
-# 연결된 상대와의 카드 3장 - 연결된 사이가 아니면 404
+# 연결된 상대와의 카드 - 연결된 사이가 아니면 404
 async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUID) -> ConnectionCardResponse:
     user_a_id, user_b_id = sorted([user_id, peer_user_id], key=str)
     connection = (

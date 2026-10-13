@@ -336,7 +336,7 @@ async def test_pairing_uses_stronger_follow_up_sighting():
     assert strong.json()["status"] == "pending"
 
 
-# 두 사람이 거의 동시에 확인해도 연결됨 (10/13 실기기에서 6ms 차이로 둘 다 "확인 기다리는 중"에 멈춤)
+# 두 사람이 거의 동시에 확인해도 연결됨 (둘 다 "확인 기다리는 중"에 멈췄던 경합)
 async def test_simultaneous_confirm_connects():
     from app.services.connection import confirm_connection_request
 

@@ -85,7 +85,7 @@ class Taste(BaseModel):
 
 
 class CardUs(BaseModel):
-    # 1장 "우리 사이" - 같이 간 공연이 없으면 앱은 공통 아티스트로 대체
+    # "우리 사이" - 같이 간 공연·취향·궁합·공통 아티스트
     together_count: int
     latest_together_poster_url: str | None
     compatibility: Compatibility | None
@@ -110,7 +110,7 @@ class SameConcertOtherDay(BaseModel):
 
 
 class CardHistory(BaseModel):
-    # 2장 "함께한 기록"
+    # "함께한 기록" - 앱은 "우리 사이"와 같은 장에 보여줌
     together_concerts: list[CardConcert]
     shared_song_count: int
     shared_songs: list[SharedSong]
@@ -125,7 +125,7 @@ class InterestedConcert(BaseModel):
 
 
 class CardNext(BaseModel):
-    # 3장 "다음에 같이" - 각자 다음 공연이 같으면 together_next 하나로 합침.
+    # "다음에 같이" - 각자 다음 공연이 같으면 together_next 하나로 합침
     # 상대가 공개를 끄면 peer_next는 비고 peer_next_hidden=True (둘 다 예매한 공연은 그래도 보임)
     my_next: CardConcert | None
     peer_next: CardConcert | None
@@ -139,7 +139,7 @@ class CardNext(BaseModel):
 
 
 class ConnectionCardResponse(BaseModel):
-    # 연결 카드 3장
+    # 연결 카드 (우리 사이 / 함께한 기록 / 다음에 같이)
     peer: ConnectionPeer
     connected_at: datetime
     last_met_at: datetime | None

@@ -104,10 +104,8 @@ async def _stop_one_pod(pod_id: str) -> bool:
     return False
 
 
-# pod을 깨운 직후엔 vLLM 로딩 시간이 있어 llm_server 헬스체크(base+"/health")가 응답할
-# 때까지 폴링함. 타임아웃 안에 준비 안 되면 False - 호출부는 이번 배치를 건너뛰고 다음날
-# 재시도. 기본값 1500초 = start_vllm.sh가 매 기동 setup_local.sh로 vLLM을 컨테이너 디스크에
-# 재설치(stop마다 초기화, 5~10분) + vLLM 준비 최대 10분. 예전 600초는 설치 단계가 없던 때 기준.
+# pod을 깨운 직후 llm_server 헬스체크(base+"/health")가 응답할 때까지 폴링, 안 되면 False(다음날 재시도).
+# 기본 1500초 = 매 기동 vLLM 재설치(컨테이너 디스크가 stop마다 초기화, 5~10분) + vLLM 준비 최대 10분
 async def wait_until_llm_server_ready(timeout_seconds: float = 1500.0, interval_seconds: float = 10.0) -> bool:
     if not settings.LLM_CRAWL_URL:
         return False
