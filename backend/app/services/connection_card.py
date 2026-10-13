@@ -41,6 +41,8 @@ _MAX_SHARED_SONGS = 3
 _MAX_COMMON_ARTISTS = 5
 _MAX_INTERESTED = 3
 _MAX_SUGGESTIONS = 3
+# 공통 장르 추천 후보로 훑어볼 가까운 다가오는 공연 수
+_GENRE_SUGGESTION_POOL = 300
 # 궁합 가중치 - 장르 분포가 취향을 가장 잘 드러내고, 겹치는 아티스트, 국내/내한 비율 순.
 # 계산할 수 없는 항목은 빼고 남은 가중치로 다시 나눔
 _WEIGHT_GENRE = 0.5
@@ -298,7 +300,32 @@ def _shared_songs(me: _Side, peer: _Side) -> tuple[int, list[SharedSong]]:
     return len(shared), top
 
 
-async def _next(db: AsyncSession, me: _Side, peer: _Side, peer_shares: bool, common_display: list[str]) -> CardNext:
+# 둘 다 좋아하는 장르(궁합의 top_shared_genre) 아티스트가 나오는 가까운 다가오는 공연
+async def _genre_suggestions(db: AsyncSession, genre: str, exclude: set[UUID]) -> list[Concert]:
+    rows = (
+        await db.execute(
+            select(Concert)
+            .where(Concert.start_date >= datetime.now(timezone.utc))
+            .order_by(Concert.start_date)
+            .limit(_GENRE_SUGGESTION_POOL)
+        )
+    ).scalars().all()
+    genres_by_artist = await get_artist_genres(db, {a for c in rows for a in c.artist_name or []})
+    return [
+        c
+        for c in rows
+        if c.id not in exclude and any(genre in genres_by_artist.get(a, []) for a in c.artist_name or [])
+    ][:_MAX_SUGGESTIONS]
+
+
+async def _next(
+    db: AsyncSession,
+    me: _Side,
+    peer: _Side,
+    peer_shares: bool,
+    common_display: list[str],
+    shared_genre: str | None,
+) -> CardNext:
     my_next = me.upcoming[0] if me.upcoming else None
     peer_next = peer.upcoming[0] if peer.upcoming and peer_shares else None
     peer_ticket_ids = {t.concert_id for t in peer.upcoming}
@@ -329,10 +356,12 @@ async def _next(db: AsyncSession, me: _Side, peer: _Side, peer_shares: bool, com
             for c in upcoming[:_MAX_INTERESTED]
         ]
 
-    # 둘 다 관심 공연이 없으면 공통 아티스트의 다가오는 공연으로 대체 (상대 단독 기록은 안 드러남)
+    # 추천은 관심 공연과 별개로 항상 - 공통 아티스트의 다가오는 공연, 없으면 둘 다 좋아하는 장르 공연.
+    # 둘 중 누가 이미 예매/찜한 공연은 뺌 (상대 단독 기록은 안 드러남)
+    exclude = set(my_status) | set(peer_status)
     suggestions: list[CardConcert] = []
-    if not interested and common_display:
-        exclude = set(my_status) | set(peer_status)
+    suggestion_basis = None
+    if common_display:
         rows = (
             await db.execute(
                 select(Concert)
@@ -342,6 +371,10 @@ async def _next(db: AsyncSession, me: _Side, peer: _Side, peer_shares: bool, com
             )
         ).scalars().all()
         suggestions = [_card_concert(c) for c in rows if c.id not in exclude][:_MAX_SUGGESTIONS]
+        suggestion_basis = "artist" if suggestions else None
+    if not suggestions and shared_genre:
+        suggestions = [_card_concert(c) for c in await _genre_suggestions(db, shared_genre, exclude)]
+        suggestion_basis = "genre" if suggestions else None
 
     return CardNext(
         my_next=_card_concert(my_next.concert, my_next) if my_next else None,
@@ -350,6 +383,7 @@ async def _next(db: AsyncSession, me: _Side, peer: _Side, peer_shares: bool, com
         peer_next_hidden=not peer_shares,
         both_interested=interested,
         suggestions=suggestions,
+        suggestion_basis=suggestion_basis,
     )
 
 
@@ -376,6 +410,7 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
     all_artists = me.taste_artists | peer.taste_artists
     genres_by_artist = await get_artist_genres(db, all_artists)
     countries = await _artist_countries(db, all_artists)
+    compatibility = _compatibility(me, peer, common_norm, genres_by_artist, countries)
 
     return ConnectionCardResponse(
         peer=ConnectionPeer(
@@ -386,7 +421,7 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
         us=CardUs(
             together_count=len(together),
             latest_together_poster_url=together[0][0].concert.poster_url if together else None,
-            compatibility=_compatibility(me, peer, common_norm, genres_by_artist, countries),
+            compatibility=compatibility,
             common_artists=common_display[:_MAX_COMMON_ARTISTS],
             my_taste=_taste(me.taste_artists, genres_by_artist, countries),
             peer_taste=_taste(peer.taste_artists, genres_by_artist, countries),
@@ -397,5 +432,12 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
             shared_songs=shared_songs,
             same_concert_other_days=other_days,
         ),
-        next=await _next(db, me, peer, peer_user.share_next_concert, common_display),
+        next=await _next(
+            db,
+            me,
+            peer,
+            peer_user.share_next_concert,
+            common_display,
+            compatibility.top_shared_genre if compatibility else None,
+        ),
     )

@@ -340,3 +340,49 @@ async def test_card_taste_origin_split_mixed_and_too_few():
     assert with_b["my_taste"]["genres"] == []  # 장르 정보 없음
     assert with_b["peer_taste"] == {"origins": [], "origin_mixed": True, "genres": []}
     assert with_c["peer_taste"] is None
+
+
+# 둘 다 관심 공연이 있어도 공통 아티스트의 다른 공연은 따로 추천
+async def test_card_suggestions_shown_with_interested():
+    shared = _artist("공통")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        token_a, user_a = await _user(ac)
+        _, user_b = await _user(ac)
+        await _connect(user_a, user_b)
+        both = await _concert("둘다관심콘", [shared], start=10)
+        await _concert("또다른공연", [shared], start=20)
+        await _follow(user_a, [shared])
+        await _follow(user_b, [shared])
+        await _ticket(user_a, both, past=False)
+        async with AsyncSessionLocal() as db:
+            db.add(ConcertFollow(user_id=user_b, concerts=[{"concert_id": str(both)}]))
+            await db.commit()
+
+        nxt = (await _card(ac, token_a, user_b)).json()["next"]
+
+    assert [c["concert"]["name"] for c in nxt["both_interested"]] == ["둘다관심콘"]
+    assert [c["name"] for c in nxt["suggestions"]] == ["또다른공연"]
+    assert nxt["suggestion_basis"] == "artist"
+
+
+# 공통 아티스트가 없으면 둘 다 좋아하는 장르의 다가오는 공연을 추천
+async def test_card_genre_suggestions_without_common_artist():
+    rock_a, rock_b, rock_c, pop = _artist("록A"), _artist("록B"), _artist("록C"), _artist("팝")
+    for name, genres in ((rock_a, ["rock"]), (rock_b, ["indie rock"]), (rock_c, ["rock"]), (pop, ["k-pop"])):
+        await _canonical(name, None, genres)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        token_a, user_a = await _user(ac)
+        _, user_b = await _user(ac)
+        await _connect(user_a, user_b)
+        await _follow(user_a, [rock_a])
+        await _follow(user_b, [rock_b])
+        await _concert("록공연", [rock_c], start=1)
+        await _concert("팝공연", [pop], start=1)
+
+        nxt = (await _card(ac, token_a, user_b)).json()["next"]
+
+    names = [c["name"] for c in nxt["suggestions"]]
+    assert "록공연" in names
+    assert "팝공연" not in names
+    assert nxt["suggestion_basis"] == "genre"
