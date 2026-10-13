@@ -31,6 +31,7 @@ from app.schemas.connection import (
     InterestedConcert,
     SameConcertOtherDay,
     SharedSong,
+    Taste,
 )
 from app.services.artist_genre import get_artist_genres
 from app.services.setlist import resolve_performance_date
@@ -45,6 +46,15 @@ _MAX_SUGGESTIONS = 3
 _WEIGHT_GENRE = 0.5
 _WEIGHT_ARTIST = 0.35
 _WEIGHT_ORIGIN = 0.15
+
+# 취향 요약 - 국적/장르가 확인된 아티스트가 이보다 적으면 그 항목은 판단하지 않음
+_MIN_TASTE_ARTISTS = 3
+# 1위 국적 줄기가 이 비율 이상이면 단독 표시, 2·3위는 1위의 절반 이상일 때만 같이 셈
+_ORIGIN_DOMINANT_SHARE = 0.6
+_ORIGIN_RUNNER_UP_RATIO = 0.5
+# 2위 장르가 1위의 이 비율 이상이면 같이 표시
+_GENRE_RUNNER_UP_RATIO = 0.7
+_ANGLO_COUNTRIES = {"US", "GB", "CA", "AU", "IE", "NZ"}
 
 
 # 한 사람의 카드 계산 재료
@@ -177,13 +187,50 @@ def _foreign_share(artists: set[str], countries: dict[str, str]) -> float | None
     return sum(1 for c in known if c != "KR") / len(known)
 
 
-async def _compatibility(db: AsyncSession, me: _Side, peer: _Side, common: set[str]) -> Compatibility | None:
+def _origin_group(country: str) -> str:
+    if country == "KR":
+        return "domestic"
+    if country == "JP":
+        return "japan"
+    return "anglo" if country in _ANGLO_COUNTRIES else "other"
+
+
+# 한 사람의 취향 요약 - 국적 큰 줄기(국내/일본/영미권/그 외) + 대표 장르. 둘 다 판단 못 하면 None
+def _taste(artists: set[str], genres_by_artist: dict[str, list[str]], countries: dict[str, str]) -> Taste | None:
+    origins: list[str] = []
+    origin_mixed = False
+    groups = Counter(_origin_group(countries[a]) for a in artists if a in countries)
+    if sum(groups.values()) >= _MIN_TASTE_ARTISTS:
+        ranked = groups.most_common()
+        top_group, top_count = ranked[0]
+        runners = [(g, n) for g, n in ranked[1:] if n >= top_count * _ORIGIN_RUNNER_UP_RATIO]
+        if top_count / sum(groups.values()) >= _ORIGIN_DOMINANT_SHARE and not runners:
+            origins = [top_group]
+        elif len(runners) >= 2:
+            origin_mixed = True
+        else:
+            origins = [top_group] + [g for g, _ in runners]
+
+    genres: list[str] = []
+    if sum(1 for a in artists if genres_by_artist.get(a)) >= _MIN_TASTE_ARTISTS:
+        ranked_genres = sorted(_genre_distribution(artists, genres_by_artist).items(), key=lambda kv: (-kv[1], kv[0]))
+        genres = [ranked_genres[0][0]]
+        if len(ranked_genres) > 1 and ranked_genres[1][1] >= ranked_genres[0][1] * _GENRE_RUNNER_UP_RATIO:
+            genres.append(ranked_genres[1][0])
+
+    if not origins and not origin_mixed and not genres:
+        return None
+    return Taste(origins=origins, origin_mixed=origin_mixed, genres=genres)
+
+
+def _compatibility(
+    me: _Side, peer: _Side, common: set[str], genres_by_artist: dict[str, list[str]], countries: dict[str, str]
+) -> Compatibility | None:
     mine, theirs = me.taste_artists, peer.taste_artists
     if not mine or not theirs:
         return None
     parts: list[tuple[float, float]] = []
 
-    genres_by_artist = await get_artist_genres(db, mine | theirs)
     dist_me, dist_peer = _genre_distribution(mine, genres_by_artist), _genre_distribution(theirs, genres_by_artist)
     top_shared_genre = None
     if dist_me and dist_peer:
@@ -196,7 +243,6 @@ async def _compatibility(db: AsyncSession, me: _Side, peer: _Side, common: set[s
     # 관람 수가 크게 다르면 합집합 기준으론 늘 낮게 나와서 작은 쪽 대비 겹친 비율로 봄
     parts.append((_WEIGHT_ARTIST, len(common) / min(len({_norm(a) for a in mine}), len({_norm(a) for a in theirs}))))
 
-    countries = await _artist_countries(db, mine | theirs)
     share_me, share_peer = _foreign_share(mine, countries), _foreign_share(theirs, countries)
     if share_me is not None and share_peer is not None:
         parts.append((_WEIGHT_ORIGIN, 1 - abs(share_me - share_peer)))
@@ -327,6 +373,9 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
     common_norm, common_display = _common_artists(me, peer)
     together, other_days = _history(me, peer)
     shared_song_count, shared_songs = _shared_songs(me, peer)
+    all_artists = me.taste_artists | peer.taste_artists
+    genres_by_artist = await get_artist_genres(db, all_artists)
+    countries = await _artist_countries(db, all_artists)
 
     return ConnectionCardResponse(
         peer=ConnectionPeer(
@@ -337,8 +386,10 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
         us=CardUs(
             together_count=len(together),
             latest_together_poster_url=together[0][0].concert.poster_url if together else None,
-            compatibility=await _compatibility(db, me, peer, common_norm),
+            compatibility=_compatibility(me, peer, common_norm, genres_by_artist, countries),
             common_artists=common_display[:_MAX_COMMON_ARTISTS],
+            my_taste=_taste(me.taste_artists, genres_by_artist, countries),
+            peer_taste=_taste(peer.taste_artists, genres_by_artist, countries),
         ),
         history=CardHistory(
             together_concerts=[_card_concert(t.concert, t) for t, _ in together],

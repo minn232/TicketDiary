@@ -105,6 +105,8 @@ async def search_artist(name: str, client: httpx.AsyncClient | None = None) -> l
                 for a in kr_results
             ]
 
+        # 북한(KP) 인물은 국내 공연에 나올 일이 없는데, 흔한 한글 이름(김순영, 최정임 등)이 KR 결과가
+        # 없을 때 여기서 동명의 북한 가수로 매칭되고 그룹 로스터(모란봉악단)까지 딸려 들어왔음
         general_results = await _run_query(c, base_query)
         return [
             ArtistCandidate(
@@ -112,6 +114,7 @@ async def search_artist(name: str, client: httpx.AsyncClient | None = None) -> l
                 country=a.get("country"), source="general",
             )
             for a in general_results
+            if a.get("country") != "KP"
         ]
 
     if client is not None:

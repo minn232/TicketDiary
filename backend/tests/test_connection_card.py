@@ -270,3 +270,73 @@ async def test_card_compatibility_uses_genres():
     assert same_genre["shared_artist_count"] == 0
     assert other_genre["top_shared_genre"] is None
     assert same_genre["score"] > other_genre["score"]
+
+
+async def _canonical(name: str, country: str | None, genres: list[str] | None = None) -> None:
+    from app.models.artist_normalization import CanonicalArtist
+
+    async with AsyncSessionLocal() as db:
+        db.add(CanonicalArtist(
+            canonical_name=name, mb_country=country, mb_genres=genres,
+            mb_genres_fetched_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
+
+async def _follow(user_id: uuid.UUID, artists: list[str]) -> None:
+    async with AsyncSessionLocal() as db:
+        db.add(ArtistFollow(user_id=user_id, artists=[{"artist_name": a} for a in artists]))
+        await db.commit()
+
+
+# 취향 요약: 국적 큰 줄기 + 대표 장르, 각자 따로 계산
+async def test_card_taste_summary():
+    anglo_rock = [_artist("영미록") for _ in range(3)]
+    kpop = [_artist("케이팝") for _ in range(3)]
+    for name, country in zip(anglo_rock, ("US", "GB", "US")):
+        await _canonical(name, country, ["rock"])
+    for name in kpop:
+        await _canonical(name, "KR", ["k-pop"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        token_a, user_a = await _user(ac)
+        _, user_b = await _user(ac)
+        await _connect(user_a, user_b)
+        await _follow(user_a, anglo_rock)
+        await _follow(user_b, kpop)
+
+        us = (await _card(ac, token_a, user_b)).json()["us"]
+
+    assert us["my_taste"] == {"origins": ["anglo"], "origin_mixed": False, "genres": ["록/밴드"]}
+    assert us["peer_taste"] == {"origins": ["domestic"], "origin_mixed": False, "genres": ["K-pop"]}
+
+
+# 국적이 두 줄기로 나뉘면 둘 다, 세 줄기 이상 고르면 "여러 나라", 아티스트가 적으면 판단 안 함
+async def test_card_taste_origin_split_mixed_and_too_few():
+    split = [_artist("반반") for _ in range(4)]
+    for name, country in zip(split, ("KR", "KR", "JP", "JP")):
+        await _canonical(name, country)
+    mixed = [_artist("섞임") for _ in range(3)]
+    for name, country in zip(mixed, ("KR", "JP", "US")):
+        await _canonical(name, country)
+    few = [_artist("적음") for _ in range(2)]
+    for name in few:
+        await _canonical(name, "KR", ["ballad"])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        token_a, user_a = await _user(ac)
+        _, user_b = await _user(ac)
+        _, user_c = await _user(ac)
+        await _connect(user_a, user_b)
+        await _connect(user_a, user_c)
+        await _follow(user_a, split)
+        await _follow(user_b, mixed)
+        await _follow(user_c, few)
+
+        with_b = (await _card(ac, token_a, user_b)).json()["us"]
+        with_c = (await _card(ac, token_a, user_c)).json()["us"]
+
+    assert sorted(with_b["my_taste"]["origins"]) == ["domestic", "japan"]
+    assert with_b["my_taste"]["genres"] == []  # 장르 정보 없음
+    assert with_b["peer_taste"] == {"origins": [], "origin_mixed": True, "genres": []}
+    assert with_c["peer_taste"] is None

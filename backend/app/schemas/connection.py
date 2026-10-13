@@ -75,12 +75,24 @@ class Compatibility(BaseModel):
     shared_artist_count: int
 
 
+class Taste(BaseModel):
+    # 한 사람의 취향 요약 (예: "영미권 록/밴드") - 문장은 앱에서 조합
+    # origins: 아티스트 국적 큰 줄기 1~2개(많은 순), origin_mixed면 세 줄기 이상 고르게 섞임("여러 나라")
+    # 둘 다 비어 있으면 국적 정보 부족. genres: 대표 장르 0~2개(결산과 같은 장르 라벨)
+    origins: list[Literal["domestic", "japan", "anglo", "other"]]
+    origin_mixed: bool
+    genres: list[str]
+
+
 class CardUs(BaseModel):
     # 1장 "우리 사이" - 같이 간 공연이 없으면 앱은 공통 아티스트로 대체
     together_count: int
     latest_together_poster_url: str | None
     compatibility: Compatibility | None
     common_artists: list[str]
+    # 각자 취향 요약 - 판단할 데이터가 부족하면 None
+    my_taste: Taste | None = None
+    peer_taste: Taste | None = None
 
 
 class SharedSong(BaseModel):
