@@ -156,6 +156,10 @@ async def _upsert_concert(
         # 공연명 추측(SOLO)이 아티스트 수/LLM으로 승격된 FESTIVAL을 되돌리지 않게 함(강등 안 함 원칙)
         if key == "event_type" and existing == EventType.FESTIVAL.value:
             continue
+        # 이미 채워진 아티스트는 KOPIS 출연진(본명/멤버명 위주)으로 되돌리지 않음 - LLM/정규화/검수 결과가
+        # 상세 조회(공연 화면 열기, 스캔 후보) 한 번에 덮어써지고 검수 표시만 남았었음
+        if key == "artist_name" and existing:
+            continue
         if value is not None:
             setattr(concert, key, value)
 
@@ -598,9 +602,16 @@ async def create_news_feeds_for_concert(
     )
     existing_user_ids = set(existing_result.scalars().all())
 
-    for user_id, artist_name in matched:
-        if user_id not in existing_user_ids:
-            db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
+    rows = [
+        {"user_id": user_id, "concert_id": concert.id, "artist_name": artist_name}
+        for user_id, artist_name in matched
+        if user_id not in existing_user_ids
+    ]
+    if rows:
+        # 팔로우 즉시 생성과 겹쳐 이미 있으면 건너뜀 - 유니크 위반으로 야간 배치 전체가 롤백되지 않도록 함
+        await db.execute(
+            pg_insert(NewsFeed).values(rows).on_conflict_do_nothing(constraint="uq_news_feeds_user_concert")
+        )
 
     return matched
 

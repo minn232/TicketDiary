@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import 'api_client.dart';
 import 'connectivity_status.dart';
+import 'fcm_service.dart';
 
 /// 로그인 성공(게스트/카카오/마이그레이션) 후 서버가 내려주는 토큰 세트.
 @immutable
@@ -136,7 +139,8 @@ class AuthService extends ChangeNotifier {
   /// 필요)로 보내면 세션이 없을 때 401이 납니다. 이 게터는 그 경우 false를
   /// 반환해, 세션이 없으면 항상 `/auth/kakao`(신규/기존 겸용)로 가도록
   /// 판단하는 데 씁니다.
-  bool get hasActiveGuestSession => isLoggedIn && (_currentUser?.isGuest ?? false);
+  bool get hasActiveGuestSession =>
+      isLoggedIn && (_currentUser?.isGuest ?? false);
 
   /// 앱 시작 시 1회 호출: 저장된 토큰을 불러오고, 없으면 게스트로 로그인합니다.
   /// 스플래시 화면의 데이터 로딩 단계에서 다른 로딩과 함께 await 하면 됩니다.
@@ -205,9 +209,15 @@ class AuthService extends ChangeNotifier {
 
   Future<void> _loginAsGuest() async {
     final deviceId = await _deviceId();
-    final json = await _client.post('/auth/guest', body: {'device_id': deviceId});
+    final json = await _client.post(
+      '/auth/guest',
+      body: {'device_id': deviceId},
+    );
     await _saveTokens(AuthTokens.fromJson(json));
     await refreshCurrentUser();
+    // [백엔드 수정]
+    // 계정이 바뀌면 FCM 토큰을 새 계정에 다시 등록.
+    unawaited(FcmService.instance.registerForCurrentUser());
   }
 
   /// 카카오 로그인 URL(웹 브라우저로 열 주소)을 서버에서 받아옵니다.
@@ -224,12 +234,18 @@ class AuthService extends ChangeNotifier {
   /// 계정을 마이그레이션하려 하면(백엔드가 409로 응답) [AlreadyKakaoUserException]을
   /// 던집니다. (403은 "게스트가 아닌 유저가 마이그레이션을 시도"하는 별개의
   /// 케이스라, UI에서 마이그레이션 버튼을 게스트에게만 노출하는 한 발생하지 않습니다.)
-  Future<void> completeKakaoLogin(String code, {required bool migrateFromGuest}) async {
+  Future<void> completeKakaoLogin(
+    String code, {
+    required bool migrateFromGuest,
+  }) async {
     final path = migrateFromGuest ? '/auth/migrate' : '/auth/kakao';
     try {
       final json = await _client.post(path, body: {'code': code});
       await _saveTokens(AuthTokens.fromJson(json));
       await refreshCurrentUser();
+      // [백엔드 수정]
+      // 계정이 바뀌면 FCM 토큰을 새 계정에 다시 등록.
+      unawaited(FcmService.instance.registerForCurrentUser());
     } on ApiException catch (e) {
       if (migrateFromGuest && e.statusCode == 409) {
         throw const AlreadyKakaoUserException();

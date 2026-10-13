@@ -34,6 +34,8 @@ from app.services.kopis import _build_follow_index, create_news_feeds_for_concer
 from app.services.musicbrainz import ArtistCandidate, BandRelation
 from conftest import _get_token, kopis_mock
 
+pytestmark = pytest.mark.usefixtures("skip_admin_key")
+
 _LLM_API_KEY = "test-llm-key"
 
 

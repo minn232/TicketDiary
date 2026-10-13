@@ -197,3 +197,24 @@ async def test_search_setlists_by_artist_accepts_merged_old_mbid():
 
     assert [r["id"] for r in results] == ["SF_HYUKOH_1", "SF_HYUKOH_2"]
     lookup.assert_awaited_once_with(old_mbid)  # 같은 mbid는 한 번만 조회
+
+
+# 429(레이트리밋)면 잠깐 기다렸다 한 번 재시도해서 결과를 받음
+@pytest.mark.asyncio
+async def test_search_setlists_retries_once_on_429():
+    limited = MagicMock(status_code=429)
+    ok = MagicMock(status_code=200)
+    ok.json = MagicMock(return_value={"setlist": [_raw_setlist("s1", "Nell")]})
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(side_effect=[limited, ok])
+
+    with (
+        patch("app.services.setlistfm.httpx.AsyncClient", return_value=mock_client),
+        patch("app.services.setlistfm._RATE_LIMIT_BACKOFF_SECONDS", 0),
+    ):
+        results = await search_setlists("Nell", date(2030, 6, 1))
+
+    assert mock_client.get.await_count == 2
+    assert [r["setlistfm_id"] for r in results] == ["s1"]

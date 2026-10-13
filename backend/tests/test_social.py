@@ -756,3 +756,43 @@ async def test_mark_feed_read_other_user_404():
         )
 
     assert res.status_code == 404
+
+
+# 같은 유저·공연의 소식은 DB에서도 하나만 허용(배치와 팔로우 즉시 생성이 겹쳐도 중복 안 생김)
+@pytest.mark.asyncio
+async def test_news_feed_unique_per_user_concert():
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models.social import NewsFeed
+
+    token = await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        user_id = uuid.UUID((await ac.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})).json()["id"])
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        concert = Concert(
+            kopis_id=f"PF_FEED_UQ_{uuid.uuid4().hex[:8]}", name="중복 소식", artist_name=["A"],
+            start_date=now + timedelta(days=30), end_date=now + timedelta(days=30),
+        )
+        db.add(concert)
+        await db.commit()
+        db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name="A"))
+        await db.commit()
+        db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name="A"))
+        with pytest.raises(IntegrityError):
+            await db.commit()
+
+
+# 수정 요청 목록/이름 길이 상한
+def test_follow_update_limits():
+    from pydantic import ValidationError
+
+    from app.schemas.social import ArtistFollowUpdate, ConcertFollowUpdate
+
+    with pytest.raises(ValidationError):
+        ArtistFollowUpdate(artists=[{"artist_name": "a"}] * 501)
+    with pytest.raises(ValidationError):
+        ArtistFollowUpdate(artists=[{"artist_name": "a" * 201}])
+    with pytest.raises(ValidationError):
+        ConcertFollowUpdate(concerts=[{"concert_id": str(uuid.uuid4())}] * 501)
+    assert len(ArtistFollowUpdate(artists=[{"artist_name": "a"}] * 500).artists) == 500

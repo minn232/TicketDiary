@@ -35,7 +35,7 @@ from app.schemas.connection import (
 )
 from app.services.artist_genre import get_artist_genres
 from app.services.setlist import resolve_performance_date
-from app.services.summary_extras import _artist_countries, _norm, kst_now
+from app.services.summary_extras import artist_countries, norm_name, kst_now
 
 _MAX_SHARED_SONGS = 3
 _MAX_COMMON_ARTISTS = 5
@@ -156,7 +156,7 @@ async def _load_side(db: AsyncSession, user_id: UUID) -> _Side:
             if not name:
                 continue
             artist = song.get("artist") or default_artist
-            song_id = (_norm(artist), _norm(name))
+            song_id = (norm_name(artist), norm_name(name))
             side.songs[song_id].add(key)
             side.song_labels.setdefault(song_id, (name, artist))
 
@@ -243,7 +243,7 @@ def _compatibility(
         top_shared_genre = max(shared, key=shared.get) if shared else None
 
     # 관람 수가 크게 다르면 합집합 기준으론 늘 낮게 나와서 작은 쪽 대비 겹친 비율로 봄
-    parts.append((_WEIGHT_ARTIST, len(common) / min(len({_norm(a) for a in mine}), len({_norm(a) for a in theirs}))))
+    parts.append((_WEIGHT_ARTIST, len(common) / min(len({norm_name(a) for a in mine}), len({norm_name(a) for a in theirs}))))
 
     share_me, share_peer = _foreign_share(mine, countries), _foreign_share(theirs, countries)
     if share_me is not None and share_peer is not None:
@@ -255,17 +255,17 @@ def _compatibility(
 
 
 def _common_artists(me: _Side, peer: _Side) -> tuple[set[str], list[str]]:
-    peer_norm = {_norm(a) for a in peer.taste_artists}
-    peer_attended_norm = {_norm(a) for a in peer.attended_artists}
+    peer_norm = {norm_name(a) for a in peer.taste_artists}
+    peer_attended_norm = {norm_name(a) for a in peer.attended_artists}
     common_norm: set[str] = set()
     display: dict[str, str] = {}
     for a in sorted(me.taste_artists):
-        n = _norm(a)
+        n = norm_name(a)
         if n in peer_norm:
             common_norm.add(n)
             display.setdefault(n, a)
     # 둘 다 실제로 본 아티스트를 먼저
-    both_seen = {_norm(a) for a in me.attended_artists} & peer_attended_norm
+    both_seen = {norm_name(a) for a in me.attended_artists} & peer_attended_norm
     ordered = sorted(common_norm, key=lambda n: (n not in both_seen, display[n]))
     return common_norm, [display[n] for n in ordered]
 
@@ -420,7 +420,7 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
     shared_song_count, shared_songs = _shared_songs(me, peer)
     all_artists = me.taste_artists | peer.taste_artists
     genres_by_artist = await get_artist_genres(db, all_artists)
-    countries = await _artist_countries(db, all_artists)
+    countries = await artist_countries(db, all_artists)
     compatibility = _compatibility(me, peer, common_norm, genres_by_artist, countries)
 
     return ConnectionCardResponse(

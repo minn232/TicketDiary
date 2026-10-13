@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import allow_music_link_lookup, get_current_user
 from app.models.music_link_cache import MusicLinkCache
 from app.models.user import User
 from app.schemas.music_link import MusicLinkResolveResponse
@@ -35,10 +35,10 @@ _CACHE_TTL_FOUND = timedelta(days=30)
 _CACHE_TTL_NOT_FOUND = timedelta(days=3)
 
 
+# (캐시 적중 여부, 캐시된 url) 반환 - TTL이 지났으면 적중 안 한 것으로 취급
 async def _get_cached_url(
     db: AsyncSession, service: str, artist: str, song: str
 ) -> tuple[bool, str | None]:
-    """(캐시 적중 여부, 캐시된 url)을 반환. 쿨다운이 지났으면 적중 안 한 것으로 취급."""
     result = await db.execute(
         select(MusicLinkCache).where(
             MusicLinkCache.service == service,
@@ -101,6 +101,8 @@ async def resolve_music_link(
     hit, cached_url = await _get_cached_url(db, service, normalized_artist, song)
     if hit:
         return MusicLinkResolveResponse(url=cached_url)
+    if not allow_music_link_lookup(current_user.id):
+        return MusicLinkResolveResponse(url=None)
 
     try:
         url = await resolver(artist, song)

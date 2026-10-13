@@ -40,6 +40,18 @@ class FcmService {
     }
   }
 
+  // [백엔드 수정]
+  // 로그인/로그아웃으로 계정이 바뀌었을 때 현재 계정에 토큰 재등록.
+  Future<void> registerForCurrentUser() async {
+    if (!_initialized || kIsWeb) return;
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) await _registerToken(token);
+    } catch (e) {
+      debugPrint('[FCM] 토큰 재등록 실패(무시): $e');
+    }
+  }
+
   Future<void> _registerToken(String token) async {
     try {
       await ApiClient.instance.patch(

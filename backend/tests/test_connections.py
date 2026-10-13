@@ -443,3 +443,19 @@ async def test_cleanup_nearby_records():
         )).scalars().all()
         assert len(remaining) == 1
         assert (await db.execute(select(NearbyCode).where(NearbyCode.code == code_b))).first() is not None
+
+
+# 판정 등록은 유저당 시간당 300회까지 - 넘으면 429
+async def test_sighting_rate_limited_per_user():
+    import time
+
+    from app.core.deps import _rate_limit_hits
+
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        code_b = await _code(ac, token_b)
+        user_a = await _user_id(ac, token_a)
+        _rate_limit_hits[f"nearby_sighting:{user_a}"].extend([time.monotonic()] * 300)
+        res = await _sight(ac, token_a, code_b)
+
+    assert res.status_code == 429

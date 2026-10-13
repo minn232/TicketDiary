@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 
 
@@ -15,7 +15,7 @@ class TimeTableEntry(BaseModel):
 
 class TimeTableUpdate(BaseModel):
     # 타임테이블 upsert 요청
-    contents: list[TimeTableEntry]
+    contents: list[TimeTableEntry] = Field(max_length=1000)
 
 
 class TimeTableResponse(BaseModel):

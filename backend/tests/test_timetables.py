@@ -6,6 +6,8 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 from conftest import _get_token, kopis_mock
 
+pytestmark = pytest.mark.usefixtures("skip_admin_key")
+
 
 # 헬퍼
 

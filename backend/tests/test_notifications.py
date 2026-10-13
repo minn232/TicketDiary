@@ -765,3 +765,66 @@ async def test_ticketing_day_notification_no_duplicate_on_resend():
     notifications = await _get_notifications_from_db(token)
     ticketing_notifs = [n for n in notifications if n["type"] == "ticketing_day"]
     assert len(ticketing_notifs) == 1  # 중복 없이 최신 날짜 1개만
+
+
+# 꺼둔 알림을 다시 켜면 이미 등록된 티켓 기준으로 예약 알림이 되살아남
+@pytest.mark.asyncio
+async def test_reenabling_day_before_restores_ticket_notification():
+    kopis_id = f"PF_REENABLE_{uuid.uuid4().hex[:8]}"
+    concert_id = await _create_concert(kopis_id, _make_future_xml(kopis_id))
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    await _create_ticket(concert_id, token)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/settings", json={"notification_settings": {"day_before": False}}, headers=headers)
+        off_types = {n["type"] for n in await _get_notifications_from_db(token)}
+        await ac.patch("/api/v1/settings", json={"notification_settings": {"day_before": True}}, headers=headers)
+
+    assert "day_before" not in off_types
+    assert "day_before" in {n["type"] for n in await _get_notifications_from_db(token)}
+
+
+# 티켓팅 알림을 다시 켜면 찜한 공연 중 티켓팅일이 안 지난 것의 알림이 되살아남
+@pytest.mark.asyncio
+async def test_reenabling_ticketing_restores_followed_concert_notification():
+    from app.models.concert import Concert
+
+    kopis_id = f"PF_REENABLE_TK_{uuid.uuid4().hex[:8]}"
+    concert_id = await _create_concert(kopis_id, _make_future_xml(kopis_id))
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(ticketing_date=datetime(2030, 4, 15, tzinfo=timezone.utc))
+        )
+        await db.commit()
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/social/concerts", json={"concerts": [{"concert_id": concert_id}]}, headers=headers)
+        await ac.patch("/api/v1/settings", json={"notification_settings": {"ticketing": False}}, headers=headers)
+        await ac.patch("/api/v1/settings", json={"notification_settings": {"ticketing": True}}, headers=headers)
+
+    notifications = await _get_notifications_from_db(token)
+    assert [n["type"] for n in notifications].count("ticketing_day") == 1
+
+
+# 알림 목록은 limit만큼만 내려줌
+@pytest.mark.asyncio
+async def test_list_notifications_respects_limit():
+    kopis_id = f"PF_NOTIF_LIMIT_{uuid.uuid4().hex[:8]}"
+    concert_id = await _create_concert(kopis_id, _make_future_xml(kopis_id))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    user_id = uuid.UUID(await _get_user_id(token))
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Notification).where(Notification.user_id == user_id).values(is_sent=True))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", params={"limit": 1}, headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 200
+    assert len(res.json()) == 1

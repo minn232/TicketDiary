@@ -185,6 +185,22 @@ def reject_oversized_request(request: Request, file_count: int = 1) -> None:
         raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
 
+# 음악 링크 외부 조회(캐시 미스) 남용 방지: 유저당 시간당 30회. YouTube 검색이 1회 100 units라
+# 곡명을 바꿔가며 부르면 하루 할당량이 금방 바닥남. 넘으면 False(호출부가 url=None으로 응답)
+def allow_music_link_lookup(user_id: UUID) -> bool:
+    try:
+        _check_rate_limit(f"music_link:{user_id}", max_calls=30, period_seconds=3600)
+    except HTTPException:
+        return False
+    return True
+
+
+# 맞대기 판정 등록 남용 방지: 유저당 시간당 300회. 판정마다 행이 쌓임 - 오프라인 때 모아둔 판정을
+# 한꺼번에 올리는 경우를 감안해 널널하게 잡음
+async def rate_limit_nearby_sighting(current_user: User = Depends(get_current_user)) -> None:
+    _check_rate_limit(f"nearby_sighting:{current_user.id}", max_calls=300, period_seconds=3600)
+
+
 # 일기 생성(LLM 호출, 비용 발생) 남용 방지: 유저당 시간당 10회
 async def rate_limit_diary_generation(current_user: User = Depends(get_current_user)) -> None:
     _check_rate_limit(f"diary:{current_user.id}", max_calls=10, period_seconds=3600)

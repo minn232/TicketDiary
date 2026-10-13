@@ -765,7 +765,7 @@ async def upload_manual_crawl_screenshot(
     db: AsyncSession = Depends(get_db),
 ):
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_CRAWL_SCREENSHOT_SIZE:
+    if content_length and content_length.isdigit() and int(content_length) > _MAX_CRAWL_SCREENSHOT_SIZE:
         raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
 
     image_bytes = await image.read(_MAX_CRAWL_SCREENSHOT_SIZE + 1)

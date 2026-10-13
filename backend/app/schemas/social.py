@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from uuid import UUID
 from datetime import datetime
 
@@ -12,8 +12,15 @@ class ArtistEntry(BaseModel):
 
 
 class ArtistFollowUpdate(BaseModel):
-    # 선호 아티스트 수정 요청 (전체 교체)
-    artists: list[ArtistEntry]
+    # 선호 아티스트 수정 요청 (전체 교체). 개수/이름 길이 상한은 요청에만 둠(응답에도 쓰는 ArtistEntry엔 안 걺)
+    artists: list[ArtistEntry] = Field(max_length=500)
+
+    @field_validator("artists")
+    @classmethod
+    def check_name_length(cls, artists: list[ArtistEntry]) -> list[ArtistEntry]:
+        if any(len(a.artist_name) > 200 for a in artists):
+            raise ValueError("아티스트명은 200자를 넘을 수 없습니다.")
+        return artists
 
 
 class ArtistFollowResponse(BaseModel):
@@ -32,8 +39,8 @@ class ConcertEntry(BaseModel):
 
 
 class ConcertFollowUpdate(BaseModel):
-    # 찜 공연 수정 요청 (전체 교체)
-    concerts: list[ConcertEntry]
+    # 찜 공연 수정 요청 (전체 교체). 항목마다 크롤링이 트리거돼서 개수 상한을 둠
+    concerts: list[ConcertEntry] = Field(max_length=500)
 
 
 class ConcertFollowResponse(BaseModel):

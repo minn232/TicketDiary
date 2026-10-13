@@ -19,6 +19,8 @@ from app.services.setlist import (
 )
 from conftest import _get_token, kopis_mock
 
+pytestmark = pytest.mark.usefixtures("skip_admin_key")
+
 
 # 헬퍼
 
@@ -1234,3 +1236,16 @@ async def test_get_ticket_setlist_transient_api_error_does_not_burn_cooldown():
     row = await _get_real_setlist_row(concert_id, performance_date)
     assert row is not None
     assert len(row.songs) == 3
+
+
+# 셋리 수정 요청의 곡 수/곡명 길이 상한 - 페스티벌 예상 셋리(수백 곡)는 통과
+def test_setlist_edit_request_limits():
+    from pydantic import ValidationError
+
+    from app.schemas.setlist import SetlistEditRequest
+
+    assert len(SetlistEditRequest(songs=[{"name": "곡"}] * 1000).songs) == 1000
+    with pytest.raises(ValidationError):
+        SetlistEditRequest(songs=[{"name": "곡"}] * 1001)
+    with pytest.raises(ValidationError):
+        SetlistEditRequest(songs=[{"name": "곡" * 301}])

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, verify_admin_key
 from app.models.user import User
 from app.schemas.timetable import TimeTableUpdate, TimeTableResponse
 from app.services.timetable import get_timetable, upsert_timetable
@@ -22,8 +22,12 @@ async def get_timetable_endpoint(
     return await get_timetable(db, concert_id)
 
 
-# 타임테이블 upsert (OCR 결과 수신 및 저장)
-@router.put("/{concert_id}/timetable", response_model=TimeTableResponse)
+# 타임테이블 upsert - 공연 공용 데이터라 관리자 키로만 열어둠(평소 저장은 LLM 크롤링 콜백이 함)
+@router.put(
+    "/{concert_id}/timetable",
+    response_model=TimeTableResponse,
+    dependencies=[Depends(verify_admin_key)],
+)
 async def upsert_timetable_endpoint(
     concert_id: UUID,
     body: TimeTableUpdate,

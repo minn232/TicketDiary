@@ -16,6 +16,35 @@ _HEADERS = {
 
 _HANGUL_RE = re.compile(r"[가-힣]")
 
+# Setlist.fm 표준 키는 초당 2회 제한 - 실제 셋리 배치(동시 4개)·조회 시 재시도·티켓 등록이 각자 호출해
+# 429가 났었음. 모든 요청을 프로세스 공통 간격으로 줄 세우고, 429면 한 번만 기다렸다 재시도함
+_MIN_REQUEST_INTERVAL = 0.6
+_RATE_LIMIT_BACKOFF_SECONDS = 2.0
+_request_lock = asyncio.Lock()
+_last_request_at = 0.0
+
+
+# 직전 요청과 _MIN_REQUEST_INTERVAL 이상 벌어질 때까지 대기 (musicbrainz.py와 같은 방식)
+async def _throttle() -> None:
+    global _last_request_at
+    async with _request_lock:
+        loop = asyncio.get_running_loop()
+        wait = _last_request_at + _MIN_REQUEST_INTERVAL - loop.time()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_request_at = loop.time()
+
+
+# Setlist.fm GET 공통 - 요청 간격 맞추기 + 429 1회 재시도
+async def _get(client: httpx.AsyncClient, url: str, params: dict | None = None) -> httpx.Response:
+    await _throttle()
+    response = await client.get(url, headers=_HEADERS, params=params)
+    if response.status_code == 429:
+        await asyncio.sleep(_RATE_LIMIT_BACKOFF_SECONDS)
+        await _throttle()
+        response = await client.get(url, headers=_HEADERS, params=params)
+    return response
+
 # artist_matching.py와 같은 라이브러리/threshold 스타일(그쪽은 DB 내 아티스트명 중복 판단용,
 # 여기는 Setlist.fm 검색 결과 검증용이라 목적은 다름). 92처럼 빡빡하게 잡을 필요는 없음 -
 # 여기서 걸러야 할 건 "Nell" vs "Nell Mescal"(53점대) 같은 명백히 다른 아티스트라, 정답
@@ -115,11 +144,7 @@ async def search_setlists(
     }
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(
-            f"{settings.SETLISTFM_BASE_URL}/search/setlists",
-            headers=_HEADERS,
-            params=params,
-        )
+        response = await _get(client, f"{settings.SETLISTFM_BASE_URL}/search/setlists", params)
 
     # 결과 없음
     if response.status_code == 404:
@@ -139,15 +164,8 @@ async def search_setlists_by_artist(
     all_setlists = []
     async with httpx.AsyncClient(timeout=10.0) as client:
         for page in range(1, pages + 1):
-            if page > 1:
-                await asyncio.sleep(0.5)
-
             params = {**_artist_param(artist_name, artist_mbid, by_mbid), "p": page}
-            response = await client.get(
-                f"{settings.SETLISTFM_BASE_URL}/search/setlists",
-                headers=_HEADERS,
-                params=params,
-            )
+            response = await _get(client, f"{settings.SETLISTFM_BASE_URL}/search/setlists", params)
 
             if response.status_code == 404:
                 break
@@ -169,10 +187,7 @@ async def search_setlists_by_artist(
 # Setlist.fm ID로 셋리스트 상세 조회
 async def get_setlist_by_id(setlistfm_id: str) -> dict:
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(
-            f"{settings.SETLISTFM_BASE_URL}/setlist/{setlistfm_id}",
-            headers=_HEADERS,
-        )
+        response = await _get(client, f"{settings.SETLISTFM_BASE_URL}/setlist/{setlistfm_id}")
 
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="해당 셋리스트를 찾을 수 없습니다.")

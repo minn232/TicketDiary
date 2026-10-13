@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -236,3 +237,15 @@ async def test_llm_sent_recently_false_after_reset_without_send():
 async def test_llm_sent_recently_false_when_all_sent_is_old():
     await _set_row(all_sent_at=datetime.now(timezone.utc) - timedelta(hours=20))
     assert await llm_sent_recently() is False
+
+
+# 콜백이 동시에 몰려도 pending_count 감소가 유실되지 않음(읽고 다시 쓰던 방식은 동시 갱신이 덮어써짐)
+@pytest.mark.asyncio
+async def test_concurrent_callbacks_decrement_pending_count_exactly():
+    await _set_row(pending_count=0)
+    await mark_llm_sent(10)
+
+    await asyncio.gather(*(mark_llm_callback_received() for _ in range(6)))
+
+    row = await _get_row()
+    assert row.pending_count == 4

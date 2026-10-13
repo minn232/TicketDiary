@@ -2,10 +2,12 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
 from app.models.concert import Concert, EventType
+from app.schemas.ticket import TicketCreate, TicketUpdate
 from app.services.ticket import upgrade_event_type_if_multi_artist
 from conftest import _get_token, kopis_mock
 
@@ -1104,3 +1106,24 @@ async def test_delete_ticket_cleans_up_page_layout_photos():
     assert del_response.status_code == 204
     deleted = sorted(c.args[0] for c in mock_delete.call_args_list)
     assert deleted == sorted([_s3_key(_thumb(photo)), _s3_key(photo)])
+
+
+# 등록 시 start_time은 HH:MM으로 맞추고, 못 읽는 OCR 값은 버림(공연 공용 start_time에도 저장되므로)
+def test_ticket_create_normalizes_start_time():
+    assert TicketCreate(kopis_id="PF1", start_time="7:30").start_time == "07:30"
+    assert TicketCreate(kopis_id="PF1", start_time="19:00").start_time == "19:00"
+    assert TicketCreate(kopis_id="PF1", start_time="저녁 7시").start_time is None
+    assert TicketCreate(kopis_id="PF1", start_time="25:00").start_time is None
+
+
+# 수정은 유저가 직접 고치는 값이라 형식이 틀리면 검증 오류
+def test_ticket_update_rejects_invalid_start_time():
+    assert TicketUpdate(start_time="9:05").start_time == "09:05"
+    with pytest.raises(ValidationError):
+        TicketUpdate(start_time="abc")
+
+
+# 사진 URL은 200장까지
+def test_ticket_update_limits_photo_urls():
+    with pytest.raises(ValidationError):
+        TicketUpdate(concert_photo_urls=["https://example.com/a.jpg"] * 201)

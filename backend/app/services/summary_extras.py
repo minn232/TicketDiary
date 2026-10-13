@@ -58,7 +58,7 @@ def attended_day(t: Ticket) -> date:
 
 
 # 대소문자·공백 차이만 합쳐 같은 곡/아티스트로 봄
-def _norm(text: str | None) -> str:
+def norm_name(text: str | None) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
@@ -199,7 +199,7 @@ async def compute_artist_extras(
 
     # 내한 vs 국내 - 티켓 단위로 분류. MB 국가(KR이면 국내)를 우선 쓰고 라인업 다수결(동률이면 해외),
     # 국가를 아는 아티스트가 없으면 KOPIS visit으로 보조, 그것도 없으면 미분류
-    countries = await _artist_countries(db, set(period_artists))
+    countries = await artist_countries(db, set(period_artists))
     domestic = foreign = unknown = 0
     origin_by_ticket: dict = {}  # 티켓별 분류(세부 목록용), 미분류는 넣지 않음
     for t in tickets:
@@ -258,7 +258,7 @@ async def _artists_of_tickets(db: AsyncSession, tickets: list[Ticket]) -> set[st
 
 
 # 아티스트 이름 -> MusicBrainz 국가 코드(국가를 아는 아티스트만)
-async def _artist_countries(db: AsyncSession, names: set[str]) -> dict[str, str]:
+async def artist_countries(db: AsyncSession, names: set[str]) -> dict[str, str]:
     if not names:
         return {}
     rows = await db.execute(
@@ -297,7 +297,7 @@ async def compute_song_extras(
             if not name:
                 continue
             artist = song.get("artist") or default_artist or None
-            song_id = (_norm(artist), _norm(name))
+            song_id = (norm_name(artist), norm_name(name))
             heard[song_id] += 1
             labels.setdefault(song_id, (name, artist))
             songs.append((name, artist, song_id))
@@ -331,8 +331,8 @@ async def compute_song_extras(
             if not isinstance(p, dict) or not p.get("name"):
                 continue
             prob = float(p.get("probability") or 0)
-            by_artist_name[(_norm(p.get("artist")), _norm(p["name"]))] = prob
-            by_name[_norm(p["name"])] = prob
+            by_artist_name[(norm_name(p.get("artist")), norm_name(p["name"]))] = prob
+            by_name[norm_name(p["name"])] = prob
         for name, artist, (artist_norm, name_norm) in songs:
             prob = by_artist_name.get((artist_norm, name_norm), by_name.get(name_norm, 0.0))
             if rarest is None or prob < rarest["probability"]:
