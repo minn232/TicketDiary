@@ -13,6 +13,26 @@ class ConnectionService {
 
   final ApiClient _client;
 
+  // 서버 시계와의 차이 - 왕복이 가장 짧았던 응답 기준(요청·응답 가운데 시점을 server_time으로 봄)
+  Duration? _clockOffset;
+  Duration? _bestRoundTrip;
+
+  void _sampleClock(DateTime sent, Map<String, dynamic> json) {
+    final raw = json['server_time'] as String?;
+    if (raw == null) return;
+    final roundTrip = DateTime.now().difference(sent);
+    if (_bestRoundTrip != null && roundTrip > _bestRoundTrip!) return;
+    _bestRoundTrip = roundTrip;
+    _clockOffset = DateTime.parse(raw).difference(sent.add(roundTrip ~/ 2));
+  }
+
+  /// 서버 시각을 이 폰 시각으로. 시계 차이를 아직 모르면 null(바로 시작).
+  DateTime? toLocalTime(DateTime? serverTime) {
+    final offset = _clockOffset;
+    if (serverTime == null || offset == null) return null;
+    return serverTime.subtract(offset).toLocal();
+  }
+
   /// 연결된 상대 목록(최근에 만난 순).
   Future<List<UserConnection>> listConnections() async {
     final list = await _client.getList('/social/connections');
@@ -74,7 +94,9 @@ class ConnectionService {
       'seen_at': seenAt.toUtc().toIso8601String(),
     };
     try {
+      final sent = DateTime.now();
       final json = await _client.post('/social/nearby/sightings', body: body);
+      _sampleClock(sent, json);
       return SightingResult.fromJson(json);
     } on ApiException catch (e) {
       if (e.statusCode != -1) rethrow;
@@ -83,6 +105,14 @@ class ConnectionService {
       await prefs.setStringList(_queueKey, [...queue, jsonEncode(body)]);
       return null;
     }
+  }
+
+  /// 판정을 올리고 waiting을 받은 뒤, 본 코드의 주인과 짝이 지어졌는지 확인.
+  Future<SightingResult> getMatch(String code) async {
+    final sent = DateTime.now();
+    final json = await _client.get('/social/nearby/match?code=$code');
+    _sampleClock(sent, json);
+    return SightingResult.fromJson(json);
   }
 
   /// 오프라인 때 저장한 판정 올리기 - 서버가 72시간 안의 판정까지 받아줌.
@@ -114,12 +144,14 @@ class ConnectionService {
     ];
   }
 
-  /// "OO님 맞나요?" 확인 - 상대도 확인했으면 true(연결 완료).
-  Future<bool> confirmRequest(String connectionId) async {
+  /// "OO님 맞나요?" 확인 - 상대도 확인했으면 connected(연결 완료).
+  Future<ConfirmResult> confirmRequest(String connectionId) async {
+    final sent = DateTime.now();
     final json = await _client.post(
       '/social/connections/requests/$connectionId/confirm',
     );
-    return json['status'] == 'connected';
+    _sampleClock(sent, json);
+    return ConfirmResult.fromJson(json);
   }
 
   Future<void> rejectRequest(String connectionId) async {

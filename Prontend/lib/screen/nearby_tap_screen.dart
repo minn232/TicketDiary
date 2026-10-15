@@ -77,6 +77,8 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
   // 이미 연결된 친구를 다시 만난 것 (문구만 다름)
   bool _reMeet = false;
   Timer? _poll;
+  // 서버가 정한 시각에 애니메이션을 시작하려고 기다리는 중
+  Timer? _startTimer;
   bool _reporting = false;
 
   static const Color _paperColor = Color(0xFFF4F1E1);
@@ -113,6 +115,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
+    _startTimer?.cancel();
     _detectionSub?.cancel();
     _engine.removeListener(_onEngineChanged);
     _engine.dispose();
@@ -180,6 +183,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
   Future<void> _onDetected(NearbyDetection detection) async {
     // 상대 판정 대기 중(checking)에도 더 강해진 판정은 다시 올림
     if (_reporting ||
+        _startTimer != null ||
         (_phase != _Phase.searching && _phase != _Phase.checking)) {
       return;
     }
@@ -197,19 +201,10 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       if (!mounted) return;
       if (result == null) {
         _backToSearching('인터넷이 연결되면 연결 요청을 확인할 수 있어요.');
-      } else if (result.status == 'connected') {
-        _finish(result.peer!);
-      } else if (result.status == 'pending') {
-        _showRequest(
-          ConnectionRequest(
-            connectionId: result.connectionId!,
-            peer: result.peer!,
-            requestedAt: DateTime.now(),
-            confirmedByMe: result.confirmedByMe,
-          ),
-        );
+      } else if (result.status == 'waiting') {
+        _waitForPeerSighting(detection.code);
       } else {
-        _waitForPeerSighting();
+        _onMatched(result);
       }
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -223,71 +218,93 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     }
   }
 
-  // 상대 판정 대기 - 새 연결 요청이 생기거나, 이미 연결된 사이면 연결 목록의 만남 시각(last_met_at)이
-  // 바뀌면 완료
-  void _waitForPeerSighting() {
-    var tries = 0;
+  // 양쪽 판정이 짝지어짐 - 두 폰 모두 서버가 정한 같은 시각에 카드를 펼침
+  void _onMatched(SightingResult result) {
+    final at = _service.toLocalTime(result.revealAt);
+    if (result.status == 'connected') {
+      _finish(result.peer!, at: at);
+    } else {
+      _showRequest(
+        ConnectionRequest(
+          connectionId: result.connectionId!,
+          peer: result.peer!,
+          requestedAt: DateTime.now(),
+          confirmedByMe: result.confirmedByMe,
+        ),
+        at: at,
+      );
+    }
+  }
+
+  // 상대 판정 대기 - 본 코드의 주인과 짝이 지어졌는지 짧게 자주 확인(시작 시각 전에 알아채게)
+  void _waitForPeerSighting(String code) {
     _poll?.cancel();
-    final startedAt = DateTime.now().toUtc();
-    Map<String, DateTime?>? metBefore;
-    _poll = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      tries++;
+    final until = DateTime.now().add(const Duration(seconds: 12));
+    var busy = false;
+    _poll = Timer.periodic(const Duration(milliseconds: 300), (timer) async {
+      if (busy) return;
+      busy = true;
       try {
-        final requests = await _service.listRequests();
-        final fresh = requests.where(
-          (r) =>
-              DateTime.now().difference(r.requestedAt.toLocal()).inSeconds < 90,
-        );
+        final result = await _service.getMatch(code);
         if (!mounted || _phase != _Phase.checking) return timer.cancel();
-        if (fresh.isNotEmpty) {
+        if (result.status != 'waiting') {
           timer.cancel();
-          _showRequest(fresh.first);
+          _onMatched(result);
           return;
         }
-        final connections = await _service.listConnections();
-        if (!mounted || _phase != _Phase.checking) return timer.cancel();
-        // 처음 본 만남 시각과 달라졌거나(기기·서버 시계 차이와 무관), 방금(30초 안) 만난 사이
-        final before = metBefore ??= {
-          for (final c in connections) c.peer.userId: c.lastMetAt,
-        };
-        final met = connections.where((c) {
-          final at = c.lastMetAt;
-          if (at == null) return false;
-          final changed = before.containsKey(c.peer.userId)
-              ? before[c.peer.userId] != at
-              : true;
-          return changed ||
-              startedAt.difference(at.toUtc()).inSeconds.abs() < 30;
-        });
-        if (met.isNotEmpty) {
-          timer.cancel();
-          _finish(met.first.peer);
-          return;
-        }
-      } catch (_) {}
-      if (tries >= 12) {
+      } catch (_) {
+      } finally {
+        busy = false;
+      }
+      if (DateTime.now().isAfter(until)) {
         timer.cancel();
         if (mounted) _backToSearching('친구 폰에서도 맞대기 화면이 켜져 있는지 확인하고 다시 맞대주세요.');
       }
     });
   }
 
-  void _showRequest(ConnectionRequest request) {
-    setState(() {
-      _request = request;
-      _revealRequest = request;
-      _phase = request.confirmedByMe ? _Phase.waitingPeer : _Phase.confirm;
-    });
-    if (_reveal.status != AnimationStatus.forward &&
-        _reveal.status != AnimationStatus.completed) {
-      HapticFeedback.mediumImpact();
-      _reveal.forward();
+  // at(서버 시각을 환산한 이 폰 시각)에 시작 - 이미 지났으면 지난 만큼(late) 앞당겨 시작해 끝나는 시각을 맞춤
+  void _startAt(DateTime? at, void Function(Duration late) start) {
+    _startTimer?.cancel();
+    final wait = at == null ? Duration.zero : at.difference(DateTime.now());
+    if (wait <= Duration.zero) {
+      _startTimer = null;
+      start(-wait);
+      return;
     }
-    if (request.confirmedByMe) _waitForPeerConfirm();
+    _startTimer = Timer(wait, () {
+      _startTimer = null;
+      if (mounted && !_isClosing) start(Duration.zero);
+    });
+  }
+
+  double _progressAfter(AnimationController controller, Duration late) =>
+      (late.inMicroseconds / controller.duration!.inMicroseconds).clamp(
+        0.0,
+        1.0,
+      );
+
+  void _showRequest(ConnectionRequest request, {DateTime? at}) {
+    _poll?.cancel();
+    _startAt(at, (late) {
+      setState(() {
+        _request = request;
+        _revealRequest = request;
+        _phase = request.confirmedByMe ? _Phase.waitingPeer : _Phase.confirm;
+      });
+      if (_reveal.status != AnimationStatus.forward &&
+          _reveal.status != AnimationStatus.completed) {
+        HapticFeedback.mediumImpact();
+        _reveal.forward(from: _progressAfter(_reveal, late));
+      }
+      if (request.confirmedByMe) _waitForPeerConfirm();
+    });
   }
 
   void _backToSearching(String? message) {
     _poll?.cancel();
+    _startTimer?.cancel();
+    _startTimer = null;
     setState(() {
       _phase = _Phase.searching;
       _message = message;
@@ -298,12 +315,13 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
 
   Future<void> _confirm() async {
     final request = _request;
-    if (request == null) return;
+    // 연결돼 시작 시각을 기다리는 중엔 다시 누르지 않게
+    if (request == null || _startTimer != null) return;
     try {
-      final connected = await _service.confirmRequest(request.connectionId);
+      final result = await _service.confirmRequest(request.connectionId);
       if (!mounted) return;
-      if (connected) {
-        _finish(request.peer);
+      if (result.connected) {
+        _finish(request.peer, at: _service.toLocalTime(result.finishAt));
       } else {
         setState(() => _phase = _Phase.waitingPeer);
         _waitForPeerConfirm();
@@ -320,7 +338,8 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
 
   Future<void> _reject() async {
     final request = _request;
-    if (request == null) return;
+    // 연결돼 시작 시각을 기다리는 중엔 다시 누르지 않게
+    if (request == null || _startTimer != null) return;
     try {
       await _service.rejectRequest(request.connectionId);
     } catch (_) {}
@@ -328,19 +347,22 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     _backToSearching(null);
   }
 
-  // 내가 확인한 뒤 상대 확인 대기 - 확인을 1.5초마다 다시 보내 연결되면 완료, 404/410이면 거절/만료
+  // 내가 확인한 뒤 상대 확인 대기 - 확인을 자주 다시 보내 상대 확인을 시작 시각 전에 알아챔,
+  // 404/410이면 거절/만료
   void _waitForPeerConfirm() {
     final request = _request!;
-    var tries = 0;
+    final until = DateTime.now().add(const Duration(minutes: 10));
+    var busy = false;
     _poll?.cancel();
-    _poll = Timer.periodic(const Duration(milliseconds: 1500), (timer) async {
-      tries++;
+    _poll = Timer.periodic(const Duration(milliseconds: 400), (timer) async {
+      if (busy) return;
+      busy = true;
       try {
-        final connected = await _service.confirmRequest(request.connectionId);
+        final result = await _service.confirmRequest(request.connectionId);
         if (!mounted || _phase != _Phase.waitingPeer) return timer.cancel();
-        if (connected) {
+        if (result.connected) {
           timer.cancel();
-          _finish(request.peer);
+          _finish(request.peer, at: _service.toLocalTime(result.finishAt));
           return;
         }
       } on ApiException catch (e) {
@@ -355,43 +377,52 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
           );
           return;
         }
-      } catch (_) {}
-      if (tries >= 400) timer.cancel(); // 10분 뒤 요청이 만료되므로 그만 확인
+      } catch (_) {
+      } finally {
+        busy = false;
+      }
+      // 10분 뒤 요청이 만료되므로 그만 확인
+      if (DateTime.now().isAfter(until)) timer.cancel();
     });
   }
 
   // 연결 완료 - "연결됐어요"(이미 연결된 사이면 "다시 만났어요")를 보여주며 공유 카드를 미리 받고,
-  // 끝날 때까지 광고를 유지한 뒤 물방울로 떨어짐
-  Future<void> _finish(ConnectionPeer peer) async {
+  // 끝날 때까지 광고를 유지한 뒤 물방울로 떨어짐. 두 폰이 같은 시각(at)에 시작해 같은 시각에 떨어짐
+  void _finish(ConnectionPeer peer, {DateTime? at}) {
     _poll?.cancel();
     if (!mounted) return;
-    final reMeet = _revealRequest == null;
-    HapticFeedback.lightImpact();
-    setState(() {
-      _phase = _Phase.connected;
-      _reMeet = reMeet;
-      _revealRequest ??= ConnectionRequest(
-        connectionId: '',
-        peer: peer,
-        requestedAt: DateTime.now(),
-        confirmedByMe: true,
-      );
+    ConnectionCard? card;
+    unawaited(
+      _service
+          .getCard(peer.userId)
+          .then<void>((c) => card = c)
+          .catchError((_) {}),
+    );
+    _startAt(at, (late) async {
+      final reMeet = _revealRequest == null;
+      HapticFeedback.lightImpact();
+      setState(() {
+        _phase = _Phase.connected;
+        _reMeet = reMeet;
+        _revealRequest ??= ConnectionRequest(
+          connectionId: '',
+          peer: peer,
+          requestedAt: DateTime.now(),
+          confirmedByMe: true,
+        );
+      });
+      if (reMeet) {
+        HapticFeedback.mediumImpact();
+        _reveal.forward(from: _progressAfter(_reveal, late));
+      }
+      // 다시 만난 경우는 카드가 펼쳐지는 시간까지 더 보여줌
+      final hold = Duration(milliseconds: reMeet ? 2200 : 1100) - late;
+      if (hold > Duration.zero) await Future<void>.delayed(hold);
+      if (!mounted) return;
+      // 동시에 떨어지도록 카드를 더 기다리지 않음 - 못 받았으면 뒤 화면이 다시 받음
+      unawaited(_engine.stop());
+      await _dropAway(peer, card);
     });
-    if (reMeet) {
-      HapticFeedback.mediumImpact();
-      _reveal.forward();
-    }
-    final cardFuture = _service
-        .getCard(peer.userId)
-        .then<ConnectionCard?>((card) => card)
-        .timeout(const Duration(seconds: 4), onTimeout: () => null)
-        .catchError((_) => null);
-    // 다시 만난 경우는 카드가 펼쳐지는 시간까지 더 보여줌
-    await Future<void>.delayed(Duration(milliseconds: reMeet ? 2200 : 1100));
-    final card = await cardFuture;
-    await _engine.stop();
-    if (!mounted) return;
-    await _dropAway(peer, card);
   }
 
   // 카드가 물방울로 오므라들어 아래로 떨어지는 동안 어두운 배경이 걷히고, 물방울이 화면 밖으로
@@ -414,6 +445,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
   Future<void> _close({ConnectionPeer? result}) async {
     if (_isClosing) return;
     _isClosing = true;
+    _startTimer?.cancel();
     try {
       await Future.wait([
         _slide.reverse(),

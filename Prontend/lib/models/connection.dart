@@ -338,11 +338,15 @@ class SightingResult {
   final ConnectionPeer? peer;
   final bool confirmedByMe;
 
+  /// 두 폰이 같은 순간에 상대 카드를 펼치는 서버 시각.
+  final DateTime? revealAt;
+
   const SightingResult({
     required this.status,
     this.connectionId,
     this.peer,
     this.confirmedByMe = false,
+    this.revealAt,
   });
 
   factory SightingResult.fromJson(Map<String, dynamic> json) => SightingResult(
@@ -354,6 +358,24 @@ class SightingResult {
             (json['peer'] as Map).cast<String, dynamic>(),
           ),
     confirmedByMe: json['confirmed_by_me'] as bool? ?? false,
+    revealAt: json['reveal_at'] == null
+        ? null
+        : DateTime.parse(json['reveal_at'] as String),
+  );
+}
+
+/// 연결 요청 확인 결과 - finishAt은 두 폰이 같은 순간에 연결 완료 애니메이션을 시작하는 서버 시각.
+class ConfirmResult {
+  final bool connected;
+  final DateTime? finishAt;
+
+  const ConfirmResult({required this.connected, this.finishAt});
+
+  factory ConfirmResult.fromJson(Map<String, dynamic> json) => ConfirmResult(
+    connected: json['status'] == 'connected',
+    finishAt: json['finish_at'] == null
+        ? null
+        : DateTime.parse(json['finish_at'] as String),
   );
 }
 
