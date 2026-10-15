@@ -459,3 +459,78 @@ async def test_sighting_rate_limited_per_user():
         res = await _sight(ac, token_a, code_b)
 
     assert res.status_code == 429
+
+
+# 애니메이션 동시 시작: 판정을 마저 올린 쪽 응답과 기다리던 쪽 폴링이 같은 reveal_at을 받음
+async def test_match_status_shares_reveal_at():
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        user_b = await _user_id(ac, token_b)
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        first = await _sight(ac, token_a, code_b)
+        before = await ac.get(f"/api/v1/social/nearby/match?code={code_b}", headers=_auth(token_a))
+        second = await _sight(ac, token_b, code_a)
+        after = await ac.get(f"/api/v1/social/nearby/match?code={code_b}", headers=_auth(token_a))
+
+    assert first.json()["status"] == "waiting"
+    assert before.json()["status"] == "waiting"
+    assert second.json()["status"] == "pending"
+    assert after.json()["status"] == "pending"
+    assert after.json()["peer"]["user_id"] == str(user_b)
+    assert after.json()["reveal_at"] == second.json()["reveal_at"]
+    reveal_at = datetime.fromisoformat(second.json()["reveal_at"])
+    server_time = datetime.fromisoformat(second.json()["server_time"])
+    assert timedelta(0) < reveal_at - server_time <= timedelta(milliseconds=1200)
+
+
+# 기다리던 쪽이 같은 시도에서 판정을 다시 올려도 시작 시각은 그대로, 화면을 다시 열면 새 시각
+async def test_reveal_at_kept_within_attempt():
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await _connect(ac, token_a, token_b)
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        await _sight(ac, token_a, code_b)
+        first = await _sight(ac, token_b, code_a)
+        again = await _sight(ac, token_a, code_b, rssi=-40)
+        await asyncio.sleep(0.01)
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        stale = await ac.get(f"/api/v1/social/nearby/match?code={code_b}", headers=_auth(token_a))
+        await _sight(ac, token_a, code_b)
+        retry = await _sight(ac, token_b, code_a)
+
+    assert first.json()["status"] == "connected"
+    assert again.json()["reveal_at"] == first.json()["reveal_at"]
+    assert stale.json()["status"] == "waiting"  # 이전 시도 짝은 이번 만남이 아님
+    assert retry.json()["reveal_at"] > first.json()["reveal_at"]
+
+
+# 다른 친구와의 짝은 이 코드의 주인과 만난 걸로 보지 않음 / 모르는 코드는 404
+async def test_match_status_scoped_to_code_owner():
+    token_a, token_b, token_c = await _get_token(), await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        code_a, code_b, code_c = await _code(ac, token_a), await _code(ac, token_b), await _code(ac, token_c)
+        await _sight(ac, token_a, code_c)
+        await _sight(ac, token_c, code_a)
+        with_b = await ac.get(f"/api/v1/social/nearby/match?code={code_b}", headers=_auth(token_a))
+        unknown = await ac.get("/api/v1/social/nearby/match?code=00000000", headers=_auth(token_a))
+
+    assert with_b.json()["status"] == "waiting"
+    assert unknown.status_code == 404
+
+
+# 연결 완료 동시 시작: 나중 확인 응답과 먼저 확인한 쪽 재전송이 같은 finish_at을 받음
+async def test_confirm_shares_finish_at():
+    token_a, token_b = await _get_token(), await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
+        await _sight(ac, token_a, code_b)
+        connection_id = (await _sight(ac, token_b, code_a)).json()["connection_id"]
+        url = f"/api/v1/social/connections/requests/{connection_id}/confirm"
+        first = await ac.post(url, headers=_auth(token_a))
+        second = await ac.post(url, headers=_auth(token_b))
+        resend = await ac.post(url, headers=_auth(token_a))
+
+    assert first.json()["finish_at"] is None
+    assert second.json()["status"] == "connected"
+    assert second.json()["finish_at"] is not None
+    assert resend.json()["finish_at"] == second.json()["finish_at"]

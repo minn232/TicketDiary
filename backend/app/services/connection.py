@@ -34,6 +34,8 @@ _PENDING_TTL = timedelta(minutes=10)
 # 조금 약하게 받아도 인정. 폰끼리 5cm(-60~-62)는 강한 쪽이 없어 탈락
 _RSSI_STRONG = -55
 _RSSI_WEAK = -62
+# 짝지어진 뒤 두 폰이 애니메이션을 시작하기까지 여유 - 기다리던 쪽이 폴링으로 알아챌 시간
+_SYNC_DELAY = timedelta(milliseconds=1200)
 
 
 def _rssi_pair_ok(mine: int | None, theirs: int | None) -> bool:
@@ -61,6 +63,23 @@ def _peer_id(row: UserConnection, user_id: UUID) -> UUID:
 
 def _confirmed_by(row: UserConnection, user_id: UUID) -> bool:
     return (row.a_confirmed_at if _is_a(row, user_id) else row.b_confirmed_at) is not None
+
+
+async def _session_started_at(db: AsyncSession, user_id: UUID) -> datetime | None:
+    return (
+        await db.execute(select(func.max(NearbyCode.session_started_at)).where(NearbyCode.user_id == user_id))
+    ).scalar_one_or_none()
+
+
+def _sighting_response(row: UserConnection, user_id: UUID, peer: ConnectionPeer | None) -> NearbySightingResponse:
+    return NearbySightingResponse(
+        status="connected" if row.connected_at is not None else "pending",
+        connection_id=row.id,
+        peer=peer,
+        confirmed_by_me=_confirmed_by(row, user_id),
+        reveal_at=row.matched_at + _SYNC_DELAY if row.matched_at is not None else None,
+        server_time=_now(),
+    )
 
 
 def _pending_expired(row: UserConnection, now: datetime) -> bool:
@@ -144,9 +163,7 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
 
     # 상대의 이번 시도(화면을 마지막으로 연 뒤) 판정만 짝지음 - 직전 시도 판정과 짝지어지면 한쪽만 바로
     # 끝나고 상대는 계속 찾는 중으로 남았음. 오프라인 때 모아 늦게 올린 판정은 예외
-    peer_session = (
-        await db.execute(select(func.max(NearbyCode.session_started_at)).where(NearbyCode.user_id == peer_id))
-    ).scalar_one_or_none()
+    peer_session = await _session_started_at(db, peer_id)
     reverse_query = select(NearbySighting.rssi).where(
         NearbySighting.observer_user_id == peer_id,
         NearbySighting.observed_user_id == user_id,
@@ -162,7 +179,7 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
     reverse = await db.execute(reverse_query)
     if not any(_rssi_pair_ok(body.rssi, theirs) for theirs in reverse.scalars().all()):
         await db.commit()
-        return NearbySightingResponse(status="waiting")
+        return NearbySightingResponse(status="waiting", server_time=_now())
 
     result = await db.execute(
         select(UserConnection).where(
@@ -187,15 +204,44 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
         row.requested_at = now
         row.a_confirmed_at = None
         row.b_confirmed_at = None
+    # 기다리던 쪽이 더 강한 판정을 다시 올려도 같은 시도면 시작 시각을 옮기지 않음 - 옮기면 먼저 받은
+    # 폰과 어긋남. 둘 중 하나라도 화면을 다시 열었으면 새 시도
+    my_session = await _session_started_at(db, user_id)
+    if row.matched_at is None or any(s is not None and row.matched_at < s for s in (my_session, peer_session)):
+        row.matched_at = now
     await db.commit()
 
     peer = (await _peers(db, [peer_id])).get(peer_id)
-    return NearbySightingResponse(
-        status="connected" if row.connected_at is not None else "pending",
-        connection_id=row.id,
-        peer=peer,
-        confirmed_by_me=_confirmed_by(row, user_id),
-    )
+    return _sighting_response(row, user_id, peer)
+
+
+# 판정을 올리고 waiting을 받은 폰이 상대 판정이 모였는지 확인 (판정을 새로 남기지 않음) - 본 코드의
+# 주인과의 짝만 보므로 다른 친구와의 연결 변화를 이번 만남으로 오인하지 않음
+async def get_match_status(db: AsyncSession, user_id: UUID, code: str) -> NearbySightingResponse:
+    now = _now()
+    peer_id = (
+        await db.execute(
+            select(NearbyCode.user_id).where(
+                NearbyCode.code == code, NearbyCode.valid_from <= now, NearbyCode.valid_until >= now
+            )
+        )
+    ).scalar_one_or_none()
+    if peer_id is None:
+        raise HTTPException(status_code=404, detail="알 수 없는 코드입니다.")
+
+    user_a_id, user_b_id = _ordered(user_id, peer_id)
+    row = (
+        await db.execute(
+            select(UserConnection).where(
+                UserConnection.user_a_id == user_a_id, UserConnection.user_b_id == user_b_id
+            )
+        )
+    ).scalar_one_or_none()
+    my_session = await _session_started_at(db, user_id)
+    if row is None or row.matched_at is None or (my_session is not None and row.matched_at < my_session):
+        return NearbySightingResponse(status="waiting", server_time=_now())
+    peer = (await _peers(db, [peer_id])).get(peer_id)
+    return _sighting_response(row, user_id, peer)
 
 
 async def _get_my_connection(
@@ -258,8 +304,12 @@ async def confirm_connection_request(
             row.connected_at = now
             row.last_met_at = now
         await db.commit()
+    # 나중 확인 쪽은 응답으로, 먼저 확인한 쪽은 재전송으로 같은 시각을 받아 동시에 시작
     return ConnectionConfirmResponse(
-        status="connected" if row.connected_at is not None else "pending", connection_id=row.id
+        status="connected" if row.connected_at is not None else "pending",
+        connection_id=row.id,
+        finish_at=row.connected_at + _SYNC_DELAY if row.connected_at is not None else None,
+        server_time=_now(),
     )
 
 

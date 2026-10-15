@@ -32,6 +32,9 @@ class NearbySightingResponse(BaseModel):
     peer: ConnectionPeer | None = None
     # pending일 때 내가 이미 확인했는지 (상대 확인만 기다리는 중인지)
     confirmed_by_me: bool = False
+    # 두 폰이 같은 순간에 상대 카드를 펼치는 서버 시각 - 앱이 server_time으로 시계 차이를 재서 맞춤
+    reveal_at: datetime | None = None
+    server_time: datetime
 
 
 class ConnectionRequestResponse(BaseModel):
@@ -54,6 +57,9 @@ class ConnectionConfirmResponse(BaseModel):
     # 확인 결과 - 상대도 확인했으면 connected
     status: Literal["pending", "connected"]
     connection_id: UUID
+    # connected일 때 두 폰이 같은 순간에 연결 완료 애니메이션을 시작하는 서버 시각
+    finish_at: datetime | None = None
+    server_time: datetime
 
 
 class CardConcert(BaseModel):

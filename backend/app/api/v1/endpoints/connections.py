@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -39,6 +39,16 @@ async def report_nearby_sighting(
     _rate_limit: None = Depends(rate_limit_nearby_sighting),
 ):
     return await connection_service.report_sighting(db, current_user.id, body)
+
+
+# 맞댐 판정 짝 확인 - waiting을 받은 폰이 상대 판정이 모였는지 폴링
+@router.get("/nearby/match", response_model=NearbySightingResponse)
+async def get_nearby_match(
+    code: str = Query(pattern=r"^[0-9a-f]{8}$"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await connection_service.get_match_status(db, current_user.id, code)
 
 
 # 확인 대기 중인 연결 요청

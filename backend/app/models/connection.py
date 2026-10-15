@@ -52,3 +52,5 @@ class UserConnection(Base):
     connected_at = Column(DateTime(timezone=True), nullable=True)
     # 연결 후에도 다시 맞대면 갱신 - 연결 목록 정렬용
     last_met_at = Column(DateTime(timezone=True), nullable=True)
+    # 이번 시도에서 양쪽 판정이 짝지어진 시각(요청·연결 상태 무관) - 두 폰이 같은 순간에 애니메이션을 시작하는 기준
+    matched_at = Column(DateTime(timezone=True), nullable=True)
