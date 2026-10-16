@@ -396,8 +396,10 @@ class _ConnectionsScreenState extends State<ConnectionsScreen>
       child: ListView(
         padding: EdgeInsets.fromLTRB(16, 8, 16, context.rs(24)),
         children: [
-          // 폰 맞대기는 안드로이드만 (iOS는 서드파티 BLE 광고 제약)
-          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+          // 폰 맞대기는 안드로이드·iOS (iOS는 앱을 띄워 둔 동안만 광고 가능)
+          if (!kIsWeb &&
+              (defaultTargetPlatform == TargetPlatform.android ||
+                  defaultTargetPlatform == TargetPlatform.iOS))
             Padding(
               padding: EdgeInsets.only(bottom: context.rs(6)),
               child: FilledButton.icon(
