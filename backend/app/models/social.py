@@ -1,5 +1,5 @@
 ﻿import uuid
-from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, Index, text, func
+from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, Index, UniqueConstraint, text, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -31,6 +31,9 @@ class ConcertFollow(Base):
 # 팔로우 아티스트의 매칭 공연에 대한 유저별 뉴스피드 항목
 class NewsFeed(Base):
     __tablename__ = "news_feeds"
+    # 야간 배치와 팔로우 즉시 생성이 겹쳐도 같은 소식이 두 번 생기지 않도록 함
+    __table_args__ = (UniqueConstraint("user_id", "concert_id", name="uq_news_feeds_user_concert"),)
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id", ondelete="CASCADE"), nullable=False, index=True)

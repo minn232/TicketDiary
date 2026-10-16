@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, verify_admin_key
 from app.models.user import User
 from app.schemas.setlist import (
     RealSetlistResponse, PreSetlistResponse, SetlistFmCandidate,
@@ -21,6 +21,10 @@ from app.services.setlist import (
 from app.services.pre_setlist import get_pre_setlist, generate_pre_setlist, update_pre_setlist
 
 router = APIRouter()
+
+# 공연 공용 데이터 쓰기는 관리자 키로만 - 게스트 계정만 있어도 아무 공연이나 고칠 수 있었음
+# (앱은 티켓 보유를 확인하는 /tickets/{id}/... 경로를 씀)
+_ADMIN_ONLY = [Depends(verify_admin_key)]
 
 
 # 저장된 실제 셋리스트 조회. 여러 날짜에 걸친 공연이면 date 쿼리파라미터 필수
@@ -47,7 +51,12 @@ async def search_real_setlists(
 
 
 # Setlist.fm ID로 셋리스트 가져와 저장
-@router.post("/{concert_id}/setlist", response_model=RealSetlistResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{concert_id}/setlist",
+    response_model=RealSetlistResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_ADMIN_ONLY,
+)
 async def fetch_real_setlist(
     concert_id: UUID,
     body: FetchSetlistRequest,
@@ -59,7 +68,7 @@ async def fetch_real_setlist(
 
 
 # 실제 셋리스트 유저 수정
-@router.patch("/{concert_id}/setlist", response_model=RealSetlistResponse)
+@router.patch("/{concert_id}/setlist", response_model=RealSetlistResponse, dependencies=_ADMIN_ONLY)
 async def edit_real_setlist(
     concert_id: UUID,
     body: SetlistEditRequest,
@@ -78,6 +87,7 @@ async def edit_real_setlist(
     "/{concert_id}/setlist/generate-festival",
     response_model=RealSetlistResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=_ADMIN_ONLY,
 )
 async def generate_real_setlist_auto_endpoint(
     concert_id: UUID,
@@ -106,7 +116,12 @@ async def get_pre_setlist_endpoint(
 
 
 # 아티스트 과거 공연 기반 예상 셋리스트 생성
-@router.post("/{concert_id}/setlist/pre/generate", response_model=PreSetlistResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{concert_id}/setlist/pre/generate",
+    response_model=PreSetlistResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=_ADMIN_ONLY,
+)
 async def generate_pre_setlist_endpoint(
     concert_id: UUID,
     current_user: User = Depends(get_current_user),
@@ -116,7 +131,7 @@ async def generate_pre_setlist_endpoint(
 
 
 # 예상 셋리스트 유저 수정
-@router.patch("/{concert_id}/setlist/pre", response_model=PreSetlistResponse)
+@router.patch("/{concert_id}/setlist/pre", response_model=PreSetlistResponse, dependencies=_ADMIN_ONLY)
 async def edit_pre_setlist(
     concert_id: UUID,
     body: SetlistEditRequest,

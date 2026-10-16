@@ -751,6 +751,23 @@ _CRAWL_RETRY_COOLDOWN = timedelta(hours=24)
 _MAX_CRAWL_ATTEMPTS = 30
 
 
+# 브라우저 단계 상한 - 티켓등록/찜 경로는 배치와 달리 바깥 타임아웃이 없어, 한 건이 멈추면 브라우저
+# 슬롯(_BROWSER_SEMAPHORE)을 쥔 채 재시작 전까지 모든 크롤이 막혔음. 배치 상한(180초)보다 짧게 잡음
+_CRAWL_TIMEOUT = 150
+
+
+# 후보 사이트를 차례로 시도, 후보가 없으면(티켓링크 전용) KOPIS 페이지로 폴백 - (업로드 키, 스크린샷) 반환
+async def _crawl_candidates_or_kopis(
+    concert: Concert, candidates: list[tuple[str, str | None]]
+) -> tuple[str | None, bytes | None]:
+    if not candidates:
+        logger.info(f"티켓링크 미지원 → KOPIS 폴백: {concert.name}")
+        return "kopis", await crawl_kopis(concert)
+    logger.info(f"크롤링 대상 후보: {[c[0] for c in candidates]}")
+    site_key, image_bytes = await _crawl_first_success(concert, candidates)
+    return (site_key.lower() if site_key else None), image_bytes
+
+
 # 티켓등록/찜(follow) 시 백그라운드 호출 - 크롤링 후 crawl_screenshot_url 갱신. 찜 경로는
 # ticketing_site가 None일 수 있어(아직 아무도 안 삼) ticketing_links만으로 시도.
 # "완료" 판단은 스크린샷 존재가 아니라 ticketing_date 확보 여부 - 예전엔 오픈 전 빈 페이지가
@@ -806,16 +823,14 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         await db.commit()
 
         candidates = _pick_crawl_candidates(ticketing_site, concert.ticketing_links)
-        async with _BROWSER_SEMAPHORE:
-            if not candidates:
-                # 티켓링크 전용 공연 → KOPIS 페이지로 폴백
-                logger.info(f"티켓링크 미지원 → KOPIS 폴백: {concert.name}")
-                image_bytes = await crawl_kopis(concert)
-                upload_key = "kopis"
-            else:
-                logger.info(f"크롤링 대상 후보: {[c[0] for c in candidates]}")
-                site_key, image_bytes = await _crawl_first_success(concert, candidates)
-                upload_key = site_key.lower() if site_key else None
+        try:
+            async with _BROWSER_SEMAPHORE:
+                upload_key, image_bytes = await asyncio.wait_for(
+                    _crawl_candidates_or_kopis(concert, candidates), timeout=_CRAWL_TIMEOUT
+                )
+        except asyncio.TimeoutError:
+            logger.error(f"크롤링 타임아웃({_CRAWL_TIMEOUT}초 초과): {concert.name}")
+            return
 
         if image_bytes is None:
             return

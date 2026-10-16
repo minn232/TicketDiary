@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -12,13 +12,15 @@ from app.services import notification as notification_service
 router = APIRouter()
 
 
-# 알림 목록 조회
+# 알림 목록 조회 (limit/offset은 선택 - 생략하면 기본 상한(200건) 적용)
 @router.get("", response_model=list[NotificationResponse])
 async def list_notifications(
+    limit: int = Query(200, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await notification_service.get_notifications(db, current_user.id)
+    return await notification_service.get_notifications(db, current_user.id, limit=limit, offset=offset)
 
 
 # 알림 읽음 처리

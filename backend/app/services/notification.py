@@ -38,11 +38,19 @@ def _init_firebase() -> None:
 # 아니라서 제외 — 예전엔 이 필터가 없어서 몇 주 뒤 예약된 알림까지 인앱
 # 알림함에 "오늘 공연 날이에요" 같은 문구로 떠서 이미 온 것처럼 보이는
 # 문제가 있었음(실기기 테스트로 발견).
-async def get_notifications(db: AsyncSession, user_id: UUID) -> list[Notification]:
+# 발송된 알림은 지우지 않고 쌓여서, 응답이 계속 커지지 않도록 기본 상한을 둠
+_DEFAULT_NOTIFICATION_LIST_LIMIT = 200
+
+
+async def get_notifications(
+    db: AsyncSession, user_id: UUID, limit: int = _DEFAULT_NOTIFICATION_LIST_LIMIT, offset: int = 0
+) -> list[Notification]:
     result = await db.execute(
         select(Notification)
         .where(Notification.user_id == user_id, Notification.is_sent == True)  # noqa: E712
         .order_by(Notification.scheduled_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
     return list(result.scalars().all())
 
@@ -166,6 +174,42 @@ async def schedule_ticketing_day_notifications(db: AsyncSession, concert_id: UUI
 
     await db.commit()
     logger.info(f"티켓팅 알림 생성: {concert.name} ({len(rows)}명)")
+
+
+# 꺼뒀던 티켓팅 알림을 다시 켰을 때 찜한 공연 중 티켓팅일이 안 지난 것의 알림을 다시 예약함
+# (NEW_CONCERT는 신규 공연 발견 시점에만 생기는 알림이라 되살릴 대상이 없음)
+async def reschedule_user_ticketing_notifications(db: AsyncSession, user: User) -> None:
+    follow = (
+        await db.execute(select(ConcertFollow).where(ConcertFollow.user_id == user.id))
+    ).scalar_one_or_none()
+    concert_ids = [UUID(c["concert_id"]) for c in (follow.concerts if follow else []) if c.get("concert_id")]
+
+    await db.execute(
+        delete(Notification).where(
+            Notification.user_id == user.id,
+            Notification.type == NotificationType.TICKETING_DAY,
+            Notification.is_sent == False,  # noqa: E712
+        )
+    )
+    if not concert_ids:
+        return
+
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Concert).where(Concert.id.in_(concert_ids), Concert.ticketing_date.isnot(None))
+    )
+    for concert in result.scalars().all():
+        scheduled = _at_9am_kst(concert.ticketing_date)
+        if scheduled <= now:
+            continue
+        db.add(Notification(
+            user_id=user.id,
+            concert_id=concert.id,
+            type=NotificationType.TICKETING_DAY,
+            title=concert.name,
+            body="티켓팅 날이에요! 지금 바로 예매하세요.",
+            scheduled_at=scheduled,
+        ))
 
 
 # 팔로우한 아티스트의 신규 공연에 NEW_CONCERT 알림 생성 - KOPIS 일별 배치가 "진짜 신규"

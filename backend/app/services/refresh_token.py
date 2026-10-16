@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -49,11 +49,13 @@ async def rotate_refresh_token(db: AsyncSession, token: str) -> tuple[User, str]
     return user, new_token
 
 
-# 로그아웃: 해당 리프레시 토큰 폐기 (이미 없거나 폐기된 토큰이어도 조용히 통과 — 로그아웃은 항상 성공해야 함)
+# 로그아웃: 해당 리프레시 토큰 폐기 (이미 없거나 폐기된 토큰이어도 조용히 통과 — 로그아웃은 항상 성공해야 함).
+# FCM 토큰도 지워 로그아웃한 폰으로 푸시가 안 가게 함(로그인 상태인 다른 기기는 앱을 켤 때 다시 등록됨)
 async def revoke_refresh_token(db: AsyncSession, token: str) -> None:
     token_hash = hash_refresh_token(token)
     result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     stored = result.scalar_one_or_none()
     if stored is not None and not stored.revoked:
         stored.revoked = True
+        await db.execute(update(User).where(User.id == stored.user_id).values(fcm_token=None))
         await db.commit()

@@ -627,6 +627,42 @@ async def test_crawl_and_save_nol_ticket_uses_interpark_crawler():
     assert mock_concert.crawl_screenshot_url == fake_url
 
 
+# 티켓등록/찜 경로 크롤이 멈춰도 상한 시간 뒤 포기하고 브라우저 슬롯을 돌려줌(다음 크롤이 막히지 않게)
+@pytest.mark.asyncio
+async def test_crawl_and_save_times_out_and_releases_browser_slot():
+    from app.services.crawler import _BROWSER_SEMAPHORE
+
+    mock_concert = MagicMock()
+    mock_concert.crawl_attempt_count = 0
+    mock_concert.name = "멈추는 공연"
+    mock_concert.ticketing_links = {"INTERPARK": "https://tickets.interpark.com/goods/1"}
+    mock_concert.ticketing_date = None
+    mock_concert.crawl_result_received_at = None
+    mock_concert.end_date = None
+    mock_concert.crawl_attempted_at = None
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_concert)))
+    mock_db.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db.__aexit__ = AsyncMock(return_value=None)
+
+    async def _hang(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    upload = AsyncMock()
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler._crawl_candidates_or_kopis", new=_hang),
+        patch("app.services.crawler._CRAWL_TIMEOUT", 0.05),
+        patch("app.services.crawler._upload_screenshot", new=upload),
+    ):
+        await crawl_and_save(uuid.uuid4())
+
+    upload.assert_not_awaited()
+    assert not _BROWSER_SEMAPHORE.locked()
+    assert _BROWSER_SEMAPHORE._value == 2
+
+
 # INTERPARK 크롤링 성공 시 Concert.crawl_screenshot_url과 시간표 구간 저장
 @pytest.mark.asyncio
 async def test_crawl_and_save_interpark_updates_concert():

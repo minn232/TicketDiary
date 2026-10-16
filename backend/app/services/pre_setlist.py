@@ -258,9 +258,15 @@ async def generate_pre_setlist(
 # Setlist.fm에 그 아티스트 데이터가 없는 경우가 흔해서(특히 인지도 낮은 아티스트) 404가
 # 자주 나는데, 이건 실패가 아니라 정상적인 "데이터 없음" 케이스라 조용히 로그만 남기고
 # 넘어감 - 티켓 등록 자체를 막으면 안 됨.
-async def generate_pre_setlist_background(concert_id: UUID) -> None:
+# 유저 수정본은 항상 건너뜀(다른 유저의 티켓 등록으로 지워지던 문제). only_if_empty면 곡이 이미 있을
+# 때도 건너뜀 - 티켓 등록마다 Setlist.fm을 다시 부르지 않도록 함
+async def generate_pre_setlist_background(concert_id: UUID, only_if_empty: bool = False) -> None:
     async with AsyncSessionLocal() as db:
         try:
+            result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
+            row = result.scalar_one_or_none()
+            if row is not None and (row.is_user_edited or (only_if_empty and row.songs)):
+                return
             await generate_pre_setlist(db, concert_id)
         except HTTPException as e:
             logger.info(f"예상 셋리스트 자동 생성 스킵 (concert_id={concert_id}): {e.detail}")

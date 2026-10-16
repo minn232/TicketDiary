@@ -1,6 +1,7 @@
 import math
+import re
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -18,19 +19,42 @@ def _ensure_utc(value: datetime | None) -> datetime | None:
     return value
 
 
+_START_TIME_RE = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*$")
+
+
+# start_time을 "HH:MM"으로 맞춤(7:30 -> 07:30) - 비어 있으면 None, 못 읽으면 ValueError
+def _normalize_start_time(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    m = _START_TIME_RE.match(value)
+    if m is None or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise ValueError("start_time은 HH:MM 형식이어야 합니다.")
+    return f"{int(m.group(1)):02d}:{m.group(2)}"
+
+
 class TicketCreate(BaseModel):
     # 티켓 생성 요청 (concert_id, kopis_id 중 하나 필수)
     concert_id: UUID | None = None
     kopis_id: str | None = None
     delivery_date: datetime | None = None
     start_time: str | None = None  # OCR로 추출한 티켓 실제 시작시간 ("HH:MM")
-    ticketing_site: str | None = None
+    ticketing_site: str | None = Field(default=None, max_length=200)
     price: int | None = None
-    seat_type: str | None = None
+    seat_type: str | None = Field(default=None, max_length=200)
     # OCR로 추출한 실제 관람 날짜. 있으면 등록 시점에 is_first_day/is_last_day를 자동 판정하는 데 쓰임
     attended_date: datetime | None = None
 
     _normalize_dates = field_validator("delivery_date", "attended_date", mode="after")(_ensure_utc)
+
+    # OCR 값이 공연 공용 start_time(비어 있을 때)에도 저장돼서 형식을 맞춤. 티켓 등록 자체는 막지
+    # 않도록 못 읽는 값은 버림(공연 시간으로 폴백)
+    @field_validator("start_time", mode="after")
+    @classmethod
+    def normalize_start_time(cls, value: str | None) -> str | None:
+        try:
+            return _normalize_start_time(value)
+        except ValueError:
+            return None
 
     # concert_id/kopis_id 둘 다 없으면 검증 실패 (클래스 주석 참고)
     @model_validator(mode="after")
@@ -77,13 +101,14 @@ class TicketUpdate(BaseModel):
     # 티켓 부분 수정 요청
     delivery_date: datetime | None = None
     start_time: str | None = None
-    ticketing_site: str | None = None
+    ticketing_site: str | None = Field(default=None, max_length=200)
     price: int | None = None
-    seat_type: str | None = None
-    ticket_image_url: str | None = None
+    seat_type: str | None = Field(default=None, max_length=200)
+    ticket_image_url: str | None = Field(default=None, max_length=1024)
     # 일기 생성 LLM 프롬프트에 그대로 들어가므로 과도한 길이로 토큰 비용이 늘지 않도록 제한
     review: str | None = Field(default=None, max_length=2000)
-    concert_photo_urls: list[str] | None = None
+    # 사진 URL 개수/길이 상한은 남용 방지용(실데이터는 티켓당 몇 장 수준)
+    concert_photo_urls: list[Annotated[str, Field(max_length=1024)]] | None = Field(default=None, max_length=200)
     # 이 필드를 같이 보내면 자동 판정 대신 이 값을 그대로 씀(수동 override).
     # attended_date만 보내고 이 필드들은 안 보내면 서버가 새 attended_date 기준으로 재판정함
     attended_date: datetime | None = None
@@ -95,6 +120,8 @@ class TicketUpdate(BaseModel):
     page_layout: PageLayout | None = None
 
     _normalize_dates = field_validator("delivery_date", "attended_date", "torn_at", mode="after")(_ensure_utc)
+    # start_time은 유저가 직접 고치는 값이라 형식이 틀리면 422로 알림
+    _normalize_start_time = field_validator("start_time", mode="after")(_normalize_start_time)
 
 
 class TicketResponse(BaseModel):

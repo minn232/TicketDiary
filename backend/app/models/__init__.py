@@ -19,6 +19,7 @@ from app.models.artist_identity import ArtistIdentityChange, ConcertArtistLink
 from app.models.music_link_cache import MusicLinkCache
 from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.llm_batch_state import LlmNightBatchState
+from app.models.connection import NearbyCode, NearbySighting, UserConnection
 
 __all__ = [
     "User", "UserRole",
@@ -40,4 +41,5 @@ __all__ = [
     "MusicLinkCache",
     "ItunesCatalogCache",
     "LlmNightBatchState",
+    "NearbyCode", "NearbySighting", "UserConnection",
 ]

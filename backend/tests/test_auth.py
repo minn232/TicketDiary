@@ -258,6 +258,20 @@ async def test_logout_revokes_refresh_token():
     assert refresh_res.status_code == 401
 
 
+# 로그아웃하면 FCM 토큰도 지워 로그아웃한 폰으로 푸시가 안 감
+@pytest.mark.asyncio
+async def test_logout_clears_fcm_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/guest", json={"device_id": uuid.uuid4().hex})
+        headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+        await ac.patch("/api/v1/settings/fcm-token", json={"fcm_token": f"fcm-{uuid.uuid4().hex}"}, headers=headers)
+
+        await ac.post("/api/v1/auth/logout", json={"refresh_token": login_res.json()["refresh_token"]})
+        settings_res = await ac.get("/api/v1/settings", headers=headers)
+
+    assert settings_res.json()["fcm_token"] is None
+
+
 # 로그아웃은 이미 폐기되었거나 존재하지 않는 토큰이어도 항상 성공 처리
 @pytest.mark.asyncio
 async def test_logout_is_idempotent():
@@ -338,3 +352,12 @@ async def test_update_profile_no_auth_401():
         res = await ac.patch("/api/v1/auth/me", json={"nickname": "닉네임"})
 
     assert res.status_code == 401
+
+# 닉네임은 50자까지
+@pytest.mark.asyncio
+async def test_update_profile_nickname_too_long_422():
+    token = await _get_token()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch("/api/v1/auth/me", json={"nickname": "가" * 51}, headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 422

@@ -55,6 +55,23 @@ async def test_search_artist_falls_back_to_general_when_country_kr_empty():
 
 
 @pytest.mark.asyncio
+async def test_search_artist_general_fallback_drops_north_korean_artists():
+    client = MagicMock()
+    client.get = AsyncMock(
+        side_effect=[
+            _resp(200, []),  # country:KR -> 없음
+            _resp(200, [_mb_artist("mbid-kp", "최정임", country="KP"), _mb_artist("mbid-x", "최정임", score=80, country=None)]),
+        ]
+    )
+
+    with patch("app.services.musicbrainz._MIN_REQUEST_INTERVAL", 0):
+        candidates = await search_artist("최정임", client=client)
+
+    # 동명의 북한 가수는 후보에서 빠지고 국가 미상 후보만 남음
+    assert [c.mbid for c in candidates] == ["mbid-x"]
+
+
+@pytest.mark.asyncio
 async def test_search_artist_retries_on_503_then_succeeds():
     client = MagicMock()
     client.get = AsyncMock(

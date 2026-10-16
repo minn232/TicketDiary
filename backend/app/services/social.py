@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import exists, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, selectinload
 
@@ -67,9 +68,16 @@ async def _generate_feeds_for_new_follows(
     )
     existing_concert_ids = set(existing_result.scalars().all())
 
-    for concert, artist_name in matched:
-        if concert.id not in existing_concert_ids:
-            db.add(NewsFeed(user_id=user_id, concert_id=concert.id, artist_name=artist_name))
+    rows = [
+        {"user_id": user_id, "concert_id": concert.id, "artist_name": artist_name}
+        for concert, artist_name in matched
+        if concert.id not in existing_concert_ids
+    ]
+    if rows:
+        # 야간 배치와 겹쳐 이미 있으면 건너뜀
+        await db.execute(
+            pg_insert(NewsFeed).values(rows).on_conflict_do_nothing(constraint="uq_news_feeds_user_concert")
+        )
 
     await db.commit()
 

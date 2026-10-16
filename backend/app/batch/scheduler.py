@@ -6,6 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.services.notification import process_pending_notifications
+from app.services.connection import cleanup_nearby_records
 from app.services.kopis import sync_daily_concerts
 from app.services.artist_genre import sync_musicbrainz_genres
 from app.services.artist_normalization import normalize_pending_artists
@@ -159,6 +160,15 @@ async def _run_concert_follow_cleanup() -> None:
         logger.exception("찜 공연 자동 해제 오류")
 
 
+async def _run_nearby_cleanup() -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            removed = await cleanup_nearby_records(db)
+        logger.info(f"오래된 맞대기 기록 정리: {removed}")
+    except Exception:
+        logger.exception("맞대기 기록 정리 오류")
+
+
 # 크롤링 재시도 -> 페스티벌 라인업 재확인을 한 job으로 이음. 둘 다 브라우저를 동시 2개씩 띄우는데
 # 서버 RAM이 1.9GB/스왑 0이라, 앞 작업이 길어져 고정 시각이 겹치면 4개가 동시에 떠 OOM 위험이 있음.
 # 한 단계가 실패해도 다음 단계는 돌아야 해서 각각 따로 감쌈
@@ -227,6 +237,8 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_ticket_status_sync, "cron", hour=15, minute=10, id="ticket_status_sync", max_instances=1)
     # 찜한 공연 중 이미 종료된 공연 자동 해제 (KST 00:12)
     scheduler.add_job(_run_concert_follow_cleanup, "cron", hour=15, minute=12, id="concert_follow_cleanup", max_instances=1)
+    # 오래된 맞대기 판정·코드·만료된 연결 요청 정리 (KST 05:40)
+    scheduler.add_job(_run_nearby_cleanup, "cron", hour=20, minute=40, id="nearby_cleanup", max_instances=1)
     # 크롤 배치 2종(서버에서 9/12부터 정지 중 - LLM 배치 반영 끝난 뒤에만 주석 해제할 것):
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
     # 라인업(출연진) 변경 여부 재확인을 이어서 실행 (KST 00:15)

@@ -119,12 +119,29 @@ def _stub_setlistfm_merged_mbid_lookup():
         yield
 
 
+# Setlist.fm 공통 요청 간격(0.6초)이 mock 호출에도 걸리면 테스트가 느려지므로 끔
+@pytest.fixture(autouse=True)
+def _no_setlistfm_throttle():
+    with patch("app.services.setlistfm._MIN_REQUEST_INTERVAL", 0):
+        yield
+
+
 # 예상 셋리 대표곡의 자동 확정이 iTunes 아티스트 검색을 실제로 호출하지 않게 기본은 "후보 없음".
 # 자동 확정 자체는 test_representative_songs.py에서 다시 patch
 @pytest.fixture(autouse=True)
 def _stub_itunes_artist_search_for_auto_anchor():
     with patch("app.services.representative_songs.search_itunes_artists", new=AsyncMock(return_value=[])):
         yield
+
+
+# 공연 단위 쓰기 API(셋리/타임테이블/아티스트 확정)는 관리자 키가 필요함 - 그 서비스 로직을 검증하는
+# 테스트 파일에서 pytestmark로 켜서 키 검사만 건너뜀
+@pytest.fixture
+def skip_admin_key():
+    from app.core.deps import verify_admin_key
+    app.dependency_overrides[verify_admin_key] = lambda: None
+    yield
+    app.dependency_overrides.pop(verify_admin_key, None)
 
 
 # 테스트용 게스트 인증 토큰을 반환하는 픽스처

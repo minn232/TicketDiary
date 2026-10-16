@@ -14,6 +14,8 @@ from app.models.setlist import RealSetlist
 from app.services.summary import _is_seated, _is_standing, _percent_split, _period_start
 from conftest import _get_token, kopis_mock
 
+pytestmark = pytest.mark.usefixtures("skip_admin_key")
+
 
 # 아티스트 장르 캐시 직접 삽입 (Last.fm 배치/즉시 캐싱이 이미 채워둔 상태를 시뮬레이션)
 async def _insert_artist_genre(artist_name: str, genres: list[str] | None) -> None:

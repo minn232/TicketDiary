@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from uuid import UUID
 from datetime import date
 
@@ -20,8 +20,15 @@ class SongEntry(BaseModel):
 
 
 class SetlistEditRequest(BaseModel):
-    # 실제 셋리스트 유저 수정 요청
-    songs: list[SongEntry]
+    # 실제/예상 셋리스트 유저 수정 요청. 곡 수 상한은 페스티벌 예상 셋리(수백 곡)를 감안해 넉넉히 잡음
+    songs: list[SongEntry] = Field(max_length=1000)
+
+    @field_validator("songs")
+    @classmethod
+    def check_text_length(cls, songs: list[SongEntry]) -> list[SongEntry]:
+        if any(len(s.name) > 300 or len(s.artist or "") > 200 for s in songs):
+            raise ValueError("곡명은 300자, 아티스트명은 200자를 넘을 수 없습니다.")
+        return songs
 
 
 class FetchSetlistRequest(BaseModel):

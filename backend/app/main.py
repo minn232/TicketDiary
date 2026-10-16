@@ -31,11 +31,13 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-# DEBUG 모드일 때만 /docs 노출
+# DEBUG 모드일 때만 API 문서 노출 - docs_url만 끄면 /redoc, /openapi.json은 기본값으로 열려 있었음
 app = FastAPI(
     title="Ticket Diary API",
     version="0.1.0",
     docs_url="/docs" if settings.APP_DEBUG else None,
+    redoc_url="/redoc" if settings.APP_DEBUG else None,
+    openapi_url="/openapi.json" if settings.APP_DEBUG else None,
     lifespan=lifespan,
 )
 

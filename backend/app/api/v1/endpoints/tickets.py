@@ -78,11 +78,9 @@ async def register_ticket(
     if ticket.ticketing_site:
         background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
     if ticket.concert and ticket.concert.artist_name:
-        # 아티스트 정보가 있으니 예상 셋리스트도 바로 생성 시도(Setlist.fm에 데이터가
-        # 없으면 generate_pre_setlist_background 내부에서 조용히 스킵됨). 이미 생성된
-        # 적 있으면 generate_pre_setlist가 upsert하므로 여러 유저가 같은 공연에
-        # 티켓을 등록해도 안전함.
-        background_tasks.add_task(generate_pre_setlist_background, ticket.concert.id)
+        # 아티스트 정보가 있으니 예상 셋리스트도 바로 생성 시도(Setlist.fm 데이터가 없으면 조용히 스킵).
+        # 이미 곡이 있거나 유저 수정본이면 건너뜀 - 같은 공연에 티켓이 여러 번 등록돼도 덮어쓰지 않음
+        background_tasks.add_task(generate_pre_setlist_background, ticket.concert.id, only_if_empty=True)
         # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
         # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
         background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)

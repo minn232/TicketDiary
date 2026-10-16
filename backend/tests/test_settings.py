@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 
@@ -251,3 +253,20 @@ async def test_update_fcm_token_no_auth_401():
         res = await ac.patch("/api/v1/settings/fcm-token", json={"fcm_token": "some-token"})
 
     assert res.status_code == 401
+
+
+# 같은 기기 토큰을 다른 계정이 등록하면 이전 계정에서는 지워짐 - 이전 계정 알림이 지금 사용자 폰으로 가지 않게
+@pytest.mark.asyncio
+async def test_update_fcm_token_clears_same_token_on_other_user():
+    token_a = await _get_token()
+    token_b = await _get_token()
+    shared = f"shared-fcm-{uuid.uuid4().hex}"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/settings/fcm-token", json={"fcm_token": shared}, headers={"Authorization": f"Bearer {token_a}"})
+        await ac.patch("/api/v1/settings/fcm-token", json={"fcm_token": shared}, headers={"Authorization": f"Bearer {token_b}"})
+        res_a = await ac.get("/api/v1/settings", headers={"Authorization": f"Bearer {token_a}"})
+        res_b = await ac.get("/api/v1/settings", headers={"Authorization": f"Bearer {token_b}"})
+
+    assert res_a.json()["fcm_token"] is None
+    assert res_b.json()["fcm_token"] == shared

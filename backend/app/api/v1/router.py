@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import app_config, auth, admin, artists, concerts, tickets, setlists, timetables, summary, notifications, social, settings, upload, venue_layout, crawl, recommendations, music_links
+from app.api.v1.endpoints import app_config, auth, admin, artists, concerts, tickets, setlists, timetables, summary, notifications, social, connections, settings, upload, venue_layout, crawl, recommendations, music_links
 
 api_router = APIRouter()
 
@@ -16,6 +16,7 @@ api_router.include_router(crawl.router, prefix="/concerts", tags=["crawl"])
 api_router.include_router(summary.router, prefix="/summary", tags=["summary"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(social.router, prefix="/social", tags=["social"])
+api_router.include_router(connections.router, prefix="/social", tags=["connections"])
 api_router.include_router(settings.router, prefix="/settings", tags=["settings"])
 api_router.include_router(upload.router, prefix="/upload", tags=["upload"])
 api_router.include_router(recommendations.router, prefix="/recommendations", tags=["recommendations"])

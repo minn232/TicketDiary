@@ -1,4 +1,4 @@
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, Field, computed_field
 from uuid import UUID
 from app.models.user import UserRole
 
@@ -34,8 +34,8 @@ class KakaoAuthUrlResponse(BaseModel):
 
 class UserProfileUpdate(BaseModel):
     # 회원 프로필 수정 요청 (수정할 필드만 전달)
-    nickname: str | None = None
-    profile_image_url: str | None = None
+    nickname: str | None = Field(default=None, max_length=50)
+    profile_image_url: str | None = Field(default=None, max_length=2048)
 
 
 class UserResponse(BaseModel):

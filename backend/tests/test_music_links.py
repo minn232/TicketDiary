@@ -745,3 +745,36 @@ async def test_resolve_does_not_cache_when_resolver_raises():
         )
         row = result.scalar_one()
         assert row.resolved_url == "https://www.youtube.com/watch?v=ok"
+
+
+# 외부 조회(캐시 미스) 한도를 넘으면 실제 API를 부르지 않고 url=None으로 응답(앱은 검색화면 폴백)
+@pytest.mark.asyncio
+async def test_resolve_over_lookup_limit_returns_null_without_calling_api():
+    token = await _get_token()
+    resolver = AsyncMock(return_value="https://example.com/should-not-be-used")
+
+    with (
+        patch.dict(music_links_module._RESOLVERS, {"youtube": resolver}),
+        patch.object(music_links_module, "allow_music_link_lookup", return_value=False),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get(
+                "/api/v1/music-links/resolve",
+                params={"service": "youtube", "song": f"한도테스트-{datetime.now().timestamp()}", "artist": "아무개"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert res.status_code == 200
+    assert res.json()["url"] is None
+    resolver.assert_not_awaited()
+
+
+# 유저당 시간당 30회까지만 외부 조회 허용
+def test_allow_music_link_lookup_caps_per_user():
+    from uuid import uuid4
+
+    from app.core.deps import allow_music_link_lookup
+
+    user_id = uuid4()
+    assert all(allow_music_link_lookup(user_id) for _ in range(30))
+    assert allow_music_link_lookup(user_id) is False

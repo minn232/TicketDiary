@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from app.core.database import AsyncSessionLocal
 from app.models.llm_batch_state import LlmNightBatchState
@@ -33,14 +33,21 @@ async def reset_llm_night_state() -> None:
         await db.commit()
 
 
-# 3개 야간 전송 배치(크롤링/아티스트추출/일기)가 실제로 뭔가 보냈을 때 호출 - count만큼 pending_count 증가
+# 3개 야간 전송 배치(크롤링/아티스트추출/일기)가 실제로 뭔가 보냈을 때 호출 - count만큼 pending_count 증가.
+# 증감은 UPDATE 한 문장으로 처리(읽고 다시 쓰면 동시 콜백과 겹칠 때 갱신이 유실돼 pod이 일찍 꺼질 수 있음)
 async def mark_llm_sent(count: int) -> None:
     if count <= 0:
         return
     async with AsyncSessionLocal() as db:
-        row = await _get_or_create_row(db)
-        row.last_send_at = datetime.now(timezone.utc)
-        row.pending_count = (row.pending_count or 0) + count
+        await _get_or_create_row(db)
+        await db.execute(
+            update(LlmNightBatchState)
+            .where(LlmNightBatchState.id == _SINGLETON_ID)
+            .values(
+                last_send_at=datetime.now(timezone.utc),
+                pending_count=func.coalesce(LlmNightBatchState.pending_count, 0) + count,
+            )
+        )
         await db.commit()
 
 
@@ -57,9 +64,15 @@ async def mark_all_sent_for_tonight() -> None:
 # 판단 기준 시각 갱신 + pending_count 1 감소(0 밑으로는 안 내려가게 클램프, 중복 콜백 방어)
 async def mark_llm_callback_received() -> None:
     async with AsyncSessionLocal() as db:
-        row = await _get_or_create_row(db)
-        row.last_callback_at = datetime.now(timezone.utc)
-        row.pending_count = max(0, (row.pending_count or 0) - 1)
+        await _get_or_create_row(db)
+        await db.execute(
+            update(LlmNightBatchState)
+            .where(LlmNightBatchState.id == _SINGLETON_ID)
+            .values(
+                last_callback_at=datetime.now(timezone.utc),
+                pending_count=func.greatest(func.coalesce(LlmNightBatchState.pending_count, 0) - 1, 0),
+            )
+        )
         await db.commit()
 
 

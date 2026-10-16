@@ -689,3 +689,48 @@ async def test_search_by_venue_no_facility_match():
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+# 이미 아티스트가 채워진(LLM/검수) 공연을 상세 조회해도 KOPIS 출연진으로 덮어쓰지 않음
+@pytest.mark.asyncio
+async def test_detail_sync_keeps_existing_artist_name():
+    token = await _get_token()
+    concert = await _make_concert(name="덮어쓰기 확인 공연", artist_name=["정리된이름"])
+    xml = _make_kopis_xml(concert.kopis_id, "덮어쓰기 확인 공연", "2030.06.01", "2030.06.01", artist="본명")
+
+    with kopis_mock(xml):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.get(
+                f"/api/v1/concerts/{concert.kopis_id}", headers={"Authorization": f"Bearer {token}"}
+            )
+
+    assert response.status_code == 200
+    assert response.json()["artist_name"] == ["정리된이름"]
+
+
+# 공연 단위 공용 데이터 쓰기 API는 로그인만으로는 못 부르고 관리자 키가 필요함
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,path,body",
+    [
+        ("post", "/setlist", {"setlistfm_id": "abc"}),
+        ("patch", "/setlist", {"songs": []}),
+        ("post", "/setlist/generate-festival", None),
+        ("post", "/setlist/pre/generate", None),
+        ("patch", "/setlist/pre", {"songs": []}),
+        ("put", "/timetable", {"contents": []}),
+        ("patch", "/artist-name/confirm", {"original_name": "a", "confirmed_name": "b"}),
+    ],
+)
+async def test_concert_write_routes_require_admin_key(method, path, body):
+    token = await _get_token()
+    with patch("app.core.deps.settings.ADMIN_API_KEY", "test-admin-key"):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            response = await ac.request(
+                method.upper(),
+                f"/api/v1/concerts/{uuid.uuid4()}{path}",
+                json=body,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    assert response.status_code == 401

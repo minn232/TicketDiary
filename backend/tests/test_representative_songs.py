@@ -24,6 +24,8 @@ from app.services.representative_songs import (
 from conftest import _get_token
 from test_pre_setlists import _create_concert
 
+pytestmark = pytest.mark.usefixtures("skip_admin_key")
+
 _SERVICE = "app.services.representative_songs"
 
 

@@ -13,6 +13,8 @@ from app.services.lineup import upsert_concert_lineup
 from app.services.pre_setlist import _artist_roles
 from conftest import _get_token, kopis_mock
 
+pytestmark = pytest.mark.usefixtures("skip_admin_key")
+
 
 # 헬퍼
 
@@ -507,6 +509,44 @@ async def test_ticket_registration_auto_generates_pre_setlist():
     assert pre_res.json()["concert_id"] == concert_id
     song_names = [s["name"] for s in pre_res.json()["songs"]]
     assert "노래A" in song_names
+
+
+# 다른 유저가 티켓을 등록해도 유저가 직접 고친 예상 셋리는 다시 생성되지 않음(덮어써지던 문제)
+@pytest.mark.asyncio
+async def test_ticket_registration_keeps_user_edited_pre_setlist():
+    concert_id = await _create_concert(f"PF_PRE_EDITED_{uuid.uuid4().hex[:8]}")
+    editor_headers = {"Authorization": f"Bearer {await _get_token()}"}
+    other_headers = {"Authorization": f"Bearer {await _get_token()}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            f"/api/v1/concerts/{concert_id}/setlist/pre",
+            json={"songs": [{"name": "직접고친곡", "encore": False}]},
+            headers=editor_headers,
+        )
+        with _setlistfm_artist_mock(_make_artist_setlists([["자동곡A", "자동곡B"]])):
+            res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=other_headers)
+        pre_res = await ac.get(f"/api/v1/concerts/{concert_id}/setlist/pre", headers=other_headers)
+
+    assert res.status_code == 201
+    assert [s["name"] for s in pre_res.json()["songs"]] == ["직접고친곡"]
+    assert pre_res.json()["is_user_edited"] is True
+
+
+# 이미 곡이 채워진 공연에 티켓이 또 등록되면 Setlist.fm을 다시 부르지 않음
+@pytest.mark.asyncio
+async def test_ticket_registration_skips_regeneration_when_pre_setlist_filled():
+    concert_id = await _create_concert(f"PF_PRE_FILLED_{uuid.uuid4().hex[:8]}")
+    first = {"Authorization": f"Bearer {await _get_token()}"}
+    second = {"Authorization": f"Bearer {await _get_token()}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        with _setlistfm_artist_mock(_make_artist_setlists([["노래A"]])):
+            await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=first)
+        with patch("app.services.pre_setlist.generate_pre_setlist", new=AsyncMock()) as regenerate:
+            await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=second)
+
+    regenerate.assert_not_awaited()
 
 
 # 아티스트 정보 없는 공연은 티켓 등록해도(자동 생성 시도가 조용히 스킵돼) 예상

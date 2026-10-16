@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/audio_volume_store.dart';
 
+import 'connections_screen.dart';
 import 'notifications_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
@@ -444,6 +445,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               indent: true,
                             ),
                           ],
+                        ),
+                      ),
+                      _divider,
+                      // [백엔드 수정]
+                      // 폰 맞대기로 연결된 친구 목록·연결 카드.
+                      Builder(
+                        builder: (menuContext) => _MenuRow(
+                          title: '연결된 친구',
+                          onTap: () => ConnectionsScreen.show(
+                            menuContext,
+                            frameScale:
+                                DiaryFrameScale.maybeOf(menuContext) ??
+                                diaryScaleFromMediaQuery(menuContext),
+                          ),
                         ),
                       ),
                       _divider,

@@ -13,6 +13,7 @@ from app.core.deps import (
     rate_limit_ticket_scan,
     record_meaningful_ticket_scan,
     reject_oversized_request,
+    verify_admin_key,
 )
 from app.models.concert import Concert
 from app.models.user import User
@@ -189,9 +190,13 @@ async def get_concert(
 
 
 # 미확정(MusicBrainz로 못 찾은) 아티스트 표기를 유저가 직접 확정하는 API(G안, 프론트 UI는 아직
-# 없음) - 실제 관람 유저가 크롤러/LLM보다 정확한 소스라는 전제. 로그인만 하면 아무 공연이나
-# 고칠 수 있는 건 프로토타입 단계라 임시 허용한 것(런칭 전 티켓 보유자 제한 등 정책 재검토 필요)
-@router.patch("/{concert_id}/artist-name/confirm", response_model=ArtistNameConfirmResponse)
+# 없음). 모든 공연에 쓰이는 CanonicalArtist/별칭까지 만들어서, 티켓 보유자 제한 등 정책이 정해질
+# 때까지 관리자 키로만 열어둠
+@router.patch(
+    "/{concert_id}/artist-name/confirm",
+    response_model=ArtistNameConfirmResponse,
+    dependencies=[Depends(verify_admin_key)],
+)
 async def confirm_artist_name(
     concert_id: UUID,
     body: ArtistNameConfirmRequest,
