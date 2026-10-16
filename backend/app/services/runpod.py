@@ -11,6 +11,7 @@ from app.core.http_errors import describe_http_error
 logger = logging.getLogger(__name__)
 
 _RUNPOD_PODS_URL = "https://rest.runpod.io/v1/pods"
+_STOPPED_STATUSES = {"EXITED", "TERMINATED"}
 
 
 # 시도 순서대로의 후보 pod ID 목록 - 기본 pod(RUNPOD_POD_ID) 먼저, 그다음 보조 pod들. 한 pod이
@@ -43,8 +44,8 @@ async def start_pod(pod_id: str | None = None) -> bool:
         return False
 
 
-# pod의 실제 상태를 조회. RunPod는 실제로 떠있을 때만 "runtime" 객체를 채워주므로(정지되면
-# 사라짐) desiredStatus(요청한 목표 상태) 대신 runtime 유무로 실제 상태를 판단한다
+# pod 상태 조회(REST v1). 응답에 "runtime" 필드가 아예 없어서(10/16 실제 응답 확인) 상태는
+# desiredStatus(RUNNING/EXITED/TERMINATED)로만 알 수 있음 - 과금도 이 값 기준
 async def _fetch_pod_status(pod_id: str) -> dict:
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.get(
@@ -64,7 +65,9 @@ async def _wait_until_actually_stopped(
     while elapsed < timeout_seconds:
         try:
             data = await _fetch_pod_status(pod_id)
-            if not data.get("runtime"):
+            # 예전엔 runtime 유무로 봤는데 v1 응답엔 그 필드가 없어 항상 바로 "정지됨"이 됐음.
+            # 필드가 빠지거나 값이 낯설면 꺼진 걸로 치지 않음(켜진 채 과금되는 쪽이 더 나쁨)
+            if data.get("desiredStatus") in _STOPPED_STATUSES:
                 return True
         except Exception as e:
             logger.warning(f"pod 상태 확인 중 오류(재시도함): {e}")

@@ -92,10 +92,10 @@ def _mock_get_client(json_side_effect):
     return mock_client
 
 
-# runtime이 없어지면(=실제로 꺼짐) 첫 조회에서 바로 True
+# desiredStatus가 EXITED면(=꺼짐) 첫 조회에서 바로 True
 @pytest.mark.asyncio
 async def test_wait_until_actually_stopped_true_immediately():
-    mock_client = _mock_get_client([{"runtime": None}])
+    mock_client = _mock_get_client([{"desiredStatus": "EXITED"}])
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"), \
          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
@@ -103,10 +103,10 @@ async def test_wait_until_actually_stopped_true_immediately():
     assert result is True
 
 
-# 처음엔 runtime이 남아있다가(아직 안 꺼짐) 다음 폴링에서 사라지면 - 재시도 루프가 실제로 동작하는지 확인
+# 처음엔 RUNNING이다가(아직 안 꺼짐) 다음 폴링에서 EXITED면 - 재시도 루프가 실제로 동작하는지 확인
 @pytest.mark.asyncio
 async def test_wait_until_actually_stopped_true_after_polling():
-    mock_client = _mock_get_client([{"runtime": {"uptimeInSeconds": 10}}, {"runtime": None}])
+    mock_client = _mock_get_client([{"desiredStatus": "RUNNING"}, {"desiredStatus": "EXITED"}])
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"), \
          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
@@ -115,13 +115,23 @@ async def test_wait_until_actually_stopped_true_after_polling():
     assert mock_client.get.call_count == 2
 
 
-# 타임아웃 안에 계속 runtime이 남아있으면(실제로 안 꺼짐) False
+# 타임아웃 안에 계속 RUNNING이면(실제로 안 꺼짐) False
 @pytest.mark.asyncio
 async def test_wait_until_actually_stopped_false_on_timeout():
-    mock_client = _mock_get_client([{"runtime": {"uptimeInSeconds": 10}}] * 10)
+    mock_client = _mock_get_client([{"desiredStatus": "RUNNING"}] * 10)
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"), \
          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"), \
          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
+        result = await _wait_until_actually_stopped("test-pod", timeout_seconds=0.05, interval_seconds=0.01)
+    assert result is False
+
+
+# 실제 v1 응답처럼 runtime 필드도 desiredStatus도 없으면 꺼진 걸로 치지 않음 - 예전 코드는
+# runtime이 없다는 이유로 RUNNING인 pod도 바로 "정지됨"으로 판정했음(10/16 발견)
+@pytest.mark.asyncio
+async def test_wait_until_actually_stopped_not_fooled_by_missing_fields():
+    mock_client = _mock_get_client([{"id": "test-pod", "desiredStatus": "RUNNING"}, {"id": "test-pod"}] * 5)
+    with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"),          patch("app.services.runpod.settings.RUNPOD_POD_ID", "test-pod"),          patch("app.services.runpod.httpx.AsyncClient", return_value=mock_client):
         result = await _wait_until_actually_stopped("test-pod", timeout_seconds=0.05, interval_seconds=0.01)
     assert result is False
 

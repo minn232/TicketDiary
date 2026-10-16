@@ -6,7 +6,7 @@ SSH 접속 준비까지는 기다리지 않고 시작 요청만 보내고 바로
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/pod_start.py
+    venv/bin/python3 scripts/ongoing/pod_start.py
 """
 
 import asyncio
@@ -25,7 +25,7 @@ async def main() -> None:
     print("RunPod pod 시작 요청 중...")
     ok = await start_pod()
     if ok:
-        print("pod 시작 요청 완료. OS/SSH 부팅에 시간이 걸리니 곧바로 llm_start.py를 돌려도")
+        print("pod 시작 요청 완료. OS/SSH 부팅에 시간이 걸리니 곧바로 llm_start.py를 돌려도(이미 켜진 pod이면 시작 요청은 그냥 통과)")
         print("내부에서 SSH 준비될 때까지 알아서 기다린다.")
     else:
         print("pod 시작 요청 실패 (RUNPOD_API_KEY/RUNPOD_POD_ID 설정 또는 로그 확인).")
