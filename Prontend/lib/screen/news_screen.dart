@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../services/news_list_service.dart';
+import '../services/news_card_identity.dart';
 
 import 'package:flutter/material.dart';
 import 'package:ticketdiary/models/news_model.dart';
@@ -125,6 +127,42 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   final GlobalKey _newsBodyKey = GlobalKey();
   PageController? _newsPageController;
   int? _newsPageTarget;
+  String? _visibleCardKey;
+  Timer? _newsRefreshTimer;
+
+  void _onNewsListUpdated() {
+    final items = NewsListService.updates.value;
+    if (mounted && items != null) {
+      setState(() => _newsFuture = Future.value(items));
+    }
+  }
+
+  void _consumeNewsTarget({required bool missing}) {
+    final nav = TabNavCoordinator.instance;
+    final requested =
+        nav.pendingNewsCardKey != null ||
+        nav.pendingNewsConcertId != null ||
+        nav.pendingNewsConcertName != null;
+    nav.pendingNewsCardKey = null;
+    nav.pendingNewsConcertId = null;
+    nav.pendingNewsConcertName = null;
+    if (!missing || !requested) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          content: const Text('해당 소식이 변경되었거나 더 이상 표시되지 않아요. 최신 목록을 확인해주세요.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
+      );
+    });
+  }
 
   /// 복귀 시 최신 소식 로딩이 너무 오래 걸리면(백엔드 오류 등) 기존
   /// 데이터로라도 소식으로 되돌아오게 하는 안전 타임아웃.
@@ -176,6 +214,13 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // [백엔드 수정] 소식 탭 캐싱 비활성화(정확도 우선, 코드는 보존) - 직접 호출로 대체.
     // _newsFuture = _loadNewsWithCache();
     _newsFuture = _loadNews();
+    NewsListService.updates.addListener(_onNewsListUpdated);
+    _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_phase == _FlipPhase.news &&
+          WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        unawaited(_loadNews().catchError((Object _) => <NewsModel>[]));
+      }
+    });
     _armGlassReveal(_newsFuture);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -185,6 +230,8 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _newsRefreshTimer?.cancel();
+    NewsListService.updates.removeListener(_onNewsListUpdated);
     _pageShiftSound?.stop();
     _returnTimeout?.cancel();
     TabNavCoordinator.instance.currentTab.removeListener(_onCurrentTabChanged);
@@ -367,93 +414,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     return items;
   }
 
-  Future<List<NewsModel>> _loadNews() async {
-    // 백엔드 피드는 서버에 저장된 팔로우 목록 기준으로 생성되므로,
-    // 로컬 찜 아티스트 목록을 먼저 서버에 동기화한 뒤 피드를 조회합니다.
-    // [백엔드 수정] syncFromServer() 호출 추가.
-    await FavoritesStore.instance.load();
-    await FavoritesStore.instance.syncFromServer();
-    final artistNames = FavoritesStore.instance.favoriteArtists
-        .map((a) => a.name)
-        .toList();
-    // [백엔드 수정]
-    // syncArtistFollows()가 반환하는 최신 목록을 재사용(getArtistFollowEntries()
-    // 중복 호출 제거), 동기화 실패 시에만 아래에서 별도로 다시 조회함.
-    List<Map<String, dynamic>>? entries;
-    try {
-      entries = await _socialService.syncArtistFollows(artistNames);
-    } catch (_) {
-      // 동기화에 실패해도(네트워크 순단 등) 기존 서버 팔로우 목록 기준의
-      // 피드는 조회할 수 있으므로 계속 진행합니다.
-    }
-
-    final feed = await _socialService.getNewsFeed();
-
-    // 백엔드는 한 번 생성된 소식을 아티스트 언팔로우 후에도 지우지 않고
-    // 그대로 돌려주므로(GET /social/feed가 팔로우 상태와 무관하게 전체
-    // 반환), 지금 실제로 팔로우 중인 아티스트의 소식만 화면에 남깁니다.
-    List<NewsModel> filteredFeed;
-    try {
-      entries ??= await _socialService.getArtistFollowEntries();
-      final currentFollows = {
-        for (final e in entries)
-          if ((e['artist_name'] as String?)?.isNotEmpty ?? false)
-            e['artist_name'] as String,
-      };
-      filteredFeed = feed
-          .where((item) => currentFollows.contains(item.artist))
-          .toList();
-    } catch (_) {
-      // 팔로우 목록 조회에 실패하면 필터링 없이 원본 그대로 보여줍니다.
-      filteredFeed = feed;
-    }
-
-    // 찜한 공연은 아티스트 매칭을 거치지 않고 그대로 카드로 보여줍니다.
-    // D-day(공연 시작일) 당일부터는 카드에서 제외(찜 상태는 유지).
-    final today = DateTime.now();
-    final todayDate = DateTime(today.year, today.month, today.day);
-    final favoritedConcertCards = FavoritesStore.instance.favoriteConcerts
-        .where((c) {
-          final start = c.startDate;
-          if (start == null) return true;
-          return DateTime(
-            start.year,
-            start.month,
-            start.day,
-          ).isAfter(todayDate);
-        })
-        .map(NewsModel.fromFavoritedConcert)
-        .toList();
-
-    // 이미 찜한 공연 카드로 나온 concertId는 아티스트 소식 카드에서 제외합니다
-    // (공연 찜 + 그 공연 아티스트 팔로우가 겹치면 같은 공연이 카드 2장으로
-    // 중복 노출되던 버그).
-    final favoritedConcertIds = favoritedConcertCards
-        .map((c) => c.concertId)
-        .whereType<String>()
-        .toSet();
-    filteredFeed = filteredFeed
-        .where(
-          (item) =>
-              item.concertId == null ||
-              !favoritedConcertIds.contains(item.concertId),
-        )
-        .toList();
-
-    final combined = [...favoritedConcertCards, ...filteredFeed];
-    // 공연이 가까운 순(D-day 오름차순)으로 정렬합니다 — 그리드는 왼쪽
-    // 위부터 오른쪽 아래로 채워지므로, 리스트 순서가 곧 화면 배치 순서가
-    // 됩니다. 날짜 정보가 없는 카드는 맨 뒤로 밀립니다.
-    combined.sort((a, b) {
-      final da = a.concertDate;
-      final db = b.concertDate;
-      if (da == null && db == null) return 0;
-      if (da == null) return 1;
-      if (db == null) return -1;
-      return da.compareTo(db);
-    });
-    return combined;
-  }
+  Future<List<NewsModel>> _loadNews() => NewsListService().load();
 
   /// 카드를 누르는 시점부터 오버레이가 완전히 닫히는 시점까지의 흐름을
   /// 다이어리 티켓 오버레이([_DiaryScreenState]의 "공연 전"/"공연 후" 티켓
@@ -600,7 +561,8 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
                   // [상태 1] 로딩 중: 내용은 비워 두고(빈 화면), 위에 덮인
                   // 백색 유리 글레어가 "빛 반사로 안 보이는" 상태를 대신
                   // 보여줍니다(스피너 없음).
-                  if (snapshot.connectionState == ConnectionState.waiting) {
+                  if (snapshot.connectionState == ConnectionState.waiting &&
+                      !snapshot.hasData) {
                     return const SizedBox.expand();
                   }
 
@@ -611,6 +573,14 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
                   // [상태 3] 데이터 없음
                   if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    _consumeNewsTarget(missing: true);
+                    _visibleCardKey = null;
+                    _newsPageTarget = 0;
+                    final oldController = _newsPageController;
+                    _newsPageController = null;
+                    WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => oldController?.dispose(),
+                    );
                     return const Center(child: Text('새로운 소식이 없습니다.'));
                   }
 
@@ -653,8 +623,8 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // 네트워크 단절 등 HTTP 응답 자체가 없으면 ApiClient가 statusCode -1로
     // 던지므로, 양수 코드일 때만 코드를 그대로 보여줍니다.
     final reason = error is ApiException && error.statusCode > 0
-        ? '오류 (${error.statusCode})'
-        : '오류 (연결 실패)';
+        ? '서버 오류입니다.'
+        : '네트워크 오류입니다.';
 
     return Center(
       child: Column(
@@ -727,17 +697,32 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     final pageCount = (ordered.length / 4).ceil();
     final pendingId = TabNavCoordinator.instance.pendingNewsConcertId;
     final pendingName = TabNavCoordinator.instance.pendingNewsConcertName;
-    final targetIndex = pendingId == null
-        ? -1
-        : ordered.indexWhere((item) => item.concertId == pendingId);
-    final resolvedIndex = targetIndex >= 0
-        ? targetIndex
-        : pendingName == null
-        ? -1
-        : ordered.indexWhere((item) => item.concert == pendingName);
-    final targetPage = resolvedIndex < 0 ? 0 : resolvedIndex ~/ 4;
+    final resolvedIndex = findNewsCard(
+      ordered,
+      key: TabNavCoordinator.instance.pendingNewsCardKey,
+      concertId: pendingId,
+      name: pendingName,
+    );
+    final anchorIndex = ordered.indexWhere(
+      (item) => newsCardKey(item) == _visibleCardKey,
+    );
+    final targetPage = resolvedIndex < 0
+        ? (anchorIndex >= 0 ? anchorIndex ~/ 4 : (_newsPageTarget ?? 0)).clamp(
+            0,
+            pageCount - 1,
+          )
+        : resolvedIndex ~/ 4;
+    _consumeNewsTarget(missing: resolvedIndex < 0);
+    if (resolvedIndex >= 0 || anchorIndex < 0) {
+      _visibleCardKey = newsCardKey(
+        ordered[resolvedIndex >= 0 ? resolvedIndex : targetPage * 4],
+      );
+    }
     if (_newsPageController == null || _newsPageTarget != targetPage) {
-      _newsPageController?.dispose();
+      final oldController = _newsPageController;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => oldController?.dispose(),
+      );
       _newsPageTarget = targetPage;
       _newsPageController = PageController(initialPage: targetPage);
       if ((pendingId != null || pendingName != null) && resolvedIndex >= 0) {
@@ -748,8 +733,12 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
     return SizedBox.expand(
       child: PageView.builder(
-        key: ValueKey('news-page-$targetPage'),
+        key: ObjectKey(_newsPageController),
         controller: _newsPageController,
+        onPageChanged: (page) {
+          _newsPageTarget = page;
+          _visibleCardKey = newsCardKey(ordered[page * 4]);
+        },
         itemCount: pageCount,
         physics: const PageScrollPhysics(),
         itemBuilder: (context, page) {

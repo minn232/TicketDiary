@@ -5,14 +5,18 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../widgets/summary_calendar.dart';
+import '../widgets/report_metric_chart.dart';
 import '../services/api_client.dart';
-import '../services/social_service.dart';
+import '../services/news_list_service.dart';
+import '../services/news_card_identity.dart';
+import '../services/favorites_store.dart';
 import '../models/news_model.dart';
 import '../services/ticket_refresh_bus.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/tab_nav_coordinator.dart';
 import '../widgets/summary_region_map.dart' show summaryInk, summaryPaper;
+import '../widgets/vendor_ticketing_buttons.dart' show vendorTicketingInfo;
 
 // 결산 탭: 관람 기록과 기간별 통계를 표시합니다.
 // 값은 `GET /summary` 원본 JSON을 그대로 읽음(SummaryModel 미사용).
@@ -35,10 +39,9 @@ const _palette = [
 
 Color _ticketingBrandColor(String name) {
   final normalized = name.toUpperCase().replaceAll(' ', '');
-  if (normalized.contains('INTERPARK')) return const Color(0xFF1E5AA8);
-  if (normalized.contains('YES24')) return const Color(0xFF2D62A3);
-  if (normalized.contains('MELON')) return const Color(0xFF00B900);
-  if (normalized.contains('TICKETLINK')) return const Color(0xFFE84B3C);
+  for (final entry in vendorTicketingInfo.entries) {
+    if (normalized.contains(entry.key)) return entry.value.color;
+  }
   return _palette[0];
 }
 
@@ -81,13 +84,40 @@ class _SummaryScreenState extends State<SummaryScreen> {
   // 연도 칩 선택(차트별). 페이지가 화면에서 사라졌다 다시 만들어져도 유지하려고 화면 State에 보관
   final Map<String, String> _yearSelection = {};
   late Future<List<NewsModel>> _newsFuture;
+  Timer? _newsRefreshTimer;
+
+  void _onNewsListUpdated() {
+    final items = NewsListService.updates.value;
+    if (mounted && items != null) {
+      setState(() => _newsFuture = Future.value(items));
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _load();
-    _newsFuture = SocialService().getNewsFeed();
+    _newsFuture = _loadCalendarNews();
+    NewsListService.updates.addListener(_onNewsListUpdated);
+    _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        unawaited(_loadCalendarNews().catchError((Object _) => <NewsModel>[]));
+      }
+    });
     TicketRefreshBus.tick.addListener(_load);
+    FavoritesStore.instance.addListener(_refreshCalendarNews);
+  }
+
+  /// 소식탭과 동일하게 현재 팔로우 중인 아티스트의 소식만 캘린더에
+  /// 사용합니다. 서버에는 언팔로우 이후에도 과거 feed가 남을 수 있으므로
+  /// 단순히 GET /social/feed 결과를 그대로 쓰면 캘린더와 소식탭이 달라집니다.
+  Future<List<NewsModel>> _loadCalendarNews() => NewsListService().load();
+
+  void _refreshCalendarNews() {
+    if (!mounted) return;
+    setState(() {
+      _newsFuture = _loadCalendarNews();
+    });
   }
 
   // 마지막으로 보낸 요청의 결과만 반영(연달아 눌렀을 때 늦게 온 이전 응답이 덮어쓰지 않게)
@@ -131,7 +161,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
 
   @override
   void dispose() {
+    _newsRefreshTimer?.cancel();
+    NewsListService.updates.removeListener(_onNewsListUpdated);
     TicketRefreshBus.tick.removeListener(_load);
+    FavoritesStore.instance.removeListener(_refreshCalendarNews);
     _calendarSelection.dispose();
     _noticeTimer?.cancel();
     _dismissBubble();
@@ -194,14 +227,20 @@ class _SummaryScreenState extends State<SummaryScreen> {
                     news: newsSnapshot.data ?? const [],
                     selection: _calendarSelection,
                     onNewsTap: (item) {
+                      TabNavCoordinator.instance.pendingNewsCardKey =
+                          newsCardKey(item);
                       TabNavCoordinator.instance.pendingNewsConcertId =
                           item.concertId;
                       TabNavCoordinator.instance.pendingNewsConcertName =
                           item.concert;
                       TabNavCoordinator.instance.requestTab(DiaryTab.news);
                     },
-                    onTicketTap: (_) =>
-                        TabNavCoordinator.instance.requestTab(DiaryTab.diary),
+                    onTicketTap: (ticket) {
+                      TabNavCoordinator.instance.pendingDiaryTicket = ticket;
+                      TabNavCoordinator.instance.pendingDiaryTicketId =
+                          ticket['ticket_id']?.toString();
+                      TabNavCoordinator.instance.requestTab(DiaryTab.diary);
+                    },
                   )
                 : _Body(
                     data: data,
@@ -486,75 +525,130 @@ class _Body extends StatelessWidget {
         ? 0
         : weekdays.reduce((a, b) => a > b ? a : b);
 
-    final summaryTiles = <Widget>[
-      _Tile(inline: true, '관람', '${_int(data['concert_count'])}회'),
-      _Tile(inline: true, '총 지출', _won(_int(data['total_spent']))),
-      _Tile(
-        inline: true,
-        '평균 티켓값',
-        data['avg_ticket_price'] == null
-            ? '-'
-            : _won((_int(data['avg_ticket_price']) ~/ 1000) * 1000),
-      ),
-      _Tile(
-        inline: true,
-        '가장 많이 본 장르',
-        genres.isEmpty ? '-' : genres.join(', '),
-      ),
-      _Tile(
-        inline: true,
-        '총 관람 시간',
-        _hours(_int(data['total_runtime_minutes'])),
-        sub: '시간 모름 ${_int(data['runtime_missing_count'])}장',
-      ),
-      _Tile(
-        inline: true,
-        '들은 곡',
-        '${_int(data['song_count'])}곡',
-        sub: '+ 어림 ${_int(data['song_count_estimated'])}곡',
-      ),
-      _Tile(
-        inline: true,
-        '사진 / 일기',
-        '${_int(data['photo_count'])}장 / ${_int(data['diary_count'])}개',
-      ),
-      _Tile(
-        inline: true,
-        '한 달 최다',
-        busiest == null ? '-' : '${busiest['count']}회',
-        sub: busiest == null ? null : '${busiest['month']}',
-      ),
-    ];
-
-    // 기록 타일은 값이 있는 것만 보여주고(없으면 카드째 숨김), 개수에 맞춰 격자를 정함
-    final recordTiles = <Widget>[
-      if (maxSpend != null)
-        _Tile(
-          '최고 지출',
-          _won(_int(maxSpend['price'])),
-          sub: '${maxSpend['concert_name']}',
+    _CardSpec metric(
+      String title,
+      List<(String, double, String)> rows, {
+      String? note,
+    }) => _CardSpec(
+      title: title,
+      flex: 1,
+      minHeight: 300,
+      child: ReportMetricChart(rows: rows, note: note),
+    );
+    final metricCards = <_CardSpec>[
+      metric('관람 횟수', [
+        (
+          '관람',
+          _int(data['concert_count']).toDouble(),
+          '${_int(data['concert_count'])}회',
         ),
+      ]),
+      metric('총 지출', [
+        (
+          '총 지출',
+          _int(data['total_spent']).toDouble(),
+          _won(_int(data['total_spent'])),
+        ),
+      ]),
+      if (data['avg_ticket_price'] != null || maxSpend != null)
+        metric(
+          '티켓 가격 비교',
+          [
+            if (data['avg_ticket_price'] != null)
+              (
+                '평균',
+                _int(data['avg_ticket_price']).toDouble(),
+                _won(_int(data['avg_ticket_price'])),
+              ),
+            if (maxSpend != null)
+              (
+                '최고 지출',
+                _int(maxSpend['price']).toDouble(),
+                _won(_int(maxSpend['price'])),
+              ),
+          ],
+          note: maxSpend == null
+              ? null
+              : '최고 지출 공연: ${maxSpend['concert_name']}',
+        ),
+      _CardSpec(
+        title: '가장 많이 본 장르',
+        note: '공동 최다 장르 · 장르별 횟수와 비중은 제공되지 않습니다.',
+        flex: 1,
+        minHeight: 300,
+        child: _NewArtists(names: genres),
+      ),
+      metric('총 관람 시간', [
+        (
+          '관람 시간',
+          _int(data['total_runtime_minutes']).toDouble(),
+          _hours(_int(data['total_runtime_minutes'])),
+        ),
+      ], note: '시간 정보가 없는 티켓 ${_int(data['runtime_missing_count'])}장'),
+      metric('들은 곡', [
+        (
+          '집계된 곡',
+          _int(data['song_count']).toDouble(),
+          '${_int(data['song_count'])}곡',
+        ),
+        (
+          '추정된 곡',
+          _int(data['song_count_estimated']).toDouble(),
+          '${_int(data['song_count_estimated'])}곡',
+        ),
+      ], note: '집계값과 추정값을 구분해 표시합니다.'),
+      metric('남긴 사진', [
+        (
+          '사진',
+          _int(data['photo_count']).toDouble(),
+          '${_int(data['photo_count'])}장',
+        ),
+      ]),
+      metric('남긴 일기', [
+        (
+          '일기',
+          _int(data['diary_count']).toDouble(),
+          '${_int(data['diary_count'])}개',
+        ),
+      ]),
+      if (busiest != null)
+        metric('한 달 최다 관람', [
+          (
+            '${busiest['month']}',
+            _int(busiest['count']).toDouble(),
+            '${busiest['count']}회',
+          ),
+        ]),
       if (topSpendArtist != null)
-        _Tile(
-          '가장 많이 쓴 아티스트',
-          '${topSpendArtist['name']}',
-          sub: _won(_int(topSpendArtist['amount'])),
-        ),
+        metric('가장 많이 쓴 아티스트', [
+          (
+            '${topSpendArtist['name']}',
+            _int(topSpendArtist['amount']).toDouble(),
+            _won(_int(topSpendArtist['amount'])),
+          ),
+        ]),
       if (heard != null)
-        _Tile(
-          '가장 많이 들은 곡',
-          '${heard['name']}',
-          sub: '${heard['artist'] ?? ''} · ${heard['count']}번',
-        ),
+        metric('가장 많이 들은 곡', [
+          (
+            '${heard['name']}',
+            _int(heard['count']).toDouble(),
+            '${heard['count']}번',
+          ),
+        ], note: '${heard['artist'] ?? ''}'),
       if (rare != null)
-        _Tile(
-          '가장 희귀한 곡',
-          '${rare['name']}',
-          sub:
-              '예상 ${_pct((rare['probability'] as num) * 100)} · ${rare['concert_name']}',
+        _CardSpec(
+          title: '가장 희귀한 곡',
+          flex: 1,
+          minHeight: 300,
+          note: '${rare['name']} · ${rare['concert_name']}',
+          child: _DonutBlock(
+            '예상 출현',
+            (rare['probability'] as num) * 100,
+            '그 외',
+            100 - (rare['probability'] as num) * 100,
+          ),
         ),
     ];
-
     // 전체 기간의 연도 선택 차트는 칩이 제목 줄에 들어가므로 카드 전체를 차트가 그림
     _CardSpec monthSpec(String title, Widget chart) => _CardSpec(
       title: title,
@@ -565,30 +659,9 @@ class _Body extends StatelessWidget {
       child: chart,
     );
 
-    final pages = <Widget>[
+    final sections = <_PageOfCards>[
       // 1페이지: 요약 / 기록
-      _PageOfCards(
-        cards: [
-          _CardSpec(
-            title: '요약',
-            flex: 44,
-            minHeight: 250,
-            narrowMinHeight: 270,
-            child: _TileGrid(tiles: summaryTiles),
-          ),
-          if (recordTiles.isNotEmpty)
-            _CardSpec(
-              title: '기록',
-              flex: 20,
-              minHeight: recordTiles.length > 2 ? 190 : 120,
-              narrowMinHeight: recordTiles.length > 2 ? 200 : 120,
-              child: _TileGrid(
-                columns: recordTiles.length == 4 ? 2 : recordTiles.length,
-                tiles: recordTiles,
-              ),
-            ),
-        ],
-      ),
+      _PageOfCards(cards: [...metricCards]),
       // 2페이지: 월별 관람 / 월별 지출 / 요일별
       _PageOfCards(
         cards: [
@@ -734,6 +807,47 @@ class _Body extends StatelessWidget {
         ],
       ),
     ];
+    final allCards = [for (final section in sections) ...section.cards];
+    final groups = <String, List<_CardSpec>>{
+      '관람': [],
+      '지출': [],
+      '곡': [],
+      '아티스트': [],
+      '취향': [],
+      '기록': [],
+    };
+    for (final card in allCards) {
+      final title = card.title;
+      final topic = switch (title) {
+        '총 지출' || '티켓 가격 비교' || '월별 지출' || '가장 많이 쓴 아티스트' || '예매처 비중' => '지출',
+        '들은 곡' || '가장 많이 들은 곡' || '가장 희귀한 곡' => '곡',
+        '가장 많이 본 장르' || '선호 비율' => '취향',
+        '남긴 사진' || '남긴 일기' => '기록',
+        _ when title.contains('아티스트') => '아티스트',
+        _ => '관람',
+      };
+      groups[topic]!.add(card);
+    }
+    final pages = [
+      for (final group in groups.entries)
+        if (group.value.isNotEmpty)
+          Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  group.key,
+                  style: const TextStyle(
+                    color: summaryInk,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Expanded(child: _PageOfCards(cards: group.value)),
+            ],
+          ),
+    ];
     return _Pager(
       pages: pages,
       initialPage: initialPage,
@@ -807,21 +921,23 @@ class _PagerState extends State<_Pager> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              for (var i = 0; i < _count; i++)
-                GestureDetector(
-                  onTap: () => _goTo(i),
-                  child: Container(
-                    width: i == _page ? 18 : 8,
-                    height: 8,
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: i == _page
-                          ? summaryInk
-                          : summaryInk.withValues(alpha: .3),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
+              IconButton(
+                tooltip: '이전 보고서',
+                onPressed: () => _goTo((_page - 1 + _count) % _count),
+                icon: const Icon(Icons.chevron_left, color: summaryInk),
+              ),
+              Text(
+                '${_page + 1} / $_count',
+                style: const TextStyle(
+                  color: summaryInk,
+                  fontWeight: FontWeight.w700,
                 ),
+              ),
+              IconButton(
+                tooltip: '다음 보고서',
+                onPressed: () => _goTo((_page + 1) % _count),
+                icon: const Icon(Icons.chevron_right, color: summaryInk),
+              ),
             ],
           ),
         ),
@@ -860,62 +976,65 @@ class _CardSpec {
 
 class _PageOfCards extends StatelessWidget {
   const _PageOfCards({required this.cards});
-
   final List<_CardSpec> cards;
 
   @override
   Widget build(BuildContext context) {
-    const gap = 10.0;
     return LayoutBuilder(
       builder: (context, box) {
-        // _TileGrid가 2열로 접히는 폭(안쪽 폭 480 미만)이면 좁은 화면용 높이를 씀
-        final narrow = box.maxWidth - 8 - 28 < 480;
-        double heightOf(_CardSpec c) =>
-            narrow ? (c.narrowMinHeight ?? c.minHeight) : c.minHeight;
-        final need =
-            cards.fold<double>(0, (sum, c) => sum + heightOf(c)) +
-            gap * (cards.length - 1) +
-            8;
-        // 모자라면 스크롤 대신 가상의 큰 화면에 그려 통째로 줄여 맞춤(너무 작아지면 스크롤)
-        final scale = math.min(1.0, (box.maxHeight / need));
-        if (scale >= 0.65) {
-          final w = box.maxWidth / scale;
-          final h = box.maxHeight / scale;
-          return FittedBox(
-            fit: BoxFit.fill,
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: w,
-              height: h,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
-                child: Column(
-                  children: [
-                    for (var i = 0; i < cards.length; i++) ...[
-                      if (i > 0) const SizedBox(height: gap),
-                      Expanded(
-                        flex: cards[i].flex,
-                        child: cards[i].fullCard ?? _Card(spec: cards[i]),
-                      ),
+        const gap = 8.0;
+        // 주제 전체를 고정 격자로 보여줍니다. 작은 화면에서는 카드 내부의
+        // 좌표계를 함께 축소해 차트와 터치 영역이 잘리거나 넘치지 않게 합니다.
+        final columns = cards.length >= 4 || box.maxWidth > box.maxHeight
+            ? 2
+            : 1;
+        final rows = (cards.length / columns).ceil();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
+          child: Column(
+            children: [
+              for (var row = 0; row < rows; row++) ...[
+                if (row > 0) const SizedBox(height: gap),
+                Expanded(
+                  child: Row(
+                    children: [
+                      for (var col = 0; col < columns; col++) ...[
+                        if (col > 0) const SizedBox(width: gap),
+                        Expanded(
+                          child: row * columns + col >= cards.length
+                              ? const SizedBox.shrink()
+                              : LayoutBuilder(
+                                  builder: (_, cell) {
+                                    final card = cards[row * columns + col];
+                                    final scale = math.min(
+                                      1.0,
+                                      math.min(
+                                        cell.maxWidth / 200,
+                                        cell.maxHeight /
+                                            (card.child is ReportMetricChart
+                                                ? 150
+                                                : 210),
+                                      ),
+                                    );
+                                    return FittedBox(
+                                      fit: BoxFit.contain,
+                                      child: SizedBox(
+                                        width: cell.maxWidth / scale,
+                                        height: cell.maxHeight / scale,
+                                        child:
+                                            card.fullCard ?? _Card(spec: card),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-            ),
-          );
-        }
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(0, 0, 8, 16),
-          children: [
-            for (final c in cards)
-              Padding(
-                padding: const EdgeInsets.only(bottom: gap),
-                child: SizedBox(
-                  height: heightOf(c),
-                  child: c.fullCard ?? _Card(spec: c),
-                ),
-              ),
-          ],
+              ],
+            ],
+          ),
         );
       },
     );
@@ -953,15 +1072,15 @@ class _CardShell extends StatelessWidget {
       style: const TextStyle(
         color: summaryInk,
         fontWeight: FontWeight.w800,
-        fontSize: 15,
+        fontSize: 16,
       ),
     );
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: summaryPaper,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: summaryInk.withValues(alpha: .28)),
+        color: const Color(0xFFFFFAF0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD2BFA7)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -980,13 +1099,12 @@ class _CardShell extends StatelessWidget {
               padding: const EdgeInsets.only(top: 2),
               child: Text(
                 note!,
-                style: TextStyle(
-                  color: summaryInk.withValues(alpha: .6),
-                  fontSize: 11,
-                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: const Color(0xFF715849), fontSize: 12),
               ),
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Expanded(child: child),
         ],
       ),
@@ -1201,7 +1319,7 @@ class _Tile extends StatelessWidget {
             style: TextStyle(
               color: summaryInk,
               fontWeight: FontWeight.w800,
-              fontSize: (sideBySide ? 18 : 20) * k,
+              fontSize: (sideBySide ? 24 : 26) * k,
             ),
           ),
         );
@@ -1212,14 +1330,14 @@ class _Tile extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: summaryInk.withValues(alpha: .6),
-                  fontSize: 11 * k,
+                  color: const Color(0xFF715849),
+                  fontSize: 12 * k,
                 ),
               );
         return Container(
           padding: EdgeInsets.symmetric(horizontal: 10 * k, vertical: 5 * k),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .35),
+            color: const Color(0xFFF0E5D5),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Column(
@@ -1231,8 +1349,9 @@ class _Tile extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: summaryInk.withValues(alpha: .7),
-                  fontSize: 12 * k,
+                  color: const Color(0xFF634B3E),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13 * k,
                 ),
               ),
               if (sideBySide)
@@ -1763,7 +1882,8 @@ class _HBars extends StatelessWidget {
     if (items.isEmpty) return const _Empty();
     final maxV = maxValue ?? items.map((e) => e.$2).reduce(math.max);
     return LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
+      builder: (context, constraints) => SizedBox(
+        height: constraints.maxHeight,
         child: ConstrainedBox(
           constraints: BoxConstraints(minHeight: constraints.maxHeight),
           child: Column(
@@ -1938,23 +2058,84 @@ class _YearTabbedBarsState extends State<_YearTabbedBars> {
 }
 
 // 처음 본 아티스트 이름표(많으면 위아래로 스크롤)
-class _NewArtists extends StatelessWidget {
+class _NewArtists extends StatefulWidget {
   const _NewArtists({required this.names});
 
   final List<String> names;
 
   @override
+  State<_NewArtists> createState() => _NewArtistsState();
+}
+
+class _NewArtistsState extends State<_NewArtists> {
+  int _page = 0;
+  @override
   Widget build(BuildContext context) {
+    final names = widget.names;
     if (names.isEmpty) return const _Empty();
-    return SingleChildScrollView(
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [for (final n in names) _Pill(n)],
+    final count = (names.length / 4).ceil();
+    final page = _page.clamp(0, count - 1);
+    return Column(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final name in names.skip(page * 4).take(4))
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _accent2,
+                          ),
+                        ),
+                        Container(width: 20, height: 2, color: _accent2),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              color: summaryInk,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
-      ),
+        if (count > 1)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                onPressed: page > 0
+                    ? () => setState(() => _page = page - 1)
+                    : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text('${page + 1} / $count'),
+              IconButton(
+                onPressed: page < count - 1
+                    ? () => setState(() => _page = page + 1)
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+      ],
     );
   }
 }

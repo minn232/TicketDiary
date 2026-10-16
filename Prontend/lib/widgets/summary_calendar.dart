@@ -6,6 +6,7 @@ import '../services/sound_effect_service.dart';
 
 const _ink = Color(0xFF5C4033);
 const _paper = Color(0xFFE5D3B9);
+const _diaryPaper = Color(0xFFF4F1E1);
 
 class SummaryCalendar extends StatelessWidget {
   const SummaryCalendar({
@@ -32,6 +33,8 @@ class SummaryCalendar extends StatelessWidget {
       final rows = ((days + offset) / 7).ceil();
       final now = DateTime.now();
       final grouped = <DateTime, List<Map<String, dynamic>>>{};
+      // 관람 완료 공연은 결산 API의 ticket_details를 기준으로 표시합니다.
+      // 소식 데이터와 달리 과거 관람 기록은 캘린더에 남아 있어야 합니다.
       for (final ticket in tickets) {
         final date = DateTime.tryParse('${ticket['date']}');
         if (date != null) {
@@ -55,22 +58,35 @@ class SummaryCalendar extends StatelessWidget {
         final start = item.concertDate;
         final end = item.concertEndDate ?? start;
         if (start != null && end != null) {
-          for (
-            var day = 0;
-            !DateTime(
-              start.year,
-              start.month,
-              start.day + day,
-            ).isAfter(DateTime(end.year, end.month, end.day));
-            day++
-          ) {
-            addNews(
-              DateTime(start.year, start.month, start.day + day),
-              'concert',
-              day: day + 1,
-            );
+          final todayDate = DateTime(now.year, now.month, now.day);
+          final endDate = DateTime(end.year, end.month, end.day);
+          // 소식탭에서 이미 지나간 공연 카드를 보여주지 않으므로,
+          // 캘린더에도 과거 공연 일정은 만들지 않습니다.
+          if (!endDate.isBefore(todayDate)) {
+            for (
+              var day = 0;
+              !DateTime(
+                start.year,
+                start.month,
+                start.day + day,
+              ).isAfter(DateTime(end.year, end.month, end.day));
+              day++
+            ) {
+              addNews(
+                DateTime(start.year, start.month, start.day + day),
+                'concert',
+                day: day + 1,
+              );
+            }
           }
         }
+      }
+      for (final date in grouped.keys.toList()) {
+        final items = grouped[date]!;
+        grouped[date] = [
+          ...items.where((item) => item['kind'] == 'ticketing'),
+          ...items.where((item) => item['kind'] != 'ticketing'),
+        ];
       }
       final entries = grouped[selected] ?? [];
       final currentMonth = DateTime(now.year, now.month);
@@ -88,6 +104,13 @@ class SummaryCalendar extends StatelessWidget {
         cursor = DateTime(cursor.year, cursor.month + 1)
       ) {
         availableMonths.add(cursor);
+      }
+      // 일정 데이터가 없어도 현재 달부터 12개월 뒤까지는 탐색할 수 있게
+      // 합니다. 미래 날짜는 소식/관람 데이터가 없어도 선택 가능합니다.
+      for (var i = 0; i <= 12; i++) {
+        availableMonths.add(
+          DateTime(currentMonth.year, currentMonth.month + i),
+        );
       }
       final months = availableMonths.toList()..sort();
       final monthIndex = months.indexWhere(
@@ -297,16 +320,47 @@ class SummaryCalendar extends StatelessWidget {
                                                       ),
                                                     ),
                                                     const SizedBox(height: 3),
-                                                    Container(
-                                                      width: 4,
-                                                      height: 4,
-                                                      decoration: BoxDecoration(
-                                                        shape: BoxShape.circle,
-                                                        color: count == 0
-                                                            ? Colors.transparent
-                                                            : active
-                                                            ? _paper
-                                                            : _ink,
+                                                    SizedBox(
+                                                      height: 6,
+                                                      child: Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: [
+                                                          for (final item
+                                                              in grouped[date] ??
+                                                                  const <
+                                                                    Map<
+                                                                      String,
+                                                                      dynamic
+                                                                    >
+                                                                  >[])
+                                                            Container(
+                                                              width: 5,
+                                                              height: 5,
+                                                              margin:
+                                                                  const EdgeInsets.symmetric(
+                                                                    horizontal:
+                                                                        1,
+                                                                  ),
+                                                              decoration: BoxDecoration(
+                                                                shape: BoxShape
+                                                                    .circle,
+                                                                border:
+                                                                    Border.all(
+                                                                      color:
+                                                                          _ink,
+                                                                      width: .5,
+                                                                    ),
+                                                                color:
+                                                                    item['kind'] ==
+                                                                        'ticketing'
+                                                                    ? _diaryPaper
+                                                                    : active
+                                                                    ? _paper
+                                                                    : _ink,
+                                                              ),
+                                                            ),
+                                                        ],
                                                       ),
                                                     ),
                                                   ],
@@ -372,7 +426,9 @@ class SummaryCalendar extends StatelessWidget {
                                   child: Container(
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
-                                      color: _paper,
+                                      color: ticket['kind'] == 'ticketing'
+                                          ? _diaryPaper
+                                          : _paper,
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Column(

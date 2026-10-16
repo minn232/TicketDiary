@@ -70,6 +70,11 @@ class TabNavCoordinator {
   /// 결산 캘린더에서 소식탭으로 이동할 때 열어둘 공연 식별자.
   String? pendingNewsConcertId;
   String? pendingNewsConcertName;
+  String? pendingNewsCardKey;
+
+  /// 결산 캘린더에서 관람 기록 카드를 눌렀을 때 열 다이어리 티켓 id.
+  String? pendingDiaryTicketId;
+  Map<String, dynamic>? pendingDiaryTicket;
 
   /// 전환 중에 새로 요청된, 아직 처리 못 한 다음 목적지. 여러 번 요청되면
   /// 마지막 것만 남습니다(중간 탭들은 건너뜀).
@@ -78,6 +83,7 @@ class TabNavCoordinator {
   /// [registerExitTransition] 참고.
   DiaryTab? _exitTransitionTab;
   Future<void> Function()? _exitTransitionRunner;
+  SoundPlayback? _tabSound;
 
   /// 탭을 떠나기 전에 먼저 재생할 자기 연출(예: 소식 탭 풀탭 접힘)을
   /// 등록합니다. 등록돼 있으면 이 탭을 떠날 때 [runner]가 끝난 뒤에야
@@ -116,6 +122,10 @@ class TabNavCoordinator {
     // _queuedTab으로 쌓입니다.
     isTransitioning.value = true;
     _queuedTab = null;
+    // 빠른 연속 전환이나 예외로 이전 전환의 종료 콜백이 늦게 실행돼도
+    // 탭 효과음이 서로 겹치지 않도록 현재 재생을 먼저 끊습니다.
+    _tabSound?.stop();
+    _tabSound = null;
 
     // [백엔드 수정] 퇴장 연출이 등록돼 있으면 페이지 넘김 전에 먼저 재생.
     // 응답 없이 멈추지 않도록 안전 타임아웃을 둠.
@@ -147,6 +157,7 @@ class TabNavCoordinator {
     // 라우트를 넣어주므로 안전합니다.
     navigator.pushAndRemoveUntil(route, (r) => false);
     final tabSound = SoundEffectService.instance.start(SoundEffect.tabPages);
+    _tabSound = tabSound;
 
     // 전환(진입) 애니메이션이 고정 시간만 재생되고 끝나면 곧바로 잠금을
     // 풀고, 그 사이 대기 중이던 다음 탭이 있으면 이어서 시작합니다. 소식
@@ -154,6 +165,7 @@ class TabNavCoordinator {
     // 특별 취급 없이 모든 탭이 동일하게 애니메이션 완료 시점에 풀립니다.
     void unlockAndMaybeAdvance() {
       tabSound.stop();
+      if (identical(_tabSound, tabSound)) _tabSound = null;
       isTransitioning.value = false;
       final next = _queuedTab;
       if (next != null && next != tab) {

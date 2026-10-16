@@ -44,10 +44,11 @@ class AppNetworkImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final normalizedUrl = _normalizeUrl(url);
     if (kIsWeb) {
       // 웹은 기존 동작 그대로 유지(위 클래스 doc 참고).
       return Image.network(
-        url,
+        normalizedUrl,
         fit: fit,
         width: width,
         height: height,
@@ -63,7 +64,7 @@ class AppNetworkImage extends StatelessWidget {
     }
 
     return CachedNetworkImage(
-      imageUrl: url,
+      imageUrl: normalizedUrl,
       fit: fit,
       width: width,
       height: height,
@@ -82,5 +83,16 @@ class AppNetworkImage extends StatelessWidget {
           ? null
           : (context, url, error) => errorBuilder!(context),
     );
+  }
+
+  /// 일부 KOPIS/기존 DB 데이터는 `www.example.com/path`처럼 스킴 없이
+  /// 저장되어 ImageProvider가 로컬 경로로 해석할 수 있습니다.
+  static String _normalizeUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.startsWith('//')) return 'https:$trimmed';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    return trimmed.isEmpty ? trimmed : 'https://$trimmed';
   }
 }

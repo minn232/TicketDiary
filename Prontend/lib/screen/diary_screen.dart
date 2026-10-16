@@ -26,6 +26,7 @@ import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/landscape_upcoming_ticket_panel.dart';
 import 'package:ticketdiary/widgets/poster_fallback_gradient.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
+import 'package:ticketdiary/widgets/tab_nav_coordinator.dart';
 import 'package:ticketdiary/widgets/add_ticket_option.dart';
 import 'package:ticketdiary/widgets/entry_ticket_tear_piece.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
@@ -340,6 +341,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 있는 동안 1회만 불러오면 충분 — 새로 추가/삭제한 티켓은 그 자리에서
   /// [_tickets]를 직접 갱신하므로 매번 다시 불러올 필요가 없습니다).
   static bool _backendTicketsLoaded = false;
+  static Object? _lastTicketLoadError;
 
   // [백엔드 수정]
   // [_tickets]가 서버 응답이 아니라 [TicketCacheStore] 로컬 캐시로 채워져
@@ -411,7 +413,61 @@ class _DiaryScreenState extends State<DiaryScreen> {
   void _reloadTickets() {
     unawaited(
       _loadTicketsFromBackend().then((_) {
-        if (mounted) setState(() {});
+        if (!mounted) return;
+        final coordinator = TabNavCoordinator.instance;
+        final pendingId = coordinator.pendingDiaryTicketId;
+        final record = coordinator.pendingDiaryTicket;
+        if (pendingId != null || record != null) {
+          final loadError = _lastTicketLoadError;
+          if (loadError != null) {
+            coordinator.pendingDiaryTicket = null;
+            coordinator.pendingDiaryTicketId = null;
+            final message =
+                loadError is ApiException && loadError.statusCode > 0
+                ? '서버 오류입니다.'
+                : '네트워크 오류입니다.';
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _showSnack(message);
+            });
+            setState(() {});
+            return;
+          }
+          var ticketIndex = pendingId == null
+              ? -1
+              : _tickets.indexWhere(
+                  (ticket) =>
+                      ticket.info?.ticketId == pendingId ||
+                      ticket.id == pendingId,
+                );
+          if (pendingId == null && record != null) {
+            final date = DateTime.tryParse('${record['date']}');
+            final matches = _tickets.asMap().entries.where((entry) {
+              final info = entry.value.info;
+              return info?.concertName == record['concert_name'] &&
+                  date != null &&
+                  info?.date != null &&
+                  DateUtils.isSameDay(info!.date, date);
+            }).toList();
+            if (matches.length == 1) ticketIndex = matches.single.key;
+          }
+          coordinator.pendingDiaryTicket = null;
+          coordinator.pendingDiaryTicketId = null;
+          if (ticketIndex >= 0) {
+            final page = ticketIndex < _firstPageTicketCapacity
+                ? 0
+                : 1 +
+                      ((ticketIndex - _firstPageTicketCapacity) /
+                              _otherPageTicketCapacity)
+                          .floor();
+            _currentPageIndex = page.clamp(0, _totalPages - 1);
+            coordinator.pendingDiaryTicketId = null;
+          } else {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _showSnack('해당 티켓을 찾을 수 없어요. 티켓 목록을 확인해주세요.');
+            });
+          }
+        }
+        setState(() {});
       }),
     );
   }
@@ -435,6 +491,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _tickets.any((ticket) => ticket.info?.ticketId != null);
 
   static Future<void> _loadTicketsFromBackend() {
+    _lastTicketLoadError = null;
     if (_backendTicketsLoaded && _hasCachedServerTickets) return Future.value();
     final inFlight = _backendTicketsLoadFuture;
     if (inFlight != null) return inFlight;
@@ -466,14 +523,16 @@ class _DiaryScreenState extends State<DiaryScreen> {
       _usingCachedTickets = false;
       _loadedForUserId = AuthService.instance.userId;
       _backendTicketsLoaded = true;
+      _lastTicketLoadError = null;
       unawaited(
         TicketCacheStore.instance.save(
           tickets,
           userId: AuthService.instance.userId,
         ),
       );
-    } catch (_) {
+    } catch (e) {
       _backendTicketsLoaded = false;
+      _lastTicketLoadError = e;
       await _loadTicketsFromCache();
     }
   }
@@ -2802,8 +2861,19 @@ class _PosterTicketFace extends StatelessWidget {
             ),
           ),
         ],
-        const Spacer(),
-        Row(children: [if (seat.isNotEmpty) _miniStat(context, '좌석', seat)]),
+        // 좌석 정보는 남은 높이 안에서만 표시해 작은 티켓에서도 넘치지 않게 한다.
+        Expanded(
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: seat.isEmpty
+                ? const SizedBox.shrink()
+                : FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.bottomLeft,
+                    child: _miniStat(context, '좌석', seat),
+                  ),
+          ),
+        ),
       ],
     );
   }

@@ -117,6 +117,9 @@ class FavoritesStore extends ChangeNotifier {
     for (final concert in _concerts.values.toList()) {
       unawaited(_backfillMissingConcertFields(concert));
     }
+    for (final artist in _artists.values.toList()) {
+      unawaited(_backfillMissingArtistImage(artist));
+    }
   }
 
   /// 서버에 저장된 찜 목록을 로컬로 병합합니다(다른 기기에서 등록한 찜 반영).
@@ -324,6 +327,7 @@ class FavoritesStore extends ChangeNotifier {
   Future<void> _backfillMissingConcertFields(ConcertModel concert) async {
     final kopisId = concert.kopisId;
     final missingSomething =
+        concert.posterImageUrl.isEmpty ||
         concert.venue == null ||
         concert.startDate == null ||
         concert.ticketingDate == null ||
@@ -339,7 +343,9 @@ class FavoritesStore extends ChangeNotifier {
       if (current == null) return; // 그 사이 찜 해제됐으면 무시
       _concerts[concert.name] = ConcertModel(
         name: current.name,
-        posterImageUrl: current.posterImageUrl,
+        posterImageUrl: current.posterImageUrl.isNotEmpty
+            ? current.posterImageUrl
+            : (detail.posterUrl ?? ''),
         id: current.id,
         kopisId: current.kopisId,
         venue: current.venue ?? detail.venue,
@@ -358,6 +364,43 @@ class FavoritesStore extends ChangeNotifier {
     } catch (_) {
       // 실패해도 무시 - 기존 값 그대로(대부분 "미정") 남습니다.
     }
+  }
+
+  /// 예전에 저장된 찜 아티스트는 이름만 남아 있을 수 있으므로, 이미지가
+  /// 비어 있는 항목만 DB 검색 API로 다시 조회해 표시 정보를 보충합니다.
+  Future<void> _backfillMissingArtistImage(ArtistModel artist) async {
+    if (artist.profileImageUrl.trim().isNotEmpty) return;
+    try {
+      final json = await _client.get(
+        '/artists/search?q=${Uri.encodeQueryComponent(artist.name)}',
+      );
+      final results = json['results'] as List<dynamic>? ?? const [];
+      for (final raw in results) {
+        final item = raw as Map<String, dynamic>;
+        if ((item['name'] as String? ?? '').trim() != artist.name) continue;
+        final image = (item['profile_image_url'] as String? ?? '').trim();
+        if (image.isEmpty) return;
+        final current = _artists[artist.name];
+        if (current == null || current.profileImageUrl.isNotEmpty) return;
+        _artists[artist.name] = ArtistModel(
+          name: current.name,
+          profileImageUrl: _normalizeImageUrl(image),
+        );
+        _revision++;
+        notifyListeners();
+        await _persistArtists();
+        return;
+      }
+    } catch (_) {
+      // 이미지 보충 실패는 기존 찜 목록을 사용할 수 있도록 무시합니다.
+    }
+  }
+
+  static String _normalizeImageUrl(String value) {
+    final url = value.trim();
+    if (url.startsWith('//')) return 'https:$url';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return url.isEmpty ? url : 'https://$url';
   }
 
   Future<void> removeArtist(String name) async {
