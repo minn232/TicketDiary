@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 import asyncssh
 import httpx
@@ -106,12 +107,20 @@ async def _stop_one_pod(pod_id: str) -> bool:
 
 # pod을 깨운 직후 llm_server 헬스체크(base+"/health")가 응답할 때까지 폴링, 안 되면 False(다음날 재시도).
 # 기본 1500초 = 매 기동 vLLM 재설치(컨테이너 디스크가 stop마다 초기화, 5~10분) + vLLM 준비 최대 10분
-async def wait_until_llm_server_ready(timeout_seconds: float = 1500.0, interval_seconds: float = 10.0) -> bool:
+# abort_check: 기동 스크립트가 이미 실패했는지 보는 함수(실패 사유 문자열 또는 None) - 스크립트가
+# 설치 단계에서 죽어도 health는 530만 내서 1500초를 다 기다린 뒤에야 다음 후보로 넘어갔음(10/16)
+async def wait_until_llm_server_ready(
+    timeout_seconds: float = 1500.0,
+    interval_seconds: float = 10.0,
+    abort_check=None,
+    abort_check_every: int = 3,
+) -> bool:
     if not settings.LLM_CRAWL_URL:
         return False
 
     health_url = settings.LLM_CRAWL_URL.rsplit("/", 1)[0] + "/health"
     elapsed = 0.0
+    polls = 0
     last_status = "응답 없음"
     async with httpx.AsyncClient(timeout=10.0) as client:
         while elapsed < timeout_seconds:
@@ -123,6 +132,12 @@ async def wait_until_llm_server_ready(timeout_seconds: float = 1500.0, interval_
                 last_status = f"HTTP {response.status_code}"
             except Exception as e:
                 last_status = describe_http_error(e)
+            polls += 1
+            if abort_check and polls % abort_check_every == 0:
+                reason = await abort_check()
+                if reason:
+                    logger.error(f"[LLM] 기동 스크립트 실패로 준비 대기 중단 (약 {elapsed:.0f}초 시점): {reason}")
+                    return False
             await asyncio.sleep(interval_seconds)
             elapsed += interval_seconds
 
@@ -205,11 +220,30 @@ _TMUX_LOG_SESSION = "vllm_log"
 _VLLM_LOG_PATH = "/workspace/server/vllm.log"
 
 
-async def run_start_script_via_ssh(pod_id: str | None = None) -> bool:
+# 스크립트 출력 로그를 pod·실행 시각별로 분리 - 주/보조 pod, 03시/07시 실행이 한 파일을 덮어써서
+# 남은 로그가 어느 실행 것인지 알 수 없었음(10/16 LLM팀 지적)
+def _start_log_path(pod_id: str) -> str:
+    return f"/workspace/start_vllm_remote_{pod_id}_{datetime.now(timezone.utc):%m%d_%H%M}.log"
+
+
+# 스크립트가 실패하면 "ERROR: ..." 줄을 남김(setup_local.sh 실패, GPU 없음 등) - 그 줄이 보이면
+# 더 기다려도 안 뜨므로 바로 포기. SSH 자체가 안 되면 판단 보류(None)하고 health 대기를 이어감
+async def _start_script_failure(pod_id: str, log_path: str) -> str | None:
+    try:
+        async with await _ssh_connect(pod_id, connect_timeout=10) as conn:
+            result = await conn.run(f"grep -m1 '^ERROR' {log_path}", check=False)
+    except Exception:
+        return None
+    line = str(result.stdout or "").strip()
+    return line[:300] or None
+
+
+async def run_start_script_via_ssh(pod_id: str | None = None, log_path: str | None = None) -> bool:
     pod_id = pod_id or settings.RUNPOD_POD_ID
     if not settings.RUNPOD_API_KEY or not pod_id or not settings.RUNPOD_SSH_KEY_PATH:
         logger.info("RUNPOD_API_KEY/POD_ID/SSH_KEY_PATH 미설정, 원격 실행 건너뜀")
         return False
+    log_path = log_path or _start_log_path(pod_id)
     try:
         async with await _ssh_connect(pod_id, connect_timeout=15) as conn:
             # tmux는 /workspace 밖에 설치돼서 pod을 stop/start하면 사라짐 - 없으면 아래 new-session이
@@ -224,7 +258,7 @@ async def run_start_script_via_ssh(pod_id: str | None = None) -> bool:
                 conn,
                 "start_vllm.sh 세션 생성",
                 f"tmux new-session -d -s {_TMUX_SESSION} -c /workspace "
-                "'bash start_vllm.sh 2>&1 | tee start_vllm_remote.log'",
+                f"'bash start_vllm.sh 2>&1 | tee {log_path}'",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_LOG_SESSION} 2>/dev/null; true", check=False)
             await _run_remote(
@@ -235,7 +269,7 @@ async def run_start_script_via_ssh(pod_id: str | None = None) -> bool:
             )
         logger.info(
             f"[LLM] start_vllm.sh 원격 실행 요청 완료 (pod={pod_id}, tmux 세션 '{_TMUX_SESSION}'=스크립트 진행상황, "
-            f"'{_TMUX_LOG_SESSION}'=vLLM 실시간 로그, 둘 다 SSH로 attach 가능)"
+            f"'{_TMUX_LOG_SESSION}'=vLLM 실시간 로그, 둘 다 SSH로 attach 가능, 스크립트 로그={log_path})"
         )
         return True
     except Exception as e:
@@ -286,10 +320,13 @@ async def _launch_services(pod_id: str) -> bool:
     if not await _wait_for_ssh_ready(pod_id):
         logger.error(f"[LLM] pod은 켜졌지만 SSH 접속이 준비되지 않아 원격 실행을 포기함 (pod={pod_id})")
         return False
-    if not await run_start_script_via_ssh(pod_id):
+    log_path = _start_log_path(pod_id)
+    if not await run_start_script_via_ssh(pod_id, log_path):
         return False
     # 후보 모두 같은 cloudflared 터널이라 health URL은 같음. 여기서 확인해야 vLLM이 안 뜬 pod을
     # 버리고 다음 후보로 넘어갈 수 있음(호출부의 준비 대기는 이미 떠 있어 바로 통과)
-    if settings.LLM_CRAWL_URL and not await wait_until_llm_server_ready():
+    if settings.LLM_CRAWL_URL and not await wait_until_llm_server_ready(
+        abort_check=lambda: _start_script_failure(pod_id, log_path)
+    ):
         return False
     return True

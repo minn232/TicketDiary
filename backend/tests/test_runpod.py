@@ -3,10 +3,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.runpod import (
+    _start_log_path,
     _wait_until_actually_stopped,
     candidate_pod_ids,
     start_pod_and_launch_services,
     stop_pod,
+    wait_until_llm_server_ready,
 )
 
 _SETTINGS_PATCH = {
@@ -186,3 +188,49 @@ async def test_start_returns_false_when_all_candidates_fail():
         result = await start_pod_and_launch_services()
     assert result is False
     assert [c.args[0] for c in stop_one.call_args_list] == ["pod-a"]
+
+
+def _mock_health_client(status_code: int):
+    response = MagicMock(status_code=status_code)
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.get = AsyncMock(return_value=response)
+    return client
+
+
+# 기동 스크립트가 ERROR를 남기면 health 대기 시간을 다 채우지 않고 바로 포기
+@pytest.mark.asyncio
+async def test_wait_ready_aborts_when_start_script_failed():
+    abort_check = AsyncMock(side_effect=[None, "ERROR: setup_local.sh 실패"])
+    with patch("app.services.runpod.settings.LLM_CRAWL_URL", "https://llm.example.com/crawl"), \
+         patch("app.services.runpod.httpx.AsyncClient", return_value=_mock_health_client(530)), \
+         patch("app.services.runpod.asyncio.sleep", AsyncMock()):
+        result = await wait_until_llm_server_ready(
+            timeout_seconds=1500.0, abort_check=abort_check, abort_check_every=1
+        )
+    assert result is False
+    assert abort_check.await_count == 2
+
+
+# 실패 확인이 판단 보류(None)만 내면 기존처럼 timeout까지 기다림
+@pytest.mark.asyncio
+async def test_wait_ready_keeps_waiting_when_no_failure_seen():
+    abort_check = AsyncMock(return_value=None)
+    client = _mock_health_client(530)
+    with patch("app.services.runpod.settings.LLM_CRAWL_URL", "https://llm.example.com/crawl"), \
+         patch("app.services.runpod.httpx.AsyncClient", return_value=client), \
+         patch("app.services.runpod.asyncio.sleep", AsyncMock()):
+        result = await wait_until_llm_server_ready(
+            timeout_seconds=60.0, interval_seconds=10.0, abort_check=abort_check, abort_check_every=3
+        )
+    assert result is False
+    assert client.get.await_count == 6
+    assert abort_check.await_count == 2
+
+
+# 로그 파일 이름에 pod ID가 들어가 주/보조 pod 로그가 섞이지 않음
+def test_start_log_path_is_per_pod():
+    a, b = _start_log_path("pod-a"), _start_log_path("pod-b")
+    assert a.startswith("/workspace/start_vllm_remote_pod-a_") and a.endswith(".log")
+    assert a != b
