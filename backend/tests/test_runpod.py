@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.runpod import (
+    _fetch_ssh_endpoint,
     _start_log_path,
     _wait_until_actually_stopped,
     candidate_pod_ids,
@@ -244,3 +245,36 @@ def test_start_log_path_is_per_pod():
     a, b = _start_log_path("pod-a"), _start_log_path("pod-b")
     assert a.startswith("/workspace/start_vllm_remote_pod-a_") and a.endswith(".log")
     assert a != b
+
+
+def _mock_graphql_client(ports):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {"data": {"pod": {"runtime": {"ports": ports} if ports is not None else None}}}
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.post = AsyncMock(return_value=response)
+    return client
+
+
+# 22/udp가 먼저 와도 22/tcp 공인 포트를 고름 - REST portMappings가 udp 포트를 줘서 SSH가
+# Connection refused로 실패하던 문제(10/16 실제 응답 순서 그대로)
+@pytest.mark.asyncio
+async def test_fetch_ssh_endpoint_picks_public_tcp_22():
+    ports = [
+        {"ip": "213.192.2.86", "isIpPublic": True, "privatePort": 22, "publicPort": 40163, "type": "udp"},
+        {"ip": "100.65.11.5", "isIpPublic": False, "privatePort": 8000, "publicPort": 60834, "type": "http"},
+        {"ip": "213.192.2.86", "isIpPublic": True, "privatePort": 22, "publicPort": 40162, "type": "tcp"},
+    ]
+    with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"),          patch("app.services.runpod.httpx.AsyncClient", return_value=_mock_graphql_client(ports)):
+        assert await _fetch_ssh_endpoint("pod-a") == ("213.192.2.86", 40162)
+
+
+# 막 켜져서 runtime이 없거나 tcp 22가 아직 없으면 예외 - 재시도 루프가 다음 폴링에서 다시 조회
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ports", [None, [{"ip": "1.2.3.4", "isIpPublic": True, "privatePort": 22, "publicPort": 1, "type": "udp"}]])
+async def test_fetch_ssh_endpoint_raises_until_tcp_ready(ports):
+    with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"),          patch("app.services.runpod.httpx.AsyncClient", return_value=_mock_graphql_client(ports)):
+        with pytest.raises(RuntimeError):
+            await _fetch_ssh_endpoint("pod-a")

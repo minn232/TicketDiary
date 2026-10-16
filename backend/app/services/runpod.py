@@ -153,22 +153,33 @@ async def wait_until_llm_server_ready(
 # 할 때마다 바뀌는 걸 실제로 확인함(같은 세션에서 세 번 바뀜) - .env에 고정값을 박아두면
 # 재시작마다 수동으로 고쳐야 해서, 접속 직전에 RunPod API로 그때그때 조회함. 캐싱 안 함 -
 # 매 호출 최신값 보장이 중요하고 이 함수는 pod 시작 시퀀스 안에서만 불려 비용도 무시할 만함.
+# REST v1의 portMappings는 {"22": 포트} 한 칸뿐인데 pod이 22/tcp와 22/udp를 둘 다 열고 있어서
+# 둘 중 아무거나(udp일 때가 많음) 들어옴 → udp 포트로 접속해 Connection refused(10/16 확인,
+# tcp 40162/udp 40163). GraphQL은 포트별 type을 주므로 거기서 tcp 22만 고름
+_RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
+_SSH_PORTS_QUERY = (
+    "query($id: String!) { pod(input: {podId: $id}) "
+    "{ runtime { ports { ip isIpPublic privatePort publicPort type } } } }"
+)
+
+
 async def _fetch_ssh_endpoint(pod_id: str) -> tuple[str, int]:
     async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.get(
-            f"{_RUNPOD_PODS_URL}/{pod_id}",
+        response = await client.post(
+            _RUNPOD_GRAPHQL_URL,
             headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
+            json={"query": _SSH_PORTS_QUERY, "variables": {"id": pod_id}},
         )
         response.raise_for_status()
         data = response.json()
-    host = data.get("publicIp")
-    port = (data.get("portMappings") or {}).get("22")
-    if not host or not port:
-        # pod이 막 시작된 직후엔 네트워크 정보가 아직 안 잡혀있을 수 있음(publicIp가 빈
-        # 문자열) - 호출부(_wait_for_ssh_ready)가 이미 재시도 루프라 예외만 던지면 자연스럽게
-        # 다음 폴링에서 다시 조회됨
-        raise RuntimeError("pod의 SSH 접속 정보(publicIp/portMappings)가 아직 준비되지 않음")
-    return host, int(port)
+    pod = (data.get("data") or {}).get("pod") or {}
+    ports = (pod.get("runtime") or {}).get("ports") or []
+    for port in ports:
+        if port.get("privatePort") == 22 and port.get("type") == "tcp" and port.get("isIpPublic"):
+            return port["ip"], int(port["publicPort"])
+    # pod이 막 시작된 직후엔 runtime/포트가 아직 안 잡혀있을 수 있음 - 호출부
+    # (_wait_for_ssh_ready)가 이미 재시도 루프라 예외만 던지면 다음 폴링에서 다시 조회됨
+    raise RuntimeError("pod의 SSH 접속 정보(공인 IP의 22/tcp)가 아직 준비되지 않음")
 
 
 # Container Start Command 자동화가 리스크로 무산돼(pod 편집이 리셋 유발) SSH 원격 실행으로
