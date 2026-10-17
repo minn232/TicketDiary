@@ -21,27 +21,52 @@ def candidate_pod_ids() -> list[str]:
     return list(dict.fromkeys(i.strip() for i in ids if i.strip()))
 
 
+_RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
+_POD_GPU_QUERY = "query($id: String!) { pod(input: {podId: $id}) { desiredStatus gpuCount } }"
+_POD_RESUME_MUTATION = (
+    "mutation($id: String!) { podResume(input: {podId: $id, gpuCount: 1}) { id desiredStatus gpuCount } }"
+)
+
+
+# GraphQL 요청. 오류도 HTTP 200에 errors로 오므로(존재하지 않는 pod 등) errors가 있으면 예외로 바꿈
+async def _graphql(query: str, variables: dict) -> dict:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            _RUNPOD_GRAPHQL_URL,
+            headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
+            json={"query": query, "variables": variables},
+        )
+        response.raise_for_status()
+        data = response.json()
+    if data.get("errors"):
+        raise RuntimeError("; ".join(str(err.get("message")) for err in data["errors"]))
+    return data.get("data") or {}
+
+
 # RunPod pod을 재개(resume)시킨다. LLM팀 GPU 비용 절감을 위해 pod을 KST 00시 전후에만
 # 띄워두는 정책이라, 크롤링/아티스트 추출 배치 전송 전에 호출해서 미리 깨워둔다.
-# 이미 떠있는 상태에서 호출해도 RunPod API가 별 문제 없이 처리함(멱등) - 중복 호출 걱정 없음
-# pod_id를 안 주면 기본 pod(수동 스크립트용)
+# REST /start는 GPU 개수를 못 받아 pod에 남은 값을 그대로 씀 → 보조 pod이 GPU 0개(메모리 한도
+# 488MB)로 켜져 pip install vllm이 OOM으로 죽었음(10/16~10/17). 그래서 GraphQL podResume에
+# gpuCount 1을 지정하고(GPU 없으면 바로 실패), 켜진 뒤 GPU 개수도 다시 확인함
+# 이미 떠 있으면 다시 resume하지 않고 GPU 개수만 확인. pod_id를 안 주면 기본 pod(수동 스크립트용)
 async def start_pod(pod_id: str | None = None) -> bool:
     pod_id = pod_id or settings.RUNPOD_POD_ID
     if not settings.RUNPOD_API_KEY or not pod_id:
         logger.info("RUNPOD_API_KEY/RUNPOD_POD_ID 미설정, pod 시작 건너뜀")
         return False
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{_RUNPOD_PODS_URL}/{pod_id}/start",
-                headers={"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"},
-            )
-            response.raise_for_status()
-        logger.info(f"[LLM] RunPod pod 시작 요청 성공 (pod={pod_id})")
-        return True
+        pod = (await _graphql(_POD_GPU_QUERY, {"id": pod_id})).get("pod") or {}
+        if pod.get("desiredStatus") != "RUNNING":
+            pod = (await _graphql(_POD_RESUME_MUTATION, {"id": pod_id})).get("podResume") or {}
     except Exception as e:
         logger.error(f"[LLM] RunPod pod 시작 요청 실패 (pod={pod_id}): {describe_http_error(e)}")
         return False
+    if (pod.get("gpuCount") or 0) < 1:
+        logger.error(f"[LLM] RunPod pod이 GPU 없이 켜짐 - 바로 정지 (pod={pod_id}, gpuCount={pod.get('gpuCount')})")
+        await _stop_one_pod(pod_id)
+        return False
+    logger.info(f"[LLM] RunPod pod 시작 요청 성공 (pod={pod_id}, gpuCount={pod.get('gpuCount')})")
+    return True
 
 
 # pod 상태 조회(REST v1). 응답에 "runtime" 필드가 아예 없어서(10/16 실제 응답 확인) 상태는
@@ -156,7 +181,6 @@ async def wait_until_llm_server_ready(
 # REST v1의 portMappings는 {"22": 포트} 한 칸뿐인데 pod이 22/tcp와 22/udp를 둘 다 열고 있어서
 # 둘 중 아무거나(udp일 때가 많음) 들어옴 → udp 포트로 접속해 Connection refused(10/16 확인,
 # tcp 40162/udp 40163). GraphQL은 포트별 type을 주므로 거기서 tcp 22만 고름
-_RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
 _SSH_PORTS_QUERY = (
     "query($id: String!) { pod(input: {podId: $id}) "
     "{ runtime { ports { ip isIpPublic privatePort publicPort type } } } }"

@@ -7,6 +7,7 @@ from app.services.runpod import (
     _start_log_path,
     _wait_until_actually_stopped,
     candidate_pod_ids,
+    start_pod,
     start_pod_and_launch_services,
     stop_pod,
     wait_until_llm_server_ready,
@@ -278,3 +279,56 @@ async def test_fetch_ssh_endpoint_raises_until_tcp_ready(ports):
     with patch("app.services.runpod.settings.RUNPOD_API_KEY", "test-key"),          patch("app.services.runpod.httpx.AsyncClient", return_value=_mock_graphql_client(ports)):
         with pytest.raises(RuntimeError):
             await _fetch_ssh_endpoint("pod-a")
+
+
+def _patch_graphql(*results):
+    return patch("app.services.runpod._graphql", AsyncMock(side_effect=list(results)))
+
+
+# 꺼진 pod은 podResume(gpuCount 1)으로 켬 - REST /start는 남은 gpuCount 0을 그대로 써서 보조 pod이
+# GPU 없이(메모리 488MB) 켜졌음(10/17)
+@pytest.mark.asyncio
+async def test_start_pod_resumes_with_gpu():
+    graphql = AsyncMock(side_effect=[
+        {"pod": {"desiredStatus": "EXITED", "gpuCount": 0}},
+        {"podResume": {"id": "test-pod", "desiredStatus": "RUNNING", "gpuCount": 1}},
+    ])
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="test-key", RUNPOD_POD_ID="test-pod"), \
+         patch("app.services.runpod._graphql", graphql):
+        assert await start_pod() is True
+    assert "gpuCount: 1" in graphql.call_args_list[1].args[0]
+
+
+# GPU 부족 등으로 podResume이 errors를 주면 실패, 정지는 안 보냄(안 켜졌으므로)
+@pytest.mark.asyncio
+async def test_start_pod_false_when_resume_errors():
+    stop = AsyncMock(return_value=True)
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="test-key", RUNPOD_POD_ID="test-pod"), \
+         _patch_graphql({"pod": {"desiredStatus": "EXITED", "gpuCount": 1}}, RuntimeError("not enough free GPUs")), \
+         patch("app.services.runpod._stop_one_pod", stop):
+        assert await start_pod() is False
+    stop.assert_not_awaited()
+
+
+# 그래도 GPU 0개로 켜졌으면(이미 떠 있던 경우 포함) 바로 정지하고 실패 - 설치 25분을 날리지 않게
+@pytest.mark.asyncio
+@pytest.mark.parametrize("results", [
+    ({"pod": {"desiredStatus": "EXITED"}}, {"podResume": {"desiredStatus": "RUNNING", "gpuCount": 0}}),
+    ({"pod": {"desiredStatus": "RUNNING", "gpuCount": 0}},),
+])
+async def test_start_pod_stops_when_no_gpu(results):
+    stop = AsyncMock(return_value=True)
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="test-key", RUNPOD_POD_ID="test-pod"), \
+         _patch_graphql(*results), patch("app.services.runpod._stop_one_pod", stop):
+        assert await start_pod() is False
+    stop.assert_awaited_once_with("test-pod")
+
+
+# 이미 GPU로 떠 있으면 다시 resume하지 않음
+@pytest.mark.asyncio
+async def test_start_pod_skips_resume_when_running_with_gpu():
+    graphql = AsyncMock(return_value={"pod": {"desiredStatus": "RUNNING", "gpuCount": 1}})
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="test-key", RUNPOD_POD_ID="test-pod"), \
+         patch("app.services.runpod._graphql", graphql):
+        assert await start_pod() is True
+    assert graphql.await_count == 1
