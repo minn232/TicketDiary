@@ -818,10 +818,10 @@ async def test_scan_backfills_price_for_new_candidate(get_auth_token):
     assert {"seat_type": "S석", "price": 175000} in prices
 
 
-# 실제 티켓 정보가 뽑히는("의미있는") 스캔은 유저당 시간당 30회로 제한되는지 테스트
+# 실제 티켓 정보가 뽑히는("의미있는") 스캔은 유저당 시간당 100회로 제한되는지 테스트
 # (Vision 호출 비용 남용 방지 - 카메라 오인식 문제와 별개로, 진짜 스캔 시도 자체의 상한)
 @pytest.mark.asyncio
-async def test_scan_meaningful_rate_limited_after_30_calls_per_hour(get_auth_token):
+async def test_scan_meaningful_rate_limited_after_100_calls_per_hour(get_auth_token):
     headers = {"Authorization": f"Bearer {get_auth_token}"}
     statuses = []
     with (
@@ -829,7 +829,7 @@ async def test_scan_meaningful_rate_limited_after_30_calls_per_hour(get_auth_tok
         kopis_mock(_make_kopis_xml("PF_OCR_RATE", "테스트 공연")),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            for _ in range(31):
+            for _ in range(101):
                 response = await ac.post(
                     "/api/v1/concerts/scan",
                     files={"image": ("ticket.jpg", b"fake-image", "image/jpeg")},
@@ -837,8 +837,8 @@ async def test_scan_meaningful_rate_limited_after_30_calls_per_hour(get_auth_tok
                 )
                 statuses.append(response.status_code)
 
-    assert statuses[:30] == [200] * 30
-    assert statuses[30] == 429
+    assert statuses[:100] == [200] * 100
+    assert statuses[100] == 429
 
 
 # 쿨다운 해제(scan_ticket에서 호출 주석처리)로 건너뜀 - 복구 시 skip 제거
@@ -905,7 +905,7 @@ async def test_scan_empty_reason(get_auth_token, extracted_patch, kopis_xml, kop
 
 
 # 카메라 정렬 인식이 티켓이 아닌 사물을 오인식해서 아무 필드도 못 뽑은 스캔(전부 None)은
-# "의미있는 스캔" 10회 한도를 깎아먹지 않아야 함 - 10회보다 많이 반복해도 전부 200
+# "의미있는 스캔" 100회 한도를 깎아먹지 않아야 함 - 100회보다 많이 반복해도 전부 200
 @pytest.mark.asyncio
 async def test_scan_empty_result_does_not_count_toward_meaningful_limit(get_auth_token):
     headers = {"Authorization": f"Bearer {get_auth_token}"}
@@ -923,7 +923,7 @@ async def test_scan_empty_result_does_not_count_toward_meaningful_limit(get_auth
     statuses = []
     with _ocr_mock(empty_extracted):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            for _ in range(15):
+            for _ in range(110):
                 response = await ac.post(
                     "/api/v1/concerts/scan",
                     files={"image": ("junk.jpg", b"fake-image", "image/jpeg")},
@@ -931,11 +931,11 @@ async def test_scan_empty_result_does_not_count_toward_meaningful_limit(get_auth
                 )
                 statuses.append(response.status_code)
 
-    assert statuses == [200] * 15
+    assert statuses == [200] * 110
 
 
 # 빈 스캔이 "의미있는 스캔" 한도는 안 깎아도, 순수 어뷰징(요청 자체를 무한 반복) 방지를 위한
-# 하드 상한(60회/시간)은 그대로 적용되는지 테스트
+# 하드 상한(200회/시간)은 그대로 적용되는지 테스트
 @pytest.mark.asyncio
 async def test_scan_hard_ceiling_applies_even_to_empty_results(get_auth_token):
     headers = {"Authorization": f"Bearer {get_auth_token}"}
@@ -953,7 +953,7 @@ async def test_scan_hard_ceiling_applies_even_to_empty_results(get_auth_token):
     statuses = []
     with _ocr_mock(empty_extracted):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            for _ in range(61):
+            for _ in range(201):
                 response = await ac.post(
                     "/api/v1/concerts/scan",
                     files={"image": ("junk.jpg", b"fake-image", "image/jpeg")},
@@ -961,8 +961,8 @@ async def test_scan_hard_ceiling_applies_even_to_empty_results(get_auth_token):
                 )
                 statuses.append(response.status_code)
 
-    assert statuses[:60] == [200] * 60
-    assert statuses[60] == 429
+    assert statuses[:200] == [200] * 200
+    assert statuses[200] == 429
 
 
 # title 후보 중 앞쪽이 날짜가 안 맞는 흔한 구절로 결과를 내면 건너뛰고,

@@ -134,12 +134,12 @@ async def rate_limit_guest_login(request: Request) -> None:
     _check_rate_limit(f"guest_login:{client_ip}", max_calls=20, period_seconds=3600)
 
 
-# 티켓 스캔(Vision OCR, 비용 발생) 남용 방지: 유저당 시간당 60회. 프론트 카메라의 "정렬
+# 티켓 스캔(Vision OCR, 비용 발생) 남용 방지: 유저당 시간당 200회. 프론트 카메라의 "정렬
 # 인식"이 실제 문서 검출이 아니라 밝기/대비/흔들림만 보는 휴리스틱이라 오인식 자동촬영이
 # 흔함 - 그런 오탐까지 포함한 순수 어뷰징 방지용 널널한 상한. 실제 티켓 스캔의 빡빡한
 # 카운트는 record_meaningful_ticket_scan 참고.
 async def rate_limit_ticket_scan(current_user: User = Depends(get_current_user)) -> None:
-    _check_rate_limit(f"scan:{current_user.id}", max_calls=60, period_seconds=3600)
+    _check_rate_limit(f"scan:{current_user.id}", max_calls=200, period_seconds=3600)
 
 
 _SCAN_COOLDOWN_SECONDS = 2.0
@@ -165,9 +165,9 @@ def is_within_scan_cooldown(user_id: UUID) -> bool:
 
 # OCR 결과가 실제로 티켓 정보를 하나라도 뽑아냈을 때만 호출 - 카메라가 티켓이 아닌
 # 사물(책/벽/손 등)을 오인식해서 촬영한 빈 스캔은 이 한도를 깎아먹지 않도록, 진짜
-# 스캔 시도에 대해서만 세는 별도의 한도. 티켓 여러 장 한번에 등록하는 경우를 위해 10 -> 30회로 완화
+# 스캔 시도에 대해서만 세는 별도의 한도. 티켓 여러 장 한번에 등록하는 경우를 위해 10 -> 100회로 완화
 def record_meaningful_ticket_scan(user_id: UUID) -> None:
-    _check_rate_limit(f"scan_meaningful:{user_id}", max_calls=30, period_seconds=3600)
+    _check_rate_limit(f"scan_meaningful:{user_id}", max_calls=100, period_seconds=3600)
 
 
 # 이미지 업로드(S3 비용) 남용 방지: 유저당 시간당 200회. 공연 후 사진 일괄 배치 업로드를 감안해 널널하게 잡음

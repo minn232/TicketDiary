@@ -799,6 +799,14 @@ class _DiaryScreenState extends State<DiaryScreen> {
       final normalizedTitle = matchTitle.trim().toLowerCase();
       _tickets.removeWhere((t) {
         if (t.status != TicketStatus.beforeDelivery) return false;
+        // [백엔드 수정] 여러 날 공연은 관람일별로 따로 등록되므로 다른 날 티켓은 유지
+        final oldDate = t.info?.date;
+        final newDate = newTicket.info?.date;
+        if (oldDate != null &&
+            newDate != null &&
+            !DateUtils.isSameDay(oldDate.toLocal(), newDate.toLocal())) {
+          return false;
+        }
         final sameConcertId =
             matchConcertId != null && t.info?.concertId == matchConcertId;
         final sameTitle = t.title.trim().toLowerCase() == normalizedTitle;
