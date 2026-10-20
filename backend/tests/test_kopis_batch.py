@@ -708,9 +708,11 @@ async def test_sync_gives_up_after_max_detail_retries():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = _mock_get
 
+    # 요청 단위 400 재시도(_kopis_get)는 끄고 배치 단위 재시도 횟수만 셈
     with (
         patch("app.services.kopis.httpx.AsyncClient", return_value=mock_client),
         patch("asyncio.sleep"),
+        patch("app.services.kopis._KOPIS_BLOCKED_RETRIES", 0),
     ):
         async with AsyncSessionLocal() as db:
             await sync_daily_concerts(db)

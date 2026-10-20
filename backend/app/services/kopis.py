@@ -43,6 +43,22 @@ async def throttle_kopis_request() -> None:
         _kopis_last_request_at = loop.time()
 
 
+# KOPIS 방화벽은 정상 검색어도 무작위로 400(Request Blocked)을 돌려줌(서버에서 같은 검색어 반복 시
+# 약 30%, 10/21 실측) - 한 번 막힌 걸 실패로 처리하면 스캔 장소+날짜 검색이 통째로 빠짐. 잠깐 쉬고 재시도
+_KOPIS_BLOCKED_RETRIES = 2
+_KOPIS_BLOCKED_RETRY_DELAY = 0.5
+
+
+async def _kopis_get(client: httpx.AsyncClient, path: str, params: dict) -> httpx.Response:
+    for attempt in range(_KOPIS_BLOCKED_RETRIES + 1):
+        await throttle_kopis_request()
+        response = await client.get(f"{settings.KOPIS_BASE_URL}/{path}", params=params)
+        if response.status_code != 400 or attempt == _KOPIS_BLOCKED_RETRIES:
+            return response
+        await asyncio.sleep(_KOPIS_BLOCKED_RETRY_DELAY)
+    return response
+
+
 # client가 주어지면 그대로 재사용(연결 재사용으로 매 호출마다 새 TCP/TLS 핸드셰이크 방지),
 # 없으면 이 스코프에서만 쓸 임시 client를 새로 만듦 - 여러 후보를 순차 조회하는 상위 호출부
 # (search_concerts_multi 등)가 client 하나를 만들어 하위 함수들에 공유시키기 위한 헬퍼
@@ -180,9 +196,8 @@ async def _fetch_and_upsert_concerts(
         **extra_params,
     }
 
-    await throttle_kopis_request()
     async with _kopis_client(client) as c:
-        response = await c.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+        response = await _kopis_get(c, "pblprfr", params)
 
     if response.status_code != 200:
         raise HTTPException(status_code=502, detail="KOPIS API 호출에 실패했습니다.")
@@ -336,10 +351,8 @@ async def _resolve_venue_facility_code(
         for name in venue_candidates:
             if not name or len(name) < 2:
                 continue
-            await throttle_kopis_request()
-            response = await c.get(
-                f"{settings.KOPIS_BASE_URL}/prfplc",
-                params={"service": settings.KOPIS_API_KEY, "shprfnmfct": name, "rows": 10, "cpage": 1},
+            response = await _kopis_get(
+                c, "prfplc", {"service": settings.KOPIS_API_KEY, "shprfnmfct": name, "rows": 10, "cpage": 1}
             )
             if response.status_code != 200:
                 continue
@@ -708,9 +721,8 @@ async def _fetch_all_kopis_ids(client: httpx.AsyncClient, today: date, end_date:
             "rows": 100,
             "cpage": cpage,
         }
-        await throttle_kopis_request()
         try:
-            response = await client.get(f"{settings.KOPIS_BASE_URL}/pblprfr", params=params)
+            response = await _kopis_get(client, "pblprfr", params)
         except httpx.HTTPError as e:
             logger.warning(f"KOPIS 배치 목록 조회 실패 (cpage={cpage}): {e}")
             break
@@ -871,11 +883,7 @@ class KopisNoData(HTTPException):
 
 # KOPIS 상세 API 호출 + XML 파싱만 수행 (DB 접근 없음 -> 병렬 호출 가능)
 async def fetch_kopis_detail_data(client: httpx.AsyncClient, kopis_id: str) -> dict:
-    await throttle_kopis_request()
-    response = await client.get(
-        f"{settings.KOPIS_BASE_URL}/pblprfr/{kopis_id}",
-        params={"service": settings.KOPIS_API_KEY},
-    )
+    response = await _kopis_get(client, f"pblprfr/{kopis_id}", {"service": settings.KOPIS_API_KEY})
 
     if response.status_code != 200:
         raise HTTPException(status_code=502, detail="KOPIS API 호출에 실패했습니다.")
