@@ -252,28 +252,65 @@ async def _search_concerts_once(
     )
 
 
+# 티켓엔 영문으로 찍히지만 KOPIS 시설명은 한글인 공연장 표기 - 영문 그대로면 시설 검색이 일반 단어
+# ("LIVE HALL")로 줄어들다 엉뚱한 시설(세티 라이브홀)에 걸려서 한글 표기로 바꾼 후보를 먼저 시도
+_VENUE_ALIASES = [
+    (re.compile(r"yes\s*24", re.IGNORECASE), "예스24"),
+    (re.compile(r"live\s*hall", re.IGNORECASE), "라이브홀"),
+    (re.compile(r"wonder\s*rock\s*hall", re.IGNORECASE), "원더로크홀"),
+]
+
+# 공연장 이름에 흔히 붙는 일반 단어 - 이것만 남은 후보로 시설을 검색하거나, 이것만 겹친다고 같은
+# 장소로 보면 "YES24 LIVE HALL"이 "SETI LIVE HALL"과 같은 장소로 잡힘
+_GENERIC_VENUE_WORDS_RE = re.compile(
+    r"live|hall|stage|arena|theater|라이브|홀|스테이지|아레나|극장|공연장", re.IGNORECASE
+)
+
+
+def _apply_venue_aliases(location: str) -> str:
+    for pattern, replacement in _VENUE_ALIASES:
+        location = pattern.sub(replacement, location)
+    return location
+
+
+def _is_generic_venue_name(name: str) -> bool:
+    return not _GENERIC_VENUE_WORDS_RE.sub("", re.sub(r"[^\w가-힣]", "", name))
+
+
 # OCR 공연장 텍스트와 KOPIS fcltynm이 실질적으로 같은 장소인지 확인 (공백/기호 무시, 4글자 이상의
 # 최장 공통 부분열 기준). 완전 포함(substring)만 보면 "잠실실내체육관"(OCR) vs "잠실종합운동장
-# (실내체육관)"(KOPIS)처럼 중간에 다른 단어가 낀 같은 장소를 다르다고 오판하므로 이렇게 완화함
+# (실내체육관)"(KOPIS)처럼 중간에 다른 단어가 낀 같은 장소를 다르다고 오판하므로 이렇게 완화함.
+# 겹치는 부분이 "LIVEHALL"처럼 일반 단어뿐이면 같은 장소로 보지 않음
 def _venue_overlaps(a: str, b: str) -> bool:
-    a_norm = re.sub(r"[^\w가-힣]", "", a)
-    b_norm = re.sub(r"[^\w가-힣]", "", b)
+    a_norm = re.sub(r"[^\w가-힣]", "", _apply_venue_aliases(a))
+    b_norm = re.sub(r"[^\w가-힣]", "", _apply_venue_aliases(b))
     if not a_norm or not b_norm:
         return False
     if a_norm in b_norm or b_norm in a_norm:
-        return True
+        return not _is_generic_venue_name(a_norm if len(a_norm) <= len(b_norm) else b_norm)
     match = difflib.SequenceMatcher(None, a_norm, b_norm).find_longest_match(0, len(a_norm), 0, len(b_norm))
-    return match.size >= 4
+    return match.size >= 4 and not _is_generic_venue_name(a_norm[match.a:match.a + match.size])
 
 
 # OCR 공연장 텍스트에서 KOPIS 시설 검색(/prfplc)에 걸릴 후보를 순서대로 생성 - "인터파크
 # 유니플렉스 2관" 전체가 아니라 "유니플렉스"처럼 시설 본체 이름만 걸리는 경우가 많아, 끝의
 # 세부관(N관/N홀) 제거 + 접미사를 순서대로 시도. 숫자 붙은 것만 세부관으로 봄(숫자 없이
-# 관/홀로 끝나면 "세종문화회관"처럼 본체 이름일 수 있어 그대로 둠).
+# 관/홀로 끝나면 "세종문화회관"처럼 본체 이름일 수 있어 그대로 둠). 영문 표기는 한글로 바꾼
+# 후보부터 시도(_VENUE_ALIASES)
 def _venue_candidates(location: str) -> list[str]:
     location = location.strip()
     if not location:
         return []
+    aliased = _apply_venue_aliases(location)
+    candidates: list[str] = []
+    for loc in ([aliased] if aliased != location else []) + [location]:
+        for c in _venue_candidates_of(loc):
+            if c not in candidates and not _is_generic_venue_name(c):
+                candidates.append(c)
+    return candidates
+
+
+def _venue_candidates_of(location: str) -> list[str]:
     candidates = [location]
     stripped = re.sub(r"\s*\d+\s*(관|홀|층|실)$", "", location).strip()
     if stripped and stripped not in candidates:
@@ -282,6 +319,11 @@ def _venue_candidates(location: str) -> list[str]:
     for i in range(1, len(words)):
         w = " ".join(words[i:])
         if w not in candidates:
+            candidates.append(w)
+    # "일산 킨텍스 제1전시장"처럼 시설 본체 이름이 가운데 끼어 있으면 접미사로는 안 걸려서 단어 단위로도 시도
+    # (2글자 이하는 "일산"처럼 지역명이라 엉뚱한 시설에 걸릴 수 있어 제외)
+    for w in words:
+        if len(w) >= 3 and w not in candidates:
             candidates.append(w)
     return candidates
 
@@ -297,17 +339,21 @@ async def _resolve_venue_facility_code(
             await throttle_kopis_request()
             response = await c.get(
                 f"{settings.KOPIS_BASE_URL}/prfplc",
-                params={"service": settings.KOPIS_API_KEY, "shprfnmfct": name, "rows": 1, "cpage": 1},
+                params={"service": settings.KOPIS_API_KEY, "shprfnmfct": name, "rows": 10, "cpage": 1},
             )
             if response.status_code != 200:
                 continue
             root = ET.fromstring(response.content)
-            elem = root.find("db")
-            if elem is None:
+            # 부분일치 검색이라 "킨텍스"가 "뽀로로파크 [킨텍스]"부터 돌려주기도 함 - 이름이 정확히 같은
+            # 시설을 우선하고, 없으면 기존처럼 첫 결과
+            facilities = [
+                ((elem.findtext("fcltynm") or "").strip(), (elem.findtext("mt10id") or "").strip())
+                for elem in root.findall("db")
+            ]
+            facilities = [(fname, code) for fname, code in facilities if code]
+            if not facilities:
                 continue
-            code = (elem.findtext("mt10id") or "").strip()
-            if code:
-                return code
+            return next((code for fname, code in facilities if fname == name), facilities[0][1])
     return None
 
 
@@ -460,6 +506,9 @@ def _strip_parenthetical(s: str) -> str:
     return re.sub(r"\s+", " ", stripped).strip()
 
 
+_QUOTE_RE = re.compile(r"[\"“”‘’「」『』]")
+
+
 # OCR 후보 줄이 많을 때 KOPIS 호출이 무한정 늘어나지 않도록 제목 후보 자체를 상한선까지만 시도
 # (보통 앞쪽 후보일수록 실제 제목일 확률이 높으므로 순서상 앞쪽만 남겨도 실효성 손실이 적음)
 _MAX_TITLE_KEYWORDS = 6
@@ -486,6 +535,8 @@ async def search_concerts_multi(
     target_date = _midpoint(start_date, end_date)
     expanded_keywords: list[str] = []
     for kw in keywords[:_MAX_TITLE_KEYWORDS]:
+        # 티켓의 '"Grateful Yesterdays Tour 2026"'처럼 따옴표가 붙으면 KOPIS 부분일치 검색이 안 걸림
+        kw = re.sub(r"\s+", " ", _QUOTE_RE.sub(" ", kw)).strip()
         expanded_keywords.append(kw)
         stripped = _strip_parenthetical(kw)
         if stripped and stripped != kw.strip():

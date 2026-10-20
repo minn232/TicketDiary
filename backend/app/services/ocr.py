@@ -223,6 +223,10 @@ async def call_vision(image_bytes: bytes) -> dict:
             {
                 "image": {"content": base64.b64encode(image_bytes).decode()},
                 "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                # 실물 티켓 앨범처럼 뒤에 일본어 안내문이 많이 찍히면 Vision이 언어를 일본어로 잡아서
+                # 한글을 한자로 깨뜨림("일시:"→"人:") - 한국어 힌트로 고정. 일본어 문구는 대신 깨지지만
+                # KOPIS 공연명은 한글/영문이라 매칭엔 영향 적음(실사용 사진으로 비교 확인)
+                "imageContext": {"languageHints": ["ko"]},
             }
         ]
     }
@@ -561,6 +565,83 @@ def _parse_ticket_fields_from_layout(annotation: dict, raw_text: str) -> dict | 
     }
 
 
+# 실물 티켓은 앨범에 겹쳐 꽂힌 채 찍히는 경우가 많아, 뒤 티켓의 안내문/제목이 같이 인식됨 -
+# 줄글 순서상 첫 줄을 제목으로 잡으면 "유의사항"이나 일본어 안내문이 제목이 됨. 그래서 공연 날짜가
+# 적힌 줄을 기준점으로 잡고, 그 바로 위에 같은 열로 정렬된 줄을 제목 후보로 씀(공연명은 일시
+# 바로 위에 있는 게 일반적). 날짜 줄이 여러 개면(뒤 티켓 날짜) "일시" 라벨이 붙은 줄 우선, 그다음
+# 사진 중앙(가이드 박스로 찍은 티켓)에 가까운 줄 우선
+_ANCHOR_EXCLUDE_LABEL_RE = re.compile(r"예매|판매|발송|배송|수령|출고|발행")
+_ANCHOR_LABEL_RE = re.compile(r"(?<!예매)일\s*시|공연\s*일")
+_ANCHOR_TITLE_MAX_GAP = 5.5    # 날짜 줄 높이의 이 배수까지 위쪽 줄만 제목 후보
+_ANCHOR_TITLE_X_TOLERANCE = 6  # 날짜 줄 시작 x와의 차이가 줄 높이의 이 배수 이내여야 같은 열
+_ANCHOR_TITLE_SKIP_RE = re.compile(r"입장번호|구역|\d+\s*열|\d+\s*번$")
+
+
+def _find_date_anchor(annotation: dict) -> tuple[str, dict] | None:
+    pages = annotation.get("fullTextAnnotation", {}).get("pages", [])
+    if not pages:
+        return None
+    center_x = pages[0].get("width", 0) / 2
+    center_y = pages[0].get("height", 0) / 2
+
+    anchors = []
+    for page in pages:
+        for block in page.get("blocks", []):
+            for paragraph in block.get("paragraphs", []):
+                for sub in _split_multiline_paragraph(paragraph):
+                    text = _paragraph_text(sub)
+                    dm = _DATE_RE.search(text)
+                    if not dm or _ANCHOR_EXCLUDE_LABEL_RE.search(text[:dm.start()]):
+                        continue
+                    date = (
+                        _parse_date(dm.group(1), dm.group(2), dm.group(3)) if dm.group(1)
+                        else _parse_date(dm.group(4), dm.group(5), dm.group(6))
+                    )
+                    # 여러 문단이 한 덩어리로 묶이면 문단 bbox가 옆 티켓까지 넓어지므로, 연도 단어 위치를 기준점으로
+                    year_word = next(
+                        (w for w in sub.get("words", [])
+                         if re.match(r"(?:19|20)\d{2}", "".join(s.get("text", "") for s in w.get("symbols", [])))),
+                        None,
+                    )
+                    if not date or year_word is None:
+                        continue
+                    x0, y0, x1, y1 = _bounding_box(year_word.get("boundingBox", {}))
+                    if y1 <= y0:
+                        continue
+                    distance = ((x0 + x1) / 2 - center_x) ** 2 + ((y0 + y1) / 2 - center_y) ** 2
+                    labeled = bool(_ANCHOR_LABEL_RE.search(text[:dm.start()]))
+                    anchors.append((not labeled, distance, date, {"x0": x0, "y0": y0, "x1": x1, "y1": y1}))
+
+    if not anchors:
+        return None
+    _, _, date, box = min(anchors, key=lambda a: (a[0], a[1]))
+    return date, box
+
+
+# 기준 날짜 줄 바로 위 같은 열의 줄들을 가까운 순으로 반환. 제목이 두 줄이면 위아래를 이어붙인 후보도 추가
+def _titles_above_anchor(annotation: dict, box: dict) -> list[str]:
+    height = box["y1"] - box["y0"]
+    above = []
+    for b in _flatten_paragraphs(annotation):
+        gap = box["y0"] - b["y1"]
+        if gap < -height * 0.3 or gap > height * _ANCHOR_TITLE_MAX_GAP:
+            continue
+        if abs(b["x0"] - box["x0"]) > height * _ANCHOR_TITLE_X_TOLERANCE:
+            continue
+        text = b["text"].strip()
+        if not _title_line_candidates(text) or _DATE_RE.search(text) or _ANCHOR_TITLE_SKIP_RE.search(text):
+            continue
+        above.append((gap, b, text))
+    above.sort(key=lambda a: a[0])
+
+    titles = [text for _, _, text in above]
+    if len(above) >= 2:
+        (_, lower, lower_text), (_, upper, upper_text) = above[0], above[1]
+        if lower["y0"] - upper["y1"] < height * 1.5:
+            titles.insert(2, f"{upper_text} {lower_text}")
+    return titles
+
+
 # 모바일 티켓(NOL 등)은 날짜가 "09 / 20 / 2026"으로 세로로 쌓여 있는데, Vision이 일(20)을 옆 제목
 # 블록에 합쳐 줄글 정규식으로는 못 잡음 - 단어 좌표에서 같은 x 위치에 쌓인 (월, 일, 연도)를 직접 찾음
 _STACKED_GAP_RATIO = 2.0   # 위아래 단어 사이 간격이 단어 높이의 이 배수 이내여야 같은 묶음
@@ -818,7 +899,19 @@ async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     annotation = await call_vision(jpeg_bytes)
     raw_text = _full_text_from_annotation(annotation)
 
-    fields = _parse_ticket_fields_from_layout(annotation, raw_text) or _parse_ticket_fields(raw_text)
+    fields = _parse_ticket_fields_from_layout(annotation, raw_text)
+    if fields is None:
+        fields = _parse_ticket_fields(raw_text)
+        # 실물 티켓: 날짜 줄 기준으로 공연일/제목을 다시 잡음(_find_date_anchor 주석 참고)
+        anchor = _find_date_anchor(annotation)
+        if anchor:
+            fields["date"], box = anchor
+            anchored_titles = _titles_above_anchor(annotation, box)
+            if anchored_titles:
+                fields["title"] = anchored_titles[0]
+                fields["title_candidates"] = anchored_titles + [
+                    c for c in fields.get("title_candidates", []) if c not in anchored_titles
+                ]
     if not fields.get("date"):
         fields["date"] = _extract_stacked_date_from_words(annotation)
     return fields

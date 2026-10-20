@@ -610,6 +610,23 @@ def test_venue_candidates_strips_hall_suffix_and_yields_word_suffixes():
     assert "유니플렉스" in candidates
 
 
+# 시설 본체 이름이 가운데 끼어 있으면(일산 킨텍스 제1전시장) 단어 단위로도 후보를 만들되,
+# 2글자 지역명(일산)은 엉뚱한 시설에 걸릴 수 있어 제외하는지 테스트
+def test_venue_candidates_includes_middle_word():
+    candidates = _venue_candidates("일산 킨텍스 제1전시장 5홀")
+    assert "킨텍스" in candidates
+    assert "일산" not in candidates
+
+
+# 영문 표기(YES24 LIVE HALL)는 KOPIS 한글 시설명으로 바꾼 후보부터 시도하고, "LIVE HALL"처럼
+# 일반 단어만 남은 후보는 만들지 않는지 테스트 (세티 라이브홀이 걸리던 문제)
+def test_venue_candidates_aliases_english_and_skips_generic_words():
+    candidates = _venue_candidates("YES24 LIVE HALL")
+    assert candidates[0] == "예스24 라이브홀"
+    assert "LIVE HALL" not in candidates
+    assert "HALL" not in candidates
+
+
 # 빈 문자열은 빈 목록 반환
 def test_venue_candidates_empty_string():
     assert _venue_candidates("") == []
@@ -617,6 +634,13 @@ def test_venue_candidates_empty_string():
 
 
 # _venue_overlaps 테스트
+
+# "LIVE HALL"처럼 일반 단어만 겹치는 다른 공연장은 같은 장소로 보지 않고, 영문/한글 표기가 달라도
+# 같은 공연장이면 같은 장소로 보는지 테스트
+def test_venue_overlaps_ignores_generic_words_and_matches_aliases():
+    assert _venue_overlaps("YES24 LIVE HALL", "세티 라이브홀 (SETI LIVE HALL)") is False
+    assert _venue_overlaps("YES24 LIVE HALL", "예스24 라이브홀 (구. 악스코리아)") is True
+
 
 # 중간에 다른 단어(종합운동장)가 껴서 완전 포함 관계는 아니어도 같은 장소로 인식해야 함
 def test_venue_overlaps_allows_partial_overlap_with_inserted_word():

@@ -1281,3 +1281,66 @@ def test_extract_stacked_date_from_words_ignores_unstacked_numbers():
         _word("2026", 100, 900, 200, 930),     # 세로로 멀리 떨어져 있음
     ])
     assert _extract_stacked_date_from_words(ann) is None
+
+
+# 실물 티켓 날짜 줄 기준 제목 추출 (_find_date_anchor / _titles_above_anchor) 테스트
+
+# 단어마다 bbox가 있는 문단 - 문단 폭을 단어 수로 나눠 왼쪽부터 배치
+def _paragraph_with_word_boxes(text: str, x0: int, y0: int, x1: int, y1: int) -> dict:
+    words = text.split(" ")
+    step = (x1 - x0) / len(words)
+    word_objs = []
+    for i, word in enumerate(words):
+        word_obj = _word_with_bbox(word, int(x0 + step * i), y0, int(x0 + step * (i + 1)), y1)
+        if i < len(words) - 1:
+            word_obj["symbols"][-1]["property"] = {"detectedBreak": {"type": "SPACE"}}
+        word_objs.append(word_obj)
+    paragraph = _paragraph(text, x0, y0, x1, y1)
+    paragraph["words"] = word_objs
+    return paragraph
+
+
+def _page_annotation(paragraphs: list[dict]) -> dict:
+    return {"fullTextAnnotation": {"pages": [{"width": 4000, "height": 3000, "blocks": [{"paragraphs": paragraphs}]}]}}
+
+
+# 앨범에 겹쳐 꽂힌 티켓: 뒤 티켓의 "유의사항"/안내문이 줄글 순서상 먼저 나와도,
+# 일시 줄 바로 위 같은 열의 공연명이 제목 1순위가 되는지 테스트 (실사용 사진 KIMCHIKURA 케이스)
+def test_titles_above_date_anchor_skip_background_ticket_text():
+    from app.services.ocr import _find_date_anchor, _titles_above_anchor
+
+    annotation = _page_annotation([
+        _paragraph_with_word_boxes("유의사항", 50, 450, 280, 540),
+        _paragraph_with_word_boxes("본 티켓은 영수증으로 사용하실 수 있습니다", 100, 700, 980, 820),
+        _paragraph_with_word_boxes("KIMCHIKURA Fes VOL.4", 1066, 730, 2300, 835),
+        _paragraph_with_word_boxes("일시: 2025-08-23 [토] 오후 3시 00분", 1070, 1000, 2400, 1090),
+        _paragraph_with_word_boxes("1층 스탠딩B구역 입장번호095번", 1090, 1250, 2650, 1400),
+        _paragraph_with_word_boxes("예매일시: 2025-06-05", 1010, 1580, 1880, 1690),
+    ])
+
+    date, box = _find_date_anchor(annotation)
+    titles = _titles_above_anchor(annotation, box)
+
+    assert date == "2025-08-23"
+    assert titles[0] == "KIMCHIKURA Fes VOL.4"
+    assert "유의사항" not in titles
+
+
+# "일시" 라벨 없이 날짜만 있는 티켓(멜론)에서 뒤 티켓 날짜가 더 먼저 나와도, 사진 중앙(찍으려는
+# 티켓)에 가까운 날짜를 고르고, 두 줄 제목은 이어붙인 후보도 만드는지 테스트 (Rokudenashi 케이스)
+def test_date_anchor_prefers_center_date_and_joins_two_line_title():
+    from app.services.ocr import _find_date_anchor, _titles_above_anchor
+
+    annotation = _page_annotation([
+        _paragraph_with_word_boxes("2025-05-10 [토]", 250, 1440, 730, 1500),
+        _paragraph_with_word_boxes("Rokudenashi 1st Oneman Live", 1400, 880, 3120, 1010),
+        _paragraph_with_word_boxes("Not Just A Memory Live In Korea", 1450, 1000, 3380, 1140),
+        _paragraph_with_word_boxes("2025-04-18 (금) 20:00", 1416, 1243, 2258, 1322),
+    ])
+
+    date, box = _find_date_anchor(annotation)
+    titles = _titles_above_anchor(annotation, box)
+
+    assert date == "2025-04-18"
+    assert titles[:2] == ["Not Just A Memory Live In Korea", "Rokudenashi 1st Oneman Live"]
+    assert "Rokudenashi 1st Oneman Live Not Just A Memory Live In Korea" in titles
