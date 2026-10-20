@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.deps import (
     get_current_user,
-    is_within_scan_cooldown,
+    # is_within_scan_cooldown,
     rate_limit_ticket_scan,
     record_meaningful_ticket_scan,
     reject_oversized_request,
@@ -52,9 +52,10 @@ async def scan_ticket(
 
     # 카메라 정렬 오인식으로 짧은 간격에 연달아 들어온 요청이면, 유료 Vision 호출 없이
     # 빈 결과로 바로 응답 (is_within_scan_cooldown 주석 참고)
-    if is_within_scan_cooldown(current_user.id):
-        logger.info("티켓 스캔 빈 결과: reason=cooldown user=%s", current_user.id)
-        return TicketScanResponse(extracted=TicketScanExtracted(), candidates=[], empty_reason="cooldown")
+    # 인식률 낮던 시기의 임시 조치라 해제 - 여러 장 연속 등록이 막혀서. 오인식 연사가 다시 생기면 복구
+    # if is_within_scan_cooldown(current_user.id):
+    #     logger.info("티켓 스캔 빈 결과: reason=cooldown user=%s", current_user.id)
+    #     return TicketScanResponse(extracted=TicketScanExtracted(), candidates=[], empty_reason="cooldown")
 
     # OCR + LLM으로 티켓 정보 추출
     extracted_raw = await extract_ticket_info(image_bytes, image.content_type or "image/jpeg")
