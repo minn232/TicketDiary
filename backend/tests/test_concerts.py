@@ -15,6 +15,7 @@ from app.services.kopis import (
     _venue_candidates,
     _venue_overlaps,
     search_concerts as kopis_search_concerts,
+    search_concerts_by_venue as kopis_search_by_venue,
     search_concerts_multi as kopis_search_concerts_multi,
 )
 from app.services.site_aliases import find_site_key
@@ -647,7 +648,6 @@ def _venue_search_mock(facility_xml: bytes, performance_xml: bytes):
 # 공연장명으로 시설 코드를 찾고 그 코드로 공연 목록을 조회하는지 테스트
 @pytest.mark.asyncio
 async def test_search_by_venue_success():
-    token = await _get_token()
     facility_xml = (
         '<?xml version="1.0" encoding="UTF-8"?><dbs>'
         '<db><fcltynm>유니플렉스</fcltynm><mt10id>FC001233</mt10id></db>'
@@ -656,39 +656,24 @@ async def test_search_by_venue_success():
     performance_xml = _make_kopis_xml("PF_VENUE_001", "빨래 [대학로]", "2024.06.07", "2025.03.02")
 
     with _venue_search_mock(facility_xml, performance_xml):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search-by-venue",
-                params={
-                    "venue": "인터파크 유니플렉스 2관",
-                    "start_date": "2024-07-10",
-                    "end_date": "2024-07-24",
-                },
-                headers={"Authorization": f"Bearer {token}"},
+        async with AsyncSessionLocal() as db:
+            concerts = await kopis_search_by_venue(
+                db, "인터파크 유니플렉스 2관", date(2024, 7, 10), date(2024, 7, 24)
             )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 1
-    assert data[0]["kopis_id"] == "PF_VENUE_001"
+    assert [c.kopis_id for c in concerts] == ["PF_VENUE_001"]
 
 
 # 시설 검색이 전부 실패하면(등록 안 된 공연장) 빈 목록 반환
 @pytest.mark.asyncio
 async def test_search_by_venue_no_facility_match():
-    token = await _get_token()
     empty_facility_xml = b'<?xml version="1.0" encoding="UTF-8"?><dbs/>'
 
     with _venue_search_mock(empty_facility_xml, _EMPTY_XML):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.get(
-                "/api/v1/concerts/search-by-venue",
-                params={"venue": "존재하지않는공연장 XYZ"},
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        async with AsyncSessionLocal() as db:
+            concerts = await kopis_search_by_venue(db, "존재하지않는공연장 XYZ")
 
-    assert response.status_code == 200
-    assert response.json() == []
+    assert concerts == []
 
 
 # 이미 아티스트가 채워진(LLM/검수) 공연을 상세 조회해도 KOPIS 출연진으로 덮어쓰지 않음
@@ -719,7 +704,6 @@ async def test_detail_sync_keeps_existing_artist_name():
         ("post", "/setlist/pre/generate", None),
         ("patch", "/setlist/pre", {"songs": []}),
         ("put", "/timetable", {"contents": []}),
-        ("patch", "/artist-name/confirm", {"original_name": "a", "confirmed_name": "b"}),
     ],
 )
 async def test_concert_write_routes_require_admin_key(method, path, body):

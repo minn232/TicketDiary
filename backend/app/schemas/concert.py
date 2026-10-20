@@ -89,15 +89,3 @@ class TicketScanResponse(BaseModel):
     candidates: list[ConcertResponse]
     # 후보가 비었을 때 이유(cooldown/no_text/no_date/kopis_error/no_match), 후보가 있으면 None
     empty_reason: str | None = None
-
-
-class ArtistNameConfirmRequest(BaseModel):
-    # 미확정 아티스트 표기를 유저가 직접 확정(G안) - original_name은 지금 concert.artist_name에
-    # 실제로 들어있는 표기여야 함
-    original_name: str
-    confirmed_name: str
-
-
-class ArtistNameConfirmResponse(BaseModel):
-    # 치환 후 concert.artist_name 전체 배열
-    artist_name: list[str]

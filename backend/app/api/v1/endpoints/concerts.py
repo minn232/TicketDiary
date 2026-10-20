@@ -1,6 +1,5 @@
 import logging
 from datetime import date, timedelta
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, HTTPException
 from sqlalchemy import select
@@ -13,22 +12,17 @@ from app.core.deps import (
     rate_limit_ticket_scan,
     record_meaningful_ticket_scan,
     reject_oversized_request,
-    verify_admin_key,
 )
 from app.models.concert import Concert
 from app.models.user import User
 from app.schemas.concert import (
-    ArtistNameConfirmRequest,
-    ArtistNameConfirmResponse,
     ConcertResponse,
     TicketScanExtracted,
     TicketScanResponse,
 )
-from app.services.artist_normalization import confirm_artist_name_change
 from app.services.concert_search import search_concerts_db
 from app.services.kopis import (
     search_concerts_multi as kopis_search_multi,
-    search_concerts_by_venue as kopis_search_by_venue,
     get_concert_detail,
 )
 from app.services.ocr import extract_ticket_info
@@ -156,19 +150,6 @@ async def search_concerts(
     return await search_concerts_db(db, keyword)
 
 
-# 공연장 + 날짜 기준 KOPIS 재검색 (/scan 후보 목록에 원하는 공연이 없을 때 사용)
-# 공연장+날짜 조합은 보통 1~2건으로 좁혀지는 강한 필터라 제목 표기가 KOPIS 등록명과 완전히 달라도 찾을 수 있음
-@router.get("/search-by-venue", response_model=list[ConcertResponse])
-async def search_concerts_by_venue(
-    venue: str = Query(...),
-    start_date: date | None = Query(None),
-    end_date: date | None = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await kopis_search_by_venue(db, venue, start_date, end_date)
-
-
 # 공연 상세 조회 (DB -> KOPIS API + DB upsert)
 @router.get("/{kopis_id}", response_model=ConcertResponse)
 async def get_concert(
@@ -187,21 +168,3 @@ async def get_concert(
 
     # KOPIS API
     return await get_concert_detail(db, kopis_id)
-
-
-# 미확정(MusicBrainz로 못 찾은) 아티스트 표기를 유저가 직접 확정하는 API(G안, 프론트 UI는 아직
-# 없음). 모든 공연에 쓰이는 CanonicalArtist/별칭까지 만들어서, 티켓 보유자 제한 등 정책이 정해질
-# 때까지 관리자 키로만 열어둠
-@router.patch(
-    "/{concert_id}/artist-name/confirm",
-    response_model=ArtistNameConfirmResponse,
-    dependencies=[Depends(verify_admin_key)],
-)
-async def confirm_artist_name(
-    concert_id: UUID,
-    body: ArtistNameConfirmRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    concert = await confirm_artist_name_change(db, concert_id, body.original_name, body.confirmed_name)
-    return ArtistNameConfirmResponse(artist_name=concert.artist_name)

@@ -8,8 +8,9 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 
 from app.core.database import AsyncSessionLocal
+from app.core.security import hash_refresh_token
 from app.main import app
-from app.services.refresh_token import rotate_refresh_token
+from app.services.refresh_token import cleanup_refresh_tokens, rotate_refresh_token
 from conftest import _get_token
 
 
@@ -232,6 +233,34 @@ def test_rate_limit_sweep_removes_only_stale_keys():
     with patch.object(deps, "_last_rate_limit_sweep", 0.0):
         deps._sweep_rate_limit_hits(now)
         assert set(deps._rate_limit_hits) == {"fresh"}
+
+
+# 정리 배치는 만료·폐기된 토큰만 지우고 아직 쓸 수 있는 토큰은 남기는지 확인
+@pytest.mark.asyncio
+async def test_cleanup_refresh_tokens_removes_only_expired_and_revoked():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        tokens = []
+        for _ in range(3):
+            res = await ac.post("/api/v1/auth/guest", json={"device_id": f"refresh-cleanup-{uuid.uuid4()}"})
+            tokens.append(res.json()["refresh_token"])
+    valid, revoked, expired = (hash_refresh_token(t) for t in tokens)
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("UPDATE refresh_tokens SET revoked = true WHERE token_hash = :h"), {"h": revoked})
+        await db.execute(
+            text("UPDATE refresh_tokens SET expires_at = now() - interval '1 day' WHERE token_hash = :h"),
+            {"h": expired},
+        )
+        await db.commit()
+        removed = await cleanup_refresh_tokens(db)
+        rows = await db.execute(
+            text("SELECT token_hash FROM refresh_tokens WHERE token_hash IN (:a, :b, :c)"),
+            {"a": valid, "b": revoked, "c": expired},
+        )
+        remaining = {r[0] for r in rows}
+
+    assert removed >= 2
+    assert remaining == {valid}
 
 
 # 존재하지 않는 리프레시 토큰으로 재발급 시도

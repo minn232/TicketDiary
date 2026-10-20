@@ -623,37 +623,9 @@ async def test_single_day_concert_performance_date_auto_resolved():
     assert response.json()["performance_date"] == "2030-06-01"
 
 
-# 티켓 기준 페스티벌 실제 셋리스트 자동 생성 라우트 테스트
-@pytest.mark.asyncio
-async def test_ticket_generate_real_setlist_for_festival():
-    artist_a = "우주여행자밴드"
-    artist_b = "산책하는고양이"
-    concert_id = await _create_concert("PF_SL_TICKET_FEST_001", artist=f"{artist_a},{artist_b}")
-    token = await _get_token()
-    headers = {"Authorization": f"Bearer {token}"}
+# 티켓 기준 셋리스트 라우트 테스트 (GET /tickets/{ticket_id}/setlist)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        ticket_res = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
-    ticket_id = ticket_res.json()["id"]
-
-    search_a = _make_setlistfm_search("SF_TICKET_FEST_A", artist=artist_a)
-    search_b = _make_setlistfm_search("SF_TICKET_FEST_B", artist=artist_b)
-
-    with _setlistfm_search_mock_multi({artist_a: search_a, artist_b: search_b}):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            response = await ac.post(
-                f"/api/v1/tickets/{ticket_id}/setlist/generate-festival",
-                headers=headers,
-            )
-
-    assert response.status_code == 201
-    songs = response.json()["songs"]
-    assert {s["artist"] for s in songs} == {artist_a, artist_b}
-
-
-# 티켓 기준 셋리스트 라우트 테스트 (GET/POST /tickets/{ticket_id}/setlist)
-
-# 하루짜리 공연 티켓은 attended_date 없이도 티켓 라우트로 조회/저장 가능한지 테스트
+# 하루짜리 공연 티켓은 attended_date 없이도 티켓 라우트로 조회 가능한지 테스트
 @pytest.mark.asyncio
 async def test_ticket_setlist_route_single_day_works_without_attended_date():
     concert_id = await _create_concert("PF_SL_TICKET_SINGLE")
@@ -667,7 +639,7 @@ async def test_ticket_setlist_route_single_day_works_without_attended_date():
     with _setlistfm_mock(_make_setlistfm_detail("SF_TICKET_SINGLE")):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             post_res = await ac.post(
-                f"/api/v1/tickets/{ticket_id}/setlist",
+                f"/api/v1/concerts/{concert_id}/setlist",
                 json={"setlistfm_id": "SF_TICKET_SINGLE"},
                 headers=headers,
             )

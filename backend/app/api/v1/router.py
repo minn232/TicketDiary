@@ -11,7 +11,8 @@ api_router.include_router(concerts.router, prefix="/concerts", tags=["concerts"]
 api_router.include_router(tickets.router, prefix="/tickets", tags=["tickets"])
 api_router.include_router(setlists.router, prefix="/concerts", tags=["setlists"])
 api_router.include_router(timetables.router, prefix="/concerts", tags=["timetables"])
-api_router.include_router(venue_layout.router, prefix="/concerts", tags=["venue_layout"])
+# 좌석 배치 조회는 앱에서 아직 안 써서 라우트만 꺼둠(크롤 콜백 저장은 그대로) - 화면 생기면 주석 해제
+# api_router.include_router(venue_layout.router, prefix="/concerts", tags=["venue_layout"])
 api_router.include_router(crawl.router, prefix="/concerts", tags=["crawl"])
 api_router.include_router(summary.router, prefix="/summary", tags=["summary"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])

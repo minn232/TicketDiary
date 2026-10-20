@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.concert import Concert
+from app.services.venue_layout import get_venue_layout
 from conftest import _get_token, kopis_mock, _get_notifications_from_db
 
 _LLM_API_KEY = "test-llm-key"
@@ -86,6 +87,7 @@ async def _create_concert_without_artist(kopis_id: str) -> str:
 # venue-layout 조회 테스트
 
 # venue-layout 없는 공연 조회 시 404
+@pytest.mark.skip(reason="venue-layout 조회 라우트를 꺼둠(router.py 주석)")
 @pytest.mark.asyncio
 async def test_get_venue_layout_not_found():
     concert_id = await _create_concert("PF_VL_GET_001")
@@ -101,6 +103,7 @@ async def test_get_venue_layout_not_found():
 
 
 # 존재하지 않는 concert_id로 조회 시 404
+@pytest.mark.skip(reason="venue-layout 조회 라우트를 꺼둠(router.py 주석)")
 @pytest.mark.asyncio
 async def test_get_venue_layout_concert_not_found():
     token = await _get_token()
@@ -115,6 +118,7 @@ async def test_get_venue_layout_concert_not_found():
 
 
 # crawl-result 수신 후 venue-layout 저장 + 조회 성공
+@pytest.mark.skip(reason="venue-layout 조회 라우트를 꺼둠(router.py 주석)")
 @pytest.mark.asyncio
 async def test_get_venue_layout_after_crawl_result():
     concert_id = await _create_concert("PF_VL_GET_002")
@@ -474,17 +478,12 @@ async def test_crawl_result_venue_layout_upsert():
     assert res1.status_code == 200
     assert res2.status_code == 200
 
-    token = await _get_token()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        get_res = await ac.get(
-            f"/api/v1/concerts/{concert_id}/venue-layout",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    # 조회 라우트는 꺼둬서 서비스로 직접 확인
+    async with AsyncSessionLocal() as db:
+        layout = await get_venue_layout(db, uuid.UUID(concert_id))
 
-    assert get_res.status_code == 200
-    data = get_res.json()
-    assert data["image_url"] == "https://s3.example.com/v2.png"
-    assert data["layout_data"] == {"sections": ["R석", "S석"]}
+    assert layout.image_url == "https://s3.example.com/v2.png"
+    assert layout.layout_data == {"sections": ["R석", "S석"]}
 
 
 # ticketing_date 수신 → Concert.ticketing_date 저장 + "ticketing_date" in updated

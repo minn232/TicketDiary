@@ -34,20 +34,6 @@ async def _read_and_validate(image: UploadFile) -> bytes:
     return image_bytes
 
 
-# 티켓 이미지 업로드 (ticket-images/{uuid}.ext -> S3)
-@router.post("/ticket-image", response_model=UploadResponse)
-async def upload_ticket_image(
-    request: Request,
-    image: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    _rate_limit: None = Depends(rate_limit_upload),
-):
-    reject_oversized_request(request, file_count=1)
-    image_bytes = await _read_and_validate(image)
-    url = await upload_image(image_bytes, "ticket-images", image.content_type or "image/jpeg")
-    return UploadResponse(url=url)
-
-
 # 공연 사진 업로드 (concert-photos/{uuid}.ext -> S3)
 # 썸네일은 서버가 디코딩하지 않도록 기기에서 만들어 같이 보냄(선택) - concert-photo-thumbs/에 저장
 @router.post("/concert-photo", response_model=UploadResponse)

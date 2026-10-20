@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -59,3 +59,14 @@ async def revoke_refresh_token(db: AsyncSession, token: str) -> None:
         stored.revoked = True
         await db.execute(update(User).where(User.id == stored.user_id).values(fcm_token=None))
         await db.commit()
+
+
+# 만료·폐기된 리프레시 토큰 정리(매일) - 둘 다 재발급 시 401이라 남겨둘 이유가 없고 계속 쌓이기만 함
+async def cleanup_refresh_tokens(db: AsyncSession) -> int:
+    result = await db.execute(
+        delete(RefreshToken).where(
+            or_(RefreshToken.revoked.is_(True), RefreshToken.expires_at < datetime.now(timezone.utc))
+        )
+    )
+    await db.commit()
+    return result.rowcount

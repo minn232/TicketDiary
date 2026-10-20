@@ -14,8 +14,8 @@ from app.schemas.artist_identity import (
 )
 from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.setlist import (
-    RealSetlistResponse, PreSetlistResponse, SetlistFmCandidate,
-    SetlistEditRequest, FetchSetlistRequest, ArtistAnchorCandidate, ArtistAnchorRequest, ArtistCandidate,
+    RealSetlistResponse, PreSetlistResponse,
+    SetlistEditRequest, ArtistAnchorCandidate, ArtistAnchorRequest, ArtistCandidate,
     PreviewTracksResponse,
 )
 from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
@@ -32,7 +32,6 @@ from app.services.pre_setlist import (
     apply_itunes_anchor,
     check_pre_setlist_on_view,
     get_pre_setlist,
-    generate_pre_setlist,
     generate_pre_setlist_background,
     refresh_setlists_after_identity_change,
     regenerate_pre_setlists_for_artist,
@@ -44,9 +43,6 @@ from app.services.representative_songs import search_itunes_songs
 from app.services.setlist import (
     attach_artist_setlist_statuses,
     get_real_setlist,
-    search_setlists_for_concert,
-    fetch_and_save_real_setlist,
-    generate_real_setlist_auto,
     check_real_setlist_on_view,
     update_real_setlist,
 )
@@ -174,31 +170,6 @@ async def get_ticket_preview_tracks(
     return await get_preview_tracks(db, concert_id, explicit_date)
 
 
-# 티켓 기준 Setlist.fm 후보 검색
-@router.get("/{ticket_id}/setlist/search", response_model=list[SetlistFmCandidate])
-async def search_ticket_real_setlists(
-    ticket_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    ticket = await get_ticket(db, current_user.id, ticket_id)
-    concert_id, explicit_date = _ticket_concert_and_date(ticket)
-    return await search_setlists_for_concert(db, concert_id, explicit_date)
-
-
-# 티켓 기준으로 Setlist.fm ID의 셋리스트를 가져와 저장
-@router.post("/{ticket_id}/setlist", response_model=RealSetlistResponse, status_code=status.HTTP_201_CREATED)
-async def fetch_ticket_real_setlist(
-    ticket_id: UUID,
-    body: FetchSetlistRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    ticket = await get_ticket(db, current_user.id, ticket_id)
-    concert_id, explicit_date = _ticket_concert_and_date(ticket)
-    return await fetch_and_save_real_setlist(db, concert_id, body.setlistfm_id, explicit_date)
-
-
 # 티켓 기준 실제 셋리스트 유저 수정
 @router.patch("/{ticket_id}/setlist", response_model=RealSetlistResponse)
 async def edit_ticket_real_setlist(
@@ -210,24 +181,6 @@ async def edit_ticket_real_setlist(
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, explicit_date = _ticket_concert_and_date(ticket)
     return await update_real_setlist(db, concert_id, body.songs, current_user.nickname, explicit_date)
-
-
-# 아티스트별 자동 검색+병합으로 실제 셋리스트 생성(페스티벌뿐 아니라 단독 공연도 동작).
-# 위 search+POST(단독 후보 선택) 흐름과 별개 - 프론트에 다중 선택 UI가 아직 없어도
-# 바로 쓸 수 있는 자동 경로. 자세한 배경은 generate_real_setlist_auto 참고.
-@router.post(
-    "/{ticket_id}/setlist/generate-festival",
-    response_model=RealSetlistResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def generate_ticket_real_setlist_auto(
-    ticket_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    ticket = await get_ticket(db, current_user.id, ticket_id)
-    concert_id, explicit_date = _ticket_concert_and_date(ticket)
-    return await generate_real_setlist_auto(db, concert_id, explicit_date)
 
 
 # show_predicted_setlist는 이제 조회 자체를 막는 스위치가 아니라 프론트 블러
@@ -254,17 +207,6 @@ async def get_ticket_pre_setlist(
     if not songs:
         background_tasks.add_task(check_pre_setlist_on_view, concert_id)
     return result
-
-
-@router.post("/{ticket_id}/setlist/pre/generate", response_model=PreSetlistResponse, status_code=status.HTTP_201_CREATED)
-async def generate_ticket_pre_setlist(
-    ticket_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    ticket = await get_ticket(db, current_user.id, ticket_id)
-    concert_id, _ = _ticket_concert_and_date(ticket)
-    return await generate_pre_setlist(db, concert_id)
 
 
 @router.patch("/{ticket_id}/setlist/pre", response_model=PreSetlistResponse)

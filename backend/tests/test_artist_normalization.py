@@ -21,6 +21,7 @@ from app.models.social import NewsFeed
 from app.services.artist_normalization import (
     alternate_lookup_names,
     apply_canonical_replacement,
+    confirm_artist_name_change,
     decide_match,
     expand_follow_index_with_group_relations,
     find_canonical_by_alias,
@@ -653,7 +654,7 @@ async def test_artist_result_schedules_immediate_normalization():
     mock_normalize.assert_awaited_once_with(concert_id, ["즉시아티스트"])
 
 
-# PATCH /concerts/{concert_id}/artist-name/confirm (유저 프로모션 API)
+# 미확정 표기 확정(confirm_artist_name_change, 관리자 PATCH /admin/concerts/{id}/artist-name이 사용)
 
 @pytest.mark.asyncio
 async def test_confirm_artist_name_success():
@@ -661,15 +662,9 @@ async def test_confirm_artist_name_success():
     raw_name = f"미확정_{uuid.uuid4().hex[:6]}"
     concert_id = await _create_concert(f"PF_CONFIRM_{uuid.uuid4().hex[:6]}", raw_name, token)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.patch(
-            f"/api/v1/concerts/{concert_id}/artist-name/confirm",
-            json={"original_name": raw_name, "confirmed_name": "확정된이름"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    assert res.status_code == 200
-    assert res.json()["artist_name"] == ["확정된이름"]
+    async with AsyncSessionLocal() as db:
+        concert = await confirm_artist_name_change(db, uuid.UUID(concert_id), raw_name, "확정된이름")
+        assert concert.artist_name == ["확정된이름"]
 
     async with AsyncSessionLocal() as db:
         canonical = await find_canonical_by_alias(db, raw_name)
@@ -683,26 +678,10 @@ async def test_confirm_artist_name_rejects_name_not_on_concert():
     token = await _get_token()
     concert_id = await _create_concert(f"PF_CONFIRM_BAD_{uuid.uuid4().hex[:6]}", "실제아티스트", token)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.patch(
-            f"/api/v1/concerts/{concert_id}/artist-name/confirm",
-            json={"original_name": "존재하지않는이름", "confirmed_name": "아무거나"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-    assert res.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_confirm_artist_name_requires_auth():
-    token = await _get_token()
-    concert_id = await _create_concert(f"PF_CONFIRM_AUTH_{uuid.uuid4().hex[:6]}", "아티스트", token)
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.patch(
-            f"/api/v1/concerts/{concert_id}/artist-name/confirm",
-            json={"original_name": "아티스트", "confirmed_name": "새이름"},
-        )
-    assert res.status_code == 401
+    async with AsyncSessionLocal() as db:
+        with pytest.raises(HTTPException) as exc:
+            await confirm_artist_name_change(db, uuid.UUID(concert_id), "존재하지않는이름", "아무거나")
+    assert exc.value.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -718,15 +697,10 @@ async def test_confirm_artist_name_reuses_existing_canonical_on_near_duplicate()
         await db.commit()
         canonical_id = canonical.id
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.patch(
-            f"/api/v1/concerts/{concert_id}/artist-name/confirm",
-            # 대소문자만 다른 근접 중복 - normalize_artist_names의 퍼지매칭으로 기존 canonical 재사용돼야 함
-            json={"original_name": raw_name, "confirmed_name": canonical_name.upper()},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    async with AsyncSessionLocal() as db:
+        # 대소문자만 다른 근접 중복 - normalize_artist_names의 퍼지매칭으로 기존 canonical 재사용돼야 함
+        await confirm_artist_name_change(db, uuid.UUID(concert_id), raw_name, canonical_name.upper())
 
-    assert res.status_code == 200
     async with AsyncSessionLocal() as db:
         # 다른 테스트가 병행으로 만든 canonical_artists와 섞여도 안전하게, 이 이름으로만 스코프해서 확인
         matches = (
