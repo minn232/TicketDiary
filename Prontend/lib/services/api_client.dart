@@ -150,33 +150,53 @@ class ApiClient {
     T Function(dynamic data) extract, {
     required bool allowAuthRetry,
   }) async {
+    final startedAt = DateTime.now();
     try {
       final response = await request();
-      ConnectivityStatus.instance.isOffline.value = false;
+      _markOnline();
       return extract(response.data);
     } on DioException catch (e) {
-      // [백엔드 수정] 응답 자체를 못 받았으면(연결 실패/타임아웃) 오프라인으로 간주.
-      if (e.response == null) {
-        ConnectivityStatus.instance.isOffline.value = true;
-      }
+      _markOfflineIfConnectionFailed(e, startedAt);
       final statusCode = e.response?.statusCode ?? -1;
       if (statusCode == 401 && allowAuthRetry && onUnauthorized != null) {
         final newToken = await onUnauthorized!();
         if (newToken != null) {
           try {
             final retryResponse = await request();
-            ConnectivityStatus.instance.isOffline.value = false;
+            _markOnline();
             return extract(retryResponse.data);
           } on DioException catch (retryError) {
-            if (retryError.response == null) {
-              ConnectivityStatus.instance.isOffline.value = true;
-            }
+            _markOfflineIfConnectionFailed(retryError, startedAt);
             throw _toApiException(retryError);
           }
         }
       }
       throw _toApiException(e);
     }
+  }
+
+  // [백엔드 수정]
+  // 마지막으로 요청이 성공한 시각 - 끊겼을 때 보낸 요청이 복구 뒤에 늦게 실패해도
+  // 다시 오프라인으로 덮지 않게 비교용.
+  DateTime? _lastSuccessAt;
+
+  void _markOnline() {
+    _lastSuccessAt = DateTime.now();
+    ConnectivityStatus.instance.isOffline.value = false;
+  }
+
+  // [백엔드 수정]
+  // 서버에 아예 연결을 못 했을 때만 오프라인. 응답이 느린 경우(receive/send 타임아웃)나
+  // 취소는 연결은 된 것이라 제외 - 느린 API 하나 때문에 오프라인으로 바뀌던 문제.
+  void _markOfflineIfConnectionFailed(DioException e, DateTime startedAt) {
+    final connectionFailed =
+        e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.connectionTimeout ||
+        (e.type == DioExceptionType.unknown && e.response == null);
+    if (!connectionFailed) return;
+    final lastSuccess = _lastSuccessAt;
+    if (lastSuccess != null && lastSuccess.isAfter(startedAt)) return;
+    ConnectivityStatus.instance.isOffline.value = true;
   }
 
   Map<String, dynamic> _asMap(dynamic data) =>

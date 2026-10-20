@@ -21,6 +21,7 @@ import 'package:ticketdiary/services/ticket_service.dart';
 import 'package:ticketdiary/services/torn_ticket_store.dart';
 import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/widgets/offline_banner.dart';
+import 'package:ticketdiary/services/connectivity_status.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/landscape_upcoming_ticket_panel.dart';
@@ -366,6 +367,21 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (_authListenerRegistered) return;
     _authListenerRegistered = true;
     AuthService.instance.addListener(_onAuthChangedStatic);
+    ConnectivityStatus.instance.isOffline.addListener(
+      _onConnectivityChangedStatic,
+    );
+  }
+
+  // [백엔드 수정]
+  // 캐시(오프라인) 티켓을 보여주던 중 다시 온라인이 되면 서버 목록으로 다시 불러옴 -
+  // 전엔 탭을 다시 열기 전까지 캐시가 그대로 남아 온라인인데 오프라인 데이터가 보였음.
+  static void _onConnectivityChangedStatic() {
+    if (ConnectivityStatus.instance.isOffline.value || !_usingCachedTickets) {
+      return;
+    }
+    _backendTicketsLoaded = false;
+    _backendTicketsLoadFuture = null;
+    TicketRefreshBus.notify();
   }
 
   /// 로그인 상태가 바뀔 때마다(로그인/로그아웃/게스트↔카카오 전환) 호출됩니다.

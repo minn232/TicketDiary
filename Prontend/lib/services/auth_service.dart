@@ -86,6 +86,26 @@ class AlreadyKakaoUserException implements Exception {
 class AuthService extends ChangeNotifier {
   AuthService._() {
     _client.onUnauthorized = _handleUnauthorized;
+    // [백엔드 수정]
+    // 오프라인 중 재확인 요청, 그리고 다시 온라인이 되면 오프라인이라 못 받은 내 정보를
+    // 다시 불러옴(오프라인으로 앱을 켜면 카카오 계정인데 게스트로 보이던 문제).
+    ConnectivityStatus.instance.probe = _probeServer;
+    ConnectivityStatus.instance.isOffline.addListener(_onConnectivityChanged);
+  }
+
+  Future<void> _probeServer() async {
+    if (isLoggedIn) {
+      await refreshCurrentUser();
+    } else {
+      await _loginAsGuest();
+    }
+  }
+
+  void _onConnectivityChanged() {
+    if (ConnectivityStatus.instance.isOffline.value) return;
+    if (isLoggedIn && _currentUser == null) {
+      unawaited(refreshCurrentUser().catchError((_) {}));
+    }
   }
 
   static final AuthService instance = AuthService._();
@@ -169,11 +189,13 @@ class AuthService extends ChangeNotifier {
         // 저장된 토큰이 있어도 만료/폐기됐을 수 있으니 /auth/me로 한 번 검증합니다.
         try {
           await refreshCurrentUser();
-        } catch (_) {
+        } catch (e) {
           // [백엔드 수정]
-          // 오프라인이면 저장된 세션을 그대로 두고 진행 - 무조건 게스트로
-          // 강등시키면 오프라인일 때마다 카카오 로그인이 풀리는 버그였음.
-          if (!ConnectivityStatus.instance.isOffline.value) {
+          // 토큰이 실제로 무효일 때(401/403/404)만 게스트로 - 오프라인/서버 지연/5xx에도
+          // 강등시키면 카카오 로그인이 풀림. 그 외엔 세션을 두고 온라인 복귀 시 다시 조회.
+          if (e is ApiException &&
+              const {401, 403, 404}.contains(e.statusCode) &&
+              !ConnectivityStatus.instance.isOffline.value) {
             await _loginAsGuest();
           }
         }
