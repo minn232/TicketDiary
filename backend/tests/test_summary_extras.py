@@ -224,13 +224,15 @@ async def test_summary_ticket_details():
         await db.commit()
     c1 = await _create_concert(f"PF_EXT_{_uid()}", days_ago=40, artists=jp)
     c2 = await _create_concert(f"PF_EXT_{_uid()}", days_ago=10, artists=kr)
-    await _create_attended_ticket(c1, token, seat_type="스탠딩석", price=120000)
-    await _create_attended_ticket(c2, token, seat_type="1일권")
+    t1 = await _create_attended_ticket(c1, token, seat_type="스탠딩석", price=120000)
+    t2 = await _create_attended_ticket(c2, token, seat_type="1일권")
 
     details = (await _get_summary(token))["ticket_details"]
     assert len(details) == 2
     assert [d["date"] for d in details] == sorted(d["date"] for d in details)
     first, second = details
+    assert (first["ticket_id"], second["ticket_id"]) == (t1, t2)  # 캘린더→다이어리 이동용
+    assert "poster_url" in first  # 관람 카드 포스터용(스키마에 없으면 응답에서 빠짐)
     assert (first["seat"], first["origin"], first["price"]) == ("standing", "foreign", 120000)
     assert (second["seat"], second["origin"], second["price"]) == (None, "domestic", None)  # 모호한 좌석은 null
     assert first["day"] is None and first["concert_name"]

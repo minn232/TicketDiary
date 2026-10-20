@@ -282,6 +282,7 @@ async def get_summary(db: AsyncSession, user_id: UUID, period: str) -> dict:
         # 그래프를 눌렀을 때 보여줄 간단한 티켓 목록(분류는 위 통계와 같은 기준)
         "ticket_details": [
             {
+                "ticket_id": str(t.id),
                 "concert_name": t.concert.name if t.concert else "",
                 "poster_url": t.concert.poster_url if t.concert else None,
                 "date": attended_day(t).isoformat(),

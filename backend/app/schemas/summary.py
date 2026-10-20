@@ -43,7 +43,9 @@ class MonthlyStat(BaseModel):
 class TicketDetail(BaseModel):
     # 그래프를 눌렀을 때 보여줄 티켓 한 장의 간단한 정보. 분류 값은 퍼센트/월별 통계와 같은 기준이고
     # 판별이 안 된 값(좌석 모호, 이틀 공연 아님, 국가 모름)은 null
+    ticket_id: str  # 캘린더에서 다이어리의 해당 티켓으로 이동할 때 사용
     concert_name: str
+    poster_url: str | None = None
     date: str  # 관람일 "YYYY-MM-DD"
     price: int | None
     seat: Literal["standing", "seated"] | None
