@@ -7,7 +7,8 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // [백엔드 수정]
-// 폰 맞대기 BLE 판정. 기준값은 실측 결과(docs/NearbySharing_BLE_Measurement_2026-10-13.md 6장).
+// 폰 맞대기 BLE 판정. 기준값은 실측 결과(docs/NearbySharing_BLE_Measurement_2026-10-13.md 6장,
+// 아이폰은 2026-10-16.md).
 const _serviceUuid = 'c5f3a2e0-7b1d-4e9a-8f26-1d3c5b7a9e42';
 const _manufacturerId = 0xFFFF;
 const _modeFlag = 0x80;
@@ -17,6 +18,11 @@ const _reportThreshold = -62;
 const _strongThreshold = -55;
 const _releaseThreshold = -65;
 const _minPackets = 5;
+// iOS는 광고에 제조사 데이터를 못 실어서 로컬 이름에 코드(hex 8자)만 실음 - 맞대기 화면에서만 광고하니 모드 플래그는 없음
+final _iosNamePattern = RegExp(r'^[0-9a-f]{8}$');
+// iOS는 송신 세기를 못 낮춰서 안드로이드 ULTRA_LOW보다 훨씬 세게 들림(맞댐 -34~-36, 30cm도 -45~-54).
+// 보낸 쪽이 iOS면 이만큼 빼서 보고 - 서버 기준(-55/-62)을 그대로 쓰면서 받은 값 약 -40부터 강한 쪽으로 인정
+const _iosSenderOffset = 15;
 
 /// 맞댐 판정 하나 - 상대 광고 코드와 판정 당시 1초 평균 RSSI.
 class NearbyDetection {
@@ -54,6 +60,8 @@ class NearbyTapEngine extends ChangeNotifier {
   final _peripheral = FlutterBlePeripheral();
   final _ble = FlutterReactiveBle();
   final _peers = <String, _Peer>{};
+  // 이름 없이 온 iOS 패킷(스캔 응답이 빠진 경우)은 같은 기기에서 직전에 읽은 코드를 씀
+  final _codeByDevice = <String, String>{};
   StreamSubscription<DiscoveredDevice>? _scanSub;
   final _detections = StreamController<NearbyDetection>.broadcast();
 
@@ -74,14 +82,16 @@ class NearbyTapEngine extends ChangeNotifier {
     }
     try {
       await _peripheral.start(
-        advertiseData: AdvertiseDataCore(
-          serviceUuid: _serviceUuid,
-          manufacturerId: _manufacturerId,
-          manufacturerData: Uint8List.fromList([
-            ..._hexBytes(myCode),
-            _modeFlag,
-          ]),
-        ),
+        advertiseData: _isIOS
+            ? AdvertiseDataCore(serviceUuid: _serviceUuid, localName: myCode)
+            : AdvertiseDataCore(
+                serviceUuid: _serviceUuid,
+                manufacturerId: _manufacturerId,
+                manufacturerData: Uint8List.fromList([
+                  ..._hexBytes(myCode),
+                  _modeFlag,
+                ]),
+              ),
         androidSettings: AndroidAdvertiseSettings(
           advertiseSettings: AdvertiseSettings(
             advertiseMode: AdvertiseMode.advertiseModeLowLatency,
@@ -93,6 +103,8 @@ class NearbyTapEngine extends ChangeNotifier {
           .scanForDevices(
             withServices: [Uuid.parse(_serviceUuid)],
             scanMode: ScanMode.lowLatency,
+            // 실측 앱과 같게 - iOS엔 위치 서비스 조건이 없음
+            requireLocationServicesEnabled: !_isIOS,
           )
           .listen(
             (d) => _onDiscovered(d, myCode),
@@ -115,12 +127,25 @@ class NearbyTapEngine extends ChangeNotifier {
       await _peripheral.stop();
     } catch (_) {}
     _peers.clear();
+    _codeByDevice.clear();
     running = false;
     notifyListeners();
   }
 
+  static bool get _isIOS => defaultTargetPlatform == TargetPlatform.iOS;
+
   Future<NearbyEngineError?> _prepare() async {
     if (!await _peripheral.isSupported) return NearbyEngineError.unsupported;
+    if (_isIOS) {
+      // iOS는 블루투스를 처음 쓸 때 시스템이 권한 창을 띄움 - 사용자가 누를 때까지 기다림
+      final status = await _waitReady(const Duration(seconds: 30));
+      return switch (status) {
+        BleStatus.ready => null,
+        BleStatus.unauthorized => NearbyEngineError.permissionDenied,
+        BleStatus.poweredOff => NearbyEngineError.bluetoothOff,
+        _ => NearbyEngineError.failed,
+      };
+    }
     final statuses = await [
       Permission.bluetoothScan,
       Permission.bluetoothAdvertise,
@@ -166,21 +191,40 @@ class NearbyTapEngine extends ChangeNotifier {
     return latest;
   }
 
-  void _onDiscovered(DiscoveredDevice device, String myCode) {
+  // 상대 코드와 보낸 쪽이 iOS인지 - 안드로이드 광고는 제조사 데이터, iOS 광고는 로컬 이름
+  (String, bool)? _decode(DiscoveredDevice device) {
     // 제조사 데이터 앞 2바이트는 제조사 ID(리틀엔디언), 뒤는 [코드 4바이트, 모드 플래그]
     final raw = device.manufacturerData;
-    if (raw.length < 7 || (raw[0] | raw[1] << 8) != _manufacturerId) return;
-    if (raw[6] & _modeFlag == 0) return;
-    final code = raw
-        .sublist(2, 6)
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
+    if (raw.length >= 7 && (raw[0] | raw[1] << 8) == _manufacturerId) {
+      if (raw[6] & _modeFlag == 0) return null;
+      final code = raw
+          .sublist(2, 6)
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
+      return (code, false);
+    }
+    final name = device.name.toLowerCase();
+    if (_iosNamePattern.hasMatch(name)) {
+      _codeByDevice[device.id] = name;
+      return (name, true);
+    }
+    final cached = _codeByDevice[device.id];
+    return cached == null ? null : (cached, true);
+  }
+
+  void _onDiscovered(DiscoveredDevice device, String myCode) {
+    final decoded = _decode(device);
+    if (decoded == null) return;
+    final (code, fromIOS) = decoded;
     if (code == myCode) return;
 
     final now = DateTime.now();
     final peer = _peers.putIfAbsent(code, _Peer.new);
     final wasEmpty = peer.recent.isEmpty;
-    peer.recent.add((now, device.rssi));
+    peer.recent.add((
+      now,
+      fromIOS ? device.rssi - _iosSenderOffset : device.rssi,
+    ));
     final avg = peer.average(now);
     if (wasEmpty) notifyListeners();
     if (avg == null) return;
