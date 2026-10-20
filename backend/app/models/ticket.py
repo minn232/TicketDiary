@@ -19,7 +19,9 @@ class TicketStatus(str, enum.Enum):
 class Ticket(Base):
     __tablename__ = "tickets"
 
-    __table_args__ = (UniqueConstraint("user_id", "concert_id"),)
+    # 여러 날 하는 공연은 관람일별로 티켓을 따로 등록할 수 있어서 관람일까지 포함.
+    # attended_date가 NULL인 티켓끼리는 DB가 못 막으므로 services/ticket.py의 등록/수정 검사가 담당
+    __table_args__ = (UniqueConstraint("user_id", "concert_id", "attended_date", name="uq_tickets_user_concert_date"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)

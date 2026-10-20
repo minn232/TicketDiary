@@ -416,6 +416,39 @@ async def test_create_ticket_duplicate_409():
     assert res2.status_code == 409
 
 
+# 여러 날 하는 공연은 관람일이 다르면 같은 공연에 티켓을 따로 등록할 수 있는지 테스트
+# (관람일이 같거나 한쪽이라도 관람일을 모르면 409)
+@pytest.mark.asyncio
+async def test_create_ticket_multi_day_concert_per_attended_date():
+    concert_id = await _create_concert("PF_T_MULTIDAY_001", start="2030.02.15", end="2030.02.16")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        day2 = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "attended_date": "2030-02-16"}, headers=headers
+        )
+        day1 = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "attended_date": "2030-02-15"}, headers=headers
+        )
+        day1_again = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "attended_date": "2030-02-15"}, headers=headers
+        )
+        no_date = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+        # 관람일을 바꿔서 다른 티켓과 같은 날이 되는 수정도 409
+        moved = await ac.patch(
+            f"/api/v1/tickets/{day1.json()['id']}", json={"attended_date": "2030-02-16"}, headers=headers
+        )
+
+    assert day2.status_code == 201
+    assert day1.status_code == 201
+    assert day1.json()["is_first_day"] is True
+    assert day2.json()["is_last_day"] is True
+    assert day1_again.status_code == 409
+    assert no_date.status_code == 409
+    assert moved.status_code == 409
+
+
 # 미인증 요청 401 테스트
 @pytest.mark.asyncio
 async def test_create_ticket_no_auth_401():

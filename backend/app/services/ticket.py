@@ -158,6 +158,13 @@ async def _get_concert_by_kopis_id(db: AsyncSession, kopis_id: str) -> Concert:
     return concert
 
 
+# 같은 공연의 두 티켓이 같은 날 관람인지. 관람일을 모르는 쪽이 있으면 구분할 수 없으니 같은 날로 봄
+def _is_same_attended_day(a: datetime | None, b: datetime | None) -> bool:
+    if a is None or b is None:
+        return True
+    return a.astimezone(KST).date() == b.astimezone(KST).date()
+
+
 # 티켓 등록
 async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Ticket:
     if body.concert_id is not None:
@@ -165,11 +172,12 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     else:
         concert = await _get_concert_by_kopis_id(db, body.kopis_id)
 
-    # 동일 유저-공연 중복 등록 방지
+    # 동일 유저-공연-관람일 중복 등록 방지. 여러 날 하는 공연은 KOPIS상 공연 1개라
+    # 관람일이 다르면 같은 공연에 티켓 여러 장 허용(2/15, 2/16 양일 관람 등)
     result = await db.execute(
-        select(Ticket).where(Ticket.user_id == user.id, Ticket.concert_id == concert.id)
+        select(Ticket.attended_date).where(Ticket.user_id == user.id, Ticket.concert_id == concert.id)
     )
-    if result.scalar_one_or_none() is not None:
+    if any(_is_same_attended_day(d, body.attended_date) for d in result.scalars().all()):
         raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
 
     # 실제 티켓(OCR)이 회차를 증명하는 자료이므로 KOPIS 시간과 다르면 OCR을 신뢰하고 로그만 남김
@@ -354,6 +362,19 @@ async def update_ticket(
     old_image_url = ticket.ticket_image_url
 
     fields = body.model_dump(exclude_unset=True)
+
+    # 관람일을 바꿔서 같은 공연의 다른 티켓과 같은 날이 되는 것도 등록 때와 같은 기준으로 막음
+    if "attended_date" in fields and ticket.concert_id is not None:
+        others = await db.execute(
+            select(Ticket.attended_date).where(
+                Ticket.user_id == user.id,
+                Ticket.concert_id == ticket.concert_id,
+                Ticket.id != ticket.id,
+            )
+        )
+        if any(_is_same_attended_day(d, fields["attended_date"]) for d in others.scalars().all()):
+            raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
+
     for field, value in fields.items():
         setattr(ticket, field, value)
         # 유저가 직접 delivery_date를 수정하면 더 이상 크롤링 값과 동기화된 상태가 아님
