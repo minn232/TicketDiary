@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +15,7 @@ from app.models.artist_normalization import (
     CanonicalArtist,
 )
 from app.models.concert import Concert, EventType
+from app.models.setlist import RealSetlist
 from app.services.artist_normalization import _collapse_members_to_group_names, try_link_canonical_to_musicbrainz
 from app.services.musicbrainz import ArtistCandidate, BandRelation
 from conftest import _get_token, kopis_mock
@@ -983,6 +984,30 @@ async def test_admin_review_endpoint_marks_reviewed_without_edit():
     assert res.status_code == 200
     assert res.json()["admin_reviewed_at"] is not None
     assert res.json()["artist_name"] == ["이미맞음"]  # 내용은 그대로
+
+
+# 검수/아티스트 수정 시 고치기 전 아티스트로 실패해 남은 실제 셋리 빈 행만 지움(곡 있는 행·유저 수정본은 유지)
+@pytest.mark.asyncio
+async def test_admin_review_clears_failed_real_setlist_attempts():
+    concert_id = await _create_concert(f"PF_ADMIN_RS_{uuid.uuid4().hex[:6]}", f"셋리_{uuid.uuid4().hex[:6]}")
+    cid = uuid.UUID(concert_id)
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            RealSetlist(concert_id=cid, performance_date=date(2025, 1, 1), songs=[], attempted_at=now),
+            RealSetlist(concert_id=cid, performance_date=date(2025, 1, 2), songs=[{"name": "곡", "encore": False}], attempted_at=now),
+            RealSetlist(concert_id=cid, performance_date=date(2025, 1, 3), songs=[], is_user_edited=True, attempted_at=now),
+        ])
+        await db.commit()
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(f"/api/v1/admin/concerts/{concert_id}/review", headers=_admin_headers())
+    assert res.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(select(RealSetlist.performance_date).where(RealSetlist.concert_id == cid))).scalars().all()
+    assert sorted(rows) == [date(2025, 1, 2), date(2025, 1, 3)]
 
 
 @pytest.mark.asyncio

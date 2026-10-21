@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
@@ -386,6 +386,20 @@ async def check_real_setlist_on_view(concert_id: UUID, performance_date: date) -
                 await _mark_real_setlist_attempt(db, concert_id, performance_date)
             except Exception:
                 pass  # 쿨다운 기록조차 실패하면 다음 조회 때 다시 시도되게 그냥 둠
+
+
+# 아티스트를 고친 뒤 - 고치기 전 아티스트로 못 찾아 남은 빈 행(쿨다운 추적용)을 지워서 다음 조회 때
+# 바로 다시 시도되게 함. 실사례(10/20): 멤버 본명으로 시도해 실패한 직후 고쳤는데 하루 쿨다운에 걸려
+# 셋리가 안 잡혔고, 끝난 지 14일 넘은 공연은 매일 백필에서도 빠져 조회 때만 재시도됨.
+# 곡이 있는 행은 안 건드림(commit은 호출부가 함)
+async def clear_failed_real_setlist_attempts(db: AsyncSession, concert_id: UUID) -> None:
+    await db.execute(
+        delete(RealSetlist).where(
+            RealSetlist.concert_id == concert_id,
+            RealSetlist.is_user_edited.is_(False),
+            func.jsonb_array_length(RealSetlist.songs) == 0,
+        )
+    )
 
 
 # 시도했지만 못 찾았을 때 쿨다운 추적용으로 빈 행을 남기거나(처음) 시각만 갱신(기존 빈 행)

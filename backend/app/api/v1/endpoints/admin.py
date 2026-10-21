@@ -52,6 +52,7 @@ from app.services.artist_identity import (
     revert_identity_change,
 )
 from app.services.pre_setlist import refresh_setlists_after_identity_change
+from app.services.setlist import clear_failed_real_setlist_attempts
 from app.services.artist_normalization import (
     _display_value,
     add_artist_alias,
@@ -284,6 +285,8 @@ async def _mark_reviewed(db: AsyncSession, concert_id: UUID) -> None:
     if concert is None:
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
     concert.admin_reviewed_at = datetime.now(timezone.utc)
+    # 아티스트 수정 라우트가 전부 여길 거치므로 같이 처리 - 고치기 전 아티스트로 실패한 실제 셋리 기록 정리
+    await clear_failed_real_setlist_attempts(db, concert_id)
     await db.commit()
 
 
