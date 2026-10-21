@@ -703,14 +703,15 @@ async def test_crawl_and_save_interpark_updates_concert():
     mock_db.commit.assert_awaited()
 
 
-# 미지원 사이트 + ticketing_links도 없으면 크롤링 없이 종료
+# 미지원 사이트 + ticketing_links도 없으면 KOPIS 상세페이지로 폴백
 @pytest.mark.asyncio
-async def test_crawl_and_save_unsupported_site_skips():
+async def test_crawl_and_save_unsupported_site_falls_back_to_kopis():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
     mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
+    mock_concert.kopis_id = "PF291361"
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_links = None
     mock_concert.ticketing_date = None
@@ -723,20 +724,28 @@ async def test_crawl_and_save_unsupported_site_skips():
     mock_db.__aenter__ = AsyncMock(return_value=mock_db)
     mock_db.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db):
+    mock_kopis = AsyncMock(return_value=b"kopis-bytes")
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler.crawl_kopis", new=mock_kopis),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value="https://s3.example.com/crawls/kopis.png")),
+        patch("app.services.crawler.compute_timetable_ranges", new=AsyncMock(return_value=None)),
+    ):
         await crawl_and_save(concert_id, "UNKNOWN_SITE")
 
-    mock_db.commit.assert_not_awaited()
+    mock_kopis.assert_awaited_once_with(mock_concert)
+    assert mock_concert.crawl_screenshot_url == "https://s3.example.com/crawls/kopis.png"
 
 
-# ticketing_site=None이고 ticketing_links도 없으면 크롤링 없이 종료
+# ticketing_site=None이고 ticketing_links도 없으면(예매처 주소 없음) KOPIS 상세페이지로 폴백
 @pytest.mark.asyncio
-async def test_crawl_and_save_none_ticketing_site_and_no_links_skips():
+async def test_crawl_and_save_none_ticketing_site_and_no_links_falls_back_to_kopis():
     concert_id = uuid.uuid4()
     mock_concert = MagicMock()
     mock_concert.crawl_attempt_count = 0
     mock_concert.id = concert_id
     mock_concert.name = "공연명"
+    mock_concert.kopis_id = "PF291361"
     mock_concert.crawl_screenshot_url = None
     mock_concert.ticketing_links = None
     mock_concert.ticketing_date = None
@@ -749,10 +758,17 @@ async def test_crawl_and_save_none_ticketing_site_and_no_links_skips():
     mock_db.__aenter__ = AsyncMock(return_value=mock_db)
     mock_db.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db):
+    mock_kopis = AsyncMock(return_value=b"kopis-bytes")
+    with (
+        patch("app.services.crawler.AsyncSessionLocal", return_value=mock_db),
+        patch("app.services.crawler.crawl_kopis", new=mock_kopis),
+        patch("app.services.crawler._upload_screenshot", new=AsyncMock(return_value="https://s3.example.com/crawls/kopis.png")),
+        patch("app.services.crawler.compute_timetable_ranges", new=AsyncMock(return_value=None)),
+    ):
         await crawl_and_save(concert_id, None)
 
-    mock_db.commit.assert_not_awaited()
+    mock_kopis.assert_awaited_once_with(mock_concert)
+    assert mock_concert.crawl_screenshot_url == "https://s3.example.com/crawls/kopis.png"
 
 
 # ticketing_site=None이어도(예: 찜 시점처럼 아직 아무도 티켓 등록 안 한 경우) concert.ticketing_links만

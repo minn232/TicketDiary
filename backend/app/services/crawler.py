@@ -756,12 +756,12 @@ _MAX_CRAWL_ATTEMPTS = 30
 _CRAWL_TIMEOUT = 150
 
 
-# 후보 사이트를 차례로 시도, 후보가 없으면(티켓링크 전용) KOPIS 페이지로 폴백 - (업로드 키, 스크린샷) 반환
+# 후보 사이트를 차례로 시도, 후보가 없으면(티켓링크 전용, 예매처 주소 없음) KOPIS 페이지로 폴백 - (업로드 키, 스크린샷) 반환
 async def _crawl_candidates_or_kopis(
     concert: Concert, candidates: list[tuple[str, str | None]]
 ) -> tuple[str | None, bytes | None]:
     if not candidates:
-        logger.info(f"티켓링크 미지원 → KOPIS 폴백: {concert.name}")
+        logger.info(f"크롤링 가능한 예매처 없음 → KOPIS 폴백: {concert.name}")
         return "kopis", await crawl_kopis(concert)
     logger.info(f"크롤링 대상 후보: {[c[0] for c in candidates]}")
     site_key, image_bytes = await _crawl_first_success(concert, candidates)
@@ -814,9 +814,8 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
             logger.info(f"크롤링 재시도 횟수 초과, 포기: {concert.name} ({concert.crawl_attempt_count}회)")
             return
 
-        if not ticketing_site and not concert.ticketing_links:
-            logger.info(f"크롤링 대상 사이트 정보 없음, 스킵: {concert.name}")
-            return
+        # 예매처 주소가 아예 없어도(ticketing_site/ticketing_links 둘 다 없음) 스킵하지 않음 - 후보가
+        # 비면 티켓링크 전용과 똑같이 KOPIS 상세페이지로 폴백해 LLM이 볼 스크린샷이라도 확보
 
         concert.crawl_attempted_at = now
         concert.crawl_attempt_count += 1

@@ -105,8 +105,12 @@
     <input type="text" id="search" placeholder="아티스트명 / 표시명 / 별칭 검색" style="width:100%;" />
   </div>
   <div class="field">
-    <input type="checkbox" id="unused-only" onchange="load(1)" />
-    <label for="unused-only">미출연(등장 공연 없음)만 보기</label>
+    <label for="f-usage">출연</label>
+    <select id="f-usage" onchange="load(1)">
+      <option value="">전체</option>
+      <option value="used">출연(등장 공연 있음)만</option>
+      <option value="unused">미출연(등장 공연 없음)만</option>
+    </select>
   </div>
   <button onclick="load(1)">검색</button>
   <a class="nav-link" href="/">← 공연 목록</a>
@@ -167,9 +171,10 @@ function toast(text) {
 async function load(p) {
   page = p || page;
   const search = document.getElementById('search').value.trim();
-  const unusedOnly = document.getElementById('unused-only').checked;
-  const qs = new URLSearchParams({ page, page_size: pageSize, unused_only: unusedOnly });
+  const usage = document.getElementById('f-usage').value;
+  const qs = new URLSearchParams({ page, page_size: pageSize });
   if (search) qs.set('search', search);
+  if (usage) qs.set('usage', usage);
 
   document.getElementById('status-line').textContent = '불러오는 중...';
   try {

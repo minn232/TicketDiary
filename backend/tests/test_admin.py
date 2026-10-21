@@ -1394,6 +1394,16 @@ async def test_admin_artist_unused_flag_and_filter():
                 params={"search": "아티스트_", "unused_only": True},
                 headers=_admin_headers(),
             )
+            res_usage_unused = await ac.get(
+                "/api/v1/admin/artists",
+                params={"search": "아티스트_", "usage": "unused"},
+                headers=_admin_headers(),
+            )
+            res_usage_used = await ac.get(
+                "/api/v1/admin/artists",
+                params={"search": "아티스트_", "usage": "used"},
+                headers=_admin_headers(),
+            )
 
     items_all = {item["id"]: item for item in res_all.json()["items"]}
     assert items_all[unused_id]["is_unused"] is True
@@ -1402,6 +1412,14 @@ async def test_admin_artist_unused_flag_and_filter():
     unused_ids = {item["id"] for item in res_unused.json()["items"]}
     assert unused_id in unused_ids
     assert used_id not in unused_ids
+
+    usage_unused_ids = {item["id"] for item in res_usage_unused.json()["items"]}
+    assert unused_id in usage_unused_ids
+    assert used_id not in usage_unused_ids
+
+    usage_used_ids = {item["id"] for item in res_usage_used.json()["items"]}
+    assert used_id in usage_used_ids
+    assert unused_id not in usage_used_ids
 
 
 @pytest.mark.asyncio

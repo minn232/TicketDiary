@@ -552,6 +552,8 @@ async def _used_canonical_ids(db: AsyncSession) -> set[UUID]:
 async def list_artists(
     search: str | None = Query(None),
     unused_only: bool = Query(False),
+    # 아티스트 조회 페이지가 쓰는 양방향 필터 - unused_only는 한쪽 방향만 되고 기존 호출 호환용으로 남김
+    usage: str | None = Query(None, pattern="^(used|unused)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(_DEFAULT_PAGE_SIZE, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -572,6 +574,10 @@ async def list_artists(
         )
     if unused_only:
         query = query.where(CanonicalArtist.id.not_in(used_ids)) if used_ids else query
+    if usage == "unused":
+        query = query.where(CanonicalArtist.id.not_in(used_ids)) if used_ids else query
+    elif usage == "used":
+        query = query.where(CanonicalArtist.id.in_(used_ids))
 
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
     query = query.order_by(CanonicalArtist.canonical_name).offset((page - 1) * page_size).limit(page_size)
