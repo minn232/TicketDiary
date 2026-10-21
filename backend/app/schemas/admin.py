@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class AdminConcertListItem(BaseModel):
@@ -49,9 +49,17 @@ class AdminArtistSuggestionRequest(BaseModel):
 
 class AdminReassignArtistRequest(BaseModel):
     # reassign_artist_to_canonical에 그대로 넘기는 페이로드 - 동명이인 오매칭(텍스트는 같은데
-    # 실존 인물이 다름) 강제 수정용, canonical_id는 admin이 검색해서 직접 고른 값
+    # 실존 인물이 다름) 강제 수정용, canonical_id는 admin이 검색해서 직접 고른 값.
+    # 검색에 안 나오면 mbid를 직접 넣을 수 있음(둘 중 하나만)
     artist_text: str
-    canonical_id: UUID
+    canonical_id: UUID | None = None
+    mbid: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self):
+        if (self.canonical_id is None) == (not self.mbid):
+            raise ValueError("canonical_id와 mbid 중 하나만 주세요.")
+        return self
 
 
 class AdminRegisterNewArtistRequest(BaseModel):

@@ -44,6 +44,7 @@ from app.schemas.admin import (
 )
 from app.services.artist_blocklist import add_to_blocklist
 from app.services.artist_identity import (
+    canonical_from_mbid,
     canonical_summary,
     change_concert_artist_identity,
     identity_candidates,
@@ -403,7 +404,11 @@ async def revert_artist_identity_change(
 async def reassign_artist_route(
     concert_id: UUID, body: AdminReassignArtistRequest, db: AsyncSession = Depends(get_db)
 ):
-    await reassign_artist_to_canonical(db, concert_id, body.artist_text, body.canonical_id)
+    canonical_id = body.canonical_id
+    if canonical_id is None:
+        # MBID 직접 입력 - canonical_artists에 없으면 MusicBrainz에서 조회해 새로 만든다
+        canonical_id = (await canonical_from_mbid(db, body.mbid)).id
+    await reassign_artist_to_canonical(db, concert_id, body.artist_text, canonical_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
@@ -562,6 +567,7 @@ async def list_artists(
                 CanonicalArtist.canonical_name.ilike(like),
                 CanonicalArtist.display_name.ilike(like),
                 CanonicalArtist.id.in_(alias_match_ids),
+                CanonicalArtist.mbid == search.strip().lower(),
             )
         )
     if unused_only:

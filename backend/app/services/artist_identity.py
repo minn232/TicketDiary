@@ -153,7 +153,7 @@ async def identity_candidates(db: AsyncSession, concert_id: UUID, artist: str) -
 
 
 # MusicBrainz 후보를 골랐을 때 - 없던 아티스트면 정규화와 같은 방식으로 만들고 사진/한글 표시명을 채움
-async def _canonical_from_mbid(db: AsyncSession, mbid: str) -> CanonicalArtist:
+async def canonical_from_mbid(db: AsyncSession, mbid: str) -> CanonicalArtist:
     detail = await fetch_artist_detail(mbid)
     if detail is None:
         raise HTTPException(status_code=400, detail="MusicBrainz 아티스트를 찾을 수 없습니다.")
@@ -188,7 +188,7 @@ async def change_concert_artist_identity(
         if target is None:
             raise HTTPException(status_code=404, detail="대상 아티스트를 찾을 수 없습니다.")
     elif mbid:
-        target = await _canonical_from_mbid(db, mbid)
+        target = await canonical_from_mbid(db, mbid)
     else:
         target = None
 
