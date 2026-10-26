@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/audio_volume_store.dart';
+import '../widgets/media_volume_control.dart';
 
 import 'connections_screen.dart';
 import 'notifications_screen.dart';
@@ -38,6 +38,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // 하위 알림 5개를 바로 볼 수 있도록 기본값을 펼친 상태로 둡니다.
   bool pushExpanded = false;
+  bool _audioExpanded = false;
+  bool _listeningExpanded = false;
   bool pushDayBefore = false;
   bool pushOnTheDay = false;
   bool pushTicketDelivery = false;
@@ -251,79 +253,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onTap: () => _openMemberSettingsSheet(context),
                       ),
                       _divider,
-                      FutureBuilder<void>(
-                        future: AudioVolumeStore.instance.load(),
-                        builder: (context, snapshot) => AnimatedBuilder(
-                          animation: AudioVolumeStore.instance,
-                          builder: (context, _) {
-                            final volumes = AudioVolumeStore.instance;
-                            return Theme(
-                              data: Theme.of(context).copyWith(
-                                dividerColor: Colors.transparent,
-                                splashColor: Colors.transparent,
-                                highlightColor: Colors.transparent,
+                      Theme(
+                        data: Theme.of(
+                          context,
+                        ).copyWith(dividerColor: Colors.transparent),
+                        child: ExpansionTile(
+                          key: const PageStorageKey('audio-volume-settings'),
+                          initiallyExpanded: _audioExpanded,
+                          onExpansionChanged: (value) =>
+                              setState(() => _audioExpanded = value),
+                          tilePadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                          ),
+                          childrenPadding: const EdgeInsets.fromLTRB(
+                            16,
+                            8,
+                            16,
+                            8,
+                          ),
+                          title: Builder(
+                            builder: (innerContext) => Text(
+                              '소리 설정',
+                              style: TextStyle(
+                                fontSize: innerContext.sp(15),
+                                fontWeight: FontWeight.bold,
                               ),
-                              child: ExpansionTile(
-                                key: const PageStorageKey(
-                                  'audio-volume-settings',
-                                ),
-                                tilePadding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                childrenPadding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  0,
-                                  16,
-                                  8,
-                                ),
-                                title: Builder(
-                                  builder: (innerContext) => Text(
-                                    '소리 설정',
-                                    style: TextStyle(
-                                      fontSize: innerContext.sp(15),
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                                children: [
-                                  for (final isMusic in [false, true]) ...[
-                                    const SizedBox(height: 8),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            isMusic ? '음악 재생 볼륨' : '효과음 볼륨',
-                                          ),
-                                        ),
-                                        Text(
-                                          '${((isMusic ? volumes.music : volumes.effects) * 100).round()}%',
-                                        ),
-                                      ],
-                                    ),
-                                    Slider(
-                                      activeColor: const Color(0xFF8B5E3C),
-                                      value: isMusic
-                                          ? volumes.music
-                                          : volumes.effects,
-                                      divisions: 100,
-                                      semanticFormatterCallback: (v) =>
-                                          '${(v * 100).round()}%',
-                                      onChanged:
-                                          snapshot.connectionState !=
-                                              ConnectionState.done
-                                          ? null
-                                          : (v) {
-                                              volumes.setVolume(
-                                                v,
-                                                isMusic: isMusic,
-                                              );
-                                            },
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            );
-                          },
+                            ),
+                          ),
+                          trailing: Icon(
+                            _audioExpanded
+                                ? Icons.keyboard_arrow_down
+                                : Icons.keyboard_arrow_right,
+                            color: Colors.black.withValues(alpha: .55),
+                          ),
+                          children: const [MediaVolumeControl()],
                         ),
                       ),
                       _divider,
@@ -336,6 +299,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: ExpansionTile(
                           key: const PageStorageKey(
                             'concert-listening-settings',
+                          ),
+                          initiallyExpanded: _listeningExpanded,
+                          onExpansionChanged: (value) =>
+                              setState(() => _listeningExpanded = value),
+                          trailing: Icon(
+                            _listeningExpanded
+                                ? Icons.keyboard_arrow_down
+                                : Icons.keyboard_arrow_right,
+                            color: Colors.black.withValues(alpha: .55),
                           ),
                           tilePadding: const EdgeInsets.symmetric(
                             horizontal: 16,

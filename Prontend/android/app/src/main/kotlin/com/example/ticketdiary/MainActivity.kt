@@ -3,6 +3,14 @@ package com.example.ticketdiary
 import android.content.ClipData
 import android.content.ComponentName
 import android.content.Intent
+import android.content.Context
+import android.database.ContentObserver
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.view.View
+import android.widget.SeekBar
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
@@ -11,6 +19,9 @@ import androidx.core.view.WindowCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMessageCodec
+import io.flutter.plugin.platform.PlatformView
+import io.flutter.plugin.platform.PlatformViewFactory
 import java.io.File
 
 class MainActivity : FlutterActivity() {
@@ -20,11 +31,15 @@ class MainActivity : FlutterActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        volumeControlStream = AudioManager.STREAM_MUSIC
     }
 
     /** 공연후 페이지 공유: 인스타/X/카카오톡을 앱 선택창 없이 바로 엶. */
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "ticketdiary/media_volume", MediaVolumeViewFactory()
+        )
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "ticketdiary/share_targets")
             .setMethodCallHandler { call, result ->
                 val paths = call.argument<List<String>>("paths") ?: emptyList()
@@ -136,5 +151,46 @@ class MainActivity : FlutterActivity() {
         const val INSTAGRAM = "com.instagram.android"
         const val X = "com.twitter.android"
         const val KAKAO = "com.kakao.talk"
+    }
+}
+
+private class MediaVolumeViewFactory : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+    override fun create(context: Context, viewId: Int, args: Any?): PlatformView =
+        MediaVolumeView(context)
+}
+
+private class MediaVolumeView(private val context: Context) : PlatformView {
+    private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val slider = SeekBar(context)
+    private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) { syncVolume() }
+    }
+
+    init {
+        slider.contentDescription = "미디어 볼륨"
+        slider.max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        slider.isEnabled = !audio.isVolumeFixed
+        syncVolume()
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(view: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, progress, 0)
+                    syncVolume()
+                }
+            }
+            override fun onStartTrackingTouch(view: SeekBar?) {}
+            override fun onStopTrackingTouch(view: SeekBar?) { syncVolume() }
+        })
+        context.contentResolver.registerContentObserver(Settings.System.CONTENT_URI, true, observer)
+    }
+
+    private fun syncVolume() {
+        slider.progress = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+    }
+
+    override fun getView(): View = slider
+    override fun dispose() {
+        context.contentResolver.unregisterContentObserver(observer)
+        slider.setOnSeekBarChangeListener(null)
     }
 }

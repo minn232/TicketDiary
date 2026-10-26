@@ -212,12 +212,6 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
       _pageSound = SoundEffectService.instance.start(
         backwards ? SoundEffect.pageFlipBack : SoundEffect.pageFlip,
         from: _fastFlip ? .5 : 0,
-        fitDuration: Duration(
-          microseconds: (420000 * (1 - controller.value)).round().clamp(
-            1,
-            420000,
-          ),
-        ),
       );
     }
 

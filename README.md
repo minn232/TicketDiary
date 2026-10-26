@@ -2,6 +2,16 @@
 
 ## 시작하기
 
+### Flutter iOS 시뮬레이터 실행
+
+저장소 루트에서 실행하면 iPhone 17 시뮬레이터를 부팅하고 앱을 빌드·실행합니다.
+
+```bash
+(cd Prontend && open -a Simulator && xcrun simctl bootstatus "iPhone 17" -b && flutter run -d "iPhone 17" --dart-define-from-file=env.local.json)
+```
+
+`Prontend/env.local.json`이 필요하며, `API_BASE_URL`을 `https://ticket-diary.com/api/v1`로 설정합니다.
+
 ### 1. 가상환경 생성 및 패키지 설치
 
 ```bash
