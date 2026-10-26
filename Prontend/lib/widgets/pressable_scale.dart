@@ -17,7 +17,7 @@ import '../services/sound_effect_service.dart';
 /// - 손을 떼는 순간: 약간 확대([tapScale]) 후 원래 크기(1.0)로 복귀
 class PressableScale extends StatefulWidget {
   final Widget child;
-  final SoundEffect soundEffect;
+  final SoundEffect? soundEffect;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -44,7 +44,7 @@ class PressableScale extends StatefulWidget {
     super.key,
     required this.child,
     this.onTap,
-    this.soundEffect = SoundEffect.click,
+    this.soundEffect,
     this.onLongPress,
     this.pressScale = 0.97,
     this.tapScale = 1.04,
@@ -164,7 +164,8 @@ class _PressableScaleState extends State<PressableScale>
       onTap: widget.onTap == null
           ? null
           : () {
-              SoundEffectService.instance.play(widget.soundEffect);
+              final effect = widget.soundEffect;
+              if (effect != null) SoundEffectService.instance.play(effect);
               widget.onTap!();
             },
       onLongPress: widget.onLongPress,

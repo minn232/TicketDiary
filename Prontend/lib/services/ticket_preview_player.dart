@@ -23,15 +23,9 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   static final TicketPreviewPlayer instance = TicketPreviewPlayer._();
   void _updateVolume() {
     for (final player in _players) {
-      unawaited(
-        player
-            .setVolume(
-              _muted
-                  ? 0
-                  : (_levels[player] ?? 0) * AudioVolumeStore.instance.music,
-            )
-            .catchError((Object _) {}),
-      );
+      unawaited(player.setVolume(_muted ? 0 :
+        (_levels[player] ?? 0) * AudioVolumeStore.instance.music)
+        .catchError((Object _) {}));
     }
   }
 
@@ -263,9 +257,7 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     for (final player in _players) {
       try {
-        await player.setVolume(
-          _muted ? 0 : (_levels[player] ?? 0) * AudioVolumeStore.instance.music,
-        );
+        await player.setVolume(_muted ? 0 : (_levels[player] ?? 0) * AudioVolumeStore.instance.music);
       } catch (_) {}
     }
   }
@@ -382,11 +374,11 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
     if (_sessionConfigured) return;
     _sessionConfigured = true;
     try {
-      // iOS는 ambient, 안드로이드는 미디어 볼륨
+      // Both platforms use media output volume.
       final session = await AudioSession.instance;
       await session.configure(
         const AudioSessionConfiguration(
-          avAudioSessionCategory: AVAudioSessionCategory.ambient,
+          avAudioSessionCategory: AVAudioSessionCategory.playback,
           androidAudioAttributes: AndroidAudioAttributes(
             contentType: AndroidAudioContentType.music,
             usage: AndroidAudioUsage.media,
@@ -401,9 +393,7 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _setLevel(AudioPlayer player, double level) async {
     _levels[player] = level;
     _fadeGenerations[player] = (_fadeGenerations[player] ?? 0) + 1;
-    await player.setVolume(
-      _muted ? 0 : level * AudioVolumeStore.instance.music,
-    );
+    await player.setVolume(_muted ? 0 : level * AudioVolumeStore.instance.music);
   }
 
   // 다른 앱이 음악 재생 중인지 확인(우리 재생 중엔 건너뜀)
@@ -435,9 +425,7 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
       final level = from + (target - from) * i / steps;
       _levels[player] = level;
       try {
-        await player.setVolume(
-          _muted ? 0 : level * AudioVolumeStore.instance.music,
-        );
+        await player.setVolume(_muted ? 0 : level * AudioVolumeStore.instance.music);
       } catch (_) {
         return false;
       }
