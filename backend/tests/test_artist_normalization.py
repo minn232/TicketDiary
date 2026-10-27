@@ -1601,3 +1601,23 @@ async def test_parenthetical_alternate_match_requires_exact_name():
     assert stats["matched"] == 0
     assert await _artist_names(concert_id) == [raw]
 
+
+
+# register_artist_image - Spotify/Wikidata가 없으면 mbid에 걸린 벅스/YouTube 페이지 대표 이미지로 대체
+@pytest.mark.asyncio
+async def test_register_artist_image_falls_back_to_profile_pages():
+    from app.services.artist_normalization import register_artist_image
+
+    canonical = CanonicalArtist(canonical_name="사진대체가수", mbid="photo-mbid")
+    page_image = AsyncMock(side_effect=[None, "https://yt3.googleusercontent.com/abc"])
+    with patch(
+        "app.services.artist_normalization.fetch_spotify_artist_url", new=AsyncMock(return_value=None)
+    ), patch("app.services.artist_normalization.fetch_wikidata_qid", new=AsyncMock(return_value=None)), patch(
+        "app.services.artist_normalization.fetch_profile_page_urls",
+        new=AsyncMock(return_value=["https://music.bugs.co.kr/artist/1", "https://www.youtube.com/@x"]),
+    ), patch("app.services.artist_normalization.fetch_page_image", new=page_image):
+        await register_artist_image(MagicMock(), canonical, MagicMock())
+
+    # 벅스가 기본 이미지라 None이면 다음 페이지(YouTube)로 넘어감
+    assert canonical.profile_image_url == "https://yt3.googleusercontent.com/abc"
+    assert page_image.await_count == 2

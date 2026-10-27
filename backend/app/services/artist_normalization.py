@@ -21,10 +21,12 @@ from app.services.artist_matching import compact, contains_hangul, normalize_art
 from app.services.musicbrainz import (
     ArtistCandidate,
     fetch_member_of_band_relations,
+    fetch_profile_page_urls,
     fetch_spotify_artist_url,
     fetch_wikidata_qid,
     search_artist,
 )
+from app.services.page_image import fetch_page_image
 from app.services.spotify import fetch_oembed_thumbnail
 from app.services.wikidata import fetch_artist_image_url, fetch_korean_label
 
@@ -1043,9 +1045,9 @@ async def register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalA
         canonical.display_name = label
 
 
-# canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 연결해둔 Spotify 링크
-# 우선(앨범아트 수준), 없으면 Wikidata 대표 이미지(P18)로 대체 - 둘 다 mbid 앵커라 이름
-# 검색(Deezer 등, 오매칭 실측 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함.
+# canonical의 mbid로 아티스트 사진을 찾아 저장한다. Spotify 링크 → Wikidata 대표 이미지(P18) →
+# 벅스/YouTube 페이지 대표 이미지 순 - 전부 mbid에 걸린 링크라 이름 검색(Deezer 등, 오매칭 실측
+# 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함
 async def register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid or canonical.profile_image_url:
         return
@@ -1059,6 +1061,11 @@ async def register_artist_image(db: AsyncSession, canonical: CanonicalArtist, cl
             qid = await fetch_wikidata_qid(canonical.mbid, client)
             if qid:
                 image_url = await fetch_artist_image_url(qid, client)
+        if image_url is None:
+            for page_url in await fetch_profile_page_urls(canonical.mbid, client):
+                image_url = await fetch_page_image(page_url, client)
+                if image_url:
+                    break
     except Exception as e:
         logger.warning(f"아티스트 사진 보강 실패, 건너뜀 (mbid={canonical.mbid}): {e}")
         return
