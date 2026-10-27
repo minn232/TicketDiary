@@ -19,6 +19,7 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.models.social import NewsFeed
 from app.services.artist_normalization import (
+    add_artist_name,
     alternate_lookup_names,
     apply_canonical_replacement,
     confirm_artist_name_change,
@@ -708,6 +709,73 @@ async def test_confirm_artist_name_reuses_existing_canonical_on_near_duplicate()
         ).scalars().all()
         assert len(matches) == 1
         assert matches[0].id == canonical_id  # 새로 안 만들고 기존 것 재사용
+
+
+# 별칭(예: ずっと真夜中でいいのに。의 ZUTOMAYO)으로 확정/추가해도 mbid 없는 같은 이름 canonical을 새로
+# 만들지 않고 별칭 주인을 재사용
+
+async def _canonical_with_alias(alias: str) -> uuid.UUID:
+    async with AsyncSessionLocal() as db:
+        canonical = CanonicalArtist(mbid=f"mbid-{uuid.uuid4().hex[:8]}", canonical_name=f"원어이름_{uuid.uuid4().hex[:6]}")
+        db.add(canonical)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=canonical.id, alias_text=alias, source="musicbrainz"))
+        await db.commit()
+        return canonical.id
+
+
+async def _canonicals_named(name: str) -> list[CanonicalArtist]:
+    async with AsyncSessionLocal() as db:
+        return list(
+            (await db.execute(select(CanonicalArtist).where(CanonicalArtist.canonical_name == name))).scalars().all()
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirm_artist_name_reuses_canonical_found_by_alias():
+    token = await _get_token()
+    alias = f"ALIASNAME{uuid.uuid4().hex[:6].upper()}"
+    owner_id = await _canonical_with_alias(alias)
+    raw_name = f"미확정_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_CONFIRM_ALIAS_{uuid.uuid4().hex[:6]}", raw_name, token)
+
+    async with AsyncSessionLocal() as db:
+        concert = await confirm_artist_name_change(db, uuid.UUID(concert_id), raw_name, alias)
+        assert concert.artist_name == [alias]
+
+    assert await _canonicals_named(alias) == []  # 별칭 이름의 새 canonical이 안 생김
+    async with AsyncSessionLocal() as db:
+        assert (await find_canonical_by_alias(db, raw_name)).id == owner_id  # 원래 표기도 별칭 주인에 붙음
+
+
+@pytest.mark.asyncio
+async def test_add_artist_name_reuses_canonical_found_by_alias():
+    token = await _get_token()
+    alias = f"ALIASADD{uuid.uuid4().hex[:6].upper()}"
+    owner_id = await _canonical_with_alias(alias)
+    concert_id = await _create_concert(f"PF_ADD_ALIAS_{uuid.uuid4().hex[:6]}", "다른아티스트", token)
+
+    async with AsyncSessionLocal() as db:
+        _, canonical = await add_artist_name(db, uuid.UUID(concert_id), alias)
+        assert canonical.id == owner_id
+
+    assert await _canonicals_named(alias) == []
+
+
+@pytest.mark.asyncio
+async def test_find_canonical_by_alias_prefers_canonical_with_mbid():
+    alias = f"DUPALIAS{uuid.uuid4().hex[:6].upper()}"
+    async with AsyncSessionLocal() as db:
+        # mbid 없는 중복이 먼저 만들어져 있어도
+        duplicate = CanonicalArtist(mbid=None, canonical_name=alias)
+        db.add(duplicate)
+        await db.flush()
+        db.add(ArtistAlias(canonical_artist_id=duplicate.id, alias_text=alias, source="user_input"))
+        await db.commit()
+    owner_id = await _canonical_with_alias(alias)
+
+    async with AsyncSessionLocal() as db:
+        assert (await find_canonical_by_alias(db, alias)).id == owner_id
 
 
 # 밴드<->멤버 관계 저장 (normalize_pending_artists가 새로 매치된 canonical의 관계까지 저장하는지)

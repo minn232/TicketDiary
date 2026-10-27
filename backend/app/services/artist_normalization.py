@@ -54,12 +54,15 @@ def _normalize_alias_text(text: str) -> str:
 
 # 로컬 alias 테이블에서 이미 확인된 canonical을 찾는다 - 있으면 API 호출 없이 즉시 재사용.
 # canonical_name 자체와도 비교(정확히 canonical 표기 그대로 다시 들어온 경우, 별도 alias row 없이도 바로 인식)
+# 같은 별칭/이름이 여러 canonical에 걸려 있으면(관리자 입력으로 mbid 없는 중복이 생긴 경우 등)
+# mbid 있는 쪽을 우선 - 순서 없이 limit 1이라 어떤 때는 중복 쪽이 잡혔음
 async def find_canonical_by_alias(db: AsyncSession, name: str) -> CanonicalArtist | None:
     normalized = _normalize_alias_text(name)
     result = await db.execute(
         select(CanonicalArtist)
         .join(ArtistAlias, ArtistAlias.canonical_artist_id == CanonicalArtist.id)
         .where(func.lower(ArtistAlias.alias_text) == normalized)
+        .order_by(CanonicalArtist.mbid.is_(None))
         .limit(1)
     )
     found = result.scalar_one_or_none()
@@ -67,7 +70,10 @@ async def find_canonical_by_alias(db: AsyncSession, name: str) -> CanonicalArtis
         return found
 
     result = await db.execute(
-        select(CanonicalArtist).where(func.lower(CanonicalArtist.canonical_name) == normalized).limit(1)
+        select(CanonicalArtist)
+        .where(func.lower(CanonicalArtist.canonical_name) == normalized)
+        .order_by(CanonicalArtist.mbid.is_(None))
+        .limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -399,6 +405,10 @@ async def confirm_artist_name_change(
 
     canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
     if canonical is None:
+        # 대표 이름엔 없어도 별칭(예: ずっと真夜中でいいのに。의 ZUTOMAYO)이면 그 아티스트로 - 이걸 안 봐서
+        # 고칠 때마다 mbid 없는 같은 이름 canonical이 새로 생겼음
+        canonical = await find_canonical_by_alias(db, confirmed_name)
+    if canonical is None:
         canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
         db.add(canonical)
         await db.flush()
@@ -610,6 +620,9 @@ async def add_artist_name(db: AsyncSession, concert_id, name: str) -> tuple[Conc
         raise HTTPException(status_code=400, detail="이미 등록된 아티스트입니다.")
 
     canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+    if canonical is None:
+        # 별칭으로 등록된 아티스트면 새로 만들지 않음(confirm_artist_name_change와 같은 이유)
+        canonical = await find_canonical_by_alias(db, name)
     if canonical is None:
         canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
         db.add(canonical)
