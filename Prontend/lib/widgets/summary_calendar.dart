@@ -137,7 +137,7 @@ class SummaryCalendar extends StatelessWidget {
         selection.value = DateTime(next.year, next.month, targetDay);
         SoundEffectService.instance.start(
           SoundEffect.pageFlip,
-          fitDuration: const Duration(milliseconds: 280),
+          maxDuration: const Duration(milliseconds: 280),
         );
       }
 
@@ -272,14 +272,6 @@ class SummaryCalendar extends StatelessWidget {
                                             ),
                                             onTap: selectable
                                                 ? () {
-                                                    unawaited(
-                                                      SoundEffectService
-                                                          .instance
-                                                          .play(
-                                                            SoundEffect
-                                                                .calendar,
-                                                          ),
-                                                    );
                                                     selection.value = date;
                                                   }
                                                 : null,

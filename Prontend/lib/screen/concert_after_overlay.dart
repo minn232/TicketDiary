@@ -1,3 +1,4 @@
+import '../services/ticket_transition_sound.dart';
 import 'dart:async';
 import 'dart:ui';
 
@@ -98,6 +99,7 @@ class ConcertAfterOverlay extends StatefulWidget {
 class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  late final TicketTransitionSound _transitionSound;
   late final Animation<double> _t;
 
   /// 2x2 카드(콘텐츠) 페이드 인
@@ -139,16 +141,22 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
       Tween<double>(begin: 1.0, end: 0.0),
     );
 
-    _controller.forward();
-    // [백엔드 수정] 티켓 미리듣기 재생 시작.
-    unawaited(
-      TicketPreviewPlayer.instance.start(widget.ticketInfo?.ticketId, this),
+    _transitionSound = TicketTransitionSound(
+      controller: _controller,
+      pageOpacity: _expandedOpacity,
     );
+    _controller.forward().then((_) {
+      if (!mounted || _isClosing) return;
+      unawaited(
+        TicketPreviewPlayer.instance.start(widget.ticketInfo?.ticketId, this),
+      );
+    });
   }
 
   @override
   void dispose() {
     unawaited(TicketPreviewPlayer.instance.stop(this));
+    _transitionSound.dispose();
     _controller.dispose();
     super.dispose();
   }

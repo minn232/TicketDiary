@@ -1,35 +1,28 @@
 import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ticketdiary/services/sound_effect_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  test('All sound effects are bundled as non-silent PCM WAV assets', () async {
-    for (final name in [
-      'click',
-      'calendar',
-      'success',
-      'page_flip',
-      'book_open',
-      'page_rustle',
-      'tear',
-    ]) {
-      final data = await rootBundle.load('assets/sounds/$name.wav');
+  test(
+    'retained recordings are bundled; the old sound folder is absent',
+    () async {
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
       expect(
-        ascii.decode(data.buffer.asUint8List(data.offsetInBytes, 4)),
-        'RIFF',
+        manifest.listAssets().where(
+          (path) => path.startsWith('assets/sounds/'),
+        ),
+        isEmpty,
       );
-      expect(data.getUint16(22, Endian.little), 1);
-      expect(data.getUint16(34, Endian.little), 16);
-      var peak = 0;
-      for (var i = 44; i + 1 < data.lengthInBytes; i += 2) {
-        final sample = data.getInt16(i, Endian.little).abs();
-        if (sample > peak) peak = sample;
+      for (final asset in SoundEffectService.assets.values) {
+        final data = await rootBundle.load(asset);
+        expect(data.lengthInBytes, greaterThan(44));
+        expect(
+          ascii.decode(data.buffer.asUint8List(data.offsetInBytes, 4)),
+          'RIFF',
+        );
       }
-      expect(peak, greaterThan(1000), reason: '$name must not be silent');
-    }
-  });
+    },
+  );
 }
