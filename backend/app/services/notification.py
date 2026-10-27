@@ -4,14 +4,16 @@ from uuid import UUID
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.concert import Concert
 from app.models.notification import Notification, NotificationType
 from app.models.social import ConcertFollow
+from app.models.ticket import Ticket
 from app.models.user import User
+from app.schemas.notification import NotificationResponse
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +44,73 @@ def _init_firebase() -> None:
 _DEFAULT_NOTIFICATION_LIST_LIMIT = 200
 
 
+# 응답에 공연 id/포스터를 붙임(눌렀을 때 이동·썸네일용) - 티켓 알림은 concert_id가 비어 있어 티켓의 공연으로
 async def get_notifications(
     db: AsyncSession, user_id: UUID, limit: int = _DEFAULT_NOTIFICATION_LIST_LIMIT, offset: int = 0
-) -> list[Notification]:
+) -> list[dict]:
+    concert_id = func.coalesce(Notification.concert_id, Ticket.concert_id)
     result = await db.execute(
-        select(Notification)
+        select(Notification, Concert.id, Concert.poster_url)
+        .outerjoin(Ticket, Ticket.id == Notification.ticket_id)
+        .outerjoin(Concert, Concert.id == concert_id)
         .where(Notification.user_id == user_id, Notification.is_sent == True)  # noqa: E712
         .order_by(Notification.scheduled_at.desc())
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all())
+    return [
+        {**NotificationResponse.model_validate(n).model_dump(), "concert_id": cid, "poster_url": poster}
+        for n, cid, poster in result.all()
+    ]
+
+
+# 안 읽은 알림 수 (설정 메뉴 배지용) - 목록과 같은 기준(발송된 것만)
+async def count_unread(db: AsyncSession, user_id: UUID) -> int:
+    result = await db.execute(
+        select(func.count()).select_from(Notification).where(
+            Notification.user_id == user_id,
+            Notification.is_sent == True,  # noqa: E712
+            Notification.is_read == False,  # noqa: E712
+        )
+    )
+    return result.scalar_one()
+
+
+# 알림함 "모두 읽음" - 발송된 안 읽은 알림 전부, 바뀐 건수 반환
+async def mark_all_as_read(db: AsyncSession, user_id: UUID) -> int:
+    result = await db.execute(
+        update(Notification)
+        .where(
+            Notification.user_id == user_id,
+            Notification.is_sent == True,  # noqa: E712
+            Notification.is_read == False,  # noqa: E712
+        )
+        .values(is_read=True)
+    )
+    await db.commit()
+    return result.rowcount
+
+
+# 지난 지 오래된 알림 정리(매일 배치) - 발송된 지 30일이 넘었고 공연도 끝난 지 30일이 넘은 것만 지움.
+# 공연이 아직 남은 알림(먼저 온 새 공연·티켓팅 소식)은 남겨서 공연 전에 다시 볼 수 있게 함
+_NOTIFICATION_RETENTION = timedelta(days=30)
+
+
+async def cleanup_old_notifications(db: AsyncSession) -> int:
+    cutoff = datetime.now(timezone.utc) - _NOTIFICATION_RETENTION
+    stale = (
+        select(Notification.id)
+        .outerjoin(Ticket, Ticket.id == Notification.ticket_id)
+        .outerjoin(Concert, Concert.id == func.coalesce(Notification.concert_id, Ticket.concert_id))
+        .where(
+            Notification.is_sent == True,  # noqa: E712
+            Notification.scheduled_at < cutoff,
+            or_(Concert.id.is_(None), Concert.end_date < cutoff),
+        )
+    )
+    result = await db.execute(delete(Notification).where(Notification.id.in_(stale)))
+    await db.commit()
+    return result.rowcount
 
 
 # 알림 읽음 처리
@@ -118,6 +176,54 @@ def _send_fcm(token: str, title: str, body: str) -> str:
 _KST = timezone(timedelta(hours=9))
 
 
+# 받침 있으면 첫 번째, 없으면 두 번째 조사(이/가 등) - 한글이 아니면(영문 단계명 등) 받침 없는 쪽
+def _particle(word: str, with_final: str, without_final: str) -> str:
+    last = word.strip()[-1:] if word.strip() else ""
+    if "가" <= last <= "힣" and (ord(last) - ord("가")) % 28:
+        return with_final
+    return without_final
+
+
+# 알림 본문의 공연장 - KOPIS 공연장명은 "올림픽공원 (올림픽홀)"처럼 괄호가 붙어 길어서 앞부분만
+def _short_venue(venue: str | None) -> str | None:
+    short = (venue or "").split(" (")[0].strip()
+    return short or None
+
+
+# 공연 전날/당일 알림 본문 - "내일 19:00 올림픽공원에서 공연이 있어요." (시각/장소는 있을 때만)
+def concert_reminder_body(day: str, start_time: str | None, venue: str | None) -> str:
+    when = f"{day} {start_time}" if start_time else day
+    short = _short_venue(venue)
+    return f"{when} {short}에서 공연이 있어요." if short else f"{when} 공연이 있어요."
+
+
+# 티켓팅 알림 본문 - 그날 열리는 예매 단계 이름과 시각을 넣음("오늘 20:00 팬클럽 선예매가 열려요!").
+# 시각을 모르는 티켓팅일은 날짜만 UTC 자정(KST 09:00)으로 저장돼서 그 시각이면 시각을 뺌
+def ticketing_day_body(concert: Concert) -> str:
+    opens = concert.ticketing_date
+    if opens.tzinfo is None:
+        opens = opens.replace(tzinfo=timezone.utc)
+    opens = opens.astimezone(_KST)
+    time = None if (opens.hour, opens.minute) == (9, 0) else opens.strftime("%H:%M")
+    day = opens.date().isoformat()
+    phase = next(
+        (p["phase"] for p in concert.ticketing_phases or [] if p.get("date") == day and p.get("phase")), None
+    )
+    what = phase or "티켓팅"
+    when = f"오늘 {time}" if time else "오늘"
+    return f"{when} {what}{_particle(what, '이', '가')} 열려요! 미리 준비하세요."
+
+
+# 신규 공연 알림 본문 - 공연 날짜/장소를 붙임("NELL의 새 공연이 등록됐어요 · 12.31 잠실학생체육관")
+def new_concert_body(artist: str, concert: Concert) -> str:
+    start = concert.start_date
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    start = start.astimezone(_KST)
+    detail = " ".join(x for x in (f"{start.month}.{start.day}", _short_venue(concert.venue)) if x)
+    return f"{artist}의 새 공연이 등록됐어요 · {detail}"
+
+
 def _at_9am_kst(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=_KST)
@@ -168,7 +274,7 @@ async def schedule_ticketing_day_notifications(db: AsyncSession, concert_id: UUI
             concert_id=concert_id,
             type=NotificationType.TICKETING_DAY,
             title=concert.name,
-            body="티켓팅 날이에요! 지금 바로 예매하세요.",
+            body=ticketing_day_body(concert),
             scheduled_at=scheduled,
         ))
 
@@ -207,7 +313,7 @@ async def reschedule_user_ticketing_notifications(db: AsyncSession, user: User) 
             concert_id=concert.id,
             type=NotificationType.TICKETING_DAY,
             title=concert.name,
-            body="티켓팅 날이에요! 지금 바로 예매하세요.",
+            body=ticketing_day_body(concert),
             scheduled_at=scheduled,
         ))
 
@@ -255,7 +361,7 @@ async def schedule_new_concert_notifications(
             concert_id=concert.id,
             type=NotificationType.NEW_CONCERT,
             title=concert.name,
-            body=f"{artist_by_user[user.id]}의 새 공연이 등록됐어요!",
+            body=new_concert_body(artist_by_user[user.id], concert),
             scheduled_at=scheduled,
         ))
 

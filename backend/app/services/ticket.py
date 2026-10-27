@@ -17,6 +17,7 @@ from app.models.notification import Notification, NotificationType
 from app.models.ticket import Ticket, TicketStatus
 from app.models.user import User
 from app.schemas.ticket import TicketCreate, TicketUpdate
+from app.services.notification import concert_reminder_body
 from app.services.social import remove_concert_follow
 from app.services.storage import delete_image, is_user_upload_url
 
@@ -462,6 +463,8 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
     # 실제 관람일(attended_date, OCR로 읽음)을 우선 사용 - 없으면 단독공연 등 하루짜리
     # 공연으로 보고 concert.start_date로 폴백
     target_date = ticket.attended_date or concert.start_date
+    # 본문에 넣을 시작 시각 - 티켓에서 읽은 실제 회차 시각 우선
+    start_time = ticket.start_time or concert.start_time
 
     # 배송 예정일 알림 (delivery 설정 on, 배송일 오전 9시)
     if delivery_on and ticket.delivery_date is not None:
@@ -485,7 +488,7 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
                 ticket_id=ticket.id,
                 type=NotificationType.DAY_BEFORE,
                 title=concert.name,
-                body="내일 공연이에요.",
+                body=concert_reminder_body("내일", start_time, concert.venue),
                 scheduled_at=day_before,
             ))
 
@@ -498,7 +501,7 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
                 ticket_id=ticket.id,
                 type=NotificationType.CONCERT_DAY,
                 title=concert.name,
-                body="오늘 공연 날이에요.",
+                body=concert_reminder_body("오늘", start_time, concert.venue),
                 scheduled_at=concert_day,
             ))
 

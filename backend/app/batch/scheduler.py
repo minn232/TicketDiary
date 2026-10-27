@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.services.notification import process_pending_notifications
+from app.services.notification import cleanup_old_notifications, process_pending_notifications
 from app.services.refresh_token import cleanup_refresh_tokens
 from app.services.connection import cleanup_nearby_records
 from app.services.kopis import sync_daily_concerts
@@ -178,6 +178,15 @@ async def _run_nearby_cleanup() -> None:
         logger.exception("맞대기 기록 정리 오류")
 
 
+async def _run_notification_cleanup() -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            removed = await cleanup_old_notifications(db)
+        logger.info(f"오래된 알림 정리: {removed}건")
+    except Exception:
+        logger.exception("오래된 알림 정리 오류")
+
+
 async def _run_refresh_token_cleanup() -> None:
     try:
         async with AsyncSessionLocal() as db:
@@ -260,6 +269,10 @@ def start_scheduler() -> None:
     # 만료·폐기된 리프레시 토큰 정리 (KST 05:45)
     scheduler.add_job(
         _run_refresh_token_cleanup, "cron", hour=20, minute=45, id="refresh_token_cleanup", max_instances=1
+    )
+    # 공연 끝나고 30일 지난 알림 정리 (KST 05:50)
+    scheduler.add_job(
+        _run_notification_cleanup, "cron", hour=20, minute=50, id="notification_cleanup", max_instances=1
     )
     # 크롤 배치 2종(서버에서 9/12부터 정지 중 - LLM 배치 반영 끝난 뒤에만 주석 해제할 것):
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
