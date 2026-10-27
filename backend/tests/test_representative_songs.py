@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.artist_normalization import ArtistGroupMembership, CanonicalArtist
+from app.models.concert import Concert, EventType
 from app.models.setlist import PreSetlist
 from app.services.pre_setlist import generate_pre_setlist
 from app.services.representative_songs import (
@@ -509,6 +510,33 @@ async def test_generate_pre_setlist_falls_back_to_representative():
     assert [(s["name"], s["source"]) for s in response.json()["songs"]] == [
         ("곡1", "representative"),
         ("곡2", "representative"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_pre_setlist_caps_representative_for_festival():
+    # 페스티벌(short)은 대표곡도 다른 아티스트 곡 수에 맞춰 6곡만 - top_n(20곡)이 그대로 들어가지 않게
+    concert_id = await _create_concert("PF_REP_FEST_001", artist="셋리있는가수")
+    async with AsyncSessionLocal() as db:
+        concert = await db.get(Concert, concert_id)
+        concert.artist_name = ["셋리있는가수", "대표곡만가수"]
+        concert.event_type = EventType.FESTIVAL.value
+        await db.commit()
+
+    async def _top_songs(db, artist, *args):
+        return [{"name": "셋리곡", "encore": False}] if artist == "셋리있는가수" else []
+
+    representative = AsyncMock(return_value=[{"name": "대표곡", "encore": False, "source": "representative"}])
+    with patch("app.services.pre_setlist._top_songs_for_artist", new=_top_songs), patch(
+        "app.services.pre_setlist.representative_songs_for_artist", new=representative
+    ):
+        async with AsyncSessionLocal() as db:
+            pre_setlist = await generate_pre_setlist(db, concert_id)
+
+    assert representative.await_args.args[1:3] == ("대표곡만가수", 6)
+    assert [(s["name"], s["artist"]) for s in pre_setlist.songs] == [
+        ("셋리곡", "셋리있는가수"),
+        ("대표곡", "대표곡만가수"),
     ]
 
 

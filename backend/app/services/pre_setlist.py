@@ -122,6 +122,10 @@ async def update_pre_setlist(
 # 게스트로 판정된 아티스트에게 주는 곡 수 상한(짧은 무대)
 _GUEST_MAX_SONGS = 5
 
+# 짧은 무대(페스티벌/공동공연)인데 과거 셋리가 없어 대표곡으로 채울 때 곡 수 - 셋리 있는 다른 아티스트
+# (모델 추정 5~7곡)와 비슷하게 맞춤. 없으면 top_n(20곡)이 그대로 들어가 혼자 길어짐
+_SHORT_REPRESENTATIVE_SONGS = 6
+
 
 # 한 아티스트의 과거 공연 데이터로 예상 곡 목록을 만듦. 모델(최근성/곡 수 추정/순서)이 켜져 있으면
 # 그걸 쓰고, 꺼져 있거나 쓸 만한 공연이 없으면(곡 3개 이상인 셋리가 없음) 예전 방식(빈도 top n,
@@ -220,8 +224,9 @@ async def generate_pre_setlist(
     for artist, (target_form, max_songs) in zip(artists, roles):
         songs = await _top_songs_for_artist(db, artist, top_n, concert_id, target_form, max_songs)
         if not songs:
+            representative_n = max_songs or (_SHORT_REPRESENTATIVE_SONGS if target_form == "short" else top_n)
             songs = await representative_songs_for_artist(
-                db, artist, max_songs or top_n, concert_id, as_of=concert.start_date.date()
+                db, artist, representative_n, concert_id, as_of=concert.start_date.date()
             )
         if is_festival:
             for song in songs:
