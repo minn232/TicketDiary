@@ -3,7 +3,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, Depends, FastAPI, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 
 import inference
 from auth import verify_backend_api_key
@@ -17,14 +17,17 @@ from normalize import (
     normalize_event_type,
     normalize_lineup_entries,
 )
-from schemas import ArtistExtractItem, CrawlAnalyzeItem, DiaryGenerateItem
+from schemas import ArtistExtractItem, BlogDraftRequest, BlogDraftResponse, CrawlAnalyzeItem, DiaryGenerateItem
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_BATCH_CONCURRENCY = (
-    settings.CRAWL_BATCH_CONCURRENCY + settings.ARTIST_BATCH_CONCURRENCY + settings.DIARY_BATCH_CONCURRENCY
+    settings.CRAWL_BATCH_CONCURRENCY
+    + settings.ARTIST_BATCH_CONCURRENCY
+    + settings.DIARY_BATCH_CONCURRENCY
+    + settings.BLOG_DRAFT_CONCURRENCY
 )
 
 
@@ -48,6 +51,7 @@ app = FastAPI(title="TicketDiary LLM Server", lifespan=_lifespan)
 _crawl_semaphore = asyncio.Semaphore(settings.CRAWL_BATCH_CONCURRENCY)
 _artist_semaphore = asyncio.Semaphore(settings.ARTIST_BATCH_CONCURRENCY)
 _diary_semaphore = asyncio.Semaphore(settings.DIARY_BATCH_CONCURRENCY)
+_blog_draft_semaphore = asyncio.Semaphore(settings.BLOG_DRAFT_CONCURRENCY)
 
 
 # inference.py의 함수들은 동기(sync)이고 GPU/CPU를 오래 점유할 수 있으므로,
@@ -139,6 +143,19 @@ async def artist_extract(items: list[ArtistExtractItem], background_tasks: Backg
 async def diary_generate(items: list[DiaryGenerateItem], background_tasks: BackgroundTasks):
     background_tasks.add_task(_process_diary_batch, items)
     return {"accepted": len(items)}
+
+
+# 공연 정보 + 사용자 요청으로 블로그 글 초안 생성. 다른 엔드포인트와 달리 배치/콜백이 아니라
+# 생성 완료까지 기다렸다가 응답 바디로 초안을 바로 돌려준다(사용자가 즉시 복사해서 쓰는 기능).
+# 백엔드 쪽 HTTP 타임아웃은 생성 시간(수십 초)을 감안해 넉넉히 잡을 것.
+@app.post("/blog-draft", response_model=BlogDraftResponse, dependencies=[Depends(verify_backend_api_key)])
+async def blog_draft(item: BlogDraftRequest):
+    try:
+        result = await _run_sync(_blog_draft_semaphore, inference.generate_blog_post_draft, item)
+    except Exception:
+        logger.exception(f"[blog] 초안 생성 실패: {item.concert_name}")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="블로그 초안 생성에 실패했습니다.")
+    return BlogDraftResponse(**result)
 
 
 # 인증 없이 인스턴스가 살아있는지만 확인하는 헬스체크

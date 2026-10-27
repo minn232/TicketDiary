@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── 백엔드 → 이 서버 (인바운드 배치 요청) ──────────────────────────────
@@ -31,6 +31,25 @@ class DiaryGenerateItem(BaseModel):
     artist_name: list[str] = []
     venue: str | None = None
     concert_date: str | None = None  # YYYY-MM-DD
+
+
+# 블로그 초안은 배치/콜백이 아니라 요청-응답 동기 방식 (POST /blog-draft). 사용자가 결과를
+# 바로 복사해서 쓰는 기능이라 응답 바디로 초안을 즉시 돌려준다.
+class BlogDraftRequest(BaseModel):
+    # 사용자가 자유롭게 쓴 감상 글(여러 문장). 문장 단위로 쪼개져 해당하는 공연 정보 소개 문장 아래에
+    # 끝부분만 블로그 말투로 바뀌어 들어감. 프롬프트에 그대로 실리므로 길이 제한
+    emotion: str = Field(min_length=1, max_length=2000)
+    concert_name: str | None = None  # 글 제목
+    artist_name: list[str] = []
+    venue: str | None = None
+    concert_date: str | None = None  # YYYY-MM-DD
+    setlist: list[str] = []  # 공연 순서대로
+
+
+class BlogDraftResponse(BaseModel):
+    title: str  # 블로그 에디터 제목 입력란용
+    body: str  # 본문 입력란용 (평문, 문단은 빈 줄로 구분)
+    text: str  # 제목+본문을 한 번에 복사할 수 있게 합친 것
 
 
 # ── 이 서버 → 백엔드 (콜백 웹훅 바디) ──────────────────────────────
