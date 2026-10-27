@@ -12,17 +12,22 @@ logger = logging.getLogger(__name__)
 _MIN_REQUEST_INTERVAL = 1.0
 _USER_AGENT = "Mozilla/5.0 (compatible; TicketDiaryBot/1.0)"
 
-# 페이지 종류별로 허용하는 이미지 호스트 - 엉뚱한 배너/로고가 og:image로 잡히는 걸 막음
+# 페이지 종류별 (URL, 허용 이미지 호스트, 실제 사진 표시) - 허용 호스트로 엉뚱한 배너/로고를 막고,
+# 벅스는 사진 없는 아티스트도 이니셜 기본 이미지를 같은 주소 형식으로 줘서 사진첩 링크
+# (openPageLayer)가 있을 때만 실제 사진으로 봄
 _PAGE_RULES = (
-    (re.compile(r"^https?://music\.bugs\.co\.kr/artist/\d+"), ("image.bugsm.co.kr",)),
+    (
+        re.compile(r"^https?://music\.bugs\.co\.kr/artist/\d+"),
+        ("image.bugsm.co.kr",),
+        re.compile(r"openPageLayer\("),
+    ),
     (
         re.compile(r"^https?://(www\.)?youtube\.com/(channel/|@|c/|user/)"),
         ("yt3.googleusercontent.com", "yt3.ggpht.com"),
+        None,
     ),
 )
 _OG_IMAGE_RE = re.compile(r'<meta[^>]+property="og:image"[^>]+content="([^"]+)"', re.IGNORECASE)
-# 벅스는 사진 없는 아티스트도 기본 이미지를 og:image로 줌
-_PLACEHOLDER_RE = re.compile(r"default|noimage|no_image", re.IGNORECASE)
 
 _request_lock = asyncio.Lock()
 _last_request_at = 0.0
@@ -40,15 +45,16 @@ async def _throttle() -> None:
 
 
 def is_supported_page(url: str) -> bool:
-    return any(pattern.match(url) for pattern, _ in _PAGE_RULES)
+    return any(pattern.match(url) for pattern, _, _ in _PAGE_RULES)
 
 
 # 지원하는 페이지(벅스 아티스트/YouTube 채널)의 og:image를 반환. 지원 안 하는 URL, 실패,
-# 허용 호스트가 아니거나 기본 이미지면 None
+# 허용 호스트가 아니거나 실제 사진 표시가 없으면(기본 이미지) None
 async def fetch_page_image(page_url: str, client: httpx.AsyncClient | None = None) -> str | None:
-    hosts = next((h for pattern, h in _PAGE_RULES if pattern.match(page_url)), None)
-    if hosts is None:
+    rule = next((r for r in _PAGE_RULES if r[0].match(page_url)), None)
+    if rule is None:
         return None
+    _, hosts, photo_marker = rule
 
     async def _fetch(c: httpx.AsyncClient) -> str | None:
         await _throttle()
@@ -60,11 +66,10 @@ async def fetch_page_image(page_url: str, client: httpx.AsyncClient | None = Non
         if response.status_code != 200:
             return None
         match = _OG_IMAGE_RE.search(response.text)
-        if not match:
+        if not match or (photo_marker is not None and not photo_marker.search(response.text)):
             return None
         image_url = match.group(1).replace("&amp;", "&")
-        host = httpx.URL(image_url).host
-        if host not in hosts or _PLACEHOLDER_RE.search(image_url):
+        if httpx.URL(image_url).host not in hosts:
             return None
         return image_url
 

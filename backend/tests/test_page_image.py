@@ -5,11 +5,13 @@ import pytest
 from app.services.page_image import fetch_page_image, is_supported_page
 
 
-def _html_resp(og_image: str | None, status_code: int = 200) -> MagicMock:
+# has_photo: 벅스 아티스트 페이지에서 실제 사진이 있을 때만 붙는 사진첩 링크
+def _html_resp(og_image: str | None, status_code: int = 200, has_photo: bool = True) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
     meta = f'<meta property="og:image" content="{og_image}" />' if og_image else ""
-    resp.text = f"<html><head>{meta}</head></html>"
+    photos = '<a onclick="openPageLayer(20216907, 1, this);"></a>' if has_photo else ""
+    resp.text = f"<html><head>{meta}</head><body>{photos}</body></html>"
     return resp
 
 
@@ -45,17 +47,17 @@ async def test_fetch_page_image_unescapes_youtube_og_image():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "og_image",
+    "page,og_image,has_photo",
     [
-        "https://www.youtube.com/img/desktop/yt_1200.png",  # 허용 호스트 아님(사이트 로고)
-        "https://image.bugsm.co.kr/artist/images/default/noimage.png",  # 기본 이미지
-        None,
+        ("https://www.youtube.com/@x", "https://www.youtube.com/img/desktop/yt_1200.png", True),  # 사이트 로고
+        # 사진 없는 아티스트 - 주소 형식은 실제 사진과 같은 이니셜 기본 이미지
+        ("https://music.bugs.co.kr/artist/1", "https://image.bugsm.co.kr/artist/images/1200/144960/14496051.jpg", False),
+        ("https://music.bugs.co.kr/artist/1", None, True),
     ],
 )
-async def test_fetch_page_image_rejects_logo_placeholder_or_missing(og_image):
+async def test_fetch_page_image_rejects_logo_placeholder_or_missing(page, og_image, has_photo):
     client = MagicMock()
-    client.get = AsyncMock(return_value=_html_resp(og_image))
-    page = "https://www.youtube.com/@x" if og_image and "youtube" in og_image else "https://music.bugs.co.kr/artist/1"
+    client.get = AsyncMock(return_value=_html_resp(og_image, has_photo=has_photo))
 
     with patch("app.services.page_image._MIN_REQUEST_INTERVAL", 0):
         url = await fetch_page_image(page, client=client)
