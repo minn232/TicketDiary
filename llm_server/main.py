@@ -139,15 +139,19 @@ async def artist_extract(items: list[ArtistExtractItem], background_tasks: Backg
 
 
 # 백엔드가 일기 생성 요청 배치를 보내는 엔드포인트.
-@app.post("/diary-generate", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(verify_backend_api_key)])
-async def diary_generate(items: list[DiaryGenerateItem], background_tasks: BackgroundTasks):
-    background_tasks.add_task(_process_diary_batch, items)
-    return {"accepted": len(items)}
+# 일기 생성은 블로그 초안(/blog-draft)으로 대체돼 백엔드가 더 이상 보내지 않아서 라우트만 꺼둠
+# (generate_diary_text 미구현 상태 그대로). 다시 쓰려면 주석 해제
+# @app.post("/diary-generate", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(verify_backend_api_key)])
+# async def diary_generate(items: list[DiaryGenerateItem], background_tasks: BackgroundTasks):
+#     background_tasks.add_task(_process_diary_batch, items)
+#     return {"accepted": len(items)}
 
 
-# 공연 정보 + 사용자 요청으로 블로그 글 초안 생성. 다른 엔드포인트와 달리 배치/콜백이 아니라
-# 생성 완료까지 기다렸다가 응답 바디로 초안을 바로 돌려준다(사용자가 즉시 복사해서 쓰는 기능).
-# 백엔드 쪽 HTTP 타임아웃은 생성 시간(수십 초)을 감안해 넉넉히 잡을 것.
+# 공연 정보 + 사용자 감상 글로 블로그 글 초안 생성. 다른 엔드포인트와 달리 콜백이 아니라
+# 생성 완료까지 기다렸다가 응답 바디로 초안을 바로 돌려준다. 이 서버가 밤 배치 때만 떠서
+# 유저 요청은 백엔드가 저장해두고, 밤 배치(backend/app/services/blog_draft.py의
+# send_blog_drafts_to_llm)가 한 건씩 호출해 응답을 저장함 - 동시 3건, 타임아웃 180초.
+# 실패(502)하면 백엔드가 다음날 다시 보내고 3번 실패하면 멈춤
 @app.post("/blog-draft", response_model=BlogDraftResponse, dependencies=[Depends(verify_backend_api_key)])
 async def blog_draft(item: BlogDraftRequest):
     try:

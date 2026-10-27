@@ -24,6 +24,7 @@ class ArtistExtractItem(BaseModel):
     venue: str | None = None
 
 
+# 일기 생성은 블로그 초안으로 대체돼 미사용(/diary-generate 라우트 꺼둠)
 class DiaryGenerateItem(BaseModel):
     ticket_id: str
     review: str | None = None
@@ -33,8 +34,10 @@ class DiaryGenerateItem(BaseModel):
     concert_date: str | None = None  # YYYY-MM-DD
 
 
-# 블로그 초안은 배치/콜백이 아니라 요청-응답 동기 방식 (POST /blog-draft). 사용자가 결과를
-# 바로 복사해서 쓰는 기능이라 응답 바디로 초안을 즉시 돌려준다.
+# 블로그 초안은 콜백이 아니라 요청-응답 동기 방식 (POST /blog-draft) - 응답 바디로 초안을 바로
+# 돌려준다. 백엔드가 보내는 바디는 backend/app/services/blog_draft.py의 _build_payload와,
+# 받는 응답은 backend/app/schemas/blog_draft.py의 LlmBlogDraftResult와 필드명이 같아야 함.
+# setlist는 그날 실제 셋리만(없으면 []), concert_date는 관람일(없으면 공연 시작일)이 옴
 class BlogDraftRequest(BaseModel):
     # 사용자가 자유롭게 쓴 감상 글(여러 문장). 문장 단위로 쪼개져 해당하는 공연 정보 소개 문장 아래에
     # 끝부분만 블로그 말투로 바뀌어 들어감. 프롬프트에 그대로 실리므로 길이 제한
@@ -88,5 +91,6 @@ class ArtistResultCallback(BaseModel):
     event_type: str | None = None
 
 
+# 미사용 - DiaryGenerateItem 참고
 class DiaryResultCallback(BaseModel):
     diary: str

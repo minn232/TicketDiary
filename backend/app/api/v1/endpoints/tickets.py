@@ -6,12 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, rate_limit_diary_generation, verify_llm_api_key
+from app.core.deps import get_current_user, rate_limit_blog_draft, rate_limit_diary_generation, verify_llm_api_key
 from app.models.ticket import Ticket
 from app.models.user import User
 from app.schemas.artist_identity import (
     IdentityCandidatesResponse, IdentityChangeRequest, IdentityChangeResponse,
 )
+from app.schemas.blog_draft import BlogDraftCreate, BlogDraftResponse
 from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.setlist import (
     RealSetlistResponse, PreSetlistResponse,
@@ -25,6 +26,7 @@ from app.services.artist_identity import (
     change_concert_artist_identity,
     identity_candidates,
 )
+from app.services.blog_draft import get_blog_draft, request_blog_draft
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
@@ -332,6 +334,29 @@ async def receive_diary_result(
     ticket.diary = body.diary
     await db.commit()
     return DiaryResultResponse(diary=ticket.diary)
+
+
+# 블로그 글 초안 요청 - 감상 글만 저장하고 즉시 반환(실제 생성은 밤 LLM 배치), 클라이언트는 GET으로
+# status가 done이 되는지 확인. 다시 요청하면 이전 초안을 지우고 새 글로 재생성
+@router.post("/{ticket_id}/blog-draft", response_model=BlogDraftResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_blog_draft(
+    ticket_id: UUID,
+    body: BlogDraftCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _rate_limit: None = Depends(rate_limit_blog_draft),
+):
+    return await request_blog_draft(db, current_user.id, ticket_id, body.emotion)
+
+
+# 블로그 글 초안 조회 - 요청한 적 없으면 status=none
+@router.get("/{ticket_id}/blog-draft", response_model=BlogDraftResponse)
+async def read_blog_draft(
+    ticket_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_blog_draft(db, current_user.id, ticket_id)
 
 
 # 티켓 삭제

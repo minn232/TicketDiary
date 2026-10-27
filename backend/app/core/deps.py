@@ -205,3 +205,9 @@ async def rate_limit_nearby_sighting(current_user: User = Depends(get_current_us
 # 일기 생성(LLM 호출, 비용 발생) 남용 방지: 유저당 시간당 10회
 async def rate_limit_diary_generation(current_user: User = Depends(get_current_user)) -> None:
     _check_rate_limit(f"diary:{current_user.id}", max_calls=10, period_seconds=3600)
+
+
+# 블로그 초안 요청(밤 배치 LLM 호출, 비용 발생) 남용 방지: 유저당 시간당 10회 - 다시 요청하면 덮어써서
+# 배치 전송량은 티켓 수를 안 넘지만, 요청 자체를 반복하는 걸 막음
+async def rate_limit_blog_draft(current_user: User = Depends(get_current_user)) -> None:
+    _check_rate_limit(f"blog_draft:{current_user.id}", max_calls=10, period_seconds=3600)

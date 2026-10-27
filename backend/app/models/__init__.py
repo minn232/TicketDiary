@@ -20,6 +20,7 @@ from app.models.music_link_cache import MusicLinkCache
 from app.models.itunes_catalog_cache import ItunesCatalogCache
 from app.models.llm_batch_state import LlmNightBatchState
 from app.models.connection import NearbyCode, NearbySighting, UserConnection
+from app.models.blog_draft import BlogDraft
 
 __all__ = [
     "User", "UserRole",
@@ -42,4 +43,5 @@ __all__ = [
     "ItunesCatalogCache",
     "LlmNightBatchState",
     "NearbyCode", "NearbySighting", "UserConnection",
+    "BlogDraft",
 ]
