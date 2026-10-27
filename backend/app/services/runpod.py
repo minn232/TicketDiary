@@ -292,11 +292,13 @@ async def run_start_script_via_ssh(pod_id: str | None = None, log_path: str | No
                 "command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_SESSION} 2>/dev/null; true", check=False)
+            # asyncssh conn.run은 비대화형 셸이라 .bashrc가 앞에서 return해 RunPod pod 환경변수
+            # (/etc/rp_environment, .bashrc 끝에서 source됨)가 안 실림 - 직접 로그인 실행과 환경을 맞춤
             await _run_remote(
                 conn,
                 "start_vllm.sh 세션 생성",
                 f"tmux new-session -d -s {_TMUX_SESSION} -c /workspace "
-                f"'bash start_vllm.sh 2>&1 | tee {log_path}'",
+                f"'. /etc/rp_environment 2>/dev/null; bash -l start_vllm.sh 2>&1 | tee {log_path}'",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_LOG_SESSION} 2>/dev/null; true", check=False)
             await _run_remote(
