@@ -11,6 +11,8 @@ import '../services/news_card_identity.dart';
 import '../services/favorites_store.dart';
 import '../models/news_model.dart';
 import '../services/ticket_refresh_bus.dart';
+import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
+import '../widgets/diary_landscape_cover_panel.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
 import '../widgets/tab_nav_coordinator.dart';
@@ -255,6 +257,11 @@ class _SummaryScreenState extends State<SummaryScreen> {
       isTabRoot: true,
       pageTextureEnabled: false,
       sideTabs: buildDiarySideTabs(context, active: DiaryTab.summary),
+      // [백엔드 수정] 가로모드 왼쪽 동반 패널 - 다른 탭과 동일, 색만 결산 크라프트지로 맞춤.
+      landscapeCompanionPanel: DiaryLandscapeCoverPanel(
+        pageColor: _pageColor,
+        child: buildUpcomingTicketLandscapePanel(),
+      ),
       child: Material(
         color: _pageColor,
         child: Padding(

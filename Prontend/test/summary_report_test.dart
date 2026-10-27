@@ -394,4 +394,40 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('tapping a month shows that month\'s concerts, outside closes', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      period: 'all',
+      selection: {'spent': '2025'},
+      data: {
+        ..._data,
+        'ticket_details': [
+          {'date': '2025-12-20', 'concert_name': '연말 공연', 'price': 200000},
+          {'date': '2025-12-03', 'concert_name': '첫 공연', 'price': 120000},
+          {'date': '2026-01-10', 'concert_name': '다른 달 공연', 'price': 50000},
+        ],
+      },
+    );
+    final chart = tester.getRect(find.byKey(const ValueKey('spending-chart')));
+    await tester.tapAt(Offset(chart.right - 8, chart.center.dy));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('month-detail')), findsOneWidget);
+    expect(find.text('2025년 12월'), findsOneWidget);
+    expect(find.text('320,000원'), findsWidgets);
+    expect(find.text('첫 공연'), findsOneWidget);
+    expect(find.text('연말 공연'), findsOneWidget);
+    expect(find.text('다른 달 공연'), findsNothing);
+    // 날짜순
+    expect(
+      tester.getRect(find.text('첫 공연')).top,
+      lessThan(tester.getRect(find.text('연말 공연')).top),
+    );
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('month-detail')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
