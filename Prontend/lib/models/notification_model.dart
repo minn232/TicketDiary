@@ -12,6 +12,9 @@ class NotificationModel {
   final String body;
   final bool isRead;
   final DateTime scheduledAt;
+  // [백엔드 수정] 눌렀을 때 이동할 공연과 썸네일 - 목록 응답에만 채워짐.
+  final String? concertId;
+  final String? posterUrl;
 
   const NotificationModel({
     required this.id,
@@ -21,6 +24,8 @@ class NotificationModel {
     required this.body,
     required this.isRead,
     required this.scheduledAt,
+    this.concertId,
+    this.posterUrl,
   });
 
   factory NotificationModel.fromJson(Map<String, dynamic> json) {
@@ -32,6 +37,8 @@ class NotificationModel {
       body: json['body'] as String,
       isRead: json['is_read'] as bool,
       scheduledAt: DateTime.parse(json['scheduled_at'] as String),
+      concertId: json['concert_id'] as String?,
+      posterUrl: json['poster_url'] as String?,
     );
   }
 }
