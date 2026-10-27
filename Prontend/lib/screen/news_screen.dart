@@ -881,22 +881,27 @@ class _HorizontalScrollHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = Colors.brown.withValues(alpha: 0.5);
+    // [백엔드 수정] 아래 여백 높이(_insets.bottom)는 고정인데 아이콘/글자는 화면 배율로
+    // 커져서 세로모드에서 위아래가 잘렸음 - 넘칠 때만 여백 높이에 맞춰 축소.
     return Center(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.chevron_left, size: context.rs(15), color: color),
-          Icon(Icons.chevron_right, size: context.rs(15), color: color),
-          SizedBox(width: context.rs(4)),
-          Text(
-            '옆으로 넘겨보세요',
-            style: TextStyle(
-              fontSize: context.sp(10),
-              fontWeight: FontWeight.w700,
-              color: color,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chevron_left, size: context.rs(15), color: color),
+            Icon(Icons.chevron_right, size: context.rs(15), color: color),
+            SizedBox(width: context.rs(4)),
+            Text(
+              '옆으로 넘겨보세요',
+              style: TextStyle(
+                fontSize: context.sp(10),
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

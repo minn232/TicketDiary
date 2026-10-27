@@ -1155,26 +1155,76 @@ class _InfoTileLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: underline
-          ? BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: Colors.black.withValues(alpha: 0.8),
-                  width: 1,
-                ),
-              ),
-            )
-          : null,
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: style,
+    final label = Text(
+      text,
+      textAlign: TextAlign.center,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: style,
+    );
+    if (!underline) return label;
+    // [백엔드 수정]
+    // 긴 공연장명이 자동 줄바꿈되면 아래 테두리 방식은 마지막 줄 아래에만, 그것도
+    // 타일 전체 폭으로 그어져 어색했음 - Text와 같은 조건으로 줄을 계산해 실제로
+    // 그려진 줄마다 그 줄 글자 폭만큼만 밑줄을 그음.
+    // (LayoutBuilder는 이 타일을 감싼 intrinsic 레이아웃에서 못 써서, 페인트 때 Text가
+    // 실제로 차지한 폭으로 다시 계산함)
+    return CustomPaint(
+      foregroundPainter: _LineUnderlinePainter(
+        text: TextSpan(
+          text: text,
+          style: DefaultTextStyle.of(context).style.merge(style),
+        ),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+        color: Colors.black.withValues(alpha: 0.8),
       ),
+      child: label,
     );
   }
+}
+
+class _LineUnderlinePainter extends CustomPainter {
+  final TextSpan text;
+  final TextDirection textDirection;
+  final TextScaler textScaler;
+  final Color color;
+
+  const _LineUnderlinePainter({
+    required this.text,
+    required this.textDirection,
+    required this.textScaler,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final painter = TextPainter(
+      text: text,
+      textAlign: TextAlign.center,
+      textDirection: textDirection,
+      textScaler: textScaler,
+      maxLines: 2,
+      ellipsis: '…',
+    )..layout(maxWidth: size.width + 0.01);
+    final lines = painter.computeLineMetrics();
+    painter.dispose();
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+    for (final line in lines) {
+      final bottom = line.baseline + line.descent;
+      final y = bottom > size.height - 0.5 ? size.height - 0.5 : bottom;
+      canvas.drawLine(
+        Offset(line.left, y),
+        Offset(line.left + line.width, y),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LineUnderlinePainter old) => true;
 }
 
 /// 달력 아이콘 + 날짜 숫자(있으면). 공연 기간 타일용.
