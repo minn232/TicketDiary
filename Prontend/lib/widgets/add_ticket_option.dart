@@ -30,19 +30,19 @@ class AddTicketOption extends StatelessWidget {
             Container(
               width: 40,
               height: 40,
+              // 접힌 "티켓 추가" 버튼의 + 원과 같은 갈색 원으로 맞춤
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Colors.white,
-                border: Border.all(
-                  color: Colors.black.withValues(alpha: 0.22),
-                  width: 1.4,
-                ),
+                color: const Color(0xFF5A4033),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.18),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
-              child: Icon(
-                icon,
-                color: Colors.black.withValues(alpha: 0.78),
-                size: 22,
-              ),
+              child: Icon(icon, color: Colors.white, size: 22),
             ),
             const SizedBox(height: 6),
             Text(
@@ -59,4 +59,3 @@ class AddTicketOption extends StatelessWidget {
     );
   }
 }
-

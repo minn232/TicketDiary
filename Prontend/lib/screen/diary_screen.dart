@@ -1751,30 +1751,49 @@ class _DiaryScreenState extends State<DiaryScreen> {
   }
 
   Widget _buildAddTicketOptions(BuildContext context) {
-    // 다른 티켓들과 같은 비닐 포켓 프레임 안에 표시합니다.
+    // 다른 티켓들과 같은 비닐 포켓 프레임 안에, 접힌 버튼과 같은 점선 카드로 표시합니다.
     return _buildTicketPocket(
-      child: Row(
-        children: [
-          Expanded(
-            child: AddTicketOption(
-              icon: Icons.photo_camera_outlined,
-              label: '카메라',
-              onTap: _startCameraScan,
+      child: _buildAddTicketCard(
+        child: Row(
+          children: [
+            Expanded(
+              child: AddTicketOption(
+                icon: Icons.photo_camera_outlined,
+                label: '카메라',
+                onTap: _startCameraScan,
+              ),
             ),
-          ),
-          Container(
-            width: 1,
-            margin: const EdgeInsets.symmetric(vertical: 14),
-            color: Colors.black.withValues(alpha: 0.18),
-          ),
-          Expanded(
-            child: AddTicketOption(
-              icon: Icons.photo_library_outlined,
-              label: '갤러리',
-              onTap: _pickFromGalleryAndAnalyze,
+            Container(
+              width: 1,
+              margin: const EdgeInsets.symmetric(vertical: 14),
+              color: Colors.black.withValues(alpha: 0.18),
             ),
-          ),
-        ],
+            Expanded(
+              child: AddTicketOption(
+                icon: Icons.photo_library_outlined,
+                label: '갤러리',
+                onTap: _pickFromGalleryAndAnalyze,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// "티켓 추가" 칸(접힘/펼침 공통)의 점선 테두리 크림색 카드.
+  Widget _buildAddTicketCard({required Widget child}) {
+    return CustomPaint(
+      foregroundPainter: _DashedRRectPainter(
+        color: Colors.black.withValues(alpha: 0.28),
+        radius: 8,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFFDF8),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: child,
       ),
     );
   }
@@ -2045,25 +2064,70 @@ class _DiaryScreenState extends State<DiaryScreen> {
     // [백엔드 수정]
     // context.sp(26)가 DiaryFrameScale을 못 찾던 버그 - Builder로 감싸서
     // DiaryPageFrame 하위 context로 바꿈.
+    // 빈 흰 상자에 글자만 있어 미완성처럼 보이던 것 - 점선 테두리(빈 자리)
+    // + 아이콘 + 보조 문구로 "여기에 티켓을 넣는 칸"임을 보이게 함
     return _buildTicketPocket(
       child: Builder(
-        builder: (context) => Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Center(
-            child: Text(
-              "티켓  추가",
-              style: TextStyle(
-                fontSize: context.sp(26),
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
-                letterSpacing: 4.0,
+        builder: (context) {
+          final ink = Colors.black.withValues(alpha: 0.78);
+          return _buildAddTicketCard(
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: context.rs(44),
+                      height: context.rs(44),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFF5A4033),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.add_rounded,
+                        color: Colors.white,
+                        size: context.rs(28),
+                      ),
+                    ),
+                    SizedBox(width: context.rs(14)),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '티켓 추가',
+                          style: TextStyle(
+                            fontSize: context.sp(20),
+                            fontWeight: FontWeight.w800,
+                            color: ink,
+                            height: 1.1,
+                          ),
+                        ),
+                        SizedBox(height: context.rs(4)),
+                        Text(
+                          '카메라로 찍거나 갤러리에서 골라 등록해요',
+                          style: TextStyle(
+                            fontSize: context.sp(10.5),
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black.withValues(alpha: 0.45),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -2220,7 +2284,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
                 radiusOnLeft: true,
               ),
             ),
-            Container(width: 1, color: Colors.grey.shade400),
+            const _DashedVerticalDivider(),
             Expanded(
               flex: 27,
               child: _PosterTicketFace(
@@ -2440,11 +2504,15 @@ class _DiaryScreenState extends State<DiaryScreen> {
     if (_usePosterTicketDesign) {
       return Row(
         children: [
-          const Expanded(
+          Expanded(
             flex: 13,
-            child: _TicketStub(label: '입장 티켓', radiusOnLeft: true),
+            child: _TicketStub(
+              label: '입장 티켓',
+              date: info?.date,
+              radiusOnLeft: true,
+            ),
           ),
-          Container(width: 1, color: Colors.grey.shade400),
+          const _DashedVerticalDivider(),
           Expanded(
             flex: 27,
             child: _PosterTicketFace(
@@ -2578,7 +2646,11 @@ class _DiaryScreenState extends State<DiaryScreen> {
             onTorn: onTorn,
             // 뜯기 전: 다른 티켓 왼쪽 칸과 동일한 디자인 + "관람 완료" 라벨
             front: _usePosterTicketDesign
-                ? const _TicketStub(label: '관람 완료', radiusOnLeft: true)
+                ? _TicketStub(
+                    label: '관람 완료',
+                    date: info?.date,
+                    radiusOnLeft: true,
+                  )
                 : DecoratedBox(
                     decoration: const BoxDecoration(
                       color: Colors.white,
@@ -2730,6 +2802,41 @@ class _DashedLinePainter extends CustomPainter {
   }
 }
 
+/// "티켓 추가" 칸의 점선 둥근 테두리(티켓이 들어갈 빈 자리 느낌).
+class _DashedRRectPainter extends CustomPainter {
+  final Color color;
+  final double radius;
+
+  const _DashedRRectPainter({required this.color, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    final rrect = RRect.fromRectAndRadius(
+      (Offset.zero & size).deflate(5),
+      Radius.circular(radius),
+    );
+
+    const dash = 6.0;
+    const gap = 4.0;
+    for (final metric in (Path()..addRRect(rrect)).computeMetrics()) {
+      double d = 0;
+      while (d < metric.length) {
+        canvas.drawPath(metric.extractPath(d, d + dash), paint);
+        d += dash + gap;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedRRectPainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.radius != radius;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 포스터가 녹아든 티켓 디자인 (_DiaryScreenState._usePosterTicketDesign으로
 // 켜고 끕니다. false로 두면 아래 위젯들은 전혀 쓰이지 않고 기존 디자인 유지.)
@@ -2797,16 +2904,19 @@ class _PosterTicketFace extends StatelessWidget {
               // 그래도 실패하면 아무것도 그리지 않아 아래 그라데이션이 보임
               errorBuilder: (_) => const SizedBox.shrink(),
             ),
-          // 텍스트 가독성을 위한 스크림(위/아래를 더 어둡게)
+          // 텍스트 가독성을 위한 스크림(위/아래를 더 어둡게) - 밝은 포스터에서
+          // 제목/좌석 글씨가 묻혀서 글씨가 놓이는 위·아래 띠를 더 진하게 함
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
+                stops: const [0.0, 0.42, 0.62, 1.0],
                 colors: [
-                  Colors.black.withValues(alpha: 0.32),
-                  Colors.black.withValues(alpha: 0.10),
-                  Colors.black.withValues(alpha: 0.45),
+                  Colors.black.withValues(alpha: 0.58),
+                  Colors.black.withValues(alpha: 0.12),
+                  Colors.black.withValues(alpha: 0.12),
+                  Colors.black.withValues(alpha: 0.62),
                 ],
               ),
             ),
@@ -2963,15 +3073,20 @@ class _PosterTicketFace extends StatelessWidget {
   }
 }
 
-/// 티켓 오른쪽(반권) 영역: 흰 배경에 라벨만 가운데 표시합니다.
+/// 티켓 반권 영역: 라벨 + 공연 날짜(월.일/요일)를 표시합니다. 날짜가 없으면
+/// 라벨만 가운데 표시합니다.
 class _TicketStub extends StatelessWidget {
   const _TicketStub({
     required this.label,
+    this.date,
     this.labelColor,
     this.radiusOnLeft = false,
   });
 
+  static const List<String> _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
   final String label;
+  final DateTime? date;
   final Color? labelColor;
 
   /// 이 조각이 카드의 왼쪽 끝에 놓일 때(예: 입장 티켓 라벨을 왼쪽으로 옮긴
@@ -2981,27 +3096,67 @@ class _TicketStub extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final color = labelColor ?? Colors.black.withValues(alpha: 0.55);
+    final d = date;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFFFFDF8),
         borderRadius: radiusOnLeft
             ? const BorderRadius.horizontal(left: Radius.circular(8))
             : const BorderRadius.horizontal(right: Radius.circular(8)),
       ),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: context.sp(12),
-              fontWeight: FontWeight.w800,
-              color: labelColor ?? Colors.black.withValues(alpha: 0.55),
-            ),
-          ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        child: Center(
+          child: d == null
+              ? Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: context.sp(12),
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                )
+              // 작은 티켓에서도 넘치지 않도록 통째로 줄여서 맞춤
+              : FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: context.sp(9),
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
+                          color: color,
+                        ),
+                      ),
+                      SizedBox(height: context.rs(4)),
+                      Text(
+                        '${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}',
+                        style: TextStyle(
+                          fontSize: context.sp(24),
+                          fontWeight: FontWeight.w900,
+                          height: 1.0,
+                          color: Colors.black.withValues(alpha: 0.82),
+                        ),
+                      ),
+                      SizedBox(height: context.rs(3)),
+                      Text(
+                        '${d.year} · ${_weekdays[d.weekday - 1]}',
+                        style: TextStyle(
+                          fontSize: context.sp(9.5),
+                          fontWeight: FontWeight.w700,
+                          color: Colors.black.withValues(alpha: 0.45),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
         ),
       ),
     );
