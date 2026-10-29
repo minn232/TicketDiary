@@ -17,6 +17,7 @@ import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
 import '../widgets/diary_landscape_cover_panel.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/diary_tabs.dart';
+import '../widgets/paper_style.dart';
 import '../widgets/pressable_scale.dart';
 import '../widgets/responsive_text.dart';
 
@@ -47,7 +48,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool pushFavArtistConcert = false;
   bool pushPinnedConcert = false;
 
-  static const _divider = Divider(height: 1, thickness: 1);
+  static const _divider = Divider(
+    height: 1,
+    thickness: 1,
+    color: Color(0x143B2A20),
+  );
 
   // [백엔드 수정] 알림함 메뉴 배지 - 안 읽은 알림 수(실패하면 배지 없이).
   int _unreadNotifications = 0;
@@ -196,17 +201,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showSaveError(Object e, {String label = '알림 설정'}) {
     if (!mounted) return;
     final message = e is ApiException ? e.message : '잠시 후 다시 시도해주세요.';
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$label 저장에 실패했어요: $message')));
+    showPaperSnackBar(context, '$label 저장에 실패했어요: $message');
   }
 
   void _openMemberSettingsSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: PaperColors.card,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       builder: (context) => const _MemberSettingsSheet(),
     );
@@ -223,256 +226,278 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(32, 18, 18, 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: Colors.black.withValues(alpha: 0.12),
-              width: 1.2,
-            ),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // [백엔드 수정]
-                // Builder로 감싸 DiaryPageFrame 자손 context에서 sp()를 계산하도록
-                // 수정 — 이전엔 State 레벨 context를 써서 DiaryFrameScale을 못 찾고
-                // MediaQuery 폭(가로모드 2페이지 스프레드에선 페이지 한 장이 아니라
-                // 전체 화면 폭)으로 fallback해, 가로모드에서 이 글자만 과하게 커지던
-                // 버그가 있었음([[diary_frame_scale_context_scoping_bug]] 패턴).
-                Builder(
-                  builder: (innerContext) => Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
-                    child: Text(
-                      '설정',
-                      style: TextStyle(
-                        fontSize: innerContext.sp(18),
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black87,
+        child: Stack(
+          clipBehavior: Clip.none,
+          fit: StackFit.passthrough,
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: PaperColors.card,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: PaperColors.ink.withValues(alpha: 0.10),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: PaperColors.ink.withValues(alpha: 0.12),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // [백엔드 수정]
+                    // Builder로 감싸 DiaryPageFrame 자손 context에서 sp()를 계산하도록
+                    // 수정 — 이전엔 State 레벨 context를 써서 DiaryFrameScale을 못 찾고
+                    // MediaQuery 폭(가로모드 2페이지 스프레드에선 페이지 한 장이 아니라
+                    // 전체 화면 폭)으로 fallback해, 가로모드에서 이 글자만 과하게 커지던
+                    // 버그가 있었음([[diary_frame_scale_context_scoping_bug]] 패턴).
+                    Builder(
+                      builder: (innerContext) => Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+                        child: Text(
+                          '설정',
+                          style: TextStyle(
+                            fontSize: innerContext.sp(18),
+                            fontWeight: FontWeight.w900,
+                            color: PaperColors.ink,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    _divider,
+                    Expanded(
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          _LoginStatusBanner(
+                            onTap: () => _openMemberSettingsSheet(context),
+                          ),
+                          const _SectionLabel('소리·감상'),
+                          Theme(
+                            data: Theme.of(
+                              context,
+                            ).copyWith(dividerColor: Colors.transparent),
+                            child: ExpansionTile(
+                              key: const PageStorageKey(
+                                'audio-volume-settings',
+                              ),
+                              initiallyExpanded: _audioExpanded,
+                              onExpansionChanged: (value) =>
+                                  setState(() => _audioExpanded = value),
+                              tilePadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              childrenPadding: const EdgeInsets.fromLTRB(
+                                16,
+                                8,
+                                16,
+                                8,
+                              ),
+                              title: Builder(
+                                builder: (innerContext) => Text(
+                                  '소리 설정',
+                                  style: TextStyle(
+                                    fontSize: innerContext.sp(15),
+                                    fontWeight: FontWeight.w800,
+                                    color: PaperColors.ink,
+                                  ),
+                                ),
+                              ),
+                              trailing: Icon(
+                                _audioExpanded
+                                    ? Icons.keyboard_arrow_down
+                                    : Icons.keyboard_arrow_right,
+                                color: PaperColors.muted,
+                              ),
+                              children: const [MediaVolumeControl()],
+                            ),
+                          ),
+                          _divider,
+                          Theme(
+                            data: Theme.of(context).copyWith(
+                              dividerColor: Colors.transparent,
+                              splashColor: Colors.transparent,
+                              highlightColor: Colors.transparent,
+                            ),
+                            child: ExpansionTile(
+                              key: const PageStorageKey(
+                                'concert-listening-settings',
+                              ),
+                              initiallyExpanded: _listeningExpanded,
+                              onExpansionChanged: (value) =>
+                                  setState(() => _listeningExpanded = value),
+                              trailing: Icon(
+                                _listeningExpanded
+                                    ? Icons.keyboard_arrow_down
+                                    : Icons.keyboard_arrow_right,
+                                color: PaperColors.muted,
+                              ),
+                              tilePadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              childrenPadding: EdgeInsets.zero,
+                              title: Builder(
+                                builder: (innerContext) => Text(
+                                  '공연 감상 설정',
+                                  style: TextStyle(
+                                    fontSize: innerContext.sp(15),
+                                    fontWeight: FontWeight.w800,
+                                    color: PaperColors.ink,
+                                  ),
+                                ),
+                              ),
+                              children: [
+                                _SwitchRow(
+                                  title: '예상 셋리 노출 여부',
+                                  value: _appSettings.showExpectedSetlist,
+                                  onChanged: _setShowExpectedSetlist,
+                                  indent: true,
+                                ),
+                                _divider,
+                                _SwitchRow(
+                                  title: '티켓 열 때 노래 재생',
+                                  value: _appSettings.playTicketPreview,
+                                  onChanged: _setPlayTicketPreview,
+                                  indent: true,
+                                ),
+                                _divider,
+                                _MusicServiceRow(
+                                  value: _appSettings.preferredMusicService,
+                                  onChanged: _setPreferredMusicService,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const _SectionLabel('알림'),
+                          Theme(
+                            data: Theme.of(context).copyWith(
+                              dividerColor: Colors.transparent,
+                              splashColor: Colors.transparent,
+                              highlightColor: Colors.transparent,
+                            ),
+                            child: ExpansionTile(
+                              tilePadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              childrenPadding: EdgeInsets.zero,
+                              initiallyExpanded: pushExpanded,
+                              onExpansionChanged: (v) =>
+                                  setState(() => pushExpanded = v),
+                              // [백엔드 수정] "설정" 타이틀과 같은 이유로 Builder 추가.
+                              title: Builder(
+                                builder: (innerContext) => Text(
+                                  '푸시 알림',
+                                  style: TextStyle(
+                                    fontSize: innerContext.sp(15),
+                                    fontWeight: FontWeight.w800,
+                                    color: PaperColors.ink,
+                                  ),
+                                ),
+                              ),
+                              trailing: Icon(
+                                pushExpanded
+                                    ? Icons.keyboard_arrow_down
+                                    : Icons.keyboard_arrow_right,
+                                color: PaperColors.muted,
+                              ),
+                              children: [
+                                _divider,
+                                _SwitchRow(
+                                  title: '하루 전 알림',
+                                  value: pushDayBefore,
+                                  onChanged: _setDayBefore,
+                                  indent: true,
+                                ),
+                                _divider,
+                                _SwitchRow(
+                                  title: '공연 당일 알림',
+                                  value: pushOnTheDay,
+                                  onChanged: _setConcertDay,
+                                  indent: true,
+                                ),
+                                _divider,
+                                _SwitchRow(
+                                  title: '티켓 배송일 알림',
+                                  value: pushTicketDelivery,
+                                  onChanged: _setDelivery,
+                                  indent: true,
+                                ),
+                                _divider,
+                                // [백엔드 수정]
+                                // new_concert로 서버 저장
+                                _SwitchRow(
+                                  title: '선호 아티스트 공연 알림',
+                                  value: pushFavArtistConcert,
+                                  onChanged: _setFavArtistConcert,
+                                  indent: true,
+                                ),
+                                _divider,
+                                // [백엔드 수정]
+                                // ticketing으로 서버 저장
+                                _SwitchRow(
+                                  title: '찜 공연 알림',
+                                  value: pushPinnedConcert,
+                                  onChanged: _setPinnedConcert,
+                                  indent: true,
+                                ),
+                              ],
+                            ),
+                          ),
+                          _divider,
+                          // [백엔드 수정]
+                          // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
+                          // Builder로 감싼 이유: DiaryFrameScale 조회에 필요한
+                          // 자손 context를 얻기 위함.
+                          Builder(
+                            builder: (menuContext) => _MenuRow(
+                              title: '알림함',
+                              badgeCount: _unreadNotifications,
+                              // [백엔드 수정] 닫고 나면 읽은 만큼 배지 갱신.
+                              onTap: () async {
+                                await NotificationsScreen.show(
+                                  menuContext,
+                                  frameScale:
+                                      DiaryFrameScale.maybeOf(menuContext) ??
+                                      diaryScaleFromMediaQuery(menuContext),
+                                );
+                                _loadUnreadNotifications();
+                              },
+                            ),
+                          ),
+                          const _SectionLabel('친구'),
+                          // [백엔드 수정]
+                          // 폰 맞대기로 연결된 친구 목록·연결 카드.
+                          Builder(
+                            builder: (menuContext) => _MenuRow(
+                              title: '연결된 친구',
+                              onTap: () => ConnectionsScreen.show(
+                                menuContext,
+                                frameScale:
+                                    DiaryFrameScale.maybeOf(menuContext) ??
+                                    diaryScaleFromMediaQuery(menuContext),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                _divider,
-                Expanded(
-                  child: ListView(
-                    padding: EdgeInsets.zero,
-                    children: [
-                      _LoginStatusBanner(
-                        onTap: () => _openMemberSettingsSheet(context),
-                      ),
-                      _divider,
-                      Theme(
-                        data: Theme.of(
-                          context,
-                        ).copyWith(dividerColor: Colors.transparent),
-                        child: ExpansionTile(
-                          key: const PageStorageKey('audio-volume-settings'),
-                          initiallyExpanded: _audioExpanded,
-                          onExpansionChanged: (value) =>
-                              setState(() => _audioExpanded = value),
-                          tilePadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                          ),
-                          childrenPadding: const EdgeInsets.fromLTRB(
-                            16,
-                            8,
-                            16,
-                            8,
-                          ),
-                          title: Builder(
-                            builder: (innerContext) => Text(
-                              '소리 설정',
-                              style: TextStyle(
-                                fontSize: innerContext.sp(15),
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          trailing: Icon(
-                            _audioExpanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_right,
-                            color: Colors.black.withValues(alpha: .55),
-                          ),
-                          children: const [MediaVolumeControl()],
-                        ),
-                      ),
-                      _divider,
-                      Theme(
-                        data: Theme.of(context).copyWith(
-                          dividerColor: Colors.transparent,
-                          splashColor: Colors.transparent,
-                          highlightColor: Colors.transparent,
-                        ),
-                        child: ExpansionTile(
-                          key: const PageStorageKey(
-                            'concert-listening-settings',
-                          ),
-                          initiallyExpanded: _listeningExpanded,
-                          onExpansionChanged: (value) =>
-                              setState(() => _listeningExpanded = value),
-                          trailing: Icon(
-                            _listeningExpanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_right,
-                            color: Colors.black.withValues(alpha: .55),
-                          ),
-                          tilePadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                          ),
-                          childrenPadding: EdgeInsets.zero,
-                          title: Builder(
-                            builder: (innerContext) => Text(
-                              '공연 감상 설정',
-                              style: TextStyle(
-                                fontSize: innerContext.sp(15),
-                                fontWeight: FontWeight.w800,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                          children: [
-                            _SwitchRow(
-                              title: '예상 셋리 노출 여부',
-                              value: _appSettings.showExpectedSetlist,
-                              onChanged: _setShowExpectedSetlist,
-                            ),
-                            _divider,
-                            _SwitchRow(
-                              title: '티켓 열 때 노래 재생',
-                              value: _appSettings.playTicketPreview,
-                              onChanged: _setPlayTicketPreview,
-                            ),
-                            _divider,
-                            _MusicServiceRow(
-                              value: _appSettings.preferredMusicService,
-                              onChanged: _setPreferredMusicService,
-                            ),
-                          ],
-                        ),
-                      ),
-                      _divider,
-
-                      Theme(
-                        data: Theme.of(context).copyWith(
-                          dividerColor: Colors.transparent,
-                          splashColor: Colors.transparent,
-                          highlightColor: Colors.transparent,
-                        ),
-                        child: ExpansionTile(
-                          tilePadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                          ),
-                          childrenPadding: EdgeInsets.zero,
-                          initiallyExpanded: pushExpanded,
-                          onExpansionChanged: (v) =>
-                              setState(() => pushExpanded = v),
-                          // [백엔드 수정] "설정" 타이틀과 같은 이유로 Builder 추가.
-                          title: Builder(
-                            builder: (innerContext) => Text(
-                              '푸쉬 알림',
-                              style: TextStyle(
-                                fontSize: innerContext.sp(15),
-                                fontWeight: FontWeight.w800,
-                                color: Colors.black87,
-                              ),
-                            ),
-                          ),
-                          trailing: Icon(
-                            pushExpanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_right,
-                            color: Colors.black.withValues(alpha: 0.55),
-                          ),
-                          children: [
-                            _divider,
-                            _SwitchRow(
-                              title: '하루전 알림',
-                              value: pushDayBefore,
-                              onChanged: _setDayBefore,
-                              indent: true,
-                            ),
-                            _divider,
-                            _SwitchRow(
-                              title: '당일날 알림',
-                              value: pushOnTheDay,
-                              onChanged: _setConcertDay,
-                              indent: true,
-                            ),
-                            _divider,
-                            _SwitchRow(
-                              title: '티켓배송일 알림',
-                              value: pushTicketDelivery,
-                              onChanged: _setDelivery,
-                              indent: true,
-                            ),
-                            _divider,
-                            // [백엔드 수정]
-                            // new_concert로 서버 저장
-                            _SwitchRow(
-                              title: '선호 아티스트 공연 알림',
-                              value: pushFavArtistConcert,
-                              onChanged: _setFavArtistConcert,
-                              indent: true,
-                            ),
-                            _divider,
-                            // [백엔드 수정]
-                            // ticketing으로 서버 저장
-                            _SwitchRow(
-                              title: '찜 공연 알림',
-                              value: pushPinnedConcert,
-                              onChanged: _setPinnedConcert,
-                              indent: true,
-                            ),
-                          ],
-                        ),
-                      ),
-                      _divider,
-                      // [백엔드 수정]
-                      // 폰 맞대기로 연결된 친구 목록·연결 카드.
-                      Builder(
-                        builder: (menuContext) => _MenuRow(
-                          title: '연결된 친구',
-                          onTap: () => ConnectionsScreen.show(
-                            menuContext,
-                            frameScale:
-                                DiaryFrameScale.maybeOf(menuContext) ??
-                                diaryScaleFromMediaQuery(menuContext),
-                          ),
-                        ),
-                      ),
-                      _divider,
-                      // [백엔드 수정]
-                      // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
-                      // Builder로 감싼 이유: DiaryFrameScale 조회에 필요한
-                      // 자손 context를 얻기 위함.
-                      Builder(
-                        builder: (menuContext) => _MenuRow(
-                          title: '알림함',
-                          badgeCount: _unreadNotifications,
-                          // [백엔드 수정] 닫고 나면 읽은 만큼 배지 갱신.
-                          onTap: () async {
-                            await NotificationsScreen.show(
-                              menuContext,
-                              frameScale:
-                                  DiaryFrameScale.maybeOf(menuContext) ??
-                                  diaryScaleFromMediaQuery(menuContext),
-                            );
-                            _loadUnreadNotifications();
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
+            const Positioned(
+              top: -7,
+              left: 0,
+              right: 0,
+              child: Center(child: MaskingTape(width: 64, height: 16)),
+            ),
+          ],
         ),
       ),
     );
@@ -509,7 +534,7 @@ class _MenuRow extends StatelessWidget {
                   style: TextStyle(
                     fontSize: context.sp(15),
                     fontWeight: FontWeight.w800,
-                    color: Colors.black87,
+                    color: PaperColors.ink,
                   ),
                 ),
               ),
@@ -521,22 +546,19 @@ class _MenuRow extends StatelessWidget {
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE0455E),
-                    borderRadius: BorderRadius.circular(999),
+                    color: PaperColors.stamp,
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
                     badgeCount > 99 ? '99+' : '$badgeCount',
                     style: TextStyle(
                       fontSize: context.sp(11),
                       fontWeight: FontWeight.w900,
-                      color: Colors.white,
+                      color: PaperColors.card,
                     ),
                   ),
                 ),
-              Icon(
-                Icons.chevron_right,
-                color: Colors.black.withValues(alpha: 0.45),
-              ),
+              const Icon(Icons.chevron_right, color: PaperColors.muted),
             ],
           ),
         ),
@@ -571,17 +593,23 @@ class _SwitchRow extends StatelessWidget {
               child: Text(
                 title,
                 style: TextStyle(
-                  fontSize: context.sp(15),
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black87,
+                  fontSize: context.sp(indent ? 14 : 15),
+                  fontWeight: indent ? FontWeight.w700 : FontWeight.w800,
+                  color: PaperColors.ink,
                 ),
               ),
             ),
+            // 초록 기본 스위치 대신 갈색 잉크
             Switch.adaptive(
               value: value,
               onChanged: onChanged,
-              activeThumbColor: const Color(0xFF4E8F5A),
-              activeTrackColor: const Color(0xFF7FB77E),
+              activeThumbColor: PaperColors.card,
+              activeTrackColor: PaperColors.ink.withValues(alpha: 0.8),
+              inactiveThumbColor: PaperColors.muted,
+              inactiveTrackColor: PaperColors.tile,
+              trackOutlineColor: WidgetStatePropertyAll(
+                PaperColors.ink.withValues(alpha: 0.18),
+              ),
             ),
           ],
         ),
@@ -604,16 +632,16 @@ class _MusicServiceRow extends StatelessWidget {
     return SizedBox(
       height: 56,
       child: Padding(
-        padding: const EdgeInsets.only(left: 16, right: 16),
+        padding: const EdgeInsets.only(left: 32, right: 16),
         child: Row(
           children: [
             Expanded(
               child: Text(
                 '기본 음악 앱',
                 style: TextStyle(
-                  fontSize: context.sp(15),
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black87,
+                  fontSize: context.sp(14),
+                  fontWeight: FontWeight.w700,
+                  color: PaperColors.ink,
                 ),
               ),
             ),
@@ -657,7 +685,7 @@ class _ServiceIconButton extends StatelessWidget {
           border: Border.all(
             color: selected
                 ? service.color
-                : Colors.black.withValues(alpha: 0.15),
+                : PaperColors.ink.withValues(alpha: 0.15),
             width: selected ? 1.4 : 1,
           ),
           borderRadius: BorderRadius.circular(10),
@@ -689,45 +717,81 @@ class _LoginStatusBanner extends StatelessWidget {
         final auth = AuthService.instance;
         final nickname = auth.currentUser?.nickname;
         final label = !auth.isGuest && nickname != null && nickname.isNotEmpty
-            ? '$nickname님으로 로그인됨'
+            ? nickname
             : '게스트로 이용 중';
 
+        final isGuest = auth.isGuest;
         return PressableScale(
           onTap: onTap,
           pressScale: 0.985,
           tapScale: 1.02,
-          child: SizedBox(
-            height: 56,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: [
-                  Icon(
-                    auth.isGuest ? Icons.person_outline : Icons.verified_user,
-                    size: 20,
-                    color: Colors.black.withValues(alpha: 0.55),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: context.sp(15),
-                        fontWeight: FontWeight.w800,
-                        color: Colors.black87,
-                      ),
-                    ),
-                  ),
-                  Icon(
-                    Icons.chevron_right,
-                    color: Colors.black.withValues(alpha: 0.45),
-                  ),
-                ],
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+            decoration: BoxDecoration(
+              color: PaperColors.tile,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: PaperColors.ink.withValues(alpha: 0.08),
               ),
+            ),
+            child: Row(
+              children: [
+                ProfileAvatar(
+                  size: context.rs(46),
+                  name: isGuest ? null : nickname,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: context.sp(15),
+                          fontWeight: FontWeight.w900,
+                          color: PaperColors.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isGuest ? '눌러서 카카오로 로그인' : '카카오 계정',
+                        style: TextStyle(
+                          fontSize: context.sp(12),
+                          fontWeight: FontWeight.w600,
+                          color: isGuest
+                              ? PaperColors.stamp
+                              : PaperColors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: PaperColors.muted),
+              ],
             ),
           ),
         );
       },
+    );
+  }
+}
+
+/// 설정 묶음 제목(소리·감상 / 알림 / 친구). 줄마다 아이콘을 다는 대신 묶음
+/// 위에 테이프 라벨을 붙여 구분함.
+class _SectionLabel extends StatelessWidget {
+  final String text;
+
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 20, 16, 2),
+      child: Align(alignment: Alignment.centerLeft, child: TapeLabel(text)),
     );
   }
 }
@@ -793,9 +857,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showPaperSnackBar(context, message);
   }
 
   /// 비정상 종료/실패를 알리는 확인용 알림창. 확인을 누르면 닫히고, 이미
@@ -803,18 +865,11 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   /// 원래 화면으로 복귀합니다.
   Future<void> _showAlertDialog(String title, String message) async {
     if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('확인'),
-          ),
-        ],
-      ),
+    await showPaperDialog<void>(
+      context,
+      title: title,
+      message: message,
+      actions: const [PaperDialogAction(label: '확인')],
     );
   }
 
@@ -913,31 +968,24 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
 
   /// 게스트로 저장해둔 데이터를 카카오 계정으로 가져올지 물어보는 확인창.
   Future<_MigrationChoice?> _showMigrationChoiceDialog() {
-    return showDialog<_MigrationChoice>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('게스트로 등록된 데이터를 옮기시겠습니까?'),
-        content: const Text(
+    // 데이터를 잃을 수 있는 선택이라 무게를 나눔: 옮기기(주) / 삭제하기(빨간 글자) / 취소(흐림)
+    return showPaperDialog<_MigrationChoice>(
+      context,
+      title: '게스트로 등록된 데이터를 옮기시겠습니까?',
+      message:
           '게스트로 이용하며 추가한 티켓이 있어요.\n'
           '카카오 계정으로 로그인하면서 이 데이터를 그대로 옮길까요?\n\n'
           '삭제하기를 선택하면 이 티켓들은 카카오 계정에 반영되지 않아요(다시 게스트로 돌아가야 확인할 수 있어요).',
+      tapeTint: PaperColors.tapeMustard,
+      actions: const [
+        PaperDialogAction(label: '취소', style: PaperButtonStyle.quiet),
+        PaperDialogAction(
+          label: '삭제하기',
+          value: _MigrationChoice.startFresh,
+          style: PaperButtonStyle.danger,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(context, _MigrationChoice.startFresh),
-            child: const Text('삭제하기'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, _MigrationChoice.migrate),
-            child: const Text('옮기기'),
-          ),
-        ],
-      ),
+        PaperDialogAction(label: '옮기기', value: _MigrationChoice.migrate),
+      ],
     );
   }
 
@@ -951,25 +999,22 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   /// 회색으로 둬서, 실수로 로그아웃을 누르는 걸 방지합니다.
   Future<bool> _showLogoutConfirmDialog() async {
     if (!mounted) return false;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('로그아웃'),
-        content: const Text('정말 로그아웃 하시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.black.withValues(alpha: 0.45),
-            ),
-            child: const Text('예'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('아니오'),
-          ),
-        ],
-      ),
+    final confirmed = await showPaperDialog<bool>(
+      context,
+      title: '로그아웃',
+      message: '정말 로그아웃 하시겠습니까?',
+      actions: const [
+        PaperDialogAction(
+          label: '로그아웃',
+          value: true,
+          style: PaperButtonStyle.danger,
+        ),
+        PaperDialogAction(
+          label: '취소',
+          value: false,
+          style: PaperButtonStyle.outline,
+        ),
+      ],
     );
     return confirmed ?? false;
   }
@@ -982,33 +1027,43 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+        // 버튼이 작아져 시트 폭을 안 잡아주므로 직접 꽉 채움
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 36,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 18),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(2),
+            // stretch 안에서도 짧은 막대로 남게 가운데 고정
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 18),
+                decoration: BoxDecoration(
+                  color: PaperColors.ink.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-            _ProfileRow(
-              isGuest: isGuest,
-              nickname: currentUser?.nickname,
-              profileImageUrl: currentUser?.profileImageUrl,
-            ),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              child: isGuest
-                  ? _KakaoLoginButton(
-                      onTap: _busy ? null : _loginWithKakao,
-                      busy: _busy,
-                    )
-                  : _LogoutButton(onTap: _busy ? null : _logout, busy: _busy),
-            ),
+            // 카카오 프로필 사진은 안 씀(추후 앱에서 직접 등록 예정)
+            _ProfileRow(isGuest: isGuest, nickname: currentUser?.nickname),
+            const SizedBox(height: 24),
+            if (isGuest)
+              SizedBox(
+                width: double.infinity,
+                child: _KakaoLoginButton(
+                  onTap: _busy ? null : _loginWithKakao,
+                  busy: _busy,
+                ),
+              )
+            // 되돌리기 어려운 동작이라 큰 주 버튼 대신 작은 테두리 버튼
+            else
+              Center(
+                child: PaperButton(
+                  label: _busy ? '로그아웃 중…' : '로그아웃',
+                  style: PaperButtonStyle.outline,
+                  onTap: _busy ? null : _logout,
+                ),
+              ),
           ],
         ),
       ),
@@ -1016,24 +1071,17 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   }
 }
 
-/// 현재 계정 상태를 보여주는 프로필. 큰 프로필 사진 아래에 이름처럼
-/// 텍스트를 세로로 붙여 보여줍니다. 게스트면 "게스트로 로그인 중"과 함께
-/// 아직 계정이 연결되지 않았음을 알리는 빨간 느낌표 배지가 뜹니다.
+/// 현재 계정 상태를 보여주는 프로필. 큰 프로필 동그라미 아래에 이름과 계정
+/// 종류를 붙여 보여줍니다. 게스트면 아직 계정이 연결되지 않았음을 알리는
+/// 빨간 느낌표 도장이 뜹니다.
 class _ProfileRow extends StatelessWidget {
   final bool isGuest;
   final String? nickname;
-  final String? profileImageUrl;
 
-  const _ProfileRow({
-    required this.isGuest,
-    this.nickname,
-    this.profileImageUrl,
-  });
+  const _ProfileRow({required this.isGuest, this.nickname});
 
   @override
   Widget build(BuildContext context) {
-    final hasImage =
-        !isGuest && profileImageUrl != null && profileImageUrl!.isNotEmpty;
     final label = isGuest
         ? '게스트로 로그인 중'
         : (nickname != null && nickname!.isNotEmpty ? nickname! : '카카오 계정');
@@ -1043,14 +1091,7 @@ class _ProfileRow extends StatelessWidget {
         Stack(
           clipBehavior: Clip.none,
           children: [
-            CircleAvatar(
-              radius: 44,
-              backgroundColor: Colors.grey.shade300,
-              backgroundImage: hasImage ? NetworkImage(profileImageUrl!) : null,
-              child: hasImage
-                  ? null
-                  : Icon(Icons.person, color: Colors.grey.shade600, size: 46),
-            ),
+            ProfileAvatar(size: 88, name: isGuest ? null : nickname),
             if (isGuest)
               Positioned(
                 right: -2,
@@ -1059,15 +1100,15 @@ class _ProfileRow extends StatelessWidget {
                   width: 24,
                   height: 24,
                   decoration: BoxDecoration(
-                    color: Colors.red,
+                    color: PaperColors.stamp,
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2),
+                    border: Border.all(color: PaperColors.card, width: 2),
                   ),
                   alignment: Alignment.center,
                   child: Text(
                     '!',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: PaperColors.card,
                       fontSize: context.sp(14),
                       fontWeight: FontWeight.w900,
                       height: 1,
@@ -1082,7 +1123,17 @@ class _ProfileRow extends StatelessWidget {
           label,
           style: TextStyle(
             fontSize: context.sp(16),
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w900,
+            color: PaperColors.ink,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          isGuest ? '아직 계정이 연결되지 않았어요' : '카카오 계정으로 로그인됨',
+          style: TextStyle(
+            fontSize: context.sp(12),
+            fontWeight: FontWeight.w600,
+            color: PaperColors.muted,
           ),
         ),
       ],
@@ -1105,9 +1156,8 @@ class _KakaoLoginButton extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFFFEE500),
           foregroundColor: const Color(0xFF3C1E1E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
         ),
         child: busy
             ? const SizedBox(
@@ -1120,46 +1170,6 @@ class _KakaoLoginButton extends StatelessWidget {
               )
             : Text(
                 '카카오로 로그인',
-                style: TextStyle(
-                  fontSize: context.sp(16),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-      ),
-    );
-  }
-}
-
-class _LogoutButton extends StatelessWidget {
-  final VoidCallback? onTap;
-  final bool busy;
-
-  const _LogoutButton({required this.onTap, this.busy = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 56,
-      child: ElevatedButton(
-        onPressed: onTap,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        child: busy
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.2,
-                  color: Colors.white,
-                ),
-              )
-            : Text(
-                '로그아웃',
                 style: TextStyle(
                   fontSize: context.sp(16),
                   fontWeight: FontWeight.w800,

@@ -10,6 +10,7 @@ import '../widgets/pressable_scale.dart';
 import '../widgets/responsive_text.dart';
 import '../widgets/sheet_grab_handle.dart';
 import '../widgets/tab_nav_coordinator.dart';
+import '../widgets/paper_style.dart';
 
 // [백엔드 수정]
 // 인앱 알림함 (GET/PATCH/DELETE /notifications)
@@ -80,9 +81,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   bool _dragging = false;
 
   static const Color _paperColor = Color(0xFFF4F1E1);
-  static const Color _cardColor = Color(0xFFFAFAFA);
-  static const Color _unreadAccent = Color(0xFFE0455E);
-  static const Color _deleteAccent = Color(0xFFE4002B);
+  static const Color _cardColor = PaperColors.card;
+  static const Color _unreadAccent = PaperColors.stamp;
+  static const Color _deleteAccent = PaperColors.stamp;
 
   @override
   void initState() {
@@ -340,7 +341,7 @@ class _NotificationsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: paperColor,
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
       clipBehavior: Clip.antiAlias,
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -368,7 +369,7 @@ class _NotificationsPanel extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: context.sp(18),
                                   fontWeight: FontWeight.w900,
-                                  color: Colors.black87,
+                                  color: PaperColors.ink,
                                 ),
                               ),
                             ),
@@ -377,7 +378,7 @@ class _NotificationsPanel extends StatelessWidget {
                               TextButton(
                                 onPressed: onMarkAllRead,
                                 style: TextButton.styleFrom(
-                                  foregroundColor: const Color(0xFF8B5E3C),
+                                  foregroundColor: PaperColors.muted,
                                 ),
                                 child: Text(
                                   '모두 읽음',
@@ -390,7 +391,7 @@ class _NotificationsPanel extends StatelessWidget {
                             IconButton(
                               onPressed: onClose,
                               icon: const Icon(Icons.close),
-                              color: Colors.black.withValues(alpha: 0.55),
+                              color: PaperColors.muted,
                             ),
                           ],
                         ),
@@ -400,7 +401,7 @@ class _NotificationsPanel extends StatelessWidget {
                 ),
                 Container(
                   height: 1,
-                  color: Colors.black.withValues(alpha: 0.08),
+                  color: PaperColors.ink.withValues(alpha: 0.08),
                 ),
                 Expanded(child: _buildBody(context)),
               ],
@@ -420,7 +421,9 @@ class _NotificationsPanel extends StatelessWidget {
     }
     final loaded = items;
     if (loaded == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(color: PaperColors.muted),
+      );
     }
     if (loaded.isEmpty) {
       return const _EmptyState(
@@ -557,9 +560,9 @@ class _NotificationCard extends StatelessWidget {
         alignment: Alignment.centerRight,
         decoration: BoxDecoration(
           color: deleteAccent,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(6),
         ),
-        child: const Icon(Icons.delete_outline, color: Colors.white),
+        child: const Icon(Icons.delete_outline, color: PaperColors.card),
       ),
       child: PressableScale(
         onTap: onTap,
@@ -569,12 +572,13 @@ class _NotificationCard extends StatelessWidget {
           width: double.infinity,
           decoration: BoxDecoration(
             color: cardColor,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: PaperColors.ink.withValues(alpha: 0.08)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.056),
-                blurRadius: 8,
-                offset: const Offset(0, 3),
+                color: PaperColors.ink.withValues(alpha: 0.10),
+                blurRadius: 7,
+                offset: const Offset(1, 3),
               ),
             ],
           ),
@@ -598,7 +602,7 @@ class _NotificationCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: context.sp(10.5),
                             fontWeight: FontWeight.w600,
-                            color: Colors.black.withValues(alpha: 0.38),
+                            color: PaperColors.muted,
                           ),
                         ),
                         if (!read) ...[
@@ -609,15 +613,18 @@ class _NotificationCard extends StatelessWidget {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: unreadAccent,
-                              borderRadius: BorderRadius.circular(999),
+                              borderRadius: BorderRadius.circular(2),
+                              border: Border.all(
+                                color: unreadAccent.withValues(alpha: 0.85),
+                                width: 1.3,
+                              ),
                             ),
                             child: Text(
                               'NEW',
                               style: TextStyle(
                                 fontSize: context.sp(8.5),
                                 fontWeight: FontWeight.w900,
-                                color: Colors.white,
+                                color: unreadAccent,
                                 letterSpacing: 0.5,
                               ),
                             ),
@@ -633,7 +640,7 @@ class _NotificationCard extends StatelessWidget {
                       style: TextStyle(
                         fontSize: context.sp(14),
                         fontWeight: read ? FontWeight.w600 : FontWeight.w900,
-                        color: Colors.black87,
+                        color: PaperColors.ink,
                         height: 1.3,
                       ),
                     ),
@@ -650,7 +657,7 @@ class _NotificationCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: context.sp(12.5),
-                        color: Colors.black.withValues(alpha: 0.65),
+                        color: PaperColors.ink.withValues(alpha: 0.7),
                         height: 1.35,
                       ),
                     ),
@@ -685,7 +692,7 @@ class _NotificationThumb extends StatelessWidget {
     );
     final url = posterUrl;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(3),
       child: url == null || url.isEmpty
           ? tile()
           : AppNetworkImage(
@@ -711,8 +718,8 @@ class _KindTag extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: kind.color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
+        color: kind.color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(3),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -748,7 +755,7 @@ class _GroupHeader extends StatelessWidget {
         style: TextStyle(
           fontSize: context.sp(12),
           fontWeight: FontWeight.w800,
-          color: Colors.black.withValues(alpha: 0.45),
+          color: PaperColors.muted,
         ),
       ),
     );
@@ -763,26 +770,12 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 40, color: Colors.black.withValues(alpha: 0.22)),
-            SizedBox(height: context.rs(10)),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: context.sp(13),
-                color: Colors.black.withValues(alpha: 0.5),
-                height: 1.4,
-              ),
-            ),
-          ],
-        ),
-      ),
+    // 첫 줄은 제목, 나머지는 본문으로 메모지에 얹음
+    final lines = message.split('\n');
+    return PaperNotice(
+      icon: icon,
+      title: lines.first.replaceFirst(RegExp(r'\.$'), ''),
+      body: lines.skip(1).join('\n'),
     );
   }
 }

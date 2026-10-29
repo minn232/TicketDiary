@@ -159,7 +159,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         builder: (context) => Dialog(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          child: _PaperNotice(
+          child: PaperNotice(
             icon: Icons.search_off_rounded,
             title: '소식을 찾지 못했어요',
             body: '변경되었거나 더 이상 표시되지 않는 소식이에요\n최신 목록을 확인해주세요',
@@ -671,7 +671,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         ? '서버 오류입니다.'
         : '네트워크 오류입니다.';
 
-    return _PaperNotice(
+    return PaperNotice(
       icon: Icons.cloud_off_outlined,
       tapeTint: PaperColors.tapeMustard,
       title: '소식을 불러오지 못했어요',
@@ -688,7 +688,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
   /// 소식이 하나도 없을 때. 찜 패널로 바로 넘어가는 버튼을 둡니다.
   Widget _buildEmptyView() {
-    return _PaperNotice(
+    return PaperNotice(
       icon: Icons.favorite_border_rounded,
       tapeTint: PaperColors.tapeRose,
       title: '아직 소식이 없어요',
@@ -1305,112 +1305,6 @@ class _PolaroidCard extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 빈 화면·오류·안내창에 쓰는 테이프 붙인 메모지(아이콘 + 제목 + 본문 + 버튼).
-class _PaperNotice extends StatelessWidget {
-  final IconData icon;
-  final Color? tapeTint;
-  final String title;
-  final String body;
-  final String actionLabel;
-  final VoidCallback onAction;
-
-  const _PaperNotice({
-    required this.icon,
-    this.tapeTint,
-    required this.title,
-    required this.body,
-    required this.actionLabel,
-    required this.onAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Transform.rotate(
-        angle: -0.015,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              constraints: const BoxConstraints(maxWidth: 300),
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
-              decoration: BoxDecoration(
-                color: _cardPaper,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: _ink.withValues(alpha: .08)),
-                boxShadow: [
-                  BoxShadow(
-                    color: _ink.withValues(alpha: .14),
-                    blurRadius: 9,
-                    offset: const Offset(2, 5),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: context.rs(34), color: _muted),
-                  const SizedBox(height: 10),
-                  Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: context.sp(15),
-                      fontWeight: FontWeight.w900,
-                      color: _ink,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    body,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: context.sp(12),
-                      fontWeight: FontWeight.w600,
-                      color: _muted,
-                      height: 1.5,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  PressableScale(
-                    onTap: onAction,
-                    pressScale: 0.95,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _ink,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text(
-                        actionLabel,
-                        style: TextStyle(
-                          fontSize: context.sp(13),
-                          fontWeight: FontWeight.w800,
-                          color: _cardPaper,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Positioned(
-              top: -7,
-              left: 0,
-              right: 0,
-              child: Center(child: MaskingTape(tint: tapeTint)),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

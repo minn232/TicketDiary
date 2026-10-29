@@ -441,21 +441,7 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     final rejected = await _favorites.toggleConcert(c);
     if (!mounted) return;
     if (rejected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: PaperColors.ink,
-          elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          content: const Text(
-            '이미 티켓으로 등록된 공연이에요',
-            style: TextStyle(
-              color: PaperColors.card,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      );
+      showPaperSnackBar(context, '이미 티켓으로 등록된 공연이에요');
       return;
     }
     unawaited(_loadConcertRecommendations(highlightNew: true));
