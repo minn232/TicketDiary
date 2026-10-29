@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../widgets/summary_calendar.dart';
 import '../widgets/summary_report.dart';
+import '../widgets/scrapbook_page_background.dart';
 import '../services/api_client.dart';
 import '../services/news_list_service.dart';
 import '../services/news_card_identity.dart';
@@ -280,28 +281,37 @@ class _SummaryScreenState extends State<SummaryScreen> {
       ),
       child: Material(
         color: _pageColor,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 10, 8, 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: _ModeButton(
-                  label: _calendarMode ? '캘린더' : '$_periodLabel 보고서',
-                  active: true,
-                  onTap: () {
-                    unawaited(
-                      SoundEffectService.instance.play(SoundEffect.bookSip),
-                    );
-                    _advanceSummaryMode();
-                  },
-                ),
+        // 다른 탭과 같은 종이 질감 - 프레임 옵션(pageTextureEnabled)은 내용 위를 덮어
+        // 포스터/카드까지 흐려지므로 결산은 내용 뒤에 깖
+        child: Stack(
+          children: [
+            const Positioned.fill(
+              child: ScrapbookPaperTextureOverlay(opacity: .75, seed: 110),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 8, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: _ModeButton(
+                      label: _calendarMode ? '캘린더' : '$_periodLabel 보고서',
+                      active: true,
+                      onTap: () {
+                        unawaited(
+                          SoundEffectService.instance.play(SoundEffect.bookSip),
+                        );
+                        _advanceSummaryMode();
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(child: _content()),
+                ],
               ),
-              const SizedBox(height: 16),
-              Expanded(child: _content()),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

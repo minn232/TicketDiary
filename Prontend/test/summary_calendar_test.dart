@@ -69,11 +69,14 @@ void main() {
     expect(find.text('8월 7일 · 관람 2회'), findsOneWidget);
     expect(find.text('여름 공연'), findsOneWidget);
     expect(find.text('35,000원 · 스탠딩'), findsOneWidget);
+    // 월이 바뀌면 달력 장이 넘어가는 동안(300ms) 이전 장도 잠깐 같이 그려지므로 끝난 뒤 누름
     selection.value = DateTime(2026, 12, 31);
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byTooltip('다음 달'));
     await tester.pump();
     expect(selection.value, DateTime(2027, 1, 31));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byTooltip('다음 달'));
     await tester.pump();
     expect(selection.value, DateTime(2027, 2, 28));
