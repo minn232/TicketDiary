@@ -13,6 +13,7 @@ import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart';
 import 'package:ticketdiary/widgets/app_network_image.dart';
+import 'package:ticketdiary/widgets/paper_style.dart';
 
 // [백엔드 수정]
 // 신규 추천 카드 테두리 글로우가 사라지는 애니메이션 길이(_ThumbCard).
@@ -440,9 +441,21 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
     final rejected = await _favorites.toggleConcert(c);
     if (!mounted) return;
     if (rejected) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('이미 티켓으로 등록된 공연입니다')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: PaperColors.ink,
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          content: const Text(
+            '이미 티켓으로 등록된 공연이에요',
+            style: TextStyle(
+              color: PaperColors.card,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      );
       return;
     }
     unawaited(_loadConcertRecommendations(highlightNew: true));
@@ -630,7 +643,7 @@ class _CategorySearchPage<T> extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(12),
                 fontWeight: FontWeight.w900,
-                color: Colors.black.withValues(alpha: 0.4),
+                color: PaperColors.muted,
               ),
             ),
             const SizedBox(height: 8),
@@ -681,7 +694,7 @@ class _CategorySwitcher extends StatelessWidget {
           Icon(
             Icons.chevron_left,
             size: 20,
-            color: Colors.black.withValues(alpha: canGoLeft ? 0.45 : 0.12),
+            color: PaperColors.muted.withValues(alpha: canGoLeft ? 1 : 0.3),
           ),
           Expanded(
             child: Row(
@@ -707,7 +720,7 @@ class _CategorySwitcher extends StatelessWidget {
           Icon(
             Icons.chevron_right,
             size: 20,
-            color: Colors.black.withValues(alpha: canGoRight ? 0.45 : 0.12),
+            color: PaperColors.muted.withValues(alpha: canGoRight ? 1 : 0.3),
           ),
         ],
       ),
@@ -736,10 +749,10 @@ class _CategoryPill extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? const Color(0xFF8D6E63)
-              : Colors.white.withValues(alpha: 0.4),
+              : PaperColors.card.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: Colors.black.withValues(alpha: selected ? 0 : 0.15),
+            color: PaperColors.ink.withValues(alpha: selected ? 0 : 0.15),
           ),
         ),
         alignment: Alignment.center,
@@ -748,9 +761,7 @@ class _CategoryPill extends StatelessWidget {
           style: TextStyle(
             fontSize: context.sp(13),
             fontWeight: FontWeight.w900,
-            color: selected
-                ? Colors.white
-                : Colors.black.withValues(alpha: 0.55),
+            color: selected ? PaperColors.card : PaperColors.muted,
           ),
         ),
       ),
@@ -797,21 +808,14 @@ class _SearchFieldState extends State<_SearchField> {
       child: Container(
         height: 46,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.55),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: Colors.black.withValues(alpha: 0.22),
-            width: 1.3,
-          ),
+          color: PaperColors.card,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: PaperColors.ink.withValues(alpha: 0.18)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(
           children: [
-            Icon(
-              Icons.search,
-              size: 18,
-              color: Colors.black.withValues(alpha: 0.35),
-            ),
+            Icon(Icons.search, size: 18, color: PaperColors.muted),
             const SizedBox(width: 8),
             Expanded(
               child: TextField(
@@ -825,14 +829,14 @@ class _SearchFieldState extends State<_SearchField> {
                   hintText: widget.hintText,
                   hintStyle: TextStyle(
                     fontSize: context.sp(14),
-                    fontWeight: FontWeight.w900,
-                    color: Colors.black.withValues(alpha: 0.25),
+                    fontWeight: FontWeight.w800,
+                    color: PaperColors.muted.withValues(alpha: 0.6),
                   ),
                 ),
                 style: TextStyle(
                   fontSize: context.sp(14),
                   fontWeight: FontWeight.w900,
-                  color: Colors.black87,
+                  color: PaperColors.ink,
                 ),
               ),
             ),
@@ -897,7 +901,7 @@ class _SearchResultsGrid<T> extends StatelessWidget {
           height: 22,
           child: CircularProgressIndicator(
             strokeWidth: 2.5,
-            color: Colors.brown,
+            color: PaperColors.muted,
           ),
         ),
       );
@@ -909,7 +913,8 @@ class _SearchResultsGrid<T> extends StatelessWidget {
           statusText,
           style: TextStyle(
             fontSize: context.sp(12),
-            color: Colors.black.withValues(alpha: 0.3),
+            fontWeight: FontWeight.w600,
+            color: PaperColors.muted,
           ),
         ),
       );
@@ -999,16 +1004,21 @@ class _ThumbCard extends StatelessWidget {
                 // 그 위에 그려서 항상 온전히 보이게 분리.
                 Positioned.fill(
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(8),
                     child: ColoredBox(
-                      color: Colors.white.withValues(alpha: 0.25),
+                      color: PaperColors.tile,
                       child: imageUrl.isEmpty
-                          ? _ThumbPlaceholder(icon: placeholderIcon)
+                          ? _ThumbPlaceholder(
+                              icon: placeholderIcon,
+                              label: label,
+                            )
                           : AppNetworkImage(
                               imageUrl,
                               fit: BoxFit.cover,
-                              errorBuilder: (context) =>
-                                  _ThumbPlaceholder(icon: placeholderIcon),
+                              errorBuilder: (context) => _ThumbPlaceholder(
+                                icon: placeholderIcon,
+                                label: label,
+                              ),
                             ),
                     ),
                   ),
@@ -1017,12 +1027,12 @@ class _ThumbCard extends StatelessWidget {
                   child: IgnorePointer(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: favorited
-                              ? const Color(0xFFEF4444)
-                              : Colors.black.withValues(alpha: 0.20),
-                          width: favorited ? 2.4 : 1.2,
+                              ? PaperColors.ink.withValues(alpha: 0.75)
+                              : PaperColors.ink.withValues(alpha: 0.12),
+                          width: favorited ? 2.2 : 1,
                         ),
                       ),
                     ),
@@ -1035,13 +1045,13 @@ class _ThumbCard extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.all(3),
                       decoration: const BoxDecoration(
-                        color: Color(0xFFEF4444),
+                        color: PaperColors.card,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.favorite,
                         size: 12,
-                        color: Colors.white,
+                        color: PaperColors.stamp,
                       ),
                     ),
                   ),
@@ -1062,10 +1072,10 @@ class _ThumbCard extends StatelessWidget {
                         curve: Curves.easeOut,
                         builder: (context, value, child) {
                           if (value <= 0.02) return const SizedBox.shrink();
-                          const accent = Color(0xFF7C3AED);
+                          const accent = PaperColors.stamp;
                           return DecoratedBox(
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
+                              borderRadius: BorderRadius.circular(8),
                               border: Border.all(
                                 color: accent.withValues(alpha: value),
                                 width: 2.4,
@@ -1098,13 +1108,13 @@ class _ThumbCard extends StatelessWidget {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF7C3AED),
-                          borderRadius: BorderRadius.circular(20),
+                          color: PaperColors.stamp,
+                          borderRadius: BorderRadius.circular(2),
                         ),
                         child: const Text(
                           'NEW',
                           style: TextStyle(
-                            color: Colors.white,
+                            color: PaperColors.card,
                             fontSize: 9,
                             fontWeight: FontWeight.w900,
                             letterSpacing: 0.5,
@@ -1125,7 +1135,7 @@ class _ThumbCard extends StatelessWidget {
             style: TextStyle(
               fontSize: context.sp(12),
               fontWeight: FontWeight.w900,
-              color: Colors.black.withValues(alpha: 0.55),
+              color: PaperColors.ink,
             ),
           ),
         ],
@@ -1135,18 +1145,43 @@ class _ThumbCard extends StatelessWidget {
 }
 
 /// 이미지가 없거나 로드에 실패했을 때 보여주는 placeholder.
-/// 아티스트는 사람 아이콘, 공연은 깨진 이미지 아이콘을 씁니다.
+/// 아티스트(사람 아이콘)는 이름 첫 글자를 크게, 공연은 티켓 아이콘을 씁니다 -
+/// 회색 바탕 아이콘은 깨진 화면처럼 보여서.
 class _ThumbPlaceholder extends StatelessWidget {
   final IconData icon;
+  final String label;
 
-  const _ThumbPlaceholder({this.icon = Icons.broken_image_outlined});
+  const _ThumbPlaceholder({
+    this.icon = Icons.broken_image_outlined,
+    this.label = '',
+  });
 
   @override
   Widget build(BuildContext context) {
+    final initial = label.trim().isEmpty ? '' : label.trim().characters.first;
+    final showInitial = icon == Icons.person_outline && initial.isNotEmpty;
     return Container(
-      color: Colors.grey.shade200,
+      color: PaperColors.tile,
       alignment: Alignment.center,
-      child: Icon(icon, size: 30, color: Colors.grey),
+      child: showInitial
+          ? FittedBox(
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Text(
+                  initial.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w900,
+                    color: PaperColors.ink.withValues(alpha: 0.55),
+                  ),
+                ),
+              ),
+            )
+          : Icon(
+              Icons.confirmation_num_outlined,
+              size: 28,
+              color: PaperColors.muted.withValues(alpha: 0.7),
+            ),
     );
   }
 }
@@ -1192,7 +1227,8 @@ class _FavoritedStrip extends StatelessWidget {
                   isArtist ? '찜한 아티스트가 없습니다.' : '찜한 공연이 없습니다.',
                   style: TextStyle(
                     fontSize: context.sp(12),
-                    color: Colors.black.withValues(alpha: 0.32),
+                    fontWeight: FontWeight.w600,
+                    color: PaperColors.muted,
                   ),
                 ),
               )
@@ -1266,14 +1302,19 @@ class _FavoritedChip extends StatelessWidget {
                     children: [
                       Positioned.fill(
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(6),
                           child: imageUrl.isEmpty
-                              ? _ThumbPlaceholder(icon: placeholderIcon)
+                              ? _ThumbPlaceholder(
+                                  icon: placeholderIcon,
+                                  label: label,
+                                )
                               : AppNetworkImage(
                                   imageUrl,
                                   fit: BoxFit.cover,
-                                  errorBuilder: (context) =>
-                                      _ThumbPlaceholder(icon: placeholderIcon),
+                                  errorBuilder: (context) => _ThumbPlaceholder(
+                                    icon: placeholderIcon,
+                                    label: label,
+                                  ),
                                 ),
                         ),
                       ),
@@ -1281,10 +1322,10 @@ class _FavoritedChip extends StatelessWidget {
                         child: IgnorePointer(
                           child: DecoratedBox(
                             decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(6),
                               border: Border.all(
-                                color: const Color(0xFFEF4444),
-                                width: 2.4,
+                                color: PaperColors.ink.withValues(alpha: 0.75),
+                                width: 2,
                               ),
                             ),
                           ),
@@ -1299,13 +1340,13 @@ class _FavoritedChip extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.all(2.5),
                     decoration: const BoxDecoration(
-                      color: Color(0xFFEF4444),
+                      color: PaperColors.card,
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(
                       Icons.favorite,
                       size: 10,
-                      color: Colors.white,
+                      color: PaperColors.stamp,
                     ),
                   ),
                 ),
@@ -1320,7 +1361,7 @@ class _FavoritedChip extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(10.5),
                 fontWeight: FontWeight.w700,
-                color: Colors.black.withValues(alpha: 0.6),
+                color: PaperColors.ink.withValues(alpha: 0.8),
               ),
             ),
           ],
