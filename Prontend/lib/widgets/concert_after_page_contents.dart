@@ -23,6 +23,7 @@ import '../services/music_service_links.dart';
 import '../services/scrapbook_auto_layout.dart';
 import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
+import 'paper_style.dart';
 import 'responsive_text.dart';
 import 'concert_after_palette.dart';
 import 'concert_after_editable_section.dart';
@@ -1117,8 +1118,10 @@ bool _isTablet(BuildContext context) =>
     MediaQuery.sizeOf(context).shortestSide >=
     OrientationPolicy.tabletShortestSideThreshold;
 
-/// 공연 제목 글꼴(기본 글꼴). 태블릿은 0.85배.
+/// 공연 제목 글꼴(공연 전 신문과 같은 명조). 태블릿은 0.85배.
 TextStyle _handTitle(BuildContext context) => TextStyle(
+  fontFamily: _articleSerif,
+  fontFamilyFallback: _articleSerifFallback,
   fontSize: context.sp(_isTablet(context) ? 24 * .85 : 24),
   fontWeight: FontWeight.w800,
   color: _kraftInk,
@@ -1677,38 +1680,57 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
 
   Widget _backPage() {
     final sections = _backContents();
-    return Padding(
-      padding: EdgeInsets.fromLTRB(8, 16, 8, context.rs(48)),
-      child: Column(
-        children: [
-          LayoutBuilder(
-            builder: (context, c) => Text(
-              _titleFor(c.maxWidth),
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: _handTitle(context),
+    // 칸마다 고딕/명조가 섞여 보이던 것 - 글꼴 지정 없는 글자는 전부 명조로(크기는 그대로)
+    return DefaultTextStyle.merge(
+      style: const TextStyle(
+        fontFamily: _articleSerif,
+        fontFamilyFallback: _articleSerifFallback,
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(8, 16, 8, context.rs(48)),
+        child: Column(
+          children: [
+            LayoutBuilder(
+              builder: (context, c) => Text(
+                _titleFor(c.maxWidth),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: _handTitle(context),
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < sections.length; i++) ...[
-                  Expanded(
-                    child: SingleChildScrollView(
-                      key: PageStorageKey('after_back_section_$i'),
-                      child: sections[i],
+            const SizedBox(height: 16),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final (i, column) in _backColumns(sections).indexed)
+                    Expanded(
+                      child: SingleChildScrollView(
+                        key: PageStorageKey('after_back_section_$i'),
+                        child: column,
+                      ),
                     ),
-                  ),
                 ],
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  /// [sections] = 공연 정보 / 타임테이블 / 셋리스트. 타임테이블이 짧으면 2칸으로
+  /// 묶어 셋리스트 칸을 넓힘(곡명 줄바꿈이 줄어듦), 길면(페스티벌 등) 3칸 그대로.
+  List<Widget> _backColumns(List<Widget> sections) {
+    if (!_twoColumnBack || sections.length != 3) return sections;
+    return [
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [sections[0], sections[1]],
+      ),
+      sections[2],
+    ];
   }
 
   Color? _posterAccent;
@@ -1742,11 +1764,57 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     );
     _loadEnvelopeAccent();
     unawaited(_initLayout());
+    _watchTimetableRows();
+  }
+
+  /// 뒷면 칸 수를 정하려고 타임테이블 줄 수만 따로 봄(내용은 [_RealTimetableNote]가 그림).
+  /// 아직 모르면 null - 이미 본 공연이면 타임테이블 메모의 캐시에서 바로 가져옴.
+  int? _timetableRows;
+
+  void _watchTimetableRows() {
+    final id = widget.concertId;
+    final cached = id == null ? null : _RealTimetableNoteState._cache[id];
+    if (cached != null) {
+      _timetableRows = cached.length;
+      return;
+    }
+    final future = widget.initialTimetableLoad;
+    if (future == null) {
+      _timetableRows = 0;
+      return;
+    }
+    _timetableRows = null;
+    unawaited(
+      future
+          .then((res) {
+            if (!mounted || future != widget.initialTimetableLoad) return;
+            setState(() => _timetableRows = res.contents.length);
+          })
+          .catchError((Object _) {
+            if (mounted) setState(() => _timetableRows = 0);
+          }),
+    );
+  }
+
+  /// 타임테이블이 이 줄 수 이하면(단콘 등) 따로 칸을 두지 않고 공연 정보 아래에 붙임.
+  static const int _inlineTimetableMaxRows = 4;
+
+  /// 뒷면을 2칸(공연 정보+타임테이블 | 셋리스트)으로 할지. 타임테이블을 아직 못
+  /// 불러왔으면 공연 유형으로 짐작(페스티벌이면 3칸).
+  bool get _twoColumnBack {
+    final rows = _timetableRows;
+    if (rows != null) return rows <= _inlineTimetableMaxRows;
+    final kind = widget.ticketInfo?.extraFields['공연 유형'] ?? '';
+    return !kind.contains('페스티벌');
   }
 
   @override
   void didUpdateWidget(covariant _ScrapbookCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialTimetableLoad != widget.initialTimetableLoad ||
+        oldWidget.concertId != widget.concertId) {
+      _watchTimetableRows();
+    }
     if (oldWidget.ticketInfo?.posterImageUrl !=
         widget.ticketInfo?.posterImageUrl) {
       _loadEnvelopeAccent();
@@ -2513,7 +2581,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     final values = <String, String>{
       '공연장': info?.venueName ?? '',
       '날짜': info?.formattedDate ?? '',
-      '가격': info?.price ?? '',
+      '가격': info?.formattedPrice ?? '',
       '좌석': info?.seat ?? '',
       '아티스트': extras['아티스트'] ?? extras['artist'] ?? '',
       '공연 유형': extras['공연 유형'] ?? extras['공연 타입'] ?? extras['유형'] ?? '',
@@ -3676,39 +3744,41 @@ class _ActiveMemoDimPainter extends CustomPainter {
       activeBounds != oldDelegate.activeBounds;
 }
 
-/// 편집/잠금 상태 배지.
+/// 편집/잠금 상태 표시. 스크랩북 위에 붙인 마스킹테이프 조각처럼 보이게
+/// (검은 알약은 앱 UI처럼 튀어서). 베이지 테이프는 바탕과 비슷해 안 보여서
+/// 잠금은 머스터드, 편집 중은 장미색으로 진하게.
 class _ModeBadge extends StatelessWidget {
   final bool edit;
   const _ModeBadge({required this.edit});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.rs(8),
-        vertical: context.rs(4),
-      ),
-      decoration: BoxDecoration(
-        color: (edit ? const Color(0xFF7A6A52) : _kraftInk).withValues(
-          alpha: 0.85,
-        ),
-        borderRadius: BorderRadius.circular(20),
+    return TapeStrip(
+      tint: edit ? PaperColors.tapeRose : PaperColors.tapeMustard,
+      tintAmount: 0.6,
+      angle: edit ? 0.02 : -0.03,
+      padding: EdgeInsets.fromLTRB(
+        context.rs(10),
+        context.rs(3),
+        context.rs(10),
+        context.rs(3),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
             edit ? Icons.edit : Icons.lock_outline,
-            size: context.rs(12),
-            color: Colors.white,
+            size: context.rs(11),
+            color: _kraftInk.withValues(alpha: 0.75),
           ),
           SizedBox(width: context.rs(4)),
           Text(
             edit ? '편집 모드' : '잠금 (꾹 눌러 편집)',
             style: TextStyle(
               fontSize: context.sp(10),
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              color: _kraftInk.withValues(alpha: 0.85),
+              decoration: TextDecoration.none,
             ),
           ),
         ],
@@ -3717,15 +3787,13 @@ class _ModeBadge extends StatelessWidget {
   }
 }
 
-/// 잠금 모드 하단 표시 옆 공유 버튼.
+/// 잠금 모드 하단 표시 옆 공유 버튼. 표시와 같은 테이프 조각.
 class _ShareButton extends StatelessWidget {
   final VoidCallback onTap;
   const _ShareButton({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    // 잠금 표시 높이 이하로 (줄 높이 유지).
-    final size = context.rs(20);
     return Semantics(
       button: true,
       label: '공유하기',
@@ -3736,17 +3804,20 @@ class _ShareButton extends StatelessWidget {
         // 누르는 영역만 가로로 넓힘.
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: context.rs(6)),
-          child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: _kraftInk.withValues(alpha: 0.85),
-              shape: BoxShape.circle,
+          child: TapeStrip(
+            tint: PaperColors.tapeMustard,
+            tintAmount: 0.6,
+            angle: 0.05,
+            padding: EdgeInsets.fromLTRB(
+              context.rs(7),
+              context.rs(3),
+              context.rs(7),
+              context.rs(3),
             ),
             child: Icon(
               Icons.ios_share,
-              size: context.rs(12),
-              color: Colors.white,
+              size: context.rs(13),
+              color: _kraftInk.withValues(alpha: 0.8),
             ),
           ),
         ),

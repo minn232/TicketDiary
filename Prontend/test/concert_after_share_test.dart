@@ -83,7 +83,8 @@ void main() {
       final lock = tester.getCenter(find.byIcon(Icons.lock_outline));
       final share = tester.getCenter(shareButton);
       expect(share.dx, greaterThan(lock.dx));
-      expect((share.dy - lock.dy).abs(), lessThan(1));
+      // 테이프 조각을 살짝 기울여 붙여서 몇 px은 어긋남 - 같은 줄인지만 확인.
+      expect((share.dy - lock.dy).abs(), lessThan(4));
 
       await tester.longPressAt(const Offset(30, 520));
       await tester.pumpAndSettle();

@@ -135,12 +135,24 @@ class TicketInfo {
     return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
   }
 
+  /// 화면 표시용 가격. 숫자만 있으면 "329,000원", 그 외(이미 단위가 붙은 값 등)는 그대로.
+  String get formattedPrice {
+    final raw = price.trim();
+    if (!RegExp(r'^\d+$').hasMatch(raw)) return raw;
+    final digits = raw.replaceFirst(RegExp(r'^0+(?=\d)'), '');
+    final grouped = digits.replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (_) => ',',
+    );
+    return '$grouped원';
+  }
+
   /// 화면에 순서대로 노출할 (라벨, 값) 목록.
   /// extraFields가 뒤에 이어 붙기 때문에, 필드가 늘어나도 UI가 그대로 대응합니다.
   List<MapEntry<String, String>> get displayFields => [
     MapEntry('공연장', venueName.isEmpty ? '-' : venueName),
     MapEntry('날짜', formattedDate),
-    MapEntry('가격', price.isEmpty ? '-' : price),
+    MapEntry('가격', price.isEmpty ? '-' : formattedPrice),
     MapEntry('좌석', seat.isEmpty ? '-' : seat),
     ...extraFields.entries,
   ];
