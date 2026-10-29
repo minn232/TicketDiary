@@ -109,7 +109,12 @@ class TicketDiaryApp extends StatelessWidget {
         builder: (context, child) {
           return Stack(
             children: [
-              ?child,
+              // 탭 넘김이 떠나는 화면을 속지에 실으려고 찍는 경계
+              if (child != null)
+                RepaintBoundary(
+                  key: DiaryTabFlipTransition.screenBoundaryKey,
+                  child: child,
+                ),
               const Positioned.fill(
                 child: IgnorePointer(child: HanjiTexture(opacity: .16)),
               ),

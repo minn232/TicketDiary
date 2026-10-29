@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'diary_page_flipper.dart' show BentLeafPainter, DiaryPageFlipper;
@@ -20,28 +21,45 @@ import 'diary_route.dart';
 /// - 번호가 작아지는 이동(예: 설정→소식)은 뒤로 넘김 — 속지들이 책등
 ///   쪽에서 세워진 채 나타나 오른쪽으로 한 장씩 눕습니다.
 class DiaryTabFlipRoute extends PageRouteBuilder<void> {
-  DiaryTabFlipRoute({
+  /// 라우트를 만드는 지금(push 직전)이 떠나는 화면이 아직 그려져 있는
+  /// 마지막 순간이라 여기서 찍어 둡니다 - 전환 중 속지에 실어 넘김.
+  factory DiaryTabFlipRoute({
     required DiaryTab from,
     required DiaryTab to,
     required WidgetBuilder builder,
+  }) {
+    return DiaryTabFlipRoute._(
+      from: from,
+      to: to,
+      builder: builder,
+      fromSnapshot: DiaryTabFlipTransition.captureScreen(),
+    );
+  }
+
+  DiaryTabFlipRoute._({
+    required DiaryTab from,
+    required DiaryTab to,
+    required WidgetBuilder builder,
+    ui.Image? fromSnapshot,
   }) : super(
-          settings: RouteSettings(name: routeNameForDiaryTab(to)),
-          transitionDuration: DiaryTabFlipTransition.transitionDuration,
-          pageBuilder: (context, animation, secondaryAnimation) =>
-              builder(context),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            return DiaryTabFlipTransition(
-              animation: animation,
-              forward: to.index > from.index,
-              // 진입 시 페이지 넘김은 어느 탭이든 로딩을 기다리지 않고
-              // 고정 시간만 재생한 뒤 곧바로 목적지를 드러냅니다(소식 탭도
-              // 자체 로딩 스피너로 넘어감). holdSignal 메커니즘 자체는
-              // 남겨두되 여기서는 쓰지 않습니다.
-              holdSignal: null,
-              child: child,
-            );
-          },
-        );
+         settings: RouteSettings(name: routeNameForDiaryTab(to)),
+         transitionDuration: DiaryTabFlipTransition.transitionDuration,
+         pageBuilder: (context, animation, secondaryAnimation) =>
+             builder(context),
+         transitionsBuilder: (context, animation, secondaryAnimation, child) {
+           return DiaryTabFlipTransition(
+             animation: animation,
+             forward: to.index > from.index,
+             // 진입 시 페이지 넘김은 어느 탭이든 로딩을 기다리지 않고
+             // 고정 시간만 재생한 뒤 곧바로 목적지를 드러냅니다(소식 탭도
+             // 자체 로딩 스피너로 넘어감). holdSignal 메커니즘 자체는
+             // 남겨두되 여기서는 쓰지 않습니다.
+             holdSignal: null,
+             fromSnapshot: fromSnapshot,
+             child: child,
+           );
+         },
+       );
 }
 
 /// [DiaryTabFlipRoute]의 실제 전환 화면. 목적지 화면([child]) 위(또는 아래)에
@@ -72,13 +90,48 @@ class DiaryTabFlipTransition extends StatefulWidget {
   /// 전환이 끝나는 즉시 목적지를 보여줍니다.
   final ValueListenable<bool>? holdSignal;
 
+  /// 떠나는 화면 스냅샷([captureScreen], 화면 전체). 앞으로 넘김은 맨 위
+  /// 속지에 실어 들어 올리고, 뒤로 넘김은 속지들이 내려앉는 바닥으로 깝니다.
+  /// null이면(캡처 실패·테스트) 예전처럼 빈 속지만. 이 위젯이 dispose함.
+  final ui.Image? fromSnapshot;
+
   const DiaryTabFlipTransition({
     super.key,
     required this.animation,
     required this.forward,
     required this.child,
     this.holdSignal,
+    this.fromSnapshot,
   });
+
+  /// [captureScreen]이 찍는 경계. MaterialApp.builder가 Navigator를 감쌈
+  /// (한지 질감 오버레이는 밖이라 안 찍혀 두 번 겹치지 않음).
+  static final GlobalKey screenBoundaryKey = GlobalKey(
+    debugLabel: 'diaryTabFlipScreen',
+  );
+
+  /// 지금 그려진 화면 전체를 찍습니다. 못 찍으면 null(빈 속지로 폴백).
+  static ui.Image? captureScreen() {
+    final context = screenBoundaryKey.currentContext;
+    final boundary = context?.findRenderObject();
+    if (context == null ||
+        boundary is! RenderRepaintBoundary ||
+        !boundary.hasSize) {
+      return null;
+    }
+    // 디버그에선 칠하기 전 상태로 찍으면 assert - 그땐 그냥 건너뜀
+    if (kDebugMode && boundary.debugNeedsPaint) return null;
+    try {
+      return boundary.toImageSync(
+        pixelRatio: math.min(
+          MediaQuery.devicePixelRatioOf(context),
+          _DiaryTabFlipTransitionState._rasterMaxDpr,
+        ),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 전환 전체(잎이 다 넘어가는 데 걸리는) 시간. 기존 500ms에서 20% 줄임.
   static const Duration transitionDuration = Duration(milliseconds: 400);
@@ -159,14 +212,34 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   /// (positions/colors 버퍼는 페인터가 매 프레임 덮어쓰지만, 한 프레임
   /// 안에서 잎들이 순서대로 그려지고 Vertices.raw가 값을 복사해 가므로
   /// 여러 장이 공유해도 안전합니다.)
-  ui.Image? _leafImage;
-  ui.ImageShader? _leafShader;
+  _LeafTexture? _blankLeaf;
   Float32List? _meshPositions;
   Float32List? _meshTexCoords;
   Int32List? _meshColors;
   Uint16List? _meshIndices;
   Size? _leafImageSize;
   bool _leafImageRoundBothSides = false;
+  double _leafDpr = 1.0;
+
+  /// 내용이 실린 속지: 앞으로 넘김 맨 위 장(떠나는 화면), 뒤로 넘김 마지막
+  /// 장(목적지 화면). 없으면 그 장도 빈 속지.
+  _LeafTexture? _fromLeaf;
+  _LeafTexture? _toLeaf;
+
+  /// 뒤로 넘김에서 목적지 화면을 찍는 시각 - 마지막 속지가 내려오기
+  /// 시작하는 [DiaryTabFlipTransition.lastLeafStart] 전에, 목적지가 몇
+  /// 프레임 그려진 뒤.
+  static const double _toCaptureAt = 0.4;
+  bool _toCaptureScheduled = false;
+
+  /// 앞으로 넘김 첫 프레임엔 맨 위 속지에 실은 스냅샷이 아직 안 그려져
+  /// 빈 속지로 보임(실기기 녹화로 확인) - 그 한 프레임만 스냅샷을 그대로 덮음.
+  bool _fromLeafShown = false;
+  final GlobalKey _toBoundaryKey = GlobalKey();
+
+  /// 속지 묶음(프레임) 왼쪽 위 - [child] 기준 / 화면 기준.
+  Offset _leavesOriginInChild = Offset.zero;
+  Offset _leavesOriginOnScreen = Offset.zero;
 
   @override
   void initState() {
@@ -177,16 +250,27 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   @override
   void dispose() {
     widget.holdSignal?.removeListener(_onHoldSignalChanged);
-    _leafImage?.dispose();
+    _blankLeaf?.dispose();
+    _fromLeaf?.dispose();
+    _toLeaf?.dispose();
+    widget.fromSnapshot?.dispose();
     super.dispose();
   }
 
+  /// 떠나는 화면을 실은 맨 위 속지(앞으로 넘김)의 넘김 시간. 목적지 첫
+  /// 빌드로 전환 첫 프레임 뒤 100ms 넘게 끊기는 일이 잦아(태블릿 실측
+  /// t 0.08→0.38) 다른 장과 같은 0.4면 보이기도 전에 다 넘어가 버림.
+  static const double _contentLeafSpan = 0.6;
+
   double _leafProgress(int index, double t) {
+    if (widget.forward && index == 0 && _fromLeaf != null) {
+      return (t / _contentLeafSpan).clamp(0.0, 1.0);
+    }
     final start = DiaryTabFlipTransition.leafCount == 1
         ? 0.0
         : DiaryTabFlipTransition.lastLeafStart *
-            index /
-            (DiaryTabFlipTransition.leafCount - 1);
+              index /
+              (DiaryTabFlipTransition.leafCount - 1);
     return ((t - start) / DiaryTabFlipTransition.leafSpan).clamp(0.0, 1.0);
   }
 
@@ -194,6 +278,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   /// 합성하고 셰이더/메시 버퍼를 준비합니다. toImageSync라 빌드 중에
   /// 동기적으로 만들 수 있고(setState 불필요), 별도 스냅샷 캡처가 필요한
   /// 실제 페이지 넘김과 달리 폴백 프레임 없이 첫 프레임부터 곡면입니다.
+  /// 떠나는 화면 스냅샷이 있으면 앞으로 넘김 맨 위 속지도 여기서 같이 만듦.
   ///
   // [백엔드 수정]
   // [roundBothSides] 매개변수 추가 — true(2페이지 스프레드)면 양쪽 모서리를
@@ -203,69 +288,44 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     Size frameSize, {
     bool roundBothSides = false,
   }) {
-    if (_leafImage != null &&
+    if (_blankLeaf != null &&
         _leafImageSize == frameSize &&
         _leafImageRoundBothSides == roundBothSides) {
       return;
     }
-    final dpr =
-        math.min(MediaQuery.devicePixelRatioOf(context), _rasterMaxDpr);
-
-    // 실제 페이지 종이와 같은 배치(defaultPageTop/Bottom/Left/Right +
-    // widthFactor 중앙 확장)를 프레임 좌표로 계산합니다.
-    final pageBoxWidth = frameSize.width -
-        DiaryPageFrame.defaultPageLeft -
-        DiaryPageFrame.defaultPageRight;
-    final pageWidth = pageBoxWidth * DiaryPageFrame.defaultPageWidthFactor;
-    final pageLeft = DiaryPageFrame.defaultPageLeft -
-        (pageWidth - pageBoxWidth) / 2;
-    final pageRect = Rect.fromLTWH(
-      pageLeft,
-      DiaryPageFrame.defaultPageTop,
-      pageWidth,
-      frameSize.height -
-          DiaryPageFrame.defaultPageTop -
-          DiaryPageFrame.defaultPageBottom,
-    );
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    canvas.scale(dpr);
-    final rrect = RRect.fromRectAndCorners(
-      pageRect,
-      topLeft: roundBothSides ? const Radius.circular(15) : Radius.zero,
-      bottomLeft: roundBothSides ? const Radius.circular(15) : Radius.zero,
-      topRight: const Radius.circular(15),
-      bottomRight: const Radius.circular(15),
-    );
-    canvas.drawRRect(rrect, Paint()..color = _leafColor);
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.08)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.5,
-    );
-    final picture = recorder.endRecording();
-    final image = picture.toImageSync(
-      (frameSize.width * dpr).round(),
-      (frameSize.height * dpr).round(),
-    );
-    picture.dispose();
-
-    _leafImage?.dispose();
-    _leafImage = image;
+    final dpr = math.min(MediaQuery.devicePixelRatioOf(context), _rasterMaxDpr);
+    _leafDpr = dpr;
     _leafImageSize = frameSize;
     _leafImageRoundBothSides = roundBothSides;
 
+    final image = _composeLeaf(frameSize);
+    _blankLeaf?.dispose();
+    _blankLeaf = _LeafTexture(image);
+
+    // 크기가 바뀌면 내용 속지도 다시(목적지 화면은 다시 찍음)
+    _fromLeaf?.dispose();
+    _fromLeaf = null;
+    final from = widget.fromSnapshot;
+    if (widget.forward && from != null) {
+      try {
+        _fromLeaf = _LeafTexture(
+          _composeLeaf(
+            frameSize,
+            content: from,
+            contentSize: MediaQuery.sizeOf(context),
+            contentOrigin: _leavesOriginOnScreen,
+          ),
+        );
+      } catch (_) {
+        _fromLeaf = null;
+      }
+    }
+    _toLeaf?.dispose();
+    _toLeaf = null;
+    _toCaptureScheduled = false;
+
     // 이하 셰이더/버퍼 구성은 DiaryPageFlipper._prepareLeafMesh와 동일.
-    _leafShader = ui.ImageShader(
-      image,
-      TileMode.clamp,
-      TileMode.clamp,
-      Matrix4.identity().storage,
-      filterQuality: FilterQuality.medium,
-    );
+    // (내용 속지도 같은 크기 이미지라 메시를 같이 씀)
     const cols = DiaryPageFlipper.bendColumns;
     const rows = DiaryPageFlipper.bendRows;
     const vertexCount = (cols + 1) * (rows + 1);
@@ -301,6 +361,120 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     _meshIndices = indices;
   }
 
+  /// 속지 텍스처 한 장(프레임 크기). [content]가 있으면 페이지 자리 RRect
+  /// 안에 그 화면을 잘라 넣음 - [contentOrigin]은 [content] 좌표계에서
+  /// 프레임 왼쪽 위 위치, [contentSize]는 [content]의 논리 크기.
+  ui.Image _composeLeaf(
+    Size frameSize, {
+    ui.Image? content,
+    Size? contentSize,
+    Offset contentOrigin = Offset.zero,
+  }) {
+    final dpr = _leafDpr;
+    final roundBothSides = _leafImageRoundBothSides;
+
+    // 실제 페이지 종이와 같은 배치(defaultPageTop/Bottom/Left/Right +
+    // widthFactor 중앙 확장)를 프레임 좌표로 계산합니다.
+    final pageBoxWidth =
+        frameSize.width -
+        DiaryPageFrame.defaultPageLeft -
+        DiaryPageFrame.defaultPageRight;
+    final pageWidth = pageBoxWidth * DiaryPageFrame.defaultPageWidthFactor;
+    final pageLeft =
+        DiaryPageFrame.defaultPageLeft - (pageWidth - pageBoxWidth) / 2;
+    final pageRect = Rect.fromLTWH(
+      pageLeft,
+      DiaryPageFrame.defaultPageTop,
+      pageWidth,
+      frameSize.height -
+          DiaryPageFrame.defaultPageTop -
+          DiaryPageFrame.defaultPageBottom,
+    );
+
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.scale(dpr);
+    final rrect = RRect.fromRectAndCorners(
+      pageRect,
+      topLeft: roundBothSides ? const Radius.circular(15) : Radius.zero,
+      bottomLeft: roundBothSides ? const Radius.circular(15) : Radius.zero,
+      topRight: const Radius.circular(15),
+      bottomRight: const Radius.circular(15),
+    );
+    canvas.drawRRect(rrect, Paint()..color = _leafColor);
+    if (content != null && contentSize != null) {
+      canvas.save();
+      canvas.clipRRect(rrect);
+      canvas.drawImageRect(
+        content,
+        Rect.fromLTWH(
+          0,
+          0,
+          content.width.toDouble(),
+          content.height.toDouble(),
+        ),
+        Rect.fromLTWH(
+          -contentOrigin.dx,
+          -contentOrigin.dy,
+          contentSize.width,
+          contentSize.height,
+        ),
+        Paint()..filterQuality = FilterQuality.medium,
+      );
+      canvas.restore();
+    }
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.08)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5,
+    );
+    final picture = recorder.endRecording();
+    final image = picture.toImageSync(
+      (frameSize.width * dpr).round(),
+      (frameSize.height * dpr).round(),
+    );
+    picture.dispose();
+    return image;
+  }
+
+  /// 뒤로 넘김: 목적지 화면이 몇 프레임 그려진 뒤 한 번 찍어 마지막 속지에
+  /// 실음. 이번 프레임이 칠해진 다음에 찍어야 해서 프레임 끝으로 미룸.
+  void _scheduleToCapture() {
+    if (_toCaptureScheduled) return;
+    _toCaptureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _toLeaf != null) return;
+      final frameSize = _leafImageSize;
+      final boundary = _toBoundaryKey.currentContext?.findRenderObject();
+      if (frameSize == null ||
+          boundary is! RenderRepaintBoundary ||
+          !boundary.hasSize) {
+        return;
+      }
+      if (kDebugMode && boundary.debugNeedsPaint) {
+        // 아직 안 칠해짐 - 다음 프레임에 다시
+        _toCaptureScheduled = false;
+        SchedulerBinding.instance.ensureVisualUpdate();
+        return;
+      }
+      try {
+        final shot = boundary.toImageSync(pixelRatio: _leafDpr);
+        final composed = _composeLeaf(
+          frameSize,
+          content: shot,
+          contentSize: boundary.size,
+          contentOrigin: _leavesOriginInChild,
+        );
+        shot.dispose();
+        setState(() => _toLeaf = _LeafTexture(composed));
+      } catch (_) {
+        // 못 찍으면 빈 속지 + 예전처럼 페이드로 드러냄
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -320,8 +494,9 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
         // 속지가 끝까지 평평하게 남아 있어(p<=0일 때만 제외) 이 틈이 없어
         // 괜찮습니다. 그래서 forward만 lastLeafEnd 시점부터 곧장 목적지
         // 화면(실제 링 포함)을 보여주도록 임계값을 다르게 둡니다.
-        final doneThreshold =
-            widget.forward ? DiaryTabFlipTransition.lastLeafEnd : 1.0;
+        final doneThreshold = widget.forward
+            ? DiaryTabFlipTransition.lastLeafEnd
+            : 1.0;
         // [백엔드 수정] 예전엔 앞으로 넘김 내내 고정 배경(+코사인 페이드)을
         // 덮어 소식 탭 풀탭 노출을 막았는데, 실기기 확인 결과 이전 라우트는
         // 전환 시작 즉시 사라져 커버가 불필요했고 오히려 리프와 다른
@@ -383,6 +558,9 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     Widget child, {
     bool forceCovered = false,
   }) {
+    // SafeArea 밖 좌표 - 화면 전체 스냅샷을 프레임 자리에 맞추는 데 씀
+    final screenPadding = MediaQuery.paddingOf(context);
+    final screenSize = MediaQuery.sizeOf(context);
     return SafeArea(
       // DiaryPageFrame과 값이 다르면 전환 중 속지와 실제 프레임 위치가
       // 어긋나 보여서 맞춰둠(이유는 diary_page_frame.dart 참고).
@@ -452,7 +630,8 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
               frameHeight = frameWidth / aspectRatio;
             }
             marginEachSide = math.max(0.0, (availableWidth - frameWidth) / 2);
-            marginTop = DiaryPageFrame.indexTabTopReserve +
+            marginTop =
+                DiaryPageFrame.indexTabTopReserve +
                 math.max(0.0, (reservedHeight - frameHeight) / 2);
             metrics = DiaryPageFrame.computeRingMetrics(
               frameWidth: frameWidth,
@@ -460,23 +639,31 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
             );
           }
 
+          _leavesOriginInChild = Offset(marginEachSide, marginTop);
+          _leavesOriginOnScreen = Offset(
+            screenPadding.left + marginEachSide,
+            screenPadding.top + marginTop,
+          );
           _ensureLeafImage(
             context,
             Size(frameWidth, frameHeight),
             roundBothSides: isTwoPage,
           );
 
-          final leaves = Positioned(
+          Widget leavesBox({double opacity = 1}) => Positioned(
             left: marginEachSide,
             top: marginTop,
             width: frameWidth,
             height: frameHeight,
             child: IgnorePointer(
               key: DiaryTabFlipTransition.leavesBoxKey,
-              child: Stack(
-                fit: StackFit.expand,
-                clipBehavior: Clip.none,
-                children: _buildLeaves(t, metrics),
+              child: Opacity(
+                opacity: opacity,
+                child: Stack(
+                  fit: StackFit.expand,
+                  clipBehavior: Clip.none,
+                  children: _buildLeaves(t, metrics),
+                ),
               ),
             ),
           );
@@ -510,7 +697,9 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
               clipBehavior: Clip.none,
               children: [
                 ClipRect(clipper: hideRingClip, child: child),
-                leaves,
+                leavesBox(),
+                if (widget.forward && !forceCovered)
+                  ..._firstFrameCover(screenPadding, screenSize),
               ],
             );
           }
@@ -519,13 +708,44 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
           // 동안 비쳐 보임), 속지들이 쌓인 뒤 목적지가 맨 위로 페이드인.
           // child를 조건부로 뺐다 넣으면 화면 State가 통째로 다시 만들어
           // 지므로(초기 로딩 재실행), 투명해도 항상 트리에 둡니다.
-          final reveal =
-              ((t - _revealStart) / (_revealEnd - _revealStart)).clamp(0.0, 1.0);
+          final reveal = ((t - _revealStart) / (_revealEnd - _revealStart))
+              .clamp(0.0, 1.0);
+          final fromSnapshot = widget.fromSnapshot;
+          if (fromSnapshot != null) {
+            // 떠나는 화면 스냅샷이 바닥. 목적지(child)는 그 밑에 온전히
+            // 그려 두고(마지막 속지에 실을 사진을 찍으려고) 끝에 스냅샷만
+            // 걷어냄. child 자리는 전환 내내 같아야 State가 안 바뀜.
+            if (t >= _toCaptureAt && _toLeaf == null) _scheduleToCapture();
+            return Stack(
+              fit: StackFit.expand,
+              clipBehavior: Clip.none,
+              children: [
+                ClipRect(
+                  clipper: hideRingClip,
+                  child: RepaintBoundary(key: _toBoundaryKey, child: child),
+                ),
+                Positioned(
+                  left: -screenPadding.left,
+                  top: -screenPadding.top,
+                  width: screenSize.width,
+                  height: screenSize.height,
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: 1 - reveal,
+                      child: RawImage(image: fromSnapshot, fit: BoxFit.fill),
+                    ),
+                  ),
+                ),
+                // 마지막 속지에 목적지를 못 실었으면 예전처럼 빈 속지째 걷어냄
+                leavesBox(opacity: _toLeaf == null ? 1 - reveal : 1),
+              ],
+            );
+          }
           return Stack(
             fit: StackFit.expand,
             clipBehavior: Clip.none,
             children: [
-              leaves,
+              leavesBox(),
               ClipRect(
                 clipper: hideRingClip,
                 child: Opacity(opacity: reveal, child: child),
@@ -537,16 +757,39 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
     );
   }
 
+  List<Widget> _firstFrameCover(EdgeInsets screenPadding, Size screenSize) {
+    final from = widget.fromSnapshot;
+    if (from == null || _fromLeaf == null || _fromLeafShown) return const [];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fromLeafShown = true;
+    });
+    return [
+      Positioned(
+        left: -screenPadding.left,
+        top: -screenPadding.top,
+        width: screenSize.width,
+        height: screenSize.height,
+        child: IgnorePointer(
+          child: RawImage(image: from, fit: BoxFit.fill),
+        ),
+      ),
+    ];
+  }
+
   /// 넘어가는 속지들만 만듭니다(바인더 링은 포함하지 않음 — 전환 중엔
   /// 숨깁니다).
-  List<Widget> _buildLeaves(double t, ({
-    double barWidth,
-    double barHeight,
-    double circleShiftX,
-    double binderLeft,
-    double pivotX,
-    double pageWidth,
-  }) metrics) {
+  List<Widget> _buildLeaves(
+    double t,
+    ({
+      double barWidth,
+      double barHeight,
+      double circleShiftX,
+      double binderLeft,
+      double pivotX,
+      double pageWidth,
+    })
+    metrics,
+  ) {
     // 실제 페이지 넘김(_buildForwardScene)과 같은 기준:
     // 잎이 다 넘어갈 때 은색 막대 절반만큼 왼쪽으로 이동.
     final maxTranslateX = metrics.barWidth * 0.5;
@@ -577,13 +820,22 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
         cornerLead = DiaryPageFlipper.maxCornerLead * p;
         translateX = -maxTranslateX * (1.0 - 2.0 * p).clamp(0.0, 1.0);
       }
-      leaves.add(_buildLeaf(
-        angle: angle,
-        bend: bend,
-        cornerLead: cornerLead,
-        translateX: translateX,
-        pivotX: metrics.pivotX,
-      ));
+      // 앞으로 넘김 맨 위 장 = 떠나는 화면, 뒤로 넘김 마지막 장 = 목적지
+      final texture = widget.forward && i == 0
+          ? _fromLeaf
+          : !widget.forward && i == DiaryTabFlipTransition.leafCount - 1
+          ? _toLeaf
+          : null;
+      leaves.add(
+        _buildLeaf(
+          texture: texture ?? _blankLeaf,
+          angle: angle,
+          bend: bend,
+          cornerLead: cornerLead,
+          translateX: translateX,
+          pivotX: metrics.pivotX,
+        ),
+      );
     }
 
     // z순서: 앞으로 넘김은 먼저 넘어가는(위에 놓인) 장이 맨 위, 뒤로
@@ -595,14 +847,15 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   /// 그립니다. 텍스처는 티켓 페이지 스냅샷 대신 빈 종이 합성 이미지
   /// ([_ensureLeafImage])입니다.
   Widget _buildLeaf({
+    required _LeafTexture? texture,
     required double angle,
     required double bend,
     required double cornerLead,
     required double translateX,
     required double pivotX,
   }) {
-    final image = _leafImage;
-    final shader = _leafShader;
+    final image = texture?.image;
+    final shader = texture?.shader;
     if (image == null || shader == null) {
       // toImageSync 실패 등 예외 상황 폴백: 실제 페이지 넘김의 캡처 전
       // 폴백과 같은 단순 평면 회전.
@@ -660,6 +913,23 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
       ),
     );
   }
+}
+
+/// 속지 한 장의 텍스처(프레임 크기 이미지)와 그 셰이더.
+class _LeafTexture {
+  _LeafTexture(this.image)
+    : shader = ui.ImageShader(
+        image,
+        TileMode.clamp,
+        TileMode.clamp,
+        Matrix4.identity().storage,
+        filterQuality: FilterQuality.medium,
+      );
+
+  final ui.Image image;
+  final ui.ImageShader shader;
+
+  void dispose() => image.dispose();
 }
 
 /// [x] 왼쪽을 전부 잘라내는(투명하게 만드는) 클리퍼. 전환 중 목적지/이전
