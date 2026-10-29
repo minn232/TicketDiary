@@ -583,7 +583,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
 
   Widget _titleRow(BuildContext context, double k) {
     return Text(
-      news.concert,
+      _keepWords(news.concert),
       maxLines: 3,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
@@ -723,6 +723,14 @@ String _phaseDDayLabel(DateTime? date) {
   if (diff > 0) return 'D-$diff';
   if (diff == 0) return 'D-DAY';
   return '예매 중';
+}
+
+/// 한글은 글자마다 줄바꿈될 수 있어 "페스/티벌"처럼 잘려 보임 - 띄어쓰기에서만
+/// 줄바꿈되게 단어 안 글자 사이에 WORD JOINER(U+2060)를 끼움
+/// (concert_before_page_contents.dart의 _keepWords와 같음).
+String _keepWords(String text) {
+  const wj = '\u{2060}';
+  return text.split(' ').map((token) => token.split('').join(wj)).join(' ');
 }
 
 // [백엔드 수정]
@@ -1172,6 +1180,7 @@ class _InfoTileLine extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final text = _keepWords(this.text);
     final label = Text(
       text,
       textAlign: TextAlign.center,

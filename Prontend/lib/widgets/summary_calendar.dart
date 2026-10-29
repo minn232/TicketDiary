@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'paper_style.dart';
+import 'responsive_text.dart';
 import '../models/news_model.dart';
 import '../services/sound_effect_service.dart';
 import 'app_network_image.dart';
@@ -643,41 +644,103 @@ class SummaryCalendar extends StatelessWidget {
   ) async {
     final picked = await showModalBottomSheet<int>(
       context: context,
-      backgroundColor: _paper,
-      builder: (context) {
+      backgroundColor: PaperColors.card,
+      constraints: kPaperSheetConstraints,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (outer) {
         var pickedIndex = selectedIndex;
-        return StatefulBuilder(
-          builder: (context, setSheetState) => SizedBox(
-            height: 320,
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListWheelScrollView.useDelegate(
-                    itemExtent: 48,
-                    diameterRatio: 1.25,
-                    physics: const FixedExtentScrollPhysics(),
-                    controller: FixedExtentScrollController(
-                      initialItem: selectedIndex,
-                    ),
-                    onSelectedItemChanged: (index) =>
-                        setSheetState(() => pickedIndex = index),
-                    childDelegate: ListWheelChildBuilderDelegate(
-                      childCount: months.length,
-                      builder: (context, index) => Center(
-                        child: Text(
-                          '${months[index].year}년 ${months[index].month}월',
-                          style: const TextStyle(color: _ink, fontSize: 21),
+        return paperSheetScale(
+          outer,
+          StatefulBuilder(
+            builder: (context, setSheetState) {
+              final itemExtent = context.rs(40);
+              return SafeArea(
+                child: SizedBox(
+                  height: context.rs(330),
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(top: 10, bottom: 14),
+                        decoration: BoxDecoration(
+                          color: PaperColors.ink.withValues(alpha: .15),
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
-                    ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '몇 월을 볼까요?',
+                            style: TextStyle(
+                              fontSize: context.sp(15),
+                              fontWeight: FontWeight.w900,
+                              color: PaperColors.ink,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            // 고른 달 뒤에 붙인 베이지 테이프 한 줄
+                            IgnorePointer(
+                              child: MaskingTape(
+                                width: context.rs(150),
+                                height: itemExtent - 6,
+                                angle: -.015,
+                              ),
+                            ),
+                            ListWheelScrollView.useDelegate(
+                              itemExtent: itemExtent,
+                              diameterRatio: 1.6,
+                              physics: const FixedExtentScrollPhysics(),
+                              controller: FixedExtentScrollController(
+                                initialItem: selectedIndex,
+                              ),
+                              onSelectedItemChanged: (index) =>
+                                  setSheetState(() => pickedIndex = index),
+                              childDelegate: ListWheelChildBuilderDelegate(
+                                childCount: months.length,
+                                builder: (context, index) => Center(
+                                  child: Text(
+                                    '${months[index].year}년 ${months[index].month}월',
+                                    style: TextStyle(
+                                      color: index == pickedIndex
+                                          ? PaperColors.ink
+                                          : PaperColors.muted.withValues(
+                                              alpha: .7,
+                                            ),
+                                      fontSize: context.sp(15),
+                                      fontWeight: index == pickedIndex
+                                          ? FontWeight.w900
+                                          : FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+                        child: PaperButton(
+                          label: '이 달로 보기',
+                          expand: true,
+                          onTap: () => Navigator.pop(context, pickedIndex),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, pickedIndex),
-                  child: const Text('선택', style: TextStyle(color: _ink)),
-                ),
-              ],
-            ),
+              );
+            },
           ),
         );
       },

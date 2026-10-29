@@ -8,6 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kLongPressTimeout, kTouchSlop;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -1704,13 +1705,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final (i, column) in _backColumns(sections).indexed)
-                    Expanded(
-                      child: SingleChildScrollView(
-                        key: PageStorageKey('after_back_section_$i'),
-                        child: column,
-                      ),
-                    ),
+                  for (final column in _backColumns(sections))
+                    Expanded(child: column),
                 ],
               ),
             ),
@@ -1723,14 +1719,103 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   /// [sections] = 공연 정보 / 타임테이블 / 셋리스트. 타임테이블이 짧으면 2칸으로
   /// 묶어 셋리스트 칸을 넓힘(곡명 줄바꿈이 줄어듦), 길면(페스티벌 등) 3칸 그대로.
   List<Widget> _backColumns(List<Widget> sections) {
-    if (!_twoColumnBack || sections.length != 3) return sections;
+    Widget scroll(int i, Widget child) => SingleChildScrollView(
+      key: PageStorageKey('after_back_section_$i'),
+      child: child,
+    );
+    if (!_twoColumnBack || sections.length != 3) {
+      return [for (final (i, s) in sections.indexed) scroll(i, s)];
+    }
     return [
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [sections[0], sections[1]],
+      // 타임테이블이 생겨도 칸 스크롤 없이 - 신문은 남는 높이만큼만 보임.
+      _PocketColumn(
+        scrollKey: const PageStorageKey('after_back_section_0'),
+        top: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [sections[0], sections[1]],
+        ),
+        // _LetterColumn과 같은 좌우 여백
+        pocket: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: _beforePageThumbBlock(pocket: true),
+        ),
       ),
-      sections[2],
+      scroll(2, sections[2]),
     ];
+  }
+
+  // [백엔드 수정] "공연 전 신문" 썸네일 신규.
+  /// 3칸이면 공연 정보 칸 맨 아래, 2칸이면 타임테이블 아래(타임테이블이 먼저 보이게).
+  /// [pocket]이면 주어진 높이에 맞춰 아랫부분을 잘라 테이프로 눌러 붙인 모양.
+  Widget _beforePageThumbBlock({bool pocket = false}) {
+    Widget thumb = GestureDetector(
+      key: _beforePageThumbKey,
+      behavior: HitTestBehavior.opaque,
+      onTap: _canOpenBeforePage ? _openBeforePage : null,
+      child: _beforePageThumbnail(),
+    );
+    if (pocket) {
+      thumb = Flexible(
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            ClipRect(
+              child: OverflowBox(
+                fit: OverflowBoxFit.deferToChild,
+                alignment: Alignment.topCenter,
+                minHeight: 0,
+                maxHeight: double.infinity,
+                child: thumb,
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: -6,
+              child: IgnorePointer(
+                child: Center(
+                  child: FractionallySizedBox(
+                    widthFactor: 0.55,
+                    child: TapeStrip(angle: 0.03, child: SizedBox(height: 9)),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '공연 전 신문',
+            style: TextStyle(fontSize: 11, color: _kraftInk),
+          ),
+          const SizedBox(height: 5),
+          thumb,
+          if (_canOpenBeforePage)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _openBeforePage,
+              child: Padding(
+                // 끼운 모양이면 아래로 삐져나온 테이프만큼 띄움
+                padding: EdgeInsets.only(top: pocket ? 10 : 5),
+                child: const Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    '펼쳐보기 ›',
+                    style: TextStyle(fontSize: 11, color: _kraftInk),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   Color? _posterAccent;
@@ -2583,7 +2668,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       '날짜': info?.formattedDate ?? '',
       '가격': info?.formattedPrice ?? '',
       '좌석': info?.seat ?? '',
-      '아티스트': extras['아티스트'] ?? extras['artist'] ?? '',
+      '아티스트': _shortArtistList(extras['아티스트'] ?? extras['artist'] ?? ''),
       '공연 유형': extras['공연 유형'] ?? extras['공연 타입'] ?? extras['유형'] ?? '',
     };
     return [
@@ -2591,6 +2676,47 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         MapEntry(key, values[key]?.isEmpty == true ? '-' : values[key] ?? '-'),
     ];
   }
+
+  /// 페스티벌 라인업 전체를 다 적으면 칸이 넘쳐서 앞 몇 팀만(전체는 셋리스트 칸에 있음).
+  static String _shortArtistList(String artists) {
+    const shown = 6;
+    final names = artists
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    if (names.length <= shown + 1) return artists;
+    return '${names.take(shown).join(', ')} 외 ${names.length - shown}팀';
+  }
+
+  /// 2칸이면 짧은 값끼리(날짜·가격, 좌석·공연 유형) 한 줄에 둘씩 - 아래 신문 자리 확보.
+  List<List<MapEntry<String, String>>> _backInfoRows() {
+    final fields = _backInfoFields();
+    if (!_twoColumnBack) {
+      return [
+        for (final f in fields) [f],
+      ];
+    }
+    final byKey = {for (final f in fields) f.key: f};
+    return [
+      for (final keys in const [
+        ['공연장'],
+        ['날짜', '가격'],
+        ['좌석', '공연 유형'],
+        ['아티스트'],
+      ])
+        [for (final k in keys) byKey[k]!],
+    ];
+  }
+
+  Widget _backInfoField(MapEntry<String, String> field) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(field.key, style: const TextStyle(fontSize: 11, color: _kraftInk)),
+      const SizedBox(height: 3),
+      Text(field.value, style: const TextStyle(fontSize: 13, height: 1.5)),
+    ],
+  );
 
   Future<String> _originalBackText(int index) async {
     if (index == 0) {
@@ -2666,65 +2792,22 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final field in _backInfoFields())
+                for (final row in _backInfoRows())
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          field.key,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: _kraftInk,
+                    child: row.length == 1
+                        ? _backInfoField(row.single)
+                        : Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              for (final (i, field) in row.indexed) ...[
+                                if (i > 0) const SizedBox(width: 8),
+                                Expanded(child: _backInfoField(field)),
+                              ],
+                            ],
                           ),
-                        ),
-                        const SizedBox(height: 3),
-                        Text(
-                          field.value,
-                          style: const TextStyle(fontSize: 13, height: 1.5),
-                        ),
-                      ],
-                    ),
                   ),
-                // [백엔드 수정] "공연 전 신문" 썸네일 신규.
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '공연 전 신문',
-                        style: TextStyle(fontSize: 11, color: _kraftInk),
-                      ),
-                      const SizedBox(height: 5),
-                      GestureDetector(
-                        key: _beforePageThumbKey,
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _canOpenBeforePage ? _openBeforePage : null,
-                        child: _beforePageThumbnail(),
-                      ),
-                      if (_canOpenBeforePage)
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _openBeforePage,
-                          child: const Padding(
-                            padding: EdgeInsets.only(top: 5),
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                '펼쳐보기 ›',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: _kraftInk,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+                if (!_twoColumnBack) _beforePageThumbBlock(),
               ],
             ),
           ),
@@ -4314,6 +4397,87 @@ class _BackEditChip extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// 뒷면 2칸일 때 왼쪽 칸. [top](공연 정보+타임테이블) 높이를 재서 남는 높이를
+/// 통째로 [pocket](공연 전 신문)에 줌. 남는 게 [minPocketHeight]보다 적으면
+/// 그 높이로 두고 칸을 스크롤.
+class _PocketColumn extends StatefulWidget {
+  final Widget top;
+  final Widget pocket;
+  final Key? scrollKey;
+  static const double minPocketHeight = 140;
+  const _PocketColumn({
+    required this.top,
+    required this.pocket,
+    this.scrollKey,
+  });
+
+  @override
+  State<_PocketColumn> createState() => _PocketColumnState();
+}
+
+class _PocketColumnState extends State<_PocketColumn> {
+  double? _topHeight;
+
+  void _onTopSize(Size size) {
+    if (size.height == _topHeight) return;
+    // 레이아웃 중이라 다음 프레임에 반영.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && size.height != _topHeight) {
+        setState(() => _topHeight = size.height);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, c) {
+      final top = _topHeight;
+      final pocketHeight = top == null || !c.maxHeight.isFinite
+          ? _PocketColumn.minPocketHeight
+          : math.max(_PocketColumn.minPocketHeight, c.maxHeight - top);
+      return SingleChildScrollView(
+        key: widget.scrollKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _SizeReporter(onSize: _onTopSize, child: widget.top),
+            SizedBox(height: pocketHeight, child: widget.pocket),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+/// 레이아웃 때마다 자식 크기를 알려줌.
+class _SizeReporter extends SingleChildRenderObjectWidget {
+  final ValueChanged<Size> onSize;
+  const _SizeReporter({required this.onSize, super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderSizeReporter(onSize);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderSizeReporter renderObject,
+  ) {
+    renderObject.onSize = onSize;
+  }
+}
+
+class _RenderSizeReporter extends RenderProxyBox {
+  ValueChanged<Size> onSize;
+  _RenderSizeReporter(this.onSize);
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    onSize(size);
+  }
 }
 
 class _LetterColumn extends StatelessWidget {

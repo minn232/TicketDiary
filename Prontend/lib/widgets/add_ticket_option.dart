@@ -28,8 +28,9 @@ class AddTicketOption extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 40,
-              height: 40,
+              // 고정 40이라 폰(배율 작음)에서 카드 대비 너무 커 보였음 - rs로 맞춤
+              width: context.rs(30),
+              height: context.rs(30),
               // 접힌 "티켓 추가" 버튼의 + 원과 같은 갈색 원으로 맞춤
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
@@ -42,13 +43,13 @@ class AddTicketOption extends StatelessWidget {
                   ),
                 ],
               ),
-              child: Icon(icon, color: Colors.white, size: 22),
+              child: Icon(icon, color: Colors.white, size: context.rs(17)),
             ),
-            const SizedBox(height: 6),
+            SizedBox(height: context.rs(5)),
             Text(
               label,
               style: TextStyle(
-                fontSize: context.sp(13),
+                fontSize: context.sp(11.5),
                 fontWeight: FontWeight.w900,
                 color: Colors.black87,
               ),

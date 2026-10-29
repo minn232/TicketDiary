@@ -37,6 +37,8 @@ import 'package:ticketdiary/widgets/diary_page_flipper.dart';
 import 'package:ticketdiary/widgets/scrapbook_page_background.dart';
 import 'package:ticketdiary/widgets/ticket_scan_camera_screen.dart';
 import 'package:ticketdiary/widgets/app_network_image.dart';
+import 'package:ticketdiary/widgets/paper_style.dart';
+import 'package:ticketdiary/widgets/poster_background.dart';
 
 class TicketData {
   final String title;
@@ -750,7 +752,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
     if (scanResult is TicketScanResponse) {
-      await _registerTicketFromScan(scanResult);
+      await _registerTicketFromScan(scanResult, fromGallery: false);
     }
   }
 
@@ -794,12 +796,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
     if (picked == null || !mounted) return; // 선택 취소
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) =>
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
-    );
+    showPaperLoading(context, '티켓을 읽고 있어요…');
 
     TicketScanResponse result;
     try {
@@ -807,18 +804,21 @@ class _DiaryScreenState extends State<DiaryScreen> {
     } on ApiException catch (e) {
       if (!mounted) return;
       Navigator.pop(context); // 로딩 다이얼로그 닫기
-      _showSnack('이미지 인식에 실패했어요: ${e.message}');
+      await _showScanFailure('이미지 인식에 실패했어요.\n${e.message}', fromGallery: true);
       return;
     } catch (_) {
       if (!mounted) return;
       Navigator.pop(context);
-      _showSnack('스캔 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+      await _showScanFailure(
+        '스캔 중 오류가 발생했어요.\n잠시 후 다시 시도해주세요.',
+        fromGallery: true,
+      );
       return;
     }
 
     if (!mounted) return;
     Navigator.pop(context); // 로딩 다이얼로그 닫기
-    await _registerTicketFromScan(result);
+    await _registerTicketFromScan(result, fromGallery: true);
   }
 
   /// 새 티켓을 다이어리에 추가합니다. 방금 등록한 공연과 같은 "배송 전"
@@ -862,18 +862,27 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// - 후보가 여러 개면 사용자가 직접 하나를 고르게 합니다.
   /// - 후보가 정해지면 그 공연의 concert_id로 `POST /tickets`를 호출해
   ///   실제로 서버에 저장하고, 성공하면 그 응답으로 다이어리에 티켓을 추가합니다.
-  Future<void> _registerTicketFromScan(TicketScanResponse scanResult) async {
+  Future<void> _registerTicketFromScan(
+    TicketScanResponse scanResult, {
+    required bool fromGallery,
+  }) async {
     final candidates = scanResult.candidates;
 
     if (candidates.isEmpty) {
       // [백엔드 수정] 이유별 안내 추가.
-      _showSnack(switch (scanResult.emptyReason) {
-        'cooldown' => '너무 빠르게 연속으로 시도했어요. 잠시 후 다시 시도해주세요.',
-        'kopis_error' => '공연 정보 서버(KOPIS)가 응답하지 않아요. 잠시 후 다시 시도해주세요.',
-        'no_text' => '사진에서 글자를 읽지 못했어요. 다른 사진으로 시도해주세요.',
-        'no_date' => '사진에서 공연 날짜를 읽지 못했어요. 날짜가 보이는 사진으로 시도해주세요.',
-        _ => '일치하는 공연을 찾을 수 없어요. KOPIS에 등록되지 않은 공연일 수 있어요.',
-      });
+      final reason = scanResult.emptyReason;
+      await _showScanFailure(
+        switch (reason) {
+          'cooldown' => '너무 빠르게 연속으로 시도했어요.\n잠시 후 다시 시도해주세요.',
+          'kopis_error' => '공연 정보 서버(KOPIS)가 응답하지 않아요.\n잠시 후 다시 시도해주세요.',
+          'no_text' => '사진에서 글자를 읽지 못했어요.\n다른 사진으로 시도해주세요.',
+          'no_date' => '사진에서 공연 날짜를 읽지 못했어요.\n날짜가 보이는 사진으로 시도해주세요.',
+          _ => '일치하는 공연을 찾을 수 없어요.\nKOPIS에 등록되지 않은 공연일 수 있어요.',
+        },
+        fromGallery: fromGallery,
+        // 바로 다시 해도 소용없는 이유(잠시 기다려야 함)는 다시 찍기 버튼 없이 닫기만
+        canRetry: reason != 'cooldown' && reason != 'kopis_error',
+      );
       return;
     }
 
@@ -927,12 +936,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       }
     }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) =>
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
-    );
+    showPaperLoading(context, '다이어리에 붙이는 중이에요…');
 
     try {
       final ticket = await _ticketService.createTicket(
@@ -973,49 +977,65 @@ class _DiaryScreenState extends State<DiaryScreen> {
     }
   }
 
+  /// 스캔으로 티켓을 못 찾았을 때 안내. 잠깐 떴다 사라지는 알림 바 대신 메모지로
+  /// 띄우고, 다시 해볼 수 있는 경우엔 같은 방법(카메라/갤러리)으로 바로 다시 시작.
+  Future<void> _showScanFailure(
+    String message, {
+    required bool fromGallery,
+    bool canRetry = true,
+  }) async {
+    if (!mounted) return;
+    final retry = await showPaperDialog<bool>(
+      context,
+      title: '티켓을 등록하지 못했어요',
+      message: message,
+      tapeTint: PaperColors.tapeRose,
+      actions: [
+        PaperDialogAction(
+          label: '닫기',
+          value: false,
+          style: canRetry ? PaperButtonStyle.quiet : PaperButtonStyle.primary,
+        ),
+        if (canRetry)
+          PaperDialogAction(
+            label: fromGallery ? '다른 사진 고르기' : '다시 찍기',
+            value: true,
+          ),
+      ],
+    );
+    if (retry != true || !mounted) return;
+    unawaited(fromGallery ? _pickFromGalleryAndAnalyze() : _startCameraScan());
+  }
+
   /// KOPIS 매칭 후보가 여러 개일 때 사용자가 하나를 고르게 하는 시트.
   /// 취소하면(바깥 탭 등) null을 반환합니다.
   Future<ConcertResponse?> _pickConcertCandidate(
     List<ConcertResponse> candidates,
   ) {
-    return showModalBottomSheet<ConcertResponse>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-              child: Text(
-                '일치하는 공연이 여러 개예요. 하나를 선택해주세요.',
-                style: TextStyle(
-                  fontSize: context.sp(15),
-                  fontWeight: FontWeight.w800,
-                ),
+    String ymd(DateTime d) =>
+        '${d.year}.${d.month.toString().padLeft(2, '0')}.'
+        '${d.day.toString().padLeft(2, '0')}';
+    return showPaperSheet<ConcertResponse>(
+      context,
+      title: '일치하는 공연이 여러 개예요.\n하나를 선택해주세요.',
+      rows: (context) => [
+        for (final candidate in candidates)
+          PaperSheetRow(
+            // 이름만으론 헷갈려서 포스터를 같이 보여줌
+            leading: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                width: 40,
+                height: 56,
+                child: PosterBackground(imageUrl: candidate.posterUrl),
               ),
             ),
-            for (final candidate in candidates)
-              ListTile(
-                title: Text(
-                  candidate.name,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                subtitle: Text(
-                  '${candidate.venue ?? '장소 미정'} · '
-                  '${candidate.startDate.year}.'
-                  '${candidate.startDate.month.toString().padLeft(2, '0')}.'
-                  '${candidate.startDate.day.toString().padLeft(2, '0')}',
-                ),
-                onTap: () => Navigator.pop(context, candidate),
-              ),
-          ],
-        ),
-      ),
+            title: candidate.name,
+            subtitle:
+                '${candidate.venue ?? '장소 미정'} · ${ymd(candidate.startDate)}',
+            onTap: () => Navigator.pop(context, candidate),
+          ),
+      ],
     );
   }
 
@@ -1040,44 +1060,19 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 여러 날 공연에서 관람일을 반드시 고르게 하는 시트(좌석 선택 시트와 같은 방식).
   Future<DateTime?> _pickAttendedDate(List<DateTime> days) {
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    return showModalBottomSheet<DateTime>(
-      context: context,
-      backgroundColor: Colors.white,
-      isDismissible: false,
-      enableDrag: false,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => PopScope(
-        canPop: false,
-        child: SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: Text(
-                  '여러 날 열리는 공연이에요.\n관람한 날짜를 선택해주세요.',
-                  style: TextStyle(
-                    fontSize: context.sp(15),
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              for (final day in days)
-                ListTile(
-                  title: Text(
-                    '${day.year}. ${day.month}. ${day.day} '
-                    '(${weekdays[day.weekday - 1]})',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  onTap: () => Navigator.pop(context, day),
-                ),
-            ],
+    return showPaperSheet<DateTime>(
+      context,
+      title: '여러 날 열리는 공연이에요.\n관람한 날짜를 선택해주세요.',
+      dismissible: false,
+      rows: (context) => [
+        for (final day in days)
+          PaperSheetRow(
+            title:
+                '${day.year}. ${day.month}. ${day.day} '
+                '(${weekdays[day.weekday - 1]})',
+            onTap: () => Navigator.pop(context, day),
           ),
-        ),
-      ),
+      ],
     );
   }
 
@@ -1085,44 +1080,18 @@ class _DiaryScreenState extends State<DiaryScreen> {
   /// 하나를 반드시 고르게 하는 시트 - 가격/좌석이 항상 채워지도록 바깥
   /// 탭·드래그·뒤로가기로는 못 닫고 항목을 선택해야만 닫힙니다.
   Future<PriceEntry?> _pickPriceEntry(List<PriceEntry> prices) {
-    return showModalBottomSheet<PriceEntry>(
-      context: context,
-      backgroundColor: Colors.white,
-      isDismissible: false,
-      enableDrag: false,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => PopScope(
-        canPop: false,
-        child: SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                child: Text(
-                  '티켓에서 가격/좌석 정보를 찾지 못했어요.\n예매한 좌석을 선택해주세요.',
-                  style: TextStyle(
-                    fontSize: context.sp(15),
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-              for (final entry in prices)
-                ListTile(
-                  title: Text(
-                    entry.seatType,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  trailing: Text('${_formatPrice(entry.price)}원'),
-                  onTap: () => Navigator.pop(context, entry),
-                ),
-            ],
+    return showPaperSheet<PriceEntry>(
+      context,
+      title: '티켓에서 가격/좌석 정보를 찾지 못했어요.\n예매한 좌석을 선택해주세요.',
+      dismissible: false,
+      rows: (context) => [
+        for (final entry in prices)
+          PaperSheetRow(
+            title: entry.seatType,
+            trailing: '${_formatPrice(entry.price)}원',
+            onTap: () => Navigator.pop(context, entry),
           ),
-        ),
-      ),
+      ],
     );
   }
 
@@ -1178,9 +1147,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    showPaperSnackBar(context, message);
   }
 
   /// 티켓을 길게 누르면 삭제를 확인합니다.
@@ -1191,22 +1158,23 @@ class _DiaryScreenState extends State<DiaryScreen> {
   ///   게스트는 로컬 저장소).
   /// - 로컬 예시/디버그 티켓(등록된 적 없는 것)은 화면에서만 지웁니다.
   Future<void> _confirmDeleteTicket(TicketData ticket) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('티켓 삭제'),
-        content: Text('"${ticket.title}" 티켓을 삭제할까요? 되돌릴 수 없어요.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('삭제', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+    final confirmed = await showPaperDialog<bool>(
+      context,
+      title: '티켓 삭제',
+      emphasis: ticket.title,
+      message: '이 티켓을 삭제할까요?\n삭제하면 되돌릴 수 없어요.',
+      actions: const [
+        PaperDialogAction(
+          label: '취소',
+          value: false,
+          style: PaperButtonStyle.outline,
+        ),
+        PaperDialogAction(
+          label: '삭제',
+          value: true,
+          style: PaperButtonStyle.danger,
+        ),
+      ],
     );
     if (confirmed != true || !mounted) return;
 
@@ -1216,12 +1184,7 @@ class _DiaryScreenState extends State<DiaryScreen> {
       return;
     }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) =>
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
-    );
+    showPaperLoading(context, '티켓을 지우는 중이에요…');
 
     try {
       await _ticketService.deleteTicket(ticket.id);
@@ -2070,61 +2033,81 @@ class _DiaryScreenState extends State<DiaryScreen> {
       child: Builder(
         builder: (context) {
           final ink = Colors.black.withValues(alpha: 0.78);
+          final hintStyle = TextStyle(
+            fontSize: context.sp(10),
+            fontWeight: FontWeight.w600,
+            color: Colors.black.withValues(alpha: 0.45),
+          );
+          const hint = '카메라로 찍거나 갤러리에서 골라 등록해요';
           return _buildAddTicketCard(
-            child: Center(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: context.rs(44),
-                      height: context.rs(44),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFF5A4033),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.18),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
+            // 폰처럼 칸이 좁으면 한 줄 문구가 점선 끝까지 꽉 차서 - 좌우 여백을
+            // 두고, 그래도 빠듯하면 문구를 두 줄로 나눔.
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final hintWidth = (TextPainter(
+                  text: TextSpan(text: hint, style: hintStyle),
+                  textDirection: TextDirection.ltr,
+                  textScaler: MediaQuery.textScalerOf(context),
+                )..layout()).width;
+                final pad = c.maxWidth * 0.1;
+                final oneLine =
+                    context.rs(38) + context.rs(12) + hintWidth <=
+                    c.maxWidth - pad * 2;
+                return Padding(
+                  padding: EdgeInsets.symmetric(horizontal: pad),
+                  child: Center(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: context.rs(38),
+                            height: context.rs(38),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFF5A4033),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.18),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              Icons.add_rounded,
+                              color: Colors.white,
+                              size: context.rs(24),
+                            ),
+                          ),
+                          SizedBox(width: context.rs(12)),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '티켓 추가',
+                                style: TextStyle(
+                                  fontSize: context.sp(18),
+                                  fontWeight: FontWeight.w800,
+                                  color: ink,
+                                  height: 1.1,
+                                ),
+                              ),
+                              SizedBox(height: context.rs(4)),
+                              Text(
+                                oneLine ? hint : '카메라로 찍거나\n갤러리에서 골라 등록해요',
+                                style: hintStyle,
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                      child: Icon(
-                        Icons.add_rounded,
-                        color: Colors.white,
-                        size: context.rs(28),
-                      ),
                     ),
-                    SizedBox(width: context.rs(14)),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '티켓 추가',
-                          style: TextStyle(
-                            fontSize: context.sp(20),
-                            fontWeight: FontWeight.w800,
-                            color: ink,
-                            height: 1.1,
-                          ),
-                        ),
-                        SizedBox(height: context.rs(4)),
-                        Text(
-                          '카메라로 찍거나 갤러리에서 골라 등록해요',
-                          style: TextStyle(
-                            fontSize: context.sp(10.5),
-                            fontWeight: FontWeight.w600,
-                            color: Colors.black.withValues(alpha: 0.45),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             ),
           );
         },

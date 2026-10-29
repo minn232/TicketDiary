@@ -243,7 +243,8 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               child: FloatingActionButton.extended(
                 heroTag: 'manual_capture',
                 onPressed: _captureAndExtract,
-                backgroundColor: const Color(0xFF38BDF8),
+                backgroundColor: _kAlignedColor,
+                foregroundColor: const Color(0xFF3B2A20),
                 icon: const Icon(Icons.camera_alt),
                 label: const Text('지금 촬영하기'),
               ),
@@ -266,6 +267,9 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     );
   }
 }
+
+/// 가이드 박스가 티켓을 인식했을 때 색(밝은 머스터드).
+const Color _kAlignedColor = Color(0xFFF2C14E);
 
 /// [available] 안에서 [aspectRatio](width/height)를 유지한 채 최대로 맞춘
 /// 사각형을 가운데 정렬해 반환합니다(`BoxFit.contain`과 같은 계산). 화면비가
@@ -305,7 +309,8 @@ class _ScanGuideOverlay extends StatelessWidget {
       return '이 환경에서는 자동 인식이 지원되지 않아요.\n"지금 촬영하기" 버튼을 눌러주세요.';
     }
     return switch (stage) {
-      _ScanStage.positioning => '티켓을 사각형 안에 맞춰주세요',
+      // 가이드 글자가 90도 돌아가 있어 휴대폰을 눕히라는 안내를 같이
+      _ScanStage.positioning => '휴대폰을 왼쪽으로 눕혀서\n티켓을 사각형 안에 맞춰주세요',
       _ScanStage.aligned => '인식 완료!',
       _ScanStage.capturing => '스캔 중...',
     };
@@ -313,7 +318,8 @@ class _ScanGuideOverlay extends StatelessWidget {
 
   Color get _borderColor => switch (stage) {
     _ScanStage.positioning => Colors.white70,
-    _ScanStage.aligned || _ScanStage.capturing => const Color(0xFF38BDF8),
+    // 앱 톤(머스터드)에 맞추되 카메라 화면 위에서도 잘 보이게 밝게
+    _ScanStage.aligned || _ScanStage.capturing => _kAlignedColor,
   };
 
   @override

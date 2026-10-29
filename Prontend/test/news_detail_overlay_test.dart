@@ -9,6 +9,12 @@ import 'package:ticketdiary/screen/news_detail_overlay.dart';
 /// 검증합니다. 3정보 타일 Row에 CrossAxisAlignment.stretch를 준 채
 /// SingleChildScrollView(세로 무한 높이) 안에 넣으면 무한 제약으로
 /// RenderFractionallySizedOverflowBox가 터졌던 회귀를 막습니다.
+/// 제목·정보 타일 값은 단어 안에 WORD JOINER(U+2060)를 끼워 그려서(줄바꿈 방지)
+/// 그 문자를 빼고 비교.
+Finder _text(String text) => find.byWidgetPredicate(
+  (w) => w is Text && w.data?.replaceAll('\u{2060}', '') == text,
+);
+
 void main() {
   testWidgets('소식 상세 오버레이가 예외 없이 열리고 제목/정보 타일/예매처가 보인다', (tester) async {
     final news = NewsModel(
@@ -55,7 +61,7 @@ void main() {
     expect(tester.takeException(), isNull);
 
     // 상세 콘텐츠가 실제로 그려집니다.
-    expect(find.text('테스트 공연 [서울]'), findsOneWidget);
+    expect(_text('테스트 공연 [서울]'), findsOneWidget);
     expect(find.text('공연 기간'), findsOneWidget);
     expect(find.text('공연장'), findsOneWidget);
     expect(find.text('티켓팅 날짜'), findsOneWidget);
@@ -66,9 +72,7 @@ void main() {
   // [백엔드 수정]
   // 예매 단계(선예매/1차/2차) 표시 UI 회귀 테스트 - 타일엔 다음 단계만
   // 요약해서 뜨고, 탭하면 전체 단계 목록 다이얼로그가 뜸.
-  testWidgets('예매 단계 정보가 있으면 다음 단계가 요약되고 탭하면 전체 단계가 보인다', (
-    tester,
-  ) async {
+  testWidgets('예매 단계 정보가 있으면 다음 단계가 요약되고 탭하면 전체 단계가 보인다', (tester) async {
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
     final news = NewsModel(
@@ -118,16 +122,16 @@ void main() {
 
     // 이미 지난 "선예매"가 아니라 다가올 "일반예매"가 요약으로 뜸(단계/D-day
     // 각각 밑줄이 자기 줄 폭에 맞게 그려지도록 별도 Text로 렌더링됨).
-    expect(find.text('일반예매'), findsOneWidget);
-    expect(find.text('D-5'), findsOneWidget);
+    expect(_text('일반예매'), findsOneWidget);
+    expect(_text('D-5'), findsOneWidget);
 
     await tester.tap(find.text('티켓팅 날짜'));
     await tester.pumpAndSettle();
 
     // 전체 단계(선예매/일반예매)가 목록으로 보임 - "일반예매"는 타일 요약(뒤)과
     // 다이얼로그 목록(앞) 둘 다에 남아있어 2개.
-    expect(find.text('선예매'), findsOneWidget);
-    expect(find.text('일반예매'), findsNWidgets(2));
+    expect(_text('선예매'), findsOneWidget);
+    expect(_text('일반예매'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
   });
 
@@ -170,8 +174,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    expect(find.text('예스24 라이브홀'), findsOneWidget);
-    expect(find.text('(구. 악스코리아)'), findsOneWidget);
+    expect(_text('예스24 라이브홀'), findsOneWidget);
+    expect(_text('(구. 악스코리아)'), findsOneWidget);
   });
 
   // [백엔드 수정]
@@ -213,8 +217,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    expect(find.text('2026.10.03 ~'), findsOneWidget);
-    expect(find.text('2026.10.04'), findsOneWidget);
+    expect(_text('2026.10.03 ~'), findsOneWidget);
+    expect(_text('2026.10.04'), findsOneWidget);
   });
 
   // [백엔드 수정]
@@ -256,7 +260,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    expect(find.text('파라다이스시티'), findsOneWidget);
-    expect(find.text('(컬처파크 (야외))'), findsOneWidget);
+    expect(_text('파라다이스시티'), findsOneWidget);
+    expect(_text('(컬처파크 (야외))'), findsOneWidget);
   });
 }

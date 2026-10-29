@@ -395,71 +395,88 @@ Future<T?> showPaperDialog<T>(
   BuildContext context, {
   required String title,
   String? message,
+  String? emphasis,
   required List<PaperDialogAction<T>> actions,
   Color? tapeTint,
   bool barrierDismissible = true,
 }) {
+  final em = emphasis;
   return showDialog<T>(
     context: context,
     barrierDismissible: barrierDismissible,
-    builder: (context) => Dialog(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-      child: PaperNote(
-        tapeTint: tapeTint,
-        maxWidth: 360,
-        angle: 0,
-        padding: const EdgeInsets.fromLTRB(22, 24, 16, 14),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: context.sp(16),
-                fontWeight: FontWeight.w900,
-                color: PaperColors.ink,
-                height: 1.35,
+    builder: (context) {
+      // 폭은 글자 배율을 그대로, 여백·간격은 배율의 절반만 따라감 - 다 따르면
+      // 페이지 밖이라 배율이 큰 태블릿에서 휑하고, 고정이면 빠듯함(폰은 배율 1 근처)
+      final k = 1 + (context.rs(1) - 1) * .5;
+      return Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: PaperNote(
+          tapeTint: tapeTint,
+          maxWidth: context.rs(300),
+          angle: 0,
+          padding: EdgeInsets.fromLTRB(22 * k, 26 * k, 22 * k, 16 * k),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: context.sp(16),
+                  fontWeight: FontWeight.w900,
+                  color: PaperColors.ink,
+                  height: 1.35,
+                ),
               ),
-            ),
-            if (message != null) ...[
-              const SizedBox(height: 10),
-              Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Text(
-                  message,
+              // 공연명 등 짚어줄 대상(굵게) - 빈 줄로 띄우는 대신 바로 위에 붙임
+              if (em != null) ...[
+                SizedBox(height: 10 * k),
+                Text(
+                  em,
                   style: TextStyle(
-                    fontSize: context.sp(13),
-                    fontWeight: FontWeight.w500,
-                    color: PaperColors.ink.withValues(alpha: .75),
+                    fontSize: context.sp(13.5),
+                    fontWeight: FontWeight.w800,
+                    color: PaperColors.ink,
                     height: 1.5,
                   ),
                 ),
+              ],
+              if (message != null) ...[
+                SizedBox(height: (em != null ? 4 : 10) * k),
+                Text(
+                  message,
+                  style: TextStyle(
+                    fontSize: context.sp(13.5),
+                    fontWeight: FontWeight.w500,
+                    color: PaperColors.ink.withValues(alpha: .75),
+                    height: 1.6,
+                  ),
+                ),
+              ],
+              SizedBox(height: 18 * k),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 8 * k,
+                  runSpacing: 6,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    for (final a in actions)
+                      PaperButton(
+                        label: a.label,
+                        style: a.style,
+                        onTap: () => Navigator.pop(context, a.value),
+                      ),
+                  ],
+                ),
               ),
             ],
-            const SizedBox(height: 18),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Wrap(
-                spacing: 4,
-                runSpacing: 6,
-                alignment: WrapAlignment.end,
-                children: [
-                  for (final a in actions)
-                    PaperButton(
-                      label: a.label,
-                      style: a.style,
-                      onTap: () => Navigator.pop(context, a.value),
-                    ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
-    ),
+      );
+    },
   );
 }
 
@@ -533,6 +550,209 @@ class ProfileAvatar extends StatelessWidget {
         border: Border.all(color: PaperColors.ink.withValues(alpha: .15)),
       ),
       child: inner,
+    );
+  }
+}
+
+/// 기다리는 동안 띄우는 메모지(검은 막 + 흰 스피너 대신). 닫을 때는 다른
+/// 다이얼로그처럼 `Navigator.pop(context)`.
+void showPaperLoading(BuildContext context, String message) {
+  showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => PopScope(
+      canPop: false,
+      child: Center(
+        child: Material(
+          type: MaterialType.transparency,
+          child: PaperNote(
+            maxWidth: context.rs(260),
+            padding: const EdgeInsets.fromLTRB(22, 24, 22, 20),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: PaperColors.muted,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    message,
+                    style: TextStyle(
+                      fontSize: context.sp(14),
+                      fontWeight: FontWeight.w800,
+                      color: PaperColors.ink,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// 시트 최대 폭 - 태블릿에서 화면 끝까지 늘어나지 않게.
+const BoxConstraints kPaperSheetConstraints = BoxConstraints(maxWidth: 560);
+
+/// 바텀시트는 DiaryPageFrame 밖이라 sp/rs가 화면 폭 배율을 그대로 써서
+/// 태블릿에서 글자가 너무 커짐 - 확인창처럼 배율의 절반만 따르게 덮어씀.
+Widget paperSheetScale(BuildContext context, Widget child) {
+  return DiaryFrameScale(
+    scale: 1 + (context.rs(1) - 1) * .5,
+    marginEachSide: 0,
+    child: child,
+  );
+}
+
+/// 크림 종이로 된 선택 시트. [dismissible]이 false면 바깥 탭·드래그·뒤로가기로
+/// 못 닫고 항목을 골라야만 닫힘.
+Future<T?> showPaperSheet<T>(
+  BuildContext context, {
+  required String title,
+  required List<Widget> Function(BuildContext context) rows,
+  bool dismissible = true,
+}) {
+  return showModalBottomSheet<T>(
+    context: context,
+    backgroundColor: PaperColors.card,
+    isDismissible: dismissible,
+    enableDrag: dismissible,
+    isScrollControlled: true,
+    constraints: kPaperSheetConstraints,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+    ),
+    builder: (context) => paperSheetScale(
+      context,
+      PopScope(
+        canPop: dismissible,
+        child: SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.8,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(0, 10, 0, 12),
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: PaperColors.ink.withValues(alpha: .15),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: context.sp(15),
+                      fontWeight: FontWeight.w900,
+                      color: PaperColors.ink,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+                ...rows(context),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// [showPaperSheet]의 한 줄. 위에 옅은 구분선.
+class PaperSheetRow extends StatelessWidget {
+  const PaperSheetRow({
+    super.key,
+    required this.title,
+    required this.onTap,
+    this.subtitle,
+    this.leading,
+    this.trailing,
+  });
+
+  final String title;
+  final String? subtitle;
+  final Widget? leading;
+  final String? trailing;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final sub = subtitle;
+    final tail = trailing;
+    final lead = leading;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: PaperColors.ink.withValues(alpha: .08)),
+          ),
+        ),
+        child: Row(
+          children: [
+            if (lead != null) ...[lead, const SizedBox(width: 14)],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: context.sp(14.5),
+                      fontWeight: FontWeight.w800,
+                      color: PaperColors.ink,
+                      height: 1.35,
+                    ),
+                  ),
+                  if (sub != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      sub,
+                      style: TextStyle(
+                        fontSize: context.sp(12),
+                        fontWeight: FontWeight.w600,
+                        color: PaperColors.muted,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (tail != null) ...[
+              const SizedBox(width: 12),
+              Text(
+                tail,
+                style: TextStyle(
+                  fontSize: context.sp(14),
+                  fontWeight: FontWeight.w800,
+                  color: PaperColors.ink,
+                ),
+              ),
+            ],
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right, color: PaperColors.muted),
+          ],
+        ),
+      ),
     );
   }
 }
