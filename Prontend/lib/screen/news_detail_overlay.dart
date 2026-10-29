@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/news_model.dart';
 import '../models/ticket_scan.dart' show TicketingPhaseEntry;
 import '../widgets/diary_page_frame.dart';
+import '../widgets/paper_style.dart';
 import '../widgets/poster_background.dart';
 import '../widgets/responsive_text.dart';
 import '../widgets/app_network_image.dart';
@@ -172,7 +173,7 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
 
   Rect _getRectForT(Rect end, double t) => Rect.lerp(widget.startRect, end, t)!;
 
-  double _getRadiusForT(double t) => lerpDouble(4, 18, t)!;
+  double _getRadiusForT(double t) => lerpDouble(3, 6, t)!;
 
   void _onBackgroundTap(TapDownDetails details) => _handleOutsideTap();
 
@@ -443,7 +444,9 @@ class _ExpandedNewsDetail extends StatelessWidget {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: onOutsideTap,
-            child: Container(color: Colors.white.withValues(alpha: 0.50)),
+            child: Container(
+              color: const Color(0xFFF4EBDD).withValues(alpha: 0.72),
+            ),
           ),
         ),
         SafeArea(
@@ -452,75 +455,77 @@ class _ExpandedNewsDetail extends StatelessWidget {
             child: Center(
               child: FractionallySizedBox(
                 widthFactor: 0.888 * 1.08,
-                child: Container(
-                  key: pageKey,
-                  constraints: const BoxConstraints(maxWidth: 562),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.96),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.126),
-                        blurRadius: 18,
-                        offset: const Offset(0, 10),
+                child: _TapedPaper(
+                  child: Container(
+                    key: pageKey,
+                    constraints: const BoxConstraints(maxWidth: 562),
+                    decoration: BoxDecoration(
+                      color: PaperColors.card,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: PaperColors.ink.withValues(alpha: 0.10),
                       ),
-                    ],
-                  ),
-                  child: LayoutBuilder(
-                    builder: (context, cardConstraints) {
-                      final k = cardConstraints.maxWidth / 350.0;
-                      final horizontalPadding = 18 * k;
-                      final vendorCount = news.ticketingLinks?.length ?? 0;
-                      final titleLines = (news.concert.length / 13)
-                          .ceil()
-                          .clamp(1, 3);
-                      final venueLines = ((news.venue ?? '').length / 12)
-                          .ceil()
-                          .clamp(1, 3);
-                      final estimatedNonPosterHeight =
-                          (18 * 2 + 14 + 14 + 16) * k +
-                          (titleLines * 24) * k +
-                          (96 + (venueLines - 1) * 14) * k +
-                          _VendorButtons.estimatedHeight(vendorCount, k);
-                      final availablePosterHeight =
-                          cardConstraints.maxHeight - estimatedNonPosterHeight;
-                      final posterHeight = availablePosterHeight
-                          .clamp(112 * k, 190 * k)
-                          .toDouble();
-                      return FadeTransition(
-                        opacity: contentOpacity,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.topCenter,
-                          child: SizedBox(
-                            width: cardConstraints.maxWidth,
-                            child: Padding(
-                              padding: EdgeInsets.all(horizontalPadding),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  _poster(context, k, posterHeight),
-                                  SizedBox(height: 14 * k),
-                                  _titleRow(context, k),
-                                  SizedBox(height: 14 * k),
-                                  _infoTiles(context, k),
-                                  SizedBox(height: 16 * k),
-                                  _VendorButtons(
-                                    ticketingLinks: news.ticketingLinks,
-                                    scale: k,
-                                  ),
-                                ],
+                      boxShadow: [
+                        BoxShadow(
+                          color: PaperColors.ink.withValues(alpha: 0.18),
+                          blurRadius: 14,
+                          offset: const Offset(0, 6),
+                        ),
+                      ],
+                    ),
+                    child: LayoutBuilder(
+                      builder: (context, cardConstraints) {
+                        final k = cardConstraints.maxWidth / 350.0;
+                        final horizontalPadding = 18 * k;
+                        final vendorCount = news.ticketingLinks?.length ?? 0;
+                        final titleLines = (news.concert.length / 13)
+                            .ceil()
+                            .clamp(1, 3);
+                        final venueLines = ((news.venue ?? '').length / 12)
+                            .ceil()
+                            .clamp(1, 3);
+                        final estimatedNonPosterHeight =
+                            (18 * 2 + 14 + 14 + 16) * k +
+                            (titleLines * 24) * k +
+                            (96 + (venueLines - 1) * 14) * k +
+                            _VendorButtons.estimatedHeight(vendorCount, k);
+                        final availablePosterHeight =
+                            cardConstraints.maxHeight -
+                            estimatedNonPosterHeight;
+                        final posterHeight = availablePosterHeight
+                            .clamp(112 * k, 190 * k)
+                            .toDouble();
+                        return FadeTransition(
+                          opacity: contentOpacity,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.topCenter,
+                            child: SizedBox(
+                              width: cardConstraints.maxWidth,
+                              child: Padding(
+                                padding: EdgeInsets.all(horizontalPadding),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    _poster(context, k, posterHeight),
+                                    SizedBox(height: 14 * k),
+                                    _titleRow(context, k),
+                                    SizedBox(height: 14 * k),
+                                    _infoTiles(context, k),
+                                    SizedBox(height: 16 * k),
+                                    _VendorButtons(
+                                      ticketingLinks: news.ticketingLinks,
+                                      scale: k,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -534,11 +539,21 @@ class _ExpandedNewsDetail extends StatelessWidget {
   Widget _poster(BuildContext context, double k, double height) {
     return GestureDetector(
       onTap: onPosterTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12 * k),
+      child: Container(
+        padding: EdgeInsets.all(5 * k),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: PaperColors.ink.withValues(alpha: 0.14),
+              blurRadius: 5,
+              offset: const Offset(1, 3),
+            ),
+          ],
+        ),
         child: SizedBox(
           width: double.infinity,
-          height: height,
+          height: height - 10 * k,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -549,10 +564,14 @@ class _ExpandedNewsDetail extends StatelessWidget {
                 child: Container(
                   padding: EdgeInsets.all(6 * k),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.45),
+                    color: PaperColors.card.withValues(alpha: 0.88),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.zoom_in, size: 18 * k, color: Colors.white),
+                  child: Icon(
+                    Icons.zoom_in,
+                    size: 18 * k,
+                    color: PaperColors.ink,
+                  ),
                 ),
               ),
             ],
@@ -570,6 +589,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
       style: TextStyle(
         fontSize: context.sp(20),
         fontWeight: FontWeight.w900,
+        color: PaperColors.ink,
         height: 1.2,
       ),
     );
@@ -597,7 +617,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                       title: '공연 기간',
                       start: news.concertDate!,
                       end: news.concertEndDate ?? news.concertDate!,
-                      color: const Color(0xFF3DBE6B),
+                      color: PaperColors.stamp,
                     )
                   : null,
             ),
@@ -609,7 +629,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
               icon: Icon(
                 Icons.location_on,
                 size: 26 * k,
-                color: const Color(0xFF5C4033),
+                color: PaperColors.ink,
               ),
               label: '공연장',
               value: (news.venue == null || news.venue!.isEmpty)
@@ -627,7 +647,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
               icon: Icon(
                 Icons.confirmation_num_outlined,
                 size: 26 * k,
-                color: const Color(0xFF5C4033),
+                color: PaperColors.ink,
               ),
               label: '티켓팅 날짜',
               // [백엔드 수정]
@@ -647,7 +667,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                             title: '티켓팅 날짜',
                             start: news.ticketingDate!,
                             end: news.ticketingDate!,
-                            color: const Color(0xFF3DBE6B),
+                            color: PaperColors.stamp,
                           )
                         : null),
             ),
@@ -747,8 +767,9 @@ class _TicketingPhasesDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      backgroundColor: PaperColors.card,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(context).height * 0.82,
@@ -766,7 +787,7 @@ class _TicketingPhasesDialog extends StatelessWidget {
                     style: TextStyle(
                       fontSize: context.sp(16),
                       fontWeight: FontWeight.w900,
-                      color: const Color(0xFF5C4033),
+                      color: PaperColors.ink,
                     ),
                   ),
                   const Spacer(),
@@ -776,7 +797,7 @@ class _TicketingPhasesDialog extends StatelessWidget {
                     child: Icon(
                       Icons.close_rounded,
                       size: context.sp(20),
-                      color: Colors.black45,
+                      color: PaperColors.muted,
                     ),
                   ),
                 ],
@@ -813,7 +834,7 @@ class _TicketingPhasesDialog extends StatelessWidget {
               title: phase.phase,
               start: date,
               end: date,
-              color: const Color(0xFF3DBE6B),
+              color: PaperColors.stamp,
             ),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
@@ -824,7 +845,7 @@ class _TicketingPhasesDialog extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(12),
                 fontWeight: FontWeight.w900,
-                color: const Color(0xFF3DBE6B),
+                color: PaperColors.stamp,
               ),
             ),
             const SizedBox(width: 8),
@@ -833,7 +854,7 @@ class _TicketingPhasesDialog extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(14),
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF3E2C22),
+                color: PaperColors.ink,
               ),
             ),
             const Spacer(),
@@ -841,7 +862,7 @@ class _TicketingPhasesDialog extends StatelessWidget {
               dateText,
               style: TextStyle(
                 fontSize: context.sp(13),
-                color: Colors.black.withValues(alpha: 0.55),
+                color: PaperColors.muted,
               ),
             ),
           ],
@@ -884,8 +905,9 @@ class _CalendarDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      backgroundColor: PaperColors.card,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(context).height * 0.82,
@@ -903,7 +925,7 @@ class _CalendarDialog extends StatelessWidget {
                     style: TextStyle(
                       fontSize: context.sp(16),
                       fontWeight: FontWeight.w900,
-                      color: const Color(0xFF5C4033),
+                      color: PaperColors.ink,
                     ),
                   ),
                   const Spacer(),
@@ -913,7 +935,7 @@ class _CalendarDialog extends StatelessWidget {
                     child: Icon(
                       Icons.close_rounded,
                       size: context.sp(20),
-                      color: Colors.black45,
+                      color: PaperColors.muted,
                     ),
                   ),
                 ],
@@ -973,7 +995,7 @@ class _CalendarDialog extends StatelessWidget {
             style: TextStyle(
               fontSize: context.sp(15),
               fontWeight: FontWeight.w900,
-              color: const Color(0xFF3E2C22),
+              color: PaperColors.ink,
             ),
           ),
         ),
@@ -989,7 +1011,9 @@ class _CalendarDialog extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       color: i == 0
                           ? const Color(0xFFE8455E)
-                          : (i == 6 ? const Color(0xFF3D7BE8) : Colors.black45),
+                          : (i == 6
+                                ? const Color(0xFF3D7BE8)
+                                : PaperColors.muted),
                     ),
                   ),
                 ),
@@ -1023,7 +1047,7 @@ class _CalendarDialog extends StatelessWidget {
     }
 
     // 연속된 칸은 이어지도록: 좌/우 이웃도 칠해졌으면 그쪽 모서리는 각지게.
-    const r = Radius.circular(11);
+    const r = Radius.circular(4);
     final radius = on
         ? BorderRadius.horizontal(
             left: nbrOn(i - 1) ? Radius.zero : r,
@@ -1041,7 +1065,7 @@ class _CalendarDialog extends StatelessWidget {
         style: TextStyle(
           fontSize: context.sp(13),
           fontWeight: on ? FontWeight.w900 : FontWeight.w600,
-          color: on ? Colors.white : Colors.black.withValues(alpha: 0.78),
+          color: on ? Colors.white : PaperColors.ink,
         ),
       ),
     );
@@ -1085,16 +1109,9 @@ class _InfoTile extends StatelessWidget {
       child: Container(
         padding: EdgeInsets.symmetric(vertical: 12 * k, horizontal: 4 * k),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14 * k),
-          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.042),
-              blurRadius: 6,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          color: PaperColors.tile,
+          borderRadius: BorderRadius.circular(4 * k),
+          border: Border.all(color: PaperColors.ink.withValues(alpha: 0.10)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1109,7 +1126,7 @@ class _InfoTile extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(11),
                 fontWeight: FontWeight.w700,
-                color: Colors.black.withValues(alpha: 0.45),
+                color: PaperColors.muted,
               ),
             ),
             SizedBox(height: 4 * k),
@@ -1128,7 +1145,7 @@ class _InfoTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: context.sp(12),
                   fontWeight: FontWeight.w800,
-                  color: Colors.black.withValues(alpha: 0.8),
+                  color: PaperColors.ink,
                   height: 1.25,
                 ),
               ),
@@ -1177,7 +1194,7 @@ class _InfoTileLine extends StatelessWidget {
         ),
         textDirection: Directionality.of(context),
         textScaler: MediaQuery.textScalerOf(context),
-        color: Colors.black.withValues(alpha: 0.8),
+        color: PaperColors.ink,
       ),
       child: label,
     );
@@ -1243,7 +1260,7 @@ class _CalendarDayIcon extends StatelessWidget {
         Icon(
           Icons.calendar_today_rounded,
           size: 26 * k,
-          color: const Color(0xFF5C4033),
+          color: PaperColors.ink,
         ),
         if (day != null)
           Padding(
@@ -1253,7 +1270,7 @@ class _CalendarDayIcon extends StatelessWidget {
               style: TextStyle(
                 fontSize: context.sp(9),
                 fontWeight: FontWeight.w900,
-                color: const Color(0xFF5C4033),
+                color: PaperColors.ink,
               ),
             ),
           ),
@@ -1285,7 +1302,7 @@ class _VendorButtons extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
+        Container(height: 1, color: PaperColors.ink.withValues(alpha: 0.10)),
         SizedBox(height: 14 * k),
         SizedBox(
           width: double.infinity,
@@ -1295,7 +1312,7 @@ class _VendorButtons extends StatelessWidget {
             style: TextStyle(
               fontSize: context.sp(13),
               fontWeight: FontWeight.w800,
-              color: Colors.black.withValues(alpha: 0.55),
+              color: PaperColors.muted,
             ),
           ),
         ),
@@ -1309,6 +1326,40 @@ class _VendorButtons extends StatelessWidget {
           ),
           SizedBox(height: 9 * k),
         ],
+      ],
+    );
+  }
+}
+
+/// 상세 카드 위 양쪽 모서리에 마스킹테이프 두 장을 붙입니다.
+class _TapedPaper extends StatelessWidget {
+  const _TapedPaper({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      // 바깥 폭 제약을 카드에 그대로 넘김(loose면 카드가 좁아져 왼쪽으로 쏠림)
+      fit: StackFit.passthrough,
+      children: [
+        child,
+        const Positioned(
+          top: -8,
+          left: 18,
+          child: MaskingTape(
+            tint: PaperColors.tapeRose,
+            width: 64,
+            height: 17,
+            angle: -0.18,
+          ),
+        ),
+        const Positioned(
+          top: -8,
+          right: 18,
+          child: MaskingTape(width: 64, height: 17, angle: 0.14),
+        ),
       ],
     );
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'paper_style.dart';
 import '../models/news_model.dart';
 import '../services/sound_effect_service.dart';
 import 'app_network_image.dart';
@@ -913,24 +914,8 @@ class _SheetTapes extends StatelessWidget {
   const _SheetTapes({required this.child});
   final Widget child;
 
-  static Widget _tape(double angle) => Transform.rotate(
-    angle: angle,
-    child: Container(
-      width: 54,
-      height: 16,
-      decoration: BoxDecoration(
-        color: const Color(0xFFEDE3C8).withValues(alpha: .85),
-        borderRadius: BorderRadius.circular(1.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: .08),
-            blurRadius: 2,
-            offset: const Offset(0, 1),
-          ),
-        ],
-      ),
-    ),
-  );
+  static Widget _tape(double angle) =>
+      MaskingTape(width: 54, height: 16, angle: angle);
 
   @override
   Widget build(BuildContext context) => Padding(

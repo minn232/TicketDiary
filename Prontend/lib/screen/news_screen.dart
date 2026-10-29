@@ -2,6 +2,7 @@ import 'dart:async';
 import '../services/news_list_service.dart';
 import '../services/news_card_identity.dart';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:ticketdiary/models/news_model.dart';
 import 'package:ticketdiary/services/api_client.dart';
@@ -15,6 +16,7 @@ import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
+import 'package:ticketdiary/widgets/paper_style.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/pressable_scale.dart';
@@ -130,6 +132,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   String? _visibleCardKey;
   Timer? _newsRefreshTimer;
 
+  /// 소식 페이지 (지금 장, 전체 장 수) - 아래 넘김 힌트가 씀. 전체 1장 이하면 힌트 숨김.
+  final ValueNotifier<(int, int)> _newsPageInfo = ValueNotifier((0, 0));
+
   void _onNewsListUpdated() {
     final items = NewsListService.updates.value;
     if (mounted && items != null) {
@@ -151,14 +156,16 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       if (!mounted) return;
       showDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
-          content: const Text('해당 소식이 변경되었거나 더 이상 표시되지 않아요. 최신 목록을 확인해주세요.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('확인'),
-            ),
-          ],
+        builder: (context) => Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          child: _PaperNotice(
+            icon: Icons.search_off_rounded,
+            title: '소식을 찾지 못했어요',
+            body: '변경되었거나 더 이상 표시되지 않는 소식이에요\n최신 목록을 확인해주세요',
+            actionLabel: '확인',
+            onAction: () => Navigator.pop(context),
+          ),
         ),
       );
     });
@@ -231,6 +238,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _newsRefreshTimer?.cancel();
+    _newsPageInfo.dispose();
     NewsListService.updates.removeListener(_onNewsListUpdated);
     _pageShiftSound?.stop();
     _returnTimeout?.cancel();
@@ -534,7 +542,10 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 페이지 여백을 고정된 "액자 테두리"로 남기고, 그 안쪽 창에서만 내용이
   /// 캐러셀로 슬라이드하도록 감쌉니다.
   Widget _buildFlipBody() {
-    return _NewsFrame(child: _buildWindowContent());
+    return _NewsFrame(
+      pageInfo: _phase == _FlipPhase.news ? _newsPageInfo : null,
+      child: _buildWindowContent(),
+    );
   }
 
   /// 액자 창 안에 들어갈, 현재 전환 단계별 내용.
@@ -615,7 +626,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
                     WidgetsBinding.instance.addPostFrameCallback(
                       (_) => oldController?.dispose(),
                     );
-                    return const Center(child: Text('새로운 소식이 없습니다.'));
+                    return _buildEmptyView();
                   }
 
                   // [상태 4] 성공: 리스트 렌더링. 바깥 여백은 이제 액자
@@ -660,42 +671,30 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         ? '서버 오류입니다.'
         : '네트워크 오류입니다.';
 
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.cloud_off_outlined,
-            size: 48,
-            color: Colors.black.withValues(alpha: 0.25),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '소식을 불러오지 못했어요.\n$reason',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: context.sp(13),
-              fontWeight: FontWeight.w700,
-              color: Colors.black.withValues(alpha: 0.45),
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 14),
-          OutlinedButton(
-            onPressed: () {
-              // [백엔드 수정] 소식 탭 캐싱을 껐으므로(initState 참고) 여기도 직접 호출.
-              // setState(() => _newsFuture = _fetchAndCacheNews());
-              setState(() => _newsFuture = _loadNews());
-              _armGlassReveal(_newsFuture);
-            },
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.brown,
-              side: const BorderSide(color: Colors.brown),
-            ),
-            child: const Text('다시 시도'),
-          ),
-        ],
-      ),
+    return _PaperNotice(
+      icon: Icons.cloud_off_outlined,
+      tapeTint: PaperColors.tapeMustard,
+      title: '소식을 불러오지 못했어요',
+      body: reason,
+      actionLabel: '다시 시도',
+      onAction: () {
+        // [백엔드 수정] 소식 탭 캐싱을 껐으므로(initState 참고) 여기도 직접 호출.
+        // setState(() => _newsFuture = _fetchAndCacheNews());
+        setState(() => _newsFuture = _loadNews());
+        _armGlassReveal(_newsFuture);
+      },
+    );
+  }
+
+  /// 소식이 하나도 없을 때. 찜 패널로 바로 넘어가는 버튼을 둡니다.
+  Widget _buildEmptyView() {
+    return _PaperNotice(
+      icon: Icons.favorite_border_rounded,
+      tapeTint: PaperColors.tapeRose,
+      title: '아직 소식이 없어요',
+      body: '좋아하는 아티스트나 공연을 찜하면\n새 공연·예매 소식을 여기 모아드려요',
+      actionLabel: '찜하러 가기',
+      onAction: _onPullTab,
     );
   }
 
@@ -772,12 +771,17 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       }
     }
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _newsPageInfo.value = (targetPage, pageCount);
+    });
+
     return SizedBox.expand(
       child: PageView.builder(
         key: ObjectKey(_newsPageController),
         controller: _newsPageController,
         onPageChanged: (page) {
           _newsPageTarget = page;
+          _newsPageInfo.value = (page, pageCount);
           _visibleCardKey = newsCardKey(ordered[page * 4]);
         },
         itemCount: pageCount,
@@ -822,7 +826,10 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 class _NewsFrame extends StatelessWidget {
   final Widget child;
 
-  const _NewsFrame({required this.child});
+  /// 넘김 힌트용 (지금 장, 전체 장 수). null이면(찜 패널 등) 힌트 숨김.
+  final ValueListenable<(int, int)>? pageInfo;
+
+  const _NewsFrame({required this.child, this.pageInfo});
 
   /// 액자 테두리(여백). 왼쪽은 바인더 링을 피하려 조금 더 둡니다. 위·아래는
   /// 기본(22)보다 50% 키워(33) "뚫려 보이는" 창을 세로로 더 작게 만듭니다 —
@@ -867,7 +874,21 @@ class _NewsFrame extends StatelessWidget {
           right: 0,
           bottom: 0,
           height: _insets.bottom,
-          child: const IgnorePointer(child: _HorizontalScrollHint()),
+          child: IgnorePointer(
+            child: pageInfo == null
+                ? const SizedBox.shrink()
+                : ValueListenableBuilder<(int, int)>(
+                    valueListenable: pageInfo!,
+                    builder: (context, info, _) => AnimatedOpacity(
+                      opacity: info.$2 > 1 ? 1 : 0,
+                      duration: const Duration(milliseconds: 200),
+                      child: _HorizontalScrollHint(
+                        page: info.$1,
+                        pageCount: info.$2,
+                      ),
+                    ),
+                  ),
+          ),
         ),
       ],
     );
@@ -876,11 +897,14 @@ class _NewsFrame extends StatelessWidget {
 
 /// 액자 테두리 아래쪽에 그리는 "가로로 더 스크롤할 수 있어요" 화살표 힌트.
 class _HorizontalScrollHint extends StatelessWidget {
-  const _HorizontalScrollHint();
+  final int page;
+  final int pageCount;
+
+  const _HorizontalScrollHint({required this.page, required this.pageCount});
 
   @override
   Widget build(BuildContext context) {
-    final color = Colors.brown.withValues(alpha: 0.5);
+    final color = PaperColors.muted;
     // [백엔드 수정] 아래 여백 높이(_insets.bottom)는 고정인데 아이콘/글자는 화면 배율로
     // 커져서 세로모드에서 위아래가 잘렸음 - 넘칠 때만 여백 높이에 맞춰 축소.
     return Center(
@@ -889,16 +913,25 @@ class _HorizontalScrollHint extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.chevron_left, size: context.rs(15), color: color),
-            Icon(Icons.chevron_right, size: context.rs(15), color: color),
-            SizedBox(width: context.rs(4)),
+            Icon(
+              Icons.chevron_left,
+              size: context.rs(15),
+              color: color.withValues(alpha: page > 0 ? 1 : 0.3),
+            ),
+            SizedBox(width: context.rs(2)),
             Text(
-              '옆으로 넘겨보세요',
+              '${page + 1} / $pageCount',
               style: TextStyle(
                 fontSize: context.sp(10),
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w800,
                 color: color,
               ),
+            ),
+            SizedBox(width: context.rs(2)),
+            Icon(
+              Icons.chevron_right,
+              size: context.rs(15),
+              color: color.withValues(alpha: page < pageCount - 1 ? 1 : 0.3),
             ),
           ],
         ),
@@ -1147,110 +1180,306 @@ class _InnerShadowFrame extends StatelessWidget {
   }
 }
 
+// 결산 보고서 카드와 같은 크림 메모지·갈색 잉크 톤
+const _cardPaper = PaperColors.card;
+const _ink = PaperColors.ink;
+const _muted = PaperColors.muted;
+const _stampRed = PaperColors.stamp;
+
 class _PolaroidCard extends StatelessWidget {
   final NewsModel data;
   final double angle;
 
   const _PolaroidCard({required this.data, required this.angle});
 
+  /// 테이프가 카드 위로 삐져나오는 높이 - 그리드 칸 밖은 잘리므로 칸 안에서
+  /// 카드를 이만큼 내려 둡니다.
+  static const double _tapeOverhang = 7;
+
+  /// 찜한 공연만 장미색, 나머지는 기본 베이지.
+  Color? get _tapeTint => data.isFavoritedConcert ? PaperColors.tapeRose : null;
+
   @override
   Widget build(BuildContext context) {
     return Transform.rotate(
       angle: angle,
-      child: Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFFFAFAFA),
-          borderRadius: BorderRadius.circular(4),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.105),
-              blurRadius: 10,
-              offset: const Offset(4, 8),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            top: _tapeOverhang,
+            child: Container(
+              decoration: BoxDecoration(
+                color: _cardPaper,
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(color: _ink.withValues(alpha: .08)),
+                boxShadow: [
+                  BoxShadow(
+                    color: _ink.withValues(alpha: .16),
+                    blurRadius: 9,
+                    offset: const Offset(3, 6),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
+              child: _content(context),
             ),
-          ],
+          ),
+          // 마스킹테이프(카드 윗변 가운데)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: MaskingTape(tint: _tapeTint, angle: -angle * 2 - 0.04),
+            ),
+          ),
+          // 안 읽은 소식 도장(상세를 열면 사라짐)
+          if (!data.isRead)
+            Positioned(
+              top: _tapeOverhang - 5,
+              right: -4,
+              child: const _NewStamp(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _content(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          // NEW 도장과 겹치지 않게 오른쪽을 비워 둠
+          padding: EdgeInsets.only(right: data.isRead ? 0 : 26),
+          child: data.isFavoritedConcert
+              // 찜한 공연은 아티스트 대신 공연 D-day(며칠 남았는지)
+              ? _DDayLabel(label: data.concertDDayLabel)
+              : Text(
+                  data.artist,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: context.sp(11),
+                    fontWeight: FontWeight.w800,
+                    color: _muted,
+                    letterSpacing: 0.3,
+                  ),
+                ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+        const SizedBox(height: 6),
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: _ink.withValues(alpha: .10)),
+            ),
+            // 포스터가 없거나 로드에 실패하면 그라데이션 플레이스홀더로
+            // 폴백합니다(깨진 이미지 아이콘 대신).
+            child: SizedBox.expand(
+              child: PosterBackground(imageUrl: data.imageUrl),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          data.concert,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: context.sp(13),
+            fontWeight: FontWeight.w900,
+            color: _ink,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          data.description,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: context.sp(11),
+            fontWeight: FontWeight.w600,
+            color: _muted,
+            height: 1.3,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 빈 화면·오류·안내창에 쓰는 테이프 붙인 메모지(아이콘 + 제목 + 본문 + 버튼).
+class _PaperNotice extends StatelessWidget {
+  final IconData icon;
+  final Color? tapeTint;
+  final String title;
+  final String body;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  const _PaperNotice({
+    required this.icon,
+    this.tapeTint,
+    required this.title,
+    required this.body,
+    required this.actionLabel,
+    required this.onAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Transform.rotate(
+        angle: -0.015,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              constraints: const BoxConstraints(maxWidth: 300),
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.fromLTRB(22, 26, 22, 18),
+              decoration: BoxDecoration(
+                color: _cardPaper,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: _ink.withValues(alpha: .08)),
+                boxShadow: [
+                  BoxShadow(
+                    color: _ink.withValues(alpha: .14),
+                    blurRadius: 9,
+                    offset: const Offset(2, 5),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: Text(
-                      // 찜한 공연 카드는 좌상단에 아티스트 이름 대신 공연
-                      // D-day를 보여줍니다(며칠 남았는지 한눈에 보이도록).
-                      data.isFavoritedConcert
-                          ? data.concertDDayLabel
-                          : data.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: context.sp(11),
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black.withValues(alpha: 0.4),
-                        letterSpacing: 0.5,
-                      ),
+                  Icon(icon, size: context.rs(34), color: _muted),
+                  const SizedBox(height: 10),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: context.sp(15),
+                      fontWeight: FontWeight.w900,
+                      color: _ink,
                     ),
                   ),
-                  // 아직 안 읽은 소식 표시(상세를 열면 사라짐)
-                  if (!data.isRead)
-                    Container(
+                  const SizedBox(height: 6),
+                  Text(
+                    body,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: context.sp(12),
+                      fontWeight: FontWeight.w600,
+                      color: _muted,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  PressableScale(
+                    onTap: onAction,
+                    pressScale: 0.95,
+                    child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 1.5,
+                        horizontal: 18,
+                        vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE0455E),
-                        borderRadius: BorderRadius.circular(999),
+                        color: _ink,
+                        borderRadius: BorderRadius.circular(3),
                       ),
                       child: Text(
-                        'NEW',
+                        actionLabel,
                         style: TextStyle(
-                          fontSize: context.sp(8),
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: 0.5,
+                          fontSize: context.sp(13),
+                          fontWeight: FontWeight.w800,
+                          color: _cardPaper,
                         ),
                       ),
                     ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  // 포스터가 없거나 로드에 실패하면 그라데이션 플레이스홀더로
-                  // 폴백합니다(깨진 이미지 아이콘 대신).
-                  child: SizedBox.expand(
-                    child: PosterBackground(imageUrl: data.imageUrl),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                data.concert,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: context.sp(13),
-                  fontWeight: FontWeight.w900,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                data.description,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: context.sp(11),
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey.shade600,
-                  height: 1.3,
-                ),
-              ),
-            ],
+            ),
+            Positioned(
+              top: -7,
+              left: 0,
+              right: 0,
+              child: Center(child: MaskingTape(tint: tapeTint)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 찜한 공연 D-day. 공연 당일·임박(7일 이내)은 빨간 잉크로 강조.
+class _DDayLabel extends StatelessWidget {
+  final String label;
+
+  const _DDayLabel({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final days = label.startsWith('D-')
+        ? int.tryParse(label.substring(2))
+        : null;
+    final urgent = label == 'D-DAY' || (days != null && days <= 7);
+    final color = urgent ? _stampRed : _ink.withValues(alpha: .75);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: .7), width: 1.2),
+          borderRadius: BorderRadius.circular(2),
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          style: TextStyle(
+            fontSize: context.sp(11),
+            fontWeight: FontWeight.w900,
+            color: color,
+            letterSpacing: 0.5,
+            height: 1.2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 카드 오른쪽 위에 찍힌 동그란 빨간 "NEW" 잉크 도장.
+class _NewStamp extends StatelessWidget {
+  const _NewStamp();
+
+  @override
+  Widget build(BuildContext context) {
+    final size = context.rs(30);
+    return Transform.rotate(
+      angle: 0.25,
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: _cardPaper.withValues(alpha: .6),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: _stampRed.withValues(alpha: .85),
+            width: 1.6,
+          ),
+        ),
+        child: Text(
+          'NEW',
+          style: TextStyle(
+            fontSize: context.sp(8.5),
+            fontWeight: FontWeight.w900,
+            color: _stampRed.withValues(alpha: .9),
+            letterSpacing: 0.3,
           ),
         ),
       ),

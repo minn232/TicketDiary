@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'paper_style.dart';
 
 import '../models/summary_report_data.dart';
 import '../services/artist_search_service.dart';
@@ -423,17 +424,8 @@ class _TapedCard extends StatelessWidget {
         left: 0,
         right: 0,
         child: Center(
-          child: Transform.rotate(
-            angle: -0.06,
-            child: Container(
-              width: 48,
-              height: 15,
-              decoration: BoxDecoration(
-                color: tapeColor.withValues(alpha: .38),
-                borderRadius: BorderRadius.circular(1.5),
-              ),
-            ),
-          ),
+          // 원색은 종이 톤과 안 어울려 베이지에 카드 색을 살짝만 섞음
+          child: MaskingTape(tint: tapeColor, width: 48),
         ),
       ),
     ],
