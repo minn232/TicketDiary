@@ -45,6 +45,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
   // 지금 화면에 보이는 데이터와 그 기간. 기간을 바꿔 다시 불러오는 동안에도 이전 값을 그대로 보여줌
   Map<String, dynamic>? _data;
   String _shownPeriod = 'all';
+  // 기간별로 받아둔 값. 보고서는 지금 고른 기간의 값으로만 그림 - 예전엔 새 기간을
+  // 불러오는 동안 다른 기간(캘린더의 전체 기간) 숫자를 보여줬다가 바뀌어 보였음
+  final Map<String, Map<String, dynamic>> _cache = {};
   Object? _error; // 첫 로딩 실패(보여줄 이전 값이 없을 때)만 화면 전체 오류로 표시
   bool _loading = false;
   int _requestId = 0;
@@ -109,7 +112,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
     });
     try {
       final data = await widget.loader(period);
-      if (!mounted || id != _requestId) return;
+      if (!mounted) return;
+      // 늦게 온 이전 응답도 그 기간 값으로는 맞으니 보관만 하고 화면엔 반영 안 함
+      _cache[period] = data;
+      if (id != _requestId) return;
       setState(() {
         _data = data;
         _shownPeriod = period;
@@ -172,17 +178,25 @@ class _SummaryScreenState extends State<SummaryScreen> {
       }
       return const Center(child: CircularProgressIndicator());
     }
-    // 새 값을 불러오는 동안은 이전 내용을 흐리게 두고 위에 얇은 진행 막대만 보여줌
+    final calendarData = _cache['all'] ?? data;
+    final reportData = _cache[_period];
+    // 보고서: 고른 기간 값이 있으면 바로(새로고침은 위 진행 막대로만), 없으면 뼈대
     return Stack(
       children: [
-        AnimatedOpacity(
-          opacity: _loading ? 0.45 : 1,
-          duration: const Duration(milliseconds: 150),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
           child: FutureBuilder<List<NewsModel>>(
+            key: ValueKey(
+              _calendarMode
+                  ? 'calendar'
+                  : reportData == null
+                  ? 'skeleton'
+                  : 'report-$_period',
+            ),
             future: _newsFuture,
             builder: (context, newsSnapshot) => _calendarMode
                 ? SummaryCalendar(
-                    tickets: _list(data['ticket_details']),
+                    tickets: _list(calendarData['ticket_details']),
                     news: newsSnapshot.data ?? const [],
                     selection: _calendarSelection,
                     onNewsTap: (item) {
@@ -201,10 +215,12 @@ class _SummaryScreenState extends State<SummaryScreen> {
                       TabNavCoordinator.instance.requestTab(DiaryTab.diary);
                     },
                   )
+                : reportData == null
+                ? const SummaryReportSkeleton()
                 : SummaryReport(
-                    key: ValueKey(_shownPeriod),
-                    data: data,
-                    period: _shownPeriod,
+                    key: ValueKey(_period),
+                    data: reportData,
+                    period: _period,
                     initialPage: _page,
                     onPageChanged: (i) {
                       if (mounted) setState(() => _page = i);

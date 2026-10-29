@@ -6,8 +6,9 @@ import 'package:flutter/material.dart';
 import '../models/summary_report_data.dart';
 import '../services/artist_search_service.dart';
 
-const _ink = Color(0xFF171B30);
-const _muted = Color(0xFF737B90);
+// 다이어리(크라프트지) 분위기에 맞춘 갈색 잉크 - 남색 SaaS 톤이라 다른 앱처럼 보였음
+const _ink = Color(0xFF3B2A20);
+const _muted = Color(0xFF8A7765);
 const _pink = Color(0xFFEA78B0);
 const _purple = Color(0xFF8060FF);
 
@@ -233,10 +234,14 @@ class _Metrics extends StatelessWidget {
         : minutes < 60
         ? '$minutes분'
         : '${minutes ~/ 60}시간${minutes % 60 == 0 ? '' : ' ${minutes % 60}분'}';
+    final count = _int(data['concert_count']);
+    final spent = _int(data['total_spent']);
     final cells = [
       _Metric(
         label: '관람한 공연',
-        value: '${_number(_int(data['concert_count']))}회',
+        value: '${_number(count)}회',
+        countUpTo: count,
+        format: (v) => '${_number(v)}회',
         icon: Icons.confirmation_number_outlined,
         color: _pink,
       ),
@@ -249,7 +254,9 @@ class _Metrics extends StatelessWidget {
       ),
       _Metric(
         label: '총 지출 금액',
-        value: '${_number(_int(data['total_spent']))}원',
+        value: '${_number(spent)}원',
+        countUpTo: spent,
+        format: (v) => '${_number(v)}원',
         icon: Icons.payments_outlined,
         color: const Color(0xFF7F91EE),
       ),
@@ -288,67 +295,106 @@ class _Metric extends StatelessWidget {
     required this.value,
     required this.icon,
     required this.color,
+    this.countUpTo,
+    this.format,
     this.note,
     this.multiline = false,
   });
   final String label, value;
   final IconData icon;
   final Color color;
+
+  /// 주면 0부터 이 값까지 숫자가 올라가는 연출([format]으로 표시)
+  final int? countUpTo;
+  final String Function(int)? format;
   final String? note;
   final bool multiline;
+
+  Widget _valueText(String text) => Text(
+    text,
+    style: const TextStyle(
+      color: _ink,
+      fontSize: 38,
+      fontWeight: FontWeight.w900,
+      height: 1.1,
+    ),
+  );
+
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) => _TapedCard(
     key: ValueKey('metric-$label'),
-    padding: const EdgeInsets.all(14),
-    decoration: _cardDecoration,
+    tapeColor: color,
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: .14),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(icon, color: color, size: 22),
-        ),
-        const SizedBox(height: 10),
-        Text(label, style: const TextStyle(color: _muted, fontSize: 13)),
-        const SizedBox(height: 5),
-        if (multiline)
-          Flexible(
-            child: Tooltip(
-              message: value,
+        Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: .16),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 19),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
               child: Text(
-                value,
-                maxLines: 2,
+                label,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
-                  color: _ink,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+                  color: _muted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        // 숫자를 카드 아래쪽에 크게 - 작은 숫자 위로 빈 공간만 크던 것
+        if (multiline)
+          Expanded(
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Tooltip(
+                message: value,
+                child: Text(
+                  value,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _ink,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    height: 1.15,
+                  ),
                 ),
               ),
             ),
           )
         else
-          Flexible(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                value,
-                style: const TextStyle(
-                  color: _ink,
-                  fontSize: 23,
-                  fontWeight: FontWeight.w800,
-                ),
+          Expanded(
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.bottomLeft,
+                child: countUpTo == null
+                    ? _valueText(value)
+                    : TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: countUpTo!.toDouble()),
+                        duration: const Duration(milliseconds: 700),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, v, _) =>
+                            _valueText(format!(v.round())),
+                      ),
               ),
             ),
           ),
         if (note != null) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(note!, style: const TextStyle(color: _muted, fontSize: 10)),
         ],
       ],
@@ -356,17 +402,127 @@ class _Metric extends StatelessWidget {
   );
 }
 
+/// 크라프트지 위에 마스킹테이프로 붙인 크림색 메모지 카드.
+class _TapedCard extends StatelessWidget {
+  const _TapedCard({super.key, required this.tapeColor, required this.child});
+  final Color tapeColor;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Stack(
+    clipBehavior: Clip.none,
+    children: [
+      Positioned.fill(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 16, 14, 12),
+          decoration: _cardDecoration,
+          child: child,
+        ),
+      ),
+      Positioned(
+        top: -7,
+        left: 0,
+        right: 0,
+        child: Center(
+          child: Transform.rotate(
+            angle: -0.06,
+            child: Container(
+              width: 48,
+              height: 15,
+              decoration: BoxDecoration(
+                color: tapeColor.withValues(alpha: .38),
+                borderRadius: BorderRadius.circular(1.5),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
 final _cardDecoration = BoxDecoration(
-  color: const Color(0xFFFEFDFE),
-  borderRadius: BorderRadius.circular(20),
+  color: const Color(0xFFFFFBF3),
+  borderRadius: BorderRadius.circular(10),
+  border: Border.all(color: _ink.withValues(alpha: .08)),
   boxShadow: [
     BoxShadow(
-      color: _ink.withValues(alpha: .03),
-      blurRadius: 16,
-      offset: const Offset(0, 4),
+      color: _ink.withValues(alpha: .14),
+      blurRadius: 8,
+      offset: const Offset(0, 3),
     ),
   ],
 );
+
+/// 보고서 데이터를 아직 못 받았을 때 보여주는 같은 배치의 뼈대 - 다른 기간의
+/// 숫자를 잠깐 보여줬다가 바뀌던 것 대신.
+class SummaryReportSkeleton extends StatefulWidget {
+  const SummaryReportSkeleton({super.key});
+  @override
+  State<SummaryReportSkeleton> createState() => _SummaryReportSkeletonState();
+}
+
+class _SummaryReportSkeletonState extends State<SummaryReportSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  Widget _bar(double width, double height) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: _ink.withValues(alpha: .09),
+      borderRadius: BorderRadius.circular(4),
+    ),
+  );
+
+  Widget _card({required bool chart}) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: _cardDecoration,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _bar(chart ? 110 : 70, 12),
+        const Spacer(),
+        _bar(chart ? double.infinity : 90, chart ? 90 : 24),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: Tween<double>(begin: .55, end: 1).animate(_pulse),
+    child: Padding(
+      padding: const EdgeInsets.only(right: 8, bottom: 56),
+      child: Column(
+        children: [
+          for (var row = 0; row < 2; row++) ...[
+            if (row > 0) const SizedBox(height: 10),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _card(chart: false)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _card(chart: false)),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          Expanded(flex: 2, child: _card(chart: true)),
+        ],
+      ),
+    ),
+  );
+}
 
 class _MonthlyChart extends StatefulWidget {
   const _MonthlyChart({

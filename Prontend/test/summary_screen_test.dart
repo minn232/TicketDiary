@@ -75,10 +75,13 @@ void main() {
       expect(find.text('300,000원'), findsNothing);
       await tester.tap(find.text('1년 보고서'));
       await tester.pump();
-      expect(find.text('200,000원'), findsOneWidget);
+      // 전체 기간은 처음(캘린더) 받아둔 값이 있어 다른 기간 숫자 대신 그 값을 바로 그림
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('1,280,000원'), findsOneWidget);
+      expect(find.text('200,000원'), findsNothing);
       pending['all']!.completeError(Exception('network'));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(seconds: 1));
       expect(find.text('1년 보고서'), findsOneWidget);
       expect(find.text('200,000원'), findsOneWidget);
       expect(find.textContaining('이전 값을'), findsOneWidget);
