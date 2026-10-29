@@ -237,58 +237,90 @@ class _Metrics extends StatelessWidget {
         : '${minutes ~/ 60}시간${minutes % 60 == 0 ? '' : ' ${minutes % 60}분'}';
     final count = _int(data['concert_count']);
     final spent = _int(data['total_spent']);
-    final cells = [
-      _Metric(
-        label: '관람한 공연',
-        value: '${_number(count)}회',
-        countUpTo: count,
-        format: (v) => '${_number(v)}회',
-        icon: Icons.confirmation_number_outlined,
-        color: _pink,
-      ),
-      _Metric(
-        label: '총 관람 시간',
-        value: time,
-        icon: Icons.schedule_rounded,
-        color: _purple,
-        note: missing > 0 ? '시간 미등록 $missing건 제외' : null,
-      ),
-      _Metric(
-        label: '총 지출 금액',
-        value: '${_number(spent)}원',
-        countUpTo: spent,
-        format: (v) => '${_number(v)}원',
-        icon: Icons.payments_outlined,
-        color: const Color(0xFF7F91EE),
-      ),
-      _Metric(
-        label: '선호 장르',
-        value: genre,
-        icon: Icons.star_border_rounded,
-        color: const Color(0xFFEEAD45),
-        note: genres.length > 1 ? '공동 최다 관람 장르' : '가장 많이 본 장르',
-        multiline: true,
-      ),
-    ];
-    return Column(
-      children: [
-        for (var row = 0; row < 2; row++) ...[
-          if (row > 0) const SizedBox(height: 10),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: cells[row * 2]),
-                const SizedBox(width: 10),
-                Expanded(child: cells[row * 2 + 1]),
-              ],
+    Widget layout(double valueSize) {
+      final cells = [
+        _Metric(
+          valueSize: valueSize,
+          label: '관람한 공연',
+          value: '${_number(count)}회',
+          countUpTo: count,
+          format: (v) => '${_number(v)}회',
+          icon: Icons.confirmation_number_outlined,
+          color: _pink,
+        ),
+        _Metric(
+          valueSize: valueSize,
+          label: '총 관람 시간',
+          value: time,
+          icon: Icons.schedule_rounded,
+          color: _purple,
+          note: missing > 0 ? '시간 미등록 $missing건 제외' : null,
+        ),
+        _Metric(
+          valueSize: valueSize,
+          label: '총 지출 금액',
+          value: '${_number(spent)}원',
+          countUpTo: spent,
+          format: (v) => '${_number(v)}원',
+          icon: Icons.payments_outlined,
+          color: const Color(0xFF7F91EE),
+        ),
+        _Metric(
+          valueSize: valueSize,
+          label: '선호 장르',
+          value: genre,
+          icon: Icons.star_border_rounded,
+          color: const Color(0xFFEEAD45),
+          note: genres.length > 1 ? '공동 최다 관람 장르' : '가장 많이 본 장르',
+          multiline: true,
+        ),
+      ];
+      return Column(
+        children: [
+          for (var row = 0; row < 2; row++) ...[
+            if (row > 0) const SizedBox(height: 10),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: cells[row * 2]),
+                  const SizedBox(width: 10),
+                  Expanded(child: cells[row * 2 + 1]),
+                ],
+              ),
             ),
-          ),
+          ],
         ],
-      ],
+      );
+    }
+
+    // 숫자 세 칸이 한 크기로 - 각자 FittedBox로 줄던 땐 "1회"는 38 그대로,
+    // "165,000원"만 쪼그라들어 칸마다 제각각이었고 넓은 태블릿에선 너무 컸음.
+    // 가장 긴 값이 칸 폭에 들어가는 크기를 모두에 씀.
+    return LayoutBuilder(
+      builder: (context, c) {
+        final inner = (c.maxWidth - 10) / 2 - 28;
+        final scaler = MediaQuery.textScalerOf(context);
+        var widest = 0.0;
+        for (final v in ['${_number(count)}회', time, '${_number(spent)}원']) {
+          final w = (TextPainter(
+            text: TextSpan(text: v, style: _Metric.valueStyle(_maxValueSize)),
+            textDirection: TextDirection.ltr,
+            textScaler: scaler,
+          )..layout()).width;
+          widest = math.max(widest, w);
+        }
+        final fit = widest <= 0
+            ? _maxValueSize
+            : _maxValueSize * inner / widest;
+        return layout(fit.clamp(16.0, _maxValueSize));
+      },
     );
   }
 }
+
+/// 숫자 칸 글자 최대 크기(폰 기준 - 예전 23보다 크게, 38은 과했음)
+const double _maxValueSize = 30;
 
 class _Metric extends StatelessWidget {
   const _Metric({
@@ -300,6 +332,7 @@ class _Metric extends StatelessWidget {
     this.format,
     this.note,
     this.multiline = false,
+    this.valueSize = _maxValueSize,
   });
   final String label, value;
   final IconData icon;
@@ -311,15 +344,17 @@ class _Metric extends StatelessWidget {
   final String? note;
   final bool multiline;
 
-  Widget _valueText(String text) => Text(
-    text,
-    style: const TextStyle(
-      color: _ink,
-      fontSize: 38,
-      fontWeight: FontWeight.w900,
-      height: 1.1,
-    ),
+  /// [_Metrics]가 칸 폭에 맞춰 정해 주는 숫자 크기(세 칸 공통)
+  final double valueSize;
+
+  static TextStyle valueStyle(double size) => TextStyle(
+    color: _ink,
+    fontSize: size,
+    fontWeight: FontWeight.w900,
+    height: 1.1,
   );
+
+  Widget _valueText(String text) => Text(text, style: valueStyle(valueSize));
 
   @override
   Widget build(BuildContext context) => _TapedCard(
@@ -365,9 +400,10 @@ class _Metric extends StatelessWidget {
                   value,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: _ink,
-                    fontSize: 22,
+                    // 장르는 글자가 길어 숫자보다 작게(예전 22는 세 줄로 넘침)
+                    fontSize: (valueSize * .6).clamp(14.0, 18.0),
                     fontWeight: FontWeight.w900,
                     height: 1.15,
                   ),
