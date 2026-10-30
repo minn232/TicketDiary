@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections import Counter
 from dataclasses import replace
@@ -284,9 +285,25 @@ async def generate_pre_setlist_background(concert_id: UUID, only_if_empty: bool 
 # 구조라 메모리로 추적(재시작하면 초기화돼도 무방). 502(API 일시 실패)는 쿨다운 없이 다음 조회 때 재시도
 _PRE_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(hours=6)
 _pre_setlist_view_checked_at: dict[UUID, datetime] = {}
+# 같은 공연 생성이 도는 중이면 건너뜀 - 쿨다운은 끝나야 기록돼서 생성 중 들어온 조회가 겹쳐 돌았음
+# (check_real_setlist_on_view와 같은 이유)
+_pre_setlist_view_checks_running: set[UUID] = set()
+# 다른 공연끼리도 동시에는 2개까지(_real_setlist_view_check_slots와 같은 이유)
+_pre_setlist_view_check_slots = asyncio.Semaphore(2)
 
 
 async def check_pre_setlist_on_view(concert_id: UUID) -> None:
+    if concert_id in _pre_setlist_view_checks_running:
+        return
+    _pre_setlist_view_checks_running.add(concert_id)
+    try:
+        async with _pre_setlist_view_check_slots:
+            await _check_pre_setlist_on_view(concert_id)
+    finally:
+        _pre_setlist_view_checks_running.discard(concert_id)
+
+
+async def _check_pre_setlist_on_view(concert_id: UUID) -> None:
     checked_at = _pre_setlist_view_checked_at.get(concert_id)
     now = datetime.now(timezone.utc)
     if checked_at is not None and now - checked_at < _PRE_SETLIST_VIEW_CHECK_COOLDOWN:

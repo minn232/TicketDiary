@@ -341,9 +341,27 @@ async def generate_real_setlist_auto(
 # real_setlists.attempted_at으로 추적(성공/실패 둘 다 이 값을 남김 - 실패는 songs=[]인
 # 빈 행으로). 화면을 다시 열거나 새로고침해야 결과가 보임(응답을 기다리게 하지 않음).
 _REAL_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(days=1)
+# 같은 (공연, 날짜) 검색이 도는 중이면 건너뜀 - 쿨다운은 검색이 끝나야 기록돼서, 아티스트 많은 공연은
+# 몇 분 걸리는 검색 사이에 들어온 조회마다 새로 돌아 DB 연결을 전부 잡았었음(단일 프로세스라 메모리로 충분)
+_real_setlist_view_checks_running: set[tuple[UUID, date]] = set()
+# 다른 공연끼리도 동시에는 2개까지 - 검색 중 세션이 연결을 쥐고 있어 풀(15개)을 이 작업이 다 못 쓰게 함.
+# 대기는 세션 열기 전이라 기다리는 동안엔 연결을 안 잡음
+_real_setlist_view_check_slots = asyncio.Semaphore(2)
 
 
 async def check_real_setlist_on_view(concert_id: UUID, performance_date: date) -> None:
+    key = (concert_id, performance_date)
+    if key in _real_setlist_view_checks_running:
+        return
+    _real_setlist_view_checks_running.add(key)
+    try:
+        async with _real_setlist_view_check_slots:
+            await _check_real_setlist_on_view(concert_id, performance_date)
+    finally:
+        _real_setlist_view_checks_running.discard(key)
+
+
+async def _check_real_setlist_on_view(concert_id: UUID, performance_date: date) -> None:
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(

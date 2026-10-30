@@ -143,6 +143,9 @@ class AuthService extends ChangeNotifier {
   /// 재발급 Future를 공유합니다.
   Future<String?>? _refreshFuture;
 
+  /// [백엔드 수정] 게스트 로그인 재시도를 이 시각까지 쉼(_performRefresh 참고).
+  DateTime? _guestRetryBlockedUntil;
+
   String? get accessToken => _accessToken;
   String? get refreshToken => _refreshToken;
   String? get userId => _userId;
@@ -344,10 +347,21 @@ class AuthService extends ChangeNotifier {
       // 요청마다 계속 401("인증이 필요합니다")이 나서 앱을 재시작하기
       // 전까진 회복되지 않았습니다. 여기서 새 게스트 로그인을 한 번 더
       // 시도해, 원래 요청이 자동으로 재시도되며 스스로 복구되게 합니다.
+      // [백엔드 수정] 실패 직후엔 잠깐 쉼 - 서버 장애 중 요청마다 게스트 로그인을 다시 보내
+      // IP당 한도(시간당 20회)를 다 써서 복구 뒤에도 429로 막혔었음.
+      final blockedUntil = _guestRetryBlockedUntil;
+      if (blockedUntil != null && DateTime.now().isBefore(blockedUntil)) {
+        return null;
+      }
       try {
         await _loginAsGuest();
+        _guestRetryBlockedUntil = null;
         return _accessToken;
-      } catch (_) {
+      } catch (e) {
+        final tooMany = e is ApiException && e.statusCode == 429;
+        _guestRetryBlockedUntil = DateTime.now().add(
+          tooMany ? const Duration(minutes: 5) : const Duration(seconds: 30),
+        );
         return null;
       }
     }
@@ -361,10 +375,14 @@ class AuthService extends ChangeNotifier {
       final tokens = AuthTokens.fromJson(json);
       await _saveTokens(tokens);
       return tokens.accessToken;
-    } catch (_) {
+    } catch (e) {
       // refresh token도 만료/폐기된 경우: 로컬 세션을 정리합니다. 다음
       // ensureSession(앱 재시작) 또는 사용자의 재로그인에서 새 세션이 생깁니다.
-      await _clearTokens();
+      // [백엔드 수정] 서버가 무효(401)라고 답할 때만 - 타임아웃/5xx에도 지우면 멀쩡한
+      // 로그인이 풀리고 게스트 재로그인이 몰렸음. 그 외엔 토큰을 두고 다음 요청 때 다시 시도.
+      if (e is ApiException && e.statusCode == 401) {
+        await _clearTokens();
+      }
       return null;
     }
   }

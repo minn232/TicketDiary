@@ -66,6 +66,23 @@ async def test_guest_login_rate_limited_after_20_calls_per_hour():
     assert statuses[20] == 429
 
 
+
+# 서버 오류(5xx)로 끝난 게스트 로그인은 한도 횟수에 안 들어가는지 테스트 - 장애 중 재시도로 한도가
+# 다 차서 복구 뒤에도 429로 막히던 문제
+@pytest.mark.asyncio
+async def test_guest_login_server_errors_do_not_use_rate_limit():
+    failing = AsyncMock(side_effect=RuntimeError("db pool timeout"))
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as ac:
+        with patch("app.api.v1.endpoints.auth.guest_login", new=failing):
+            for i in range(20):
+                res = await ac.post("/api/v1/auth/guest", json={"device_id": f"rate-limit-fail-{i}"})
+                assert res.status_code == 500
+        res = await ac.post("/api/v1/auth/guest", json={"device_id": "rate-limit-fail-ok"})
+
+    assert res.status_code == 200
+
 # 카카오 로그인 테스트
 
 # 카카오 계정 생성 테스트

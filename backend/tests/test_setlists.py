@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -869,6 +870,63 @@ async def test_retry_real_setlist_generation_retries_empty_attempt_row():
 # ---- 조회 시점 실제 셋리스트 확인 (check_real_setlist_on_view) ----
 # 자동 백필(14일 창)을 놓친 공연도, 사용자가 "공연 후" 화면을 열 때마다(티켓 기준 실제
 # 셋리스트 GET) 비어있으면 백그라운드로 한 번 더 채워보기를 시도하는 기능.
+
+# 같은 공연·날짜 검색이 도는 중에 또 조회돼도 검색을 겹쳐 돌리지 않는지(끝나면 다시 가능) 테스트
+@pytest.mark.asyncio
+async def test_check_real_setlist_on_view_skips_while_same_check_running():
+    concert_id = uuid.uuid4()
+    performance_date = date(2026, 3, 22)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_generate(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+
+    generate = AsyncMock(side_effect=slow_generate)
+    with patch("app.services.setlist.generate_real_setlist_auto", new=generate):
+        first = asyncio.create_task(check_real_setlist_on_view(concert_id, performance_date))
+        await asyncio.wait_for(started.wait(), timeout=10)
+        await check_real_setlist_on_view(concert_id, performance_date)
+        assert generate.await_count == 1
+        release.set()
+        await first
+        await check_real_setlist_on_view(concert_id, performance_date)
+
+    assert generate.await_count == 2
+
+
+# 서로 다른 공연이 한꺼번에 조회돼도 검색은 동시에 2개까지만 돌고, 나머지는 기다렸다가 도는지 테스트
+@pytest.mark.asyncio
+async def test_check_real_setlist_on_view_runs_at_most_two_at_once():
+    performance_date = date(2026, 3, 22)
+    release = asyncio.Event()
+    running = 0
+    peak = 0
+
+    async def slow_generate(*_args, **_kwargs):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await release.wait()
+        running -= 1
+
+    generate = AsyncMock(side_effect=slow_generate)
+    with patch("app.services.setlist.generate_real_setlist_auto", new=generate):
+        tasks = [
+            asyncio.create_task(check_real_setlist_on_view(uuid.uuid4(), performance_date)) for _ in range(5)
+        ]
+        for _ in range(200):
+            if generate.await_count >= 2:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
+        assert generate.await_count == 2
+        release.set()
+        await asyncio.gather(*tasks)
+
+    assert generate.await_count == 5
+    assert peak == 2
 
 # 실제 셋리스트가 없는 티켓을 조회하면(GET) 화면엔 빈 채로 응답하고, 백그라운드로 채워져서
 # DB엔 다음 조회 시점엔 반영돼있는지 테스트

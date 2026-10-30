@@ -467,12 +467,16 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       final res =
           await (widget.initialLoad ?? _service.getRealSetlist(ticketId));
       if (!mounted) return;
+      // [백엔드 수정] 서버가 지금 찾는 중(searching)일 때만 재확인 - 이미 찾아본 공연(쿨다운)까지
+      // 매번 10번씩 다시 불러 같은 조회가 몰렸었음.
+      final searching =
+          res.songs.isEmpty &&
+          res.artistStatuses.any((s) => s.state == 'searching');
       setState(() {
         _apply(ticketId, res);
-        // 곡이 있으면 서버가 다시 찾지 않으므로 재확인 없이 확정.
-        _settled = res.songs.isNotEmpty;
+        _settled = !searching;
       });
-      if (res.songs.isEmpty) {
+      if (searching) {
         _pollForUpdate(ticketId);
       }
     } on ApiException catch (_) {

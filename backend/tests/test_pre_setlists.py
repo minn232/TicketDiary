@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -665,6 +666,32 @@ async def test_check_pre_setlist_on_view_retries_after_502():
     generate = AsyncMock(side_effect=HTTPException(status_code=502, detail="일시 실패"))
     with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
         await check_pre_setlist_on_view(concert_id)
+        await check_pre_setlist_on_view(concert_id)
+
+    assert generate.await_count == 2
+
+
+# 같은 공연 생성이 도는 중에 또 조회돼도 겹쳐 돌리지 않음(끝나면 다시 가능)
+@pytest.mark.asyncio
+async def test_check_pre_setlist_on_view_skips_while_same_check_running():
+    from app.services.pre_setlist import check_pre_setlist_on_view
+
+    concert_id = uuid.uuid4()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_generate(*_args, **_kwargs):
+        started.set()
+        await release.wait()
+
+    generate = AsyncMock(side_effect=slow_generate)
+    with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
+        first = asyncio.create_task(check_pre_setlist_on_view(concert_id))
+        await asyncio.wait_for(started.wait(), timeout=10)
+        await check_pre_setlist_on_view(concert_id)
+        assert generate.await_count == 1
+        release.set()
+        await first
         await check_pre_setlist_on_view(concert_id)
 
     assert generate.await_count == 2

@@ -112,7 +112,7 @@ def _sweep_rate_limit_hits(now: float) -> None:
         del _rate_limit_hits[key]
 
 
-def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
+def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> float:
     now = time.monotonic()
     _sweep_rate_limit_hits(now)
     hits = _rate_limit_hits[key]
@@ -125,13 +125,24 @@ def _check_rate_limit(key: str, max_calls: int, period_seconds: float) -> None:
             detail="요청이 너무 많습니다. 잠시 후 다시 시도해주세요.",
         )
     hits.append(now)
+    return now
 
 
 # 게스트 로그인(device_id) 브루트포스 방지: IP당 시간당 20회. 프론트 device_id는 uuid v4라 추측은
-# 어렵지만, 무제한 시도와 게스트 계정 대량 생성은 막아야 함. IP 기준이라 여러 IP로 분산하면 우회됨
-async def rate_limit_guest_login(request: Request) -> None:
+# 어렵지만, 무제한 시도와 게스트 계정 대량 생성은 막아야 함. IP 기준이라 여러 IP로 분산하면 우회됨.
+# 서버 오류(5xx)로 끝난 요청은 횟수에서 뺌 - DB 장애 중 앱 재시도로 한도가 다 차 복구 뒤에도 막혔었음
+async def rate_limit_guest_login(request: Request):
     client_ip = request.client.host if request.client else "unknown"
-    _check_rate_limit(f"guest_login:{client_ip}", max_calls=20, period_seconds=3600)
+    key = f"guest_login:{client_ip}"
+    hit = _check_rate_limit(key, max_calls=20, period_seconds=3600)
+    try:
+        yield
+    except Exception as e:
+        if not isinstance(e, HTTPException) or e.status_code >= 500:
+            hits = _rate_limit_hits.get(key)
+            if hits and hit in hits:
+                hits.remove(hit)
+        raise
 
 
 # 티켓 스캔(Vision OCR, 비용 발생) 남용 방지: 유저당 시간당 200회. 프론트 카메라의 "정렬
