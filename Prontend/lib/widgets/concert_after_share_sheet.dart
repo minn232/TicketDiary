@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/external_share_service.dart';
 import 'concert_after_share_card.dart';
@@ -41,6 +42,7 @@ Future<void> showConcertAfterShareSheet(
   required String infoText,
   required String fileStem,
   DiaryFrameScale? frameScale,
+  Future<String?> Function()? loadBlogDraft,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -59,6 +61,7 @@ Future<void> showConcertAfterShareSheet(
       infoText: infoText,
       fileStem: fileStem,
       frameScale: frameScale,
+      loadBlogDraft: loadBlogDraft,
     ),
   );
 }
@@ -75,6 +78,9 @@ class ConcertAfterShareSheet extends StatefulWidget {
   final String fileStem;
   final DiaryFrameScale? frameScale;
 
+  /// 백엔드 연결 후 자동 작성된 글을 반환합니다. 미연결/빈 글은 복사하지 않습니다.
+  final Future<String?> Function()? loadBlogDraft;
+
   const ConcertAfterShareSheet({
     super.key,
     required this.pageSize,
@@ -85,6 +91,7 @@ class ConcertAfterShareSheet extends StatefulWidget {
     required this.infoText,
     required this.fileStem,
     this.frameScale,
+    this.loadBlogDraft,
   });
 
   @override
@@ -202,6 +209,48 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
           : '사진첩에 저장하지 못했어요.';
     }
     return shots.length > 1 ? '사진첩에 2장 저장했어요.' : '사진첩에 저장했어요.';
+  }
+
+  Future<String> _blog() async {
+    String? draft;
+    try {
+      draft = await widget.loadBlogDraft?.call();
+    } catch (_) {
+      return '블로그 글을 불러오지 못했어요. 다시 시도해 주세요.';
+    }
+    final hasDraft = draft != null && draft.trim().isNotEmpty;
+    if (hasDraft) {
+      try {
+        await Clipboard.setData(ClipboardData(text: draft));
+      } catch (_) {
+        return '글을 복사하지 못했어요. 다시 시도해 주세요.';
+      }
+    }
+    if (!mounted) return '';
+    final message = hasDraft
+        ? '글을 복사했어요. 네이버 블로그 본문에 붙여넣어 주세요.'
+        : '자동 작성 글은 준비 중이에요. 네이버 블로그 글쓰기를 엽니다.';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+    const writeUrl = 'https://blog.naver.com/GoBlogWrite.naver';
+    // 비 HTTP 스킴의 파라미터는 공백이 +로 변환되지 않도록 직접 인코딩합니다.
+    final appUri = Uri.parse(
+      'naversearchapp://inappbrowser?url=${Uri.encodeComponent(writeUrl)}&target=new&version=6',
+    );
+    // 설치 여부 조회 없이 실행 결과로 판단하여, 미설치/플랫폼 오류 모두 웹으로 대체.
+    for (final uri in [appUri, Uri.parse(writeUrl)]) {
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          return message;
+        }
+      } catch (_) {
+        // 네이버 앱 실행 실패 후에는 기본 브라우저로 재시도합니다.
+      }
+    }
+    return hasDraft
+        ? '글은 복사했지만 네이버 블로그를 열지 못했어요. 브라우저에서 열어 주세요.'
+        : '네이버 블로그를 열지 못했어요. 다시 시도해 주세요.';
   }
 
   /// 시스템 공유창 (인스타 DM, 그 밖의 앱).
@@ -597,7 +646,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
-                _busy ? '이미지를 만드는 중이에요…' : _message!,
+                _busy ? '공유를 준비하는 중이에요…' : _message!,
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
@@ -679,6 +728,14 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
                         ])
                       : null,
                 ),
+              _ShareTarget(
+                label: '블로그 공유',
+                icon: const _TargetIcon(
+                  color: Color(0xFF03C75A),
+                  child: Icon(Icons.edit_note_rounded, color: Colors.white),
+                ),
+                onTap: !_busy ? () => _run(_blog) : null,
+              ),
               _ShareTarget(
                 key: _moreKey,
                 label: '더보기',

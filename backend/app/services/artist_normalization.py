@@ -21,10 +21,12 @@ from app.services.artist_matching import compact, contains_hangul, normalize_art
 from app.services.musicbrainz import (
     ArtistCandidate,
     fetch_member_of_band_relations,
+    fetch_profile_page_urls,
     fetch_spotify_artist_url,
     fetch_wikidata_qid,
     search_artist,
 )
+from app.services.page_image import fetch_page_image
 from app.services.spotify import fetch_oembed_thumbnail
 from app.services.wikidata import fetch_artist_image_url, fetch_korean_label
 
@@ -52,12 +54,15 @@ def _normalize_alias_text(text: str) -> str:
 
 # 로컬 alias 테이블에서 이미 확인된 canonical을 찾는다 - 있으면 API 호출 없이 즉시 재사용.
 # canonical_name 자체와도 비교(정확히 canonical 표기 그대로 다시 들어온 경우, 별도 alias row 없이도 바로 인식)
+# 같은 별칭/이름이 여러 canonical에 걸려 있으면(관리자 입력으로 mbid 없는 중복이 생긴 경우 등)
+# mbid 있는 쪽을 우선 - 순서 없이 limit 1이라 어떤 때는 중복 쪽이 잡혔음
 async def find_canonical_by_alias(db: AsyncSession, name: str) -> CanonicalArtist | None:
     normalized = _normalize_alias_text(name)
     result = await db.execute(
         select(CanonicalArtist)
         .join(ArtistAlias, ArtistAlias.canonical_artist_id == CanonicalArtist.id)
         .where(func.lower(ArtistAlias.alias_text) == normalized)
+        .order_by(CanonicalArtist.mbid.is_(None))
         .limit(1)
     )
     found = result.scalar_one_or_none()
@@ -65,7 +70,10 @@ async def find_canonical_by_alias(db: AsyncSession, name: str) -> CanonicalArtis
         return found
 
     result = await db.execute(
-        select(CanonicalArtist).where(func.lower(CanonicalArtist.canonical_name) == normalized).limit(1)
+        select(CanonicalArtist)
+        .where(func.lower(CanonicalArtist.canonical_name) == normalized)
+        .order_by(CanonicalArtist.mbid.is_(None))
+        .limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -397,6 +405,10 @@ async def confirm_artist_name_change(
 
     canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
     if canonical is None:
+        # 대표 이름엔 없어도 별칭(예: ずっと真夜中でいいのに。의 ZUTOMAYO)이면 그 아티스트로 - 이걸 안 봐서
+        # 고칠 때마다 mbid 없는 같은 이름 canonical이 새로 생겼음
+        canonical = await find_canonical_by_alias(db, confirmed_name)
+    if canonical is None:
         canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
         db.add(canonical)
         await db.flush()
@@ -608,6 +620,9 @@ async def add_artist_name(db: AsyncSession, concert_id, name: str) -> tuple[Conc
         raise HTTPException(status_code=400, detail="이미 등록된 아티스트입니다.")
 
     canonical = next((c for c in existing_canonicals if c.canonical_name == resolved_name), None)
+    if canonical is None:
+        # 별칭으로 등록된 아티스트면 새로 만들지 않음(confirm_artist_name_change와 같은 이유)
+        canonical = await find_canonical_by_alias(db, name)
     if canonical is None:
         canonical = CanonicalArtist(mbid=None, canonical_name=resolved_name)
         db.add(canonical)
@@ -1043,9 +1058,9 @@ async def register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalA
         canonical.display_name = label
 
 
-# canonical의 mbid로 아티스트 사진을 찾아 저장한다. MusicBrainz가 연결해둔 Spotify 링크
-# 우선(앨범아트 수준), 없으면 Wikidata 대표 이미지(P18)로 대체 - 둘 다 mbid 앵커라 이름
-# 검색(Deezer 등, 오매칭 실측 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함.
+# canonical의 mbid로 아티스트 사진을 찾아 저장한다. Spotify 링크 → Wikidata 대표 이미지(P18) →
+# 벅스/YouTube 페이지 대표 이미지 순 - 전부 mbid에 걸린 링크라 이름 검색(Deezer 등, 오매칭 실측
+# 확인됨)과 달리 동명이인 위험 없음. 이미 있으면 재조회 안 함
 async def register_artist_image(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid or canonical.profile_image_url:
         return
@@ -1059,6 +1074,11 @@ async def register_artist_image(db: AsyncSession, canonical: CanonicalArtist, cl
             qid = await fetch_wikidata_qid(canonical.mbid, client)
             if qid:
                 image_url = await fetch_artist_image_url(qid, client)
+        if image_url is None:
+            for page_url in await fetch_profile_page_urls(canonical.mbid, client):
+                image_url = await fetch_page_image(page_url, client)
+                if image_url:
+                    break
     except Exception as e:
         logger.warning(f"아티스트 사진 보강 실패, 건너뜀 (mbid={canonical.mbid}): {e}")
         return

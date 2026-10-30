@@ -16,6 +16,7 @@ import 'artist_anchor_sheet.dart';
 import 'artist_identity_sheet.dart';
 import 'underlined_text.dart';
 import 'frozen_fit_scroll_view.dart';
+import 'section_scroll_view.dart';
 import 'fullscreen_poster.dart';
 import 'poster_background.dart';
 import 'pressable_scale.dart';
@@ -614,7 +615,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
     // 요청: 한 화면에 2×2로 모두 표시(가로 슬라이드/2배 폭 제거).
     //   왼위 포스터 · 왼아래 공연정보 · 오른위 예상 타임테이블 · 오른아래 셋리스트.
     // 제호(공연명 + 제 N 호)는 위에 그대로 두고, 그 아래를 2단×2행으로 나눕니다.
-    // 세로가 넘칠 때만 FittedBox(scaleDown)로 지면을 줄여 한 화면에 담습니다.
+    // 목록 길이와 무관하게 각 칸의 크기를 유지하고 칸 내부만 스크롤합니다.
     final gap = context.rs(14);
     final page = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -627,7 +628,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
           dday: _dDayLabel(ticketInfo?.date),
         ),
         SizedBox(height: context.rs(14)),
-        IntrinsicHeight(
+        Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -637,20 +638,37 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _SpreadPoster(
-                      // 요청5: 공연장은 캡션에 넣지 않고 '공연 정보'에서만.
-                      imageUrl: ticketInfo?.posterImageUrl,
-                      caption: '공연 포스터',
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return FittedBox(
+                            fit: BoxFit.contain,
+                            alignment: Alignment.topCenter,
+                            child: SizedBox(
+                              width: constraints.maxWidth,
+                              child: _SpreadPoster(
+                                imageUrl: ticketInfo?.posterImageUrl,
+                                caption: '공연 포스터',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                     SizedBox(height: context.rs(16)),
-                    _ArticleSection(
-                      title: '공연 정보',
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          for (final field in fields)
-                            _NewsInfoRow(label: field.key, value: field.value),
-                        ],
+                    Expanded(
+                      child: _ArticleSection(
+                        title: '공연 정보',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (final field in fields)
+                              _NewsInfoRow(
+                                label: field.key,
+                                value: field.value,
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -665,32 +683,40 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _ArticleSection(
-                      title: '예상 타임테이블',
-                      child: _buildTimetableBody(hasConcertId),
+                    Expanded(
+                      flex: 2,
+                      child: _ArticleSection(
+                        title: '예상 타임테이블',
+                        child: _buildTimetableBody(hasConcertId),
+                      ),
                     ),
                     SizedBox(height: context.rs(16)),
-                    _ArticleSection(
-                      title: '예상 셋 리스트',
-                      // [백엔드 수정] 유저 수정 진입점(연필) - ticketId 있을 때만.
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (widget.ticketInfo?.ticketId != null &&
-                              !widget.readOnly) ...[
-                            IconButton(
-                              onPressed: () => _openPreSetlistEditor(context),
-                              icon: const Icon(Icons.edit_outlined, size: 16),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                              visualDensity: VisualDensity.compact,
+                    Expanded(
+                      flex: 3,
+                      child: _ArticleSection(
+                        title: '예상 셋 리스트',
+                        // [백엔드 수정] 유저 수정 진입점(연필) - ticketId 있을 때만.
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.ticketInfo?.ticketId != null &&
+                                !widget.readOnly) ...[
+                              IconButton(
+                                onPressed: () => _openPreSetlistEditor(context),
+                                icon: const Icon(Icons.edit_outlined, size: 16),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              SizedBox(width: context.rs(6)),
+                            ],
+                            SetlistServiceIcon(
+                              selection: _musicServiceSelection,
                             ),
-                            SizedBox(width: context.rs(6)),
                           ],
-                          SetlistServiceIcon(selection: _musicServiceSelection),
-                        ],
+                        ),
+                        child: _buildSetlistBody(hasConcertId),
                       ),
-                      child: _buildSetlistBody(hasConcertId),
                     ),
                   ],
                 ),
@@ -701,8 +727,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       ],
     );
 
-    // [백엔드 수정] FittedBox → FrozenFitScrollView(아코디언 펼치면 축소 대신 스크롤).
-    return FrozenFitScrollView(child: page);
+    return page;
   }
 }
 
@@ -934,7 +959,12 @@ class _ArticleSection extends StatelessWidget {
           ],
         ),
         SizedBox(height: context.rs(9)),
-        child,
+        Expanded(
+          child: SectionScrollView(
+            key: ValueKey('before-section-$title'),
+            child: child,
+          ),
+        ),
       ],
     );
   }
@@ -965,10 +995,20 @@ class _NewsInfoRow extends StatelessWidget {
               color: _ink.withValues(alpha: 0.5),
             ),
           ),
-          Text(
-            _keepWords(value),
-            style: _serif(context, size: 13.5, weight: FontWeight.w600),
-          ),
+          if (label == '아티스트' || label.toLowerCase() == 'artist')
+            LimitedSectionScrollView(
+              maxHeight: context.rs(90),
+              key: const ValueKey('before-artists'),
+              child: Text(
+                _keepWords(value),
+                style: _serif(context, size: 13.5, weight: FontWeight.w600),
+              ),
+            )
+          else
+            Text(
+              _keepWords(value),
+              style: _serif(context, size: 13.5, weight: FontWeight.w600),
+            ),
         ],
       ),
     );

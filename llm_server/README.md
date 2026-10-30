@@ -5,8 +5,13 @@
 **2026-08-06 업데이트: `analyze_crawl_screenshot`/`extract_artists_from_poster`는
 LLM팀 실제 코드(`extract_poster.py`)를 파일명 그대로 옮겨서 이미 연결해뒀습니다.** 둘 다
 poster_info 스키마(json_schema 강제 출력)를 쓰는 같은 함수(`extract_poster_info`)를
-공유합니다. 남은 건 아래 "실행 방법"의 `VLLM_BASE_URL` 설정과 `generate_diary_text(item)`
-(한줄평 기반 공연 일기 생성, 이번 주 범위 아님이라 아직 `NotImplementedError` 상태) 뿐입니다.
+공유합니다. 남은 건 아래 "실행 방법"의 `VLLM_BASE_URL` 설정 뿐입니다.
+
+**2026-10-28 업데이트: 공연 일기 생성(`/diary-generate`, `generate_diary_text`)은 블로그 초안
+(`POST /blog-draft`, `blog_draft.py`)으로 대체됐습니다.** 백엔드가 일기 요청을 더 이상 보내지 않아
+`/diary-generate` 라우트는 주석 처리해뒀습니다. `/blog-draft`는 다른 엔드포인트와 달리 202 + 콜백이
+아니라 생성이 끝날 때까지 기다렸다가 응답 바디(`title`/`body`/`text`)로 바로 돌려주고, 백엔드 밤
+배치가 한 건씩(동시 3건, 타임아웃 180초) 호출합니다.
 
 - `extract_poster.py`/`schema.py`는 LLM팀 원본 그대로이니(파일명도 동일) 로직을 고칠 일이
   있으면 원본 파일을 갱신하고 다시 옮기는 방식으로 동기화해주세요 (직접 이 사본만 고치면

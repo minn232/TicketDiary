@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     LLM_CRAWL_URL: str = ""
     LLM_ARTIST_URL: str = ""
     LLM_DIARY_URL: str = ""
+    # LLM팀 블로그 초안 엔드포인트(POST /blog-draft, 콜백 없이 응답으로 바로 돌려줌) - 미설정이면 배치가 건너뜀
+    LLM_BLOG_URL: str = ""
     # LLM팀 GPU pod을 매일 켜고 끄기 위한 RunPod REST API 인증 정보 (비용 절감용, 미설정 시 트리거 안 함)
     RUNPOD_API_KEY: str = ""
     RUNPOD_POD_ID: str = ""

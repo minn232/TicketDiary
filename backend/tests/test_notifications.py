@@ -828,3 +828,114 @@ async def test_list_notifications_respects_limit():
 
     assert res.status_code == 200
     assert len(res.json()) == 1
+
+
+# 알림함 개선 - 목록에 공연 정보, 모두 읽음, 안 읽은 수, 본문 문구, 오래된 알림 정리
+
+# 유저의 알림을 전부 발송된 상태로 만듦(목록/안 읽은 수는 발송된 것만 셈)
+async def _mark_all_sent(user_id: uuid.UUID) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Notification).where(Notification.user_id == user_id).values(is_sent=True))
+        await db.commit()
+
+
+# 티켓 알림은 concert_id가 저장돼 있지 않아도 목록에선 티켓의 공연 id/포스터가 붙음
+@pytest.mark.asyncio
+async def test_list_notifications_includes_concert_of_ticket():
+    concert_id = await _create_concert("PF_NOTIF_CONCERT_001", _make_future_xml("PF_NOTIF_CONCERT_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    await _mark_all_sent(uuid.UUID(await _get_user_id(token)))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/notifications", headers={"Authorization": f"Bearer {token}"})
+
+    items = res.json()
+    assert items and all(n["concert_id"] == concert_id for n in items)
+    assert all("poster_url" in n for n in items)
+
+
+@pytest.mark.asyncio
+async def test_unread_count_and_read_all():
+    concert_id = await _create_concert("PF_NOTIF_READALL_001", _make_future_xml("PF_NOTIF_READALL_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 아직 발송 전인 알림은 세지 않음
+        assert (await ac.get("/api/v1/notifications/unread-count", headers=headers)).json() == {"count": 0}
+        await _mark_all_sent(uuid.UUID(await _get_user_id(token)))
+        count = (await ac.get("/api/v1/notifications/unread-count", headers=headers)).json()["count"]
+        assert count >= 2
+
+        res = await ac.patch("/api/v1/notifications/read-all", headers=headers)
+        assert res.status_code == 200
+        assert res.json() == {"updated": count}
+        assert (await ac.get("/api/v1/notifications/unread-count", headers=headers)).json() == {"count": 0}
+        assert all(n["is_read"] for n in (await ac.get("/api/v1/notifications", headers=headers)).json())
+
+
+# 전날/당일 알림 본문에 시각·짧은 공연장명이 들어감
+@pytest.mark.asyncio
+async def test_reminder_body_includes_venue():
+    concert_id = await _create_concert("PF_NOTIF_BODY_001", _make_future_xml("PF_NOTIF_BODY_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+
+    bodies = {n.type.value: n.body for n in await _get_user_notifications(uuid.UUID(await _get_user_id(token)))}
+    assert bodies["day_before"] == "내일 테스트공연장에서 공연이 있어요."
+    assert bodies["concert_day"] == "오늘 테스트공연장에서 공연이 있어요."
+
+
+def test_notification_body_helpers():
+    from types import SimpleNamespace
+
+    from app.services.notification import concert_reminder_body, new_concert_body, ticketing_day_body
+
+    assert concert_reminder_body("내일", "19:00", "올림픽공원 (올림픽홀)") == "내일 19:00 올림픽공원에서 공연이 있어요."
+    assert concert_reminder_body("오늘", None, None) == "오늘 공연이 있어요."
+
+    # 20:00 KST 오픈, 그날 단계명이 있으면 단계명과 조사(받침 없음 → 가)
+    concert = SimpleNamespace(
+        ticketing_date=datetime(2026, 11, 24, 11, 0, tzinfo=timezone.utc),
+        ticketing_phases=[{"date": "2026-11-24", "phase": "팬클럽 선예매"}, {"date": "2026-11-26", "phase": "일반예매"}],
+    )
+    assert ticketing_day_body(concert) == "오늘 20:00 팬클럽 선예매가 열려요! 미리 준비하세요."
+    # 시각을 모르는 날(UTC 자정 = KST 09:00 저장)은 시각을 빼고, 단계가 없으면 "티켓팅"(받침 있음 → 이)
+    concert = SimpleNamespace(ticketing_date=datetime(2026, 11, 10, tzinfo=timezone.utc), ticketing_phases=None)
+    assert ticketing_day_body(concert) == "오늘 티켓팅이 열려요! 미리 준비하세요."
+
+    concert = SimpleNamespace(start_date=datetime(2026, 12, 31, tzinfo=timezone.utc), venue="잠실학생체육관 (본관)")
+    assert new_concert_body("NELL", concert) == "NELL의 새 공연이 등록됐어요 · 12.31 잠실학생체육관"
+
+
+# 발송된 지 30일 넘고 공연도 끝난 지 30일 넘은 알림만 지움
+@pytest.mark.asyncio
+async def test_cleanup_old_notifications():
+    from app.models.concert import Concert
+    from app.services.notification import cleanup_old_notifications
+
+    concert_id = await _create_concert("PF_NOTIF_CLEAN_001", _make_future_xml("PF_NOTIF_CLEAN_001"))
+    token = await _get_token()
+    await _create_ticket(concert_id, token)
+    user_id = uuid.UUID(await _get_user_id(token))
+    await _mark_all_sent(user_id)
+    await _make_due(user_id, timedelta(days=40))
+
+    async with AsyncSessionLocal() as db:
+        # 공연이 아직 안 끝났으면(2030년) 오래된 알림이어도 남김
+        await cleanup_old_notifications(db)
+    assert await _get_user_notifications(user_id)
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(end_date=datetime.now(timezone.utc) - timedelta(days=31))
+        )
+        await db.commit()
+        await cleanup_old_notifications(db)
+    async with AsyncSessionLocal() as db:
+        left = (await db.execute(select(Notification).where(Notification.user_id == user_id))).scalars().all()
+    assert left == []

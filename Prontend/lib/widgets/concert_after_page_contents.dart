@@ -26,6 +26,7 @@ import '../services/ticket_service.dart';
 import '../services/upload_service.dart';
 import 'paper_style.dart';
 import 'responsive_text.dart';
+import 'section_scroll_view.dart';
 import 'concert_after_palette.dart';
 import 'concert_after_editable_section.dart';
 import 'concert_after_share_sheet.dart';
@@ -650,23 +651,21 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       if (songs.isEmpty) {
         return _buildEmptyState(onFixIdentity: onFix, artist: fallbackArtist);
       }
-      return SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ..._buildRealSongRows(
-              context,
-              songs,
-              widget.ink,
-              selection: widget.selection,
-              fallbackArtist: fallbackArtist,
-            ),
-            if (onFix != null) ...[
-              const SizedBox(height: 4),
-              _RealFixIdentityLink(ink: widget.ink, onTap: onFix),
-            ],
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ..._buildRealSongRows(
+            context,
+            songs,
+            widget.ink,
+            selection: widget.selection,
+            fallbackArtist: fallbackArtist,
+          ),
+          if (onFix != null) ...[
+            const SizedBox(height: 4),
+            _RealFixIdentityLink(ink: widget.ink, onTap: onFix),
           ],
-        ),
+        ],
       );
     }
 
@@ -680,15 +679,13 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
         MapEntry<String?, List<SongEntry>>(null, untaggedSongs),
     ];
 
-    return SingleChildScrollView(
-      child: _RealSetlistGroupedByArtist(
-        groups: groupList,
-        ink: widget.ink,
-        selection: widget.selection,
-        fixIdentityFor: _fixIdentityFor,
-        refilling: _refilling,
-        statusFor: _statusFor,
-      ),
+    return _RealSetlistGroupedByArtist(
+      groups: groupList,
+      ink: widget.ink,
+      selection: widget.selection,
+      fixIdentityFor: _fixIdentityFor,
+      refilling: _refilling,
+      statusFor: _statusFor,
     );
   }
 }
@@ -2714,7 +2711,17 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     children: [
       Text(field.key, style: const TextStyle(fontSize: 11, color: _kraftInk)),
       const SizedBox(height: 3),
-      Text(field.value, style: const TextStyle(fontSize: 13, height: 1.5)),
+      if (field.key == '아티스트')
+        LimitedSectionScrollView(
+          maxHeight: context.rs(90),
+          key: const ValueKey('after-artists'),
+          child: Text(
+            field.value,
+            style: const TextStyle(fontSize: 13, height: 1.5),
+          ),
+        )
+      else
+        Text(field.value, style: const TextStyle(fontSize: 13, height: 1.5)),
     ],
   );
 
@@ -2819,12 +2826,10 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         child: _editableBackSection(
           1,
           '타임테이블',
-          SingleChildScrollView(
-            child: _RealTimetableNote(
-              concertId: widget.concertId,
-              ink: _kraftInk,
-              initialLoad: timetableFuture,
-            ),
+          _RealTimetableNote(
+            concertId: widget.concertId,
+            ink: _kraftInk,
+            initialLoad: timetableFuture,
           ),
           editable: false,
         ),
