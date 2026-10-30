@@ -8,10 +8,11 @@ analyze_crawl_screenshot은 extract_poster.py, extract_artists_from_poster는 �
 extract_artist.py 쪽 결과에만 event_type(SOLO/FESTIVAL/UNKNOWN)이 추가로 들어있음
 """
 
+from blog_draft import generate_blog_draft
 from config import settings
 from extract_artist import extract_artist_info
 from extract_poster import extract_poster_info
-from schemas import ArtistExtractItem, CrawlAnalyzeItem, DiaryGenerateItem
+from schemas import ArtistExtractItem, BlogDraftRequest, CrawlAnalyzeItem, DiaryGenerateItem
 
 
 def analyze_crawl_screenshot(item: CrawlAnalyzeItem) -> dict:
@@ -44,3 +45,19 @@ def generate_diary_text(item: DiaryGenerateItem) -> str:
     바탕으로 공연 일기 텍스트를 생성한다.
     """
     raise NotImplementedError("TODO: LLM팀 - 공연 일기 생성 로직 구현")
+
+
+def generate_blog_post_draft(item: BlogDraftRequest) -> dict:
+    """공연 정보와 사용자 감상 글(item.emotion)로 복사-붙여넣기용 블로그 글 초안을 만든다.
+    공연 정보는 소개 문장("11월 20일에 ○○에 다녀왔어요" 등)이 되고 감상 문장은 해당 소개 문장 아래에
+    들어감. 반환: {"title", "body", "text"}"""
+    return generate_blog_draft(
+        item.emotion,
+        base_url=settings.VLLM_BASE_URL,
+        api_key=settings.VLLM_API_KEY,
+        concert_name=item.concert_name,
+        artist_name=item.artist_name,
+        venue=item.venue,
+        concert_date=item.concert_date,
+        setlist=item.setlist,
+    )

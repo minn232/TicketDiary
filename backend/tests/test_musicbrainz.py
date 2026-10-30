@@ -5,6 +5,7 @@ import pytest
 
 from app.services.musicbrainz import (
     fetch_member_of_band_relations,
+    fetch_profile_page_urls,
     fetch_spotify_artist_url,
     fetch_wikidata_qid,
     search_artist,
@@ -222,3 +223,27 @@ async def test_fetch_spotify_artist_url_none_when_no_spotify_relation():
         url = await fetch_spotify_artist_url("band-mbid", client=client)
 
     assert url is None
+
+
+# fetch_profile_page_urls
+
+
+@pytest.mark.asyncio
+async def test_fetch_profile_page_urls_keeps_only_bugs_and_youtube_in_order():
+    client = MagicMock()
+    client.get = AsyncMock(
+        return_value=_url_rels_resp(
+            [
+                {"type": "social network", "url": {"resource": "https://www.instagram.com/oysters.999/"}},
+                {"type": "purchase for download", "url": {"resource": "https://music.bugs.co.kr/artist/20216907"}},
+                {"type": "streaming", "url": {"resource": "https://music.bugs.co.kr/artist/20216907"}},
+                {"type": "youtube", "url": {"resource": "https://www.youtube.com/@bvlabel"}},
+            ]
+        )
+    )
+
+    with patch("app.services.musicbrainz._MIN_REQUEST_INTERVAL", 0):
+        urls = await fetch_profile_page_urls("band-mbid", client=client)
+
+    # 같은 벅스 링크가 관계 두 개로 걸려 있어도 한 번만
+    assert urls == ["https://music.bugs.co.kr/artist/20216907", "https://www.youtube.com/@bvlabel"]

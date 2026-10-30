@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import httpx
 
 from app.core.config import settings
+from app.services.page_image import is_supported_page
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,22 @@ async def fetch_spotify_artist_url(mbid: str, client: httpx.AsyncClient | None =
             if "open.spotify.com/artist/" in resource:
                 return resource
         return None
+
+    if client is not None:
+        return await _fetch(client)
+    async with httpx.AsyncClient(timeout=10.0) as c:
+        return await _fetch(c)
+
+
+# mbid에 걸린 링크 중 대표 이미지를 뽑을 수 있는 페이지(벅스 아티스트/YouTube 채널)만 골라
+# 링크 순서대로 반환 - Spotify 링크가 없을 때의 사진 대체 경로(register_artist_image 참고)
+async def fetch_profile_page_urls(mbid: str, client: httpx.AsyncClient | None = None) -> list[str]:
+    async def _fetch(c: httpx.AsyncClient) -> list[str]:
+        data = await _get_with_retry(
+            c, f"/artist/{mbid}", {"inc": "url-rels", "fmt": "json"}, f"profile pages mbid={mbid}"
+        )
+        urls = [(rel.get("url") or {}).get("resource", "") for rel in data.get("relations", [])]
+        return list(dict.fromkeys(u for u in urls if is_supported_page(u)))
 
     if client is not None:
         return await _fetch(client)

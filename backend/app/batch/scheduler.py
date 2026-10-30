@@ -5,7 +5,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.services.notification import process_pending_notifications
+from app.services.notification import cleanup_old_notifications, process_pending_notifications
 from app.services.refresh_token import cleanup_refresh_tokens
 from app.services.connection import cleanup_nearby_records
 from app.services.kopis import sync_daily_concerts
@@ -17,7 +17,9 @@ from app.services.crawler import (
     send_posters_for_artist_extraction,
     send_screenshots_to_llm,
 )
-from app.services.diary import send_diary_requests_to_llm
+from app.services.blog_draft import send_blog_drafts_to_llm
+# 일기 생성은 블로그 초안으로 대체돼 전송을 꺼둠(LLM팀 쪽 미구현, 앱에서도 안 씀)
+# from app.services.diary import send_diary_requests_to_llm
 from app.services.preview_tracks import warm_preview_catalogs
 from app.services.setlist import retry_real_setlist_generation
 from app.services.social import cleanup_ended_concert_follows
@@ -55,7 +57,7 @@ async def _run_daily_kopis_sync() -> None:
         logger.exception("KOPIS 일별 동기화 오류")
 
 
-# LLM 배치 한 번의 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/일기 전송을 한 job으로
+# LLM 배치 한 번의 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/블로그 전송을 한 job으로
 # 이어서 처리. 고정 시각 체인(pod_start 후 20~30분 뒤 전송)은 콜드스타트가 길어지면 어긋나서 묶음.
 # pod이 못 뜨거나 llm_server가 준비 안 되면 이번 시도는 포기하고 다음날 재시도(전송 대상은 DB 조건으로
 # 다시 잡힘). GPU가 잡혔는데 llm_server가 안 뜬 경우엔 켜진 채 과금되지 않게 바로 정지한다
@@ -85,7 +87,7 @@ async def _run_llm_attempt() -> None:
             return
         ready = time.monotonic()
         # 단계별 전송 건수 - 실패한 단계는 0으로 남고 원인은 각 전송 함수의 에러 로그에 있음
-        sent = {"크롤": 0, "아티스트": 0, "일기": 0}
+        sent = {"크롤": 0, "아티스트": 0, "블로그": 0}
         try:
             sent["크롤"] = await send_screenshots_to_llm()
         except Exception:
@@ -94,16 +96,22 @@ async def _run_llm_attempt() -> None:
             sent["아티스트"] = await send_posters_for_artist_extraction()
         except Exception:
             logger.exception("[LLM] 포스터 아티스트 추출 요청 전송 오류")
+        # try:
+        #     sent["일기"] = await send_diary_requests_to_llm()
+        # except Exception:
+        #     logger.exception("[LLM] 일기 생성 요청 전송 오류")
         try:
-            sent["일기"] = await send_diary_requests_to_llm()
+            # 콜백 없이 응답으로 받는 동기 호출이라 다 끝날 때까지 기다림 - 그 전에 전송 완료를 찍으면
+            # 생성 도중(호출당 수십 초) 유휴로 판단돼 pod이 꺼질 수 있음
+            sent["블로그"] = await send_blog_drafts_to_llm()
         except Exception:
-            logger.exception("[LLM] 일기 생성 요청 전송 오류")
+            logger.exception("[LLM] 블로그 초안 생성 오류")
         finally:
-            # 예정된 전송 3개 중 마지막 - 성공/실패 무관하게 "이번 전송은 이걸로 끝"을 표시해야
+            # 예정된 전송 중 마지막 - 성공/실패 무관하게 "이번 전송은 이걸로 끝"을 표시해야
             # 정확한 건수 매칭(llm_batch_state.py)이 조기 정지를 판단할 수 있음
             await mark_all_sent_for_tonight()
         logger.info(
-            f"[LLM] 배치 시도 전송 완료 - 크롤 {sent['크롤']}건, 아티스트 {sent['아티스트']}건, 일기 {sent['일기']}건 "
+            f"[LLM] 배치 시도 전송 완료 - 크롤 {sent['크롤']}건, 아티스트 {sent['아티스트']}건, 블로그 {sent['블로그']}건 "
             f"(pod 기동 {launched - started:.0f}초, 서버 준비 {ready - launched:.0f}초, 전송 {time.monotonic() - ready:.0f}초)"
         )
     except Exception:
@@ -168,6 +176,15 @@ async def _run_nearby_cleanup() -> None:
         logger.info(f"오래된 맞대기 기록 정리: {removed}")
     except Exception:
         logger.exception("맞대기 기록 정리 오류")
+
+
+async def _run_notification_cleanup() -> None:
+    try:
+        async with AsyncSessionLocal() as db:
+            removed = await cleanup_old_notifications(db)
+        logger.info(f"오래된 알림 정리: {removed}건")
+    except Exception:
+        logger.exception("오래된 알림 정리 오류")
 
 
 async def _run_refresh_token_cleanup() -> None:
@@ -253,6 +270,10 @@ def start_scheduler() -> None:
     scheduler.add_job(
         _run_refresh_token_cleanup, "cron", hour=20, minute=45, id="refresh_token_cleanup", max_instances=1
     )
+    # 공연 끝나고 30일 지난 알림 정리 (KST 05:50)
+    scheduler.add_job(
+        _run_notification_cleanup, "cron", hour=20, minute=50, id="notification_cleanup", max_instances=1
+    )
     # 크롤 배치 2종(서버에서 9/12부터 정지 중 - LLM 배치 반영 끝난 뒤에만 주석 해제할 것):
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
     # 라인업(출연진) 변경 여부 재확인을 이어서 실행 (KST 00:15)
@@ -261,7 +282,7 @@ def start_scheduler() -> None:
     scheduler.add_job(_run_lastfm_sync, "cron", hour=15, minute=20, id="lastfm_sync", max_instances=1)
     # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)
     scheduler.add_job(_run_real_setlist_backfill, "cron", hour=15, minute=40, id="real_setlist_backfill", max_instances=1)
-    # LLM 배치 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/일기 전송 (KST 03:00 = UTC 18:00).
+    # LLM 배치 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/블로그 전송 (KST 03:00 = UTC 18:00).
     # 00시대 배치(크롤 재시도/라인업 재확인 등)가 만든 새 스크린샷이 같은 날 바로 전송되는 시각.
     # RUNPOD_API_KEY/RUNPOD_POD_ID 미설정이면 start_pod_and_launch_services()가 알아서 아무것도 안 함
     scheduler.add_job(_run_llm_attempt, "cron", hour=18, minute=0, id="llm_attempt", max_instances=1)

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     CRAWL_BATCH_CONCURRENCY: int = 5
     ARTIST_BATCH_CONCURRENCY: int = 30
     DIARY_BATCH_CONCURRENCY: int = 3
+    # 블로그 초안은 백엔드 밤 배치가 응답을 기다리는 동기 요청이라 배치와 별도로 제한(백엔드도
+    # 동시 3건으로 맞춰 보냄). 이 값을 넘는 동시 요청은 앞 요청이 끝날 때까지 대기함
+    BLOG_DRAFT_CONCURRENCY: int = 3
 
 
 settings = Settings()
