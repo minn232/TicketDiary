@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from uuid import UUID
 
@@ -62,6 +63,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _QUICK_PREVIEW_ARTISTS = 2
+# 미리듣기 동시 실행 상한(get_ticket_preview_tracks 참고)
+_preview_tracks_slots = asyncio.Semaphore(4)
 
 
 # 티켓 등록
@@ -167,9 +170,13 @@ async def get_ticket_preview_tracks(
 ):
     ticket = await get_ticket(db, current_user.id, ticket_id)
     concert_id, explicit_date = _ticket_concert_and_date(ticket)
-    if quick:
-        return await get_preview_tracks(db, concert_id, explicit_date, max_artists=_QUICK_PREVIEW_ARTISTS)
-    return await get_preview_tracks(db, concert_id, explicit_date)
+    # 아티스트마다 외부 조회(MusicBrainz/iTunes)를 하며 세션이 연결을 쥐는 요청이라 동시 실행 수를 제한함.
+    # 기다리는 동안엔 연결을 안 쥐게 티켓 조회의 읽기 트랜잭션을 먼저 닫음
+    await db.commit()
+    async with _preview_tracks_slots:
+        if quick:
+            return await get_preview_tracks(db, concert_id, explicit_date, max_artists=_QUICK_PREVIEW_ARTISTS)
+        return await get_preview_tracks(db, concert_id, explicit_date)
 
 
 # 티켓 기준 실제 셋리스트 유저 수정

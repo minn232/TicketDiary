@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -1249,6 +1250,11 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
     return stats
 
 
+# 동시에 2개까지만 - 웹훅이 몰리면(LLM 배치 콜백 수백 건) 작업마다 MusicBrainz 2초 간격 대기열에
+# 서며 세션이 연결을 쥐어 풀이 바닥났었음. 대기는 세션 열기 전이라 기다리는 동안엔 연결을 안 잡음
+_specific_normalization_slots = asyncio.Semaphore(2)
+
+
 # 웹훅 도착 직후 "이번에 새로 큐잉된 이름들"만 즉시 정규화 - fire-and-forget 백그라운드
 # 태스크로 호출(웹훅 응답 이후 실행, 응답을 기다리게 하지 않음). pending 전체를 훑는
 # normalize_pending_artists와 달리 이 콘서트의 이 이름들로만 좁혀서 무관한 콘서트는 안 건드림
@@ -1256,6 +1262,11 @@ async def normalize_specific_artists(concert_id, names: list[str]) -> dict[str, 
     if not names:
         return {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
 
+    async with _specific_normalization_slots:
+        return await _normalize_specific_artists(concert_id, names)
+
+
+async def _normalize_specific_artists(concert_id, names: list[str]) -> dict[str, int]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(ArtistNormalizationStatus).where(

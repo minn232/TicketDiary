@@ -286,6 +286,7 @@ class _CandidateSongs:
 
 
 _candidate_songs_cache: dict[tuple[str, bool], tuple[datetime, _CandidateSongs]] = {}
+_candidate_songs_in_flight: dict[tuple[str, bool], asyncio.Future[_CandidateSongs]] = {}
 
 # 가나/한자 - 한국 유저가 못 읽는 경우가 많아 영문/로마자 제목으로 바꿔 보여줄 대상
 _UNREADABLE_SCRIPT = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]")
@@ -318,6 +319,20 @@ async def _candidate_songs(
     if cached and datetime.now(timezone.utc) - cached[0] < _CANDIDATE_SONGS_CACHE_TTL:
         return cached[1]
 
+    # 같은 아티스트를 찾는 중이면 그 결과를 같이 기다림 - 캐시는 끝나야 채워져서, 앱이 1초마다 다시
+    # 조회하는 동안 같은 외부 조회(Last.fm/MusicBrainz 대기열)가 요청마다 겹쳐 돌았음
+    task = _candidate_songs_in_flight.get(key)
+    if task is None:
+        task = asyncio.ensure_future(_fetch_candidate_songs(key, mbid, itunes_artist_id, use_lastfm, shown))
+        _candidate_songs_in_flight[key] = task
+        task.add_done_callback(lambda _: _candidate_songs_in_flight.pop(key, None))
+    # 기다리던 요청이 끊겨도 조회 자체는 끝까지 돌아 캐시를 채움
+    return await asyncio.shield(task)
+
+
+async def _fetch_candidate_songs(
+    key: tuple[str, bool], mbid: str | None, itunes_artist_id: str | None, use_lastfm: bool, shown: int
+) -> _CandidateSongs:
     titles: list[str] = []
     if mbid and use_lastfm:
         _, tracks = await fetch_top_tracks(mbid=mbid, limit=10, strict_mbid=True)

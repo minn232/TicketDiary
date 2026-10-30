@@ -697,6 +697,42 @@ async def test_check_pre_setlist_on_view_skips_while_same_check_running():
     assert generate.await_count == 2
 
 
+# 티켓 등록 생성과 조회 시점 생성이 같은 공연에 겹쳐도 한 번만 돌고, 다른 공연은 동시에 2개까지
+@pytest.mark.asyncio
+async def test_pre_setlist_background_jobs_share_running_guard_and_slots():
+    from app.services.pre_setlist import check_pre_setlist_on_view, generate_pre_setlist_background
+
+    release = asyncio.Event()
+    running = 0
+    peak = 0
+
+    async def slow_generate(*_args, **_kwargs):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await release.wait()
+        running -= 1
+
+    same = uuid.uuid4()
+    generate = AsyncMock(side_effect=slow_generate)
+    with patch("app.services.pre_setlist.generate_pre_setlist", new=generate):
+        tasks = [
+            asyncio.create_task(generate_pre_setlist_background(same)),
+            asyncio.create_task(check_pre_setlist_on_view(same)),
+            *(asyncio.create_task(generate_pre_setlist_background(uuid.uuid4())) for _ in range(3)),
+        ]
+        for _ in range(200):
+            if generate.await_count >= 2:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
+        assert generate.await_count == 2
+        release.set()
+        await asyncio.gather(*tasks)
+
+    assert generate.await_count == 4  # 같은 공연 2건 중 1건은 건너뜀
+    assert peak == 2
+
 # 티켓 기준 조회가 비어 있으면 백그라운드 생성을 걸어둠
 @pytest.mark.asyncio
 async def test_get_ticket_pre_setlist_schedules_generation_when_empty():

@@ -40,6 +40,9 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="존재하지 않는 유저입니다.")
 
+    # 유저 조회만 한 읽기 트랜잭션을 닫아 연결을 풀에 돌려줌 - 안 닫으면 요청이 외부 API(OCR/KOPIS 등)를
+    # 기다리는 내내 연결을 쥠. 아직 쓴 게 없어 안전, expire_on_commit=False라 user 객체도 그대로
+    await db.commit()
     return user
 
 

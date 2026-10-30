@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
@@ -260,6 +261,24 @@ async def generate_pre_setlist(
     return pre_setlist
 
 
+# 백그라운드 예상 셋리 생성(티켓 등록·조회 시점) 공용 - 같은 공연이 도는 중이면 건너뛰고, 다른 공연끼리도
+# 동시 2개까지. 쿨다운은 끝나야 기록돼서 생성 중 들어온 요청이 겹쳐 돌며 DB 연결을 다 잡았었음
+# (check_real_setlist_on_view와 같은 이유). 대기는 세션 열기 전이라 기다리는 동안엔 연결을 안 잡음
+_pre_setlist_jobs_running: set[UUID] = set()
+_pre_setlist_job_slots = asyncio.Semaphore(2)
+
+
+async def _run_pre_setlist_job(concert_id: UUID, job: Callable[[], Awaitable[None]]) -> None:
+    if concert_id in _pre_setlist_jobs_running:
+        return
+    _pre_setlist_jobs_running.add(concert_id)
+    try:
+        async with _pre_setlist_job_slots:
+            await job()
+    finally:
+        _pre_setlist_jobs_running.discard(concert_id)
+
+
 # 티켓 등록 시 BackgroundTasks로 호출(tickets.py). 요청 세션과 분리된 자체 세션을 씀.
 # Setlist.fm에 그 아티스트 데이터가 없는 경우가 흔해서(특히 인지도 낮은 아티스트) 404가
 # 자주 나는데, 이건 실패가 아니라 정상적인 "데이터 없음" 케이스라 조용히 로그만 남기고
@@ -267,6 +286,10 @@ async def generate_pre_setlist(
 # 유저 수정본은 항상 건너뜀(다른 유저의 티켓 등록으로 지워지던 문제). only_if_empty면 곡이 이미 있을
 # 때도 건너뜀 - 티켓 등록마다 Setlist.fm을 다시 부르지 않도록 함
 async def generate_pre_setlist_background(concert_id: UUID, only_if_empty: bool = False) -> None:
+    await _run_pre_setlist_job(concert_id, lambda: _generate_pre_setlist_background(concert_id, only_if_empty))
+
+
+async def _generate_pre_setlist_background(concert_id: UUID, only_if_empty: bool) -> None:
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))
@@ -285,22 +308,10 @@ async def generate_pre_setlist_background(concert_id: UUID, only_if_empty: bool 
 # 구조라 메모리로 추적(재시작하면 초기화돼도 무방). 502(API 일시 실패)는 쿨다운 없이 다음 조회 때 재시도
 _PRE_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(hours=6)
 _pre_setlist_view_checked_at: dict[UUID, datetime] = {}
-# 같은 공연 생성이 도는 중이면 건너뜀 - 쿨다운은 끝나야 기록돼서 생성 중 들어온 조회가 겹쳐 돌았음
-# (check_real_setlist_on_view와 같은 이유)
-_pre_setlist_view_checks_running: set[UUID] = set()
-# 다른 공연끼리도 동시에는 2개까지(_real_setlist_view_check_slots와 같은 이유)
-_pre_setlist_view_check_slots = asyncio.Semaphore(2)
 
 
 async def check_pre_setlist_on_view(concert_id: UUID) -> None:
-    if concert_id in _pre_setlist_view_checks_running:
-        return
-    _pre_setlist_view_checks_running.add(concert_id)
-    try:
-        async with _pre_setlist_view_check_slots:
-            await _check_pre_setlist_on_view(concert_id)
-    finally:
-        _pre_setlist_view_checks_running.discard(concert_id)
+    await _run_pre_setlist_job(concert_id, lambda: _check_pre_setlist_on_view(concert_id))
 
 
 async def _check_pre_setlist_on_view(concert_id: UUID) -> None:

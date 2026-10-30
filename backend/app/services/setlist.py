@@ -115,6 +115,9 @@ async def attach_artist_setlist_statuses(db: AsyncSession, concert_id: UUID, res
                 "mbid": canonical.mbid,
                 "itunes": canonical.itunes_artist_id,
             })
+    # DB 조회는 여기서 끝 - 아래 외부 조회(아티스트마다 Last.fm/MusicBrainz/iTunes) 동안 요청 세션이
+    # 연결을 쥐지 않게 읽기 트랜잭션을 닫음(이 요청은 쓰는 게 없음, expire_on_commit=False라 객체 그대로)
+    await db.commit()
     top_songs = await asyncio.gather(*(
         candidate_top_songs(s["mbid"], s["itunes"], limit=1) for s in statuses if "mbid" in s
     ))

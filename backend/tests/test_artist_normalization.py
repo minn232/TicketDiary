@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -602,6 +603,37 @@ async def test_normalize_specific_artists_ignores_other_concerts():
         )
         assert result.scalar_one().status == "pending"
 
+
+
+# 웹훅이 한꺼번에 몰려도 즉시 정규화는 동시에 2개까지만 돌고 나머지는 기다렸다가 도는지 테스트
+@pytest.mark.asyncio
+async def test_normalize_specific_artists_runs_at_most_two_at_once():
+    release = asyncio.Event()
+    running = 0
+    peak = 0
+
+    async def slow_normalize(*_args, **_kwargs):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await release.wait()
+        running -= 1
+        return {}
+
+    inner = AsyncMock(side_effect=slow_normalize)
+    with patch("app.services.artist_normalization._normalize_specific_artists", new=inner):
+        tasks = [asyncio.create_task(normalize_specific_artists(uuid.uuid4(), ["이름"])) for _ in range(5)]
+        for _ in range(100):
+            if inner.await_count >= 2:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
+        assert inner.await_count == 2
+        release.set()
+        await asyncio.gather(*tasks)
+
+    assert inner.await_count == 5
+    assert peak == 2
 
 @pytest.mark.asyncio
 async def test_normalize_specific_artists_empty_names_is_noop():

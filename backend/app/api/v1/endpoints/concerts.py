@@ -167,5 +167,6 @@ async def get_concert(
     if concert is not None and concert.kopis_detail_synced_at is not None:
         return concert
 
-    # KOPIS API
+    # KOPIS API - 기다리는 동안 연결을 안 쥐게 위 조회의 읽기 트랜잭션을 먼저 닫음
+    await db.commit()
     return await get_concert_detail(db, kopis_id)
