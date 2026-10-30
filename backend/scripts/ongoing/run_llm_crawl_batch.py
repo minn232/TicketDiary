@@ -27,6 +27,7 @@ vs ticketing_date 3건). 전송 대상도 같은 필드로 걸러서, 이미 콜
     venv/bin/python3 scripts/ongoing/run_llm_crawl_batch.py
     venv/bin/python3 scripts/ongoing/run_llm_crawl_batch.py --watch-minutes 30   # 지켜볼 시간(기본 20분)
     venv/bin/python3 scripts/ongoing/run_llm_crawl_batch.py --skip-pod-start    # pod이 이미 켜져있을 때
+    venv/bin/python3 scripts/ongoing/run_llm_crawl_batch.py --skip-pod-start --limit 2 --keep-pod   # 연동 테스트용 소량 전송
 """
 
 import argparse
@@ -54,7 +55,7 @@ from app.services.runpod import (  # noqa: E402
 
 # send_screenshots_to_llm과 대상 조건이 다르다(crawl_result_received_at IS NULL 추가) - 이미
 # 콜백 받은 건 재전송 안 하려는 목적이라 그 함수를 그대로 못 쓰고 여기서 직접 조회+전송한다
-async def _snapshot_targets() -> list[dict]:
+async def _snapshot_targets(limit: int | None = None) -> list[dict]:
     now = datetime.now(timezone.utc)
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -65,6 +66,8 @@ async def _snapshot_targets() -> list[dict]:
                 Concert.ai_reviewed_at.is_(None),
                 Concert.crawl_result_received_at.is_(None),
             )
+            .order_by(Concert.id)
+            .limit(limit)
         )
         concerts = result.scalars().all()
     return [
@@ -115,7 +118,7 @@ async def _count_done(ids: list) -> int:
         return len(result.scalars().all())
 
 
-async def main(watch_minutes: float, poll_interval: float, skip_pod_start: bool) -> None:
+async def main(watch_minutes: float, poll_interval: float, skip_pod_start: bool, limit: int | None, keep_pod: bool) -> None:
     if skip_pod_start:
         print("--skip-pod-start: pod 시작 단계 건너뜀(이미 켜져있다고 가정)")
     else:
@@ -138,9 +141,12 @@ async def main(watch_minutes: float, poll_interval: float, skip_pod_start: bool)
         return
     print("  -> 준비됨")
 
-    targets = await _snapshot_targets()
+    targets = await _snapshot_targets(limit)
     print(f"\n전송 대상 {len(targets)}건 (crawl_screenshot_url 있음 + 검수 안 됨 + 진행예정 + 콜백 미수신)")
 
+    if not targets and keep_pod:
+        print("\n대상이 없음. --keep-pod라 pod은 켜둠")
+        return
     if not targets:
         print("\n대상이 없어서(전부 이미 콜백 받았거나 애초에 없음) 지켜볼 것도 없음. pod 정지 중...")
         print("  -> pod 정지 성공" if await stop_pod() else "  -> pod 정지 실패(로그 확인 필요)")
@@ -161,6 +167,9 @@ async def main(watch_minutes: float, poll_interval: float, skip_pod_start: bool)
         done = await _count_done(ids)
         print(f"  [{time.strftime('%H:%M:%S')}] LLM 콜백 수신: {done}/{len(ids)}건")
         if done == len(ids):
+            if keep_pod:
+                print("전부 반영됨. --keep-pod라 pod은 켜둠(끝나면 pod_stop.py)")
+                return
             print("전부 반영됨. pod 정지 중...")
             print("  -> pod 정지 성공" if await stop_pod() else "  -> pod 정지 실패(로그 확인 필요)")
             return
@@ -177,5 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--watch-minutes", type=float, default=20.0, help="반영 현황을 지켜볼 시간(분), 기본 20분")
     parser.add_argument("--poll-interval", type=float, default=30.0, help="현황 확인 간격(초), 기본 30초")
     parser.add_argument("--skip-pod-start", action="store_true", help="pod이 이미 켜져있으면 시작 단계 건너뜀")
+    parser.add_argument("--limit", type=int, default=None, help="전송 건수 상한(연동 테스트용), 기본 전부")
+    parser.add_argument("--keep-pod", action="store_true", help="전부 반영돼도 pod을 끄지 않음(반복 테스트용)")
     args = parser.parse_args()
-    asyncio.run(main(args.watch_minutes, args.poll_interval, args.skip_pod_start))
+    asyncio.run(main(args.watch_minutes, args.poll_interval, args.skip_pod_start, args.limit, args.keep_pod))

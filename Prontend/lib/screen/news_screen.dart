@@ -466,6 +466,40 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     if (mounted) setState(() => _overlayHiddenRegionKey = null);
   }
 
+  // [백엔드 수정] 결산 캘린더에서 소식을 눌러 들어오면 그 카드 상세까지 자동으로 엶.
+  // 탭 전환·로딩 글레어가 끝나야 카드 위치가 고정되고 내용도 보여서 그때까지 기다림
+  NewsModel? _autoOpenItem;
+
+  Future<void> _openPendingNews() async {
+    final item = _autoOpenItem;
+    if (item == null) return;
+    for (var i = 0; i < 80 && mounted; i++) {
+      if (!TabNavCoordinator.instance.isTransitioning.value &&
+          _glassReveal.isCompleted &&
+          _phase == _FlipPhase.news) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || !identical(_autoOpenItem, item)) return;
+    _autoOpenItem = null;
+    if (_phase != _FlipPhase.news) return;
+    await _openNewsDetail(item, _cardKeyFor(item), _cardAngle(_cardSlot(item)));
+  }
+
+  // 페이지 안 카드 자리(0~3)
+  int _cardSlot(NewsModel item) => _orderedNews.indexOf(item) % 4;
+
+  static double _cardAngle(int slot) => switch (slot) {
+    0 => -0.02,
+    1 => 0.015,
+    2 => 0.012,
+    _ => -0.015,
+  };
+
+  List<NewsModel> _orderedNews = const [];
+
   @override
   Widget build(BuildContext context) {
     return DiaryPageFrame(
@@ -694,15 +728,22 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         if (index < items.length) items[index],
       ...items.skip(firstPageVisualOrder.length),
     ];
+    _orderedNews = ordered;
     final pageCount = (ordered.length / 4).ceil();
     final pendingId = TabNavCoordinator.instance.pendingNewsConcertId;
     final pendingName = TabNavCoordinator.instance.pendingNewsConcertName;
+    final pendingKey = TabNavCoordinator.instance.pendingNewsCardKey;
     final resolvedIndex = findNewsCard(
       ordered,
-      key: TabNavCoordinator.instance.pendingNewsCardKey,
+      key: pendingKey,
       concertId: pendingId,
       name: pendingName,
     );
+    if (resolvedIndex >= 0 &&
+        (pendingKey != null || pendingId != null || pendingName != null)) {
+      _autoOpenItem = ordered[resolvedIndex];
+      unawaited(_openPendingNews());
+    }
     final anchorIndex = ordered.indexWhere(
       (item) => newsCardKey(item) == _visibleCardKey,
     );
@@ -750,12 +791,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
             itemCount: pageItems.length,
             itemBuilder: (context, index) {
               final item = pageItems[index];
-              final angle = switch (index % 4) {
-                0 => -0.02,
-                1 => 0.015,
-                2 => 0.012,
-                _ => -0.015,
-              };
+              final angle = _cardAngle(index % 4);
               final cardKey = _cardKeyFor(item);
 
               return PressableScale(
@@ -845,22 +881,27 @@ class _HorizontalScrollHint extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = Colors.brown.withValues(alpha: 0.5);
+    // [백엔드 수정] 아래 여백 높이(_insets.bottom)는 고정인데 아이콘/글자는 화면 배율로
+    // 커져서 세로모드에서 위아래가 잘렸음 - 넘칠 때만 여백 높이에 맞춰 축소.
     return Center(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.chevron_left, size: context.rs(15), color: color),
-          Icon(Icons.chevron_right, size: context.rs(15), color: color),
-          SizedBox(width: context.rs(4)),
-          Text(
-            '옆으로 넘겨보세요',
-            style: TextStyle(
-              fontSize: context.sp(10),
-              fontWeight: FontWeight.w700,
-              color: color,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chevron_left, size: context.rs(15), color: color),
+            Icon(Icons.chevron_right, size: context.rs(15), color: color),
+            SizedBox(width: context.rs(4)),
+            Text(
+              '옆으로 넘겨보세요',
+              style: TextStyle(
+                fontSize: context.sp(10),
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -38,9 +38,16 @@ class SummaryReport extends StatefulWidget {
   State<SummaryReport> createState() => _SummaryReportState();
 }
 
+// [백엔드 수정] 보고서 무한 넘김 - 가상 페이지를 큰 수에서 시작해 양방향으로 계속 넘어가게 하고,
+// 실제 페이지는 가상 페이지를 페이지 수로 나눈 나머지
+const _reportPageCount = 2;
+const _loopBase = 10000 * _reportPageCount;
+
 class _SummaryReportState extends State<SummaryReport> {
-  late final _controller = PageController(initialPage: widget.initialPage % 2);
-  late int _page = widget.initialPage % 2;
+  late final _controller = PageController(
+    initialPage: _loopBase + widget.initialPage % _reportPageCount,
+  );
+  late int _page = widget.initialPage % _reportPageCount;
   late final _search = widget.artistSearch ?? BackendArtistSearchService();
   final _images = <String, Future<String?>>{};
 
@@ -71,11 +78,15 @@ class _SummaryReportState extends State<SummaryReport> {
     super.dispose();
   }
 
-  void _go(int page) => _controller.animateToPage(
-    page,
-    duration: const Duration(milliseconds: 250),
-    curve: Curves.easeOut,
-  );
+  // 화살표는 지금 가상 페이지에서 한 장씩 - 넘기는 방향과 같은 쪽으로 이어짐
+  void _go(int delta) {
+    final current = _controller.page?.round() ?? _loopBase + _page;
+    _controller.animateToPage(
+      current + delta,
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,48 +104,55 @@ class _SummaryReportState extends State<SummaryReport> {
       );
     }
     final months = reportMonths(widget.data, widget.period);
+    final tickets = [
+      for (final t in widget.data['ticket_details'] as List? ?? const [])
+        if (t is Map) Map<String, dynamic>.from(t),
+    ];
     return Column(
       children: [
         Expanded(
-          child: PageView(
+          child: PageView.builder(
             controller: _controller,
-            onPageChanged: (page) {
+            onPageChanged: (virtualPage) {
+              final page = virtualPage % _reportPageCount;
               setState(() => _page = page);
               widget.onPageChanged(page);
             },
-            children: [
-              _ReportPage(
-                page: 1,
-                children: [
-                  _Metrics(data: widget.data),
-                  const SizedBox(height: 14),
-                  _MonthlyChart(
-                    key: ValueKey('spend-${widget.period}'),
-                    months: months,
-                    spending: true,
-                    period: widget.period,
-                    selection: widget.yearSelection,
+            itemBuilder: (context, virtualPage) =>
+                virtualPage % _reportPageCount == 0
+                ? _ReportPage(
+                    page: 1,
+                    children: [
+                      _Metrics(data: widget.data),
+                      const SizedBox(height: 14),
+                      _MonthlyChart(
+                        key: ValueKey('spend-${widget.period}'),
+                        months: months,
+                        tickets: tickets,
+                        spending: true,
+                        period: widget.period,
+                        selection: widget.yearSelection,
+                      ),
+                    ],
+                  )
+                : _ReportPage(
+                    page: 2,
+                    children: [
+                      _MonthlyChart(
+                        key: ValueKey('visits-${widget.period}'),
+                        months: months,
+                        tickets: tickets,
+                        spending: false,
+                        period: widget.period,
+                        selection: widget.yearSelection,
+                      ),
+                      const SizedBox(height: 14),
+                      _ArtistPodium(
+                        groups: reportArtistGroups(widget.data),
+                        image: _image,
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              _ReportPage(
-                page: 2,
-                children: [
-                  _MonthlyChart(
-                    key: ValueKey('visits-${widget.period}'),
-                    months: months,
-                    spending: false,
-                    period: widget.period,
-                    selection: widget.yearSelection,
-                  ),
-                  const SizedBox(height: 14),
-                  _ArtistPodium(
-                    groups: reportArtistGroups(widget.data),
-                    image: _image,
-                  ),
-                ],
-              ),
-            ],
           ),
         ),
         Row(
@@ -142,16 +160,16 @@ class _SummaryReportState extends State<SummaryReport> {
           children: [
             IconButton(
               tooltip: '이전 보고서',
-              onPressed: () => _go(1 - _page),
+              onPressed: () => _go(-1),
               icon: const Icon(Icons.chevron_left, color: _ink),
             ),
             Text(
-              '${_page + 1} / 2',
+              '${_page + 1} / $_reportPageCount',
               style: const TextStyle(color: _ink, fontWeight: FontWeight.w700),
             ),
             IconButton(
               tooltip: '다음 보고서',
-              onPressed: () => _go(1 - _page),
+              onPressed: () => _go(1),
               icon: const Icon(Icons.chevron_right, color: _ink),
             ),
           ],
@@ -357,21 +375,64 @@ class _MonthlyChart extends StatefulWidget {
     required this.spending,
     required this.period,
     required this.selection,
+    this.tickets = const [],
   });
   final List<ReportMonth> months;
   final bool spending;
   final String period;
   final Map<String, String> selection;
+  // [백엔드 수정] 달을 누르면 그 달 공연 목록 팝업용(GET /summary의 ticket_details)
+  final List<Map<String, dynamic>> tickets;
   @override
   State<_MonthlyChart> createState() => _MonthlyChartState();
 }
 
 class _MonthlyChartState extends State<_MonthlyChart> {
   int? _selected;
+  OverlayEntry? _detail;
+
   @override
   void didUpdateWidget(covariant _MonthlyChart oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.months != widget.months) _selected = null;
+    if (oldWidget.months != widget.months) {
+      _selected = null;
+      _hideDetail();
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideDetail();
+    super.dispose();
+  }
+
+  void _hideDetail() {
+    _detail?.remove();
+    _detail = null;
+  }
+
+  // 누른 달에 본 공연을 날짜순으로 팝업에 띄움(지출 차트는 가격도). 바깥을 누르면 닫힘
+  void _showDetail(Offset anchor, ReportMonth month, Color color) {
+    _hideDetail();
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    final items = [
+      for (final t in widget.tickets)
+        if (DateTime.tryParse('${t['date']}') case final d?
+            when d.year == month.month.year && d.month == month.month.month)
+          t,
+    ]..sort((a, b) => '${a['date']}'.compareTo('${b['date']}'));
+    _detail = OverlayEntry(
+      builder: (_) => _MonthDetail(
+        anchor: anchor,
+        month: month,
+        items: items,
+        spending: widget.spending,
+        color: color,
+        onDismiss: _hideDetail,
+      ),
+    );
+    overlay.insert(_detail!);
   }
 
   @override
@@ -461,12 +522,11 @@ class _MonthlyChartState extends State<_MonthlyChart> {
                     onTapUp: (details) {
                       final left = widget.spending ? 50.0 : 26.0;
                       final step = (box.maxWidth - left - 4) / months.length;
-                      setState(
-                        () => _selected =
-                            ((details.localPosition.dx - left) / step)
-                                .floor()
-                                .clamp(0, months.length - 1),
-                      );
+                      final index = ((details.localPosition.dx - left) / step)
+                          .floor()
+                          .clamp(0, months.length - 1);
+                      setState(() => _selected = index);
+                      _showDetail(details.globalPosition, months[index], color);
                     },
                     child: CustomPaint(
                       key: ValueKey(
@@ -495,6 +555,201 @@ class _MonthlyChartState extends State<_MonthlyChart> {
       ),
     );
   }
+}
+
+// [백엔드 수정] 월별 차트 상세 팝업 - 보고서 카드와 같은 흰 카드 + 차트 색 포인트.
+// 누른 자리 위(공간 없으면 아래)에 꼬리를 달아 띄우고, 공연은 최대 4건 + "외 N건"
+class _MonthDetail extends StatelessWidget {
+  const _MonthDetail({
+    required this.anchor,
+    required this.month,
+    required this.items,
+    required this.spending,
+    required this.color,
+    required this.onDismiss,
+  });
+  final Offset anchor;
+  final ReportMonth month;
+  final List<Map<String, dynamic>> items;
+  final bool spending;
+  final Color color;
+  final VoidCallback onDismiss;
+
+  static const _maxRows = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.sizeOf(context);
+    final width = math.min(250.0, screen.width - 24);
+    final left = (anchor.dx - width / 2).clamp(12.0, screen.width - width - 12);
+    final above = anchor.dy > screen.height * .45;
+    final tailX = (anchor.dx - left).clamp(20.0, width - 20);
+    final summary = spending
+        ? '${_number(month.spent)}원'
+        : '${_number(month.count)}회';
+
+    final card = Container(
+      key: const ValueKey('month-detail'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEFDFE),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: _ink.withValues(alpha: .14),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  '${month.month.year}년 ${month.month.month}월',
+                  style: const TextStyle(
+                    color: _ink,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Text(
+                summary,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(height: 1, color: const Color(0xFFEBEBF1)),
+          const SizedBox(height: 6),
+          if (items.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text(
+                '이 달엔 관람 기록이 없어요',
+                style: TextStyle(color: _muted, fontSize: 12),
+              ),
+            ),
+          for (final t in items.take(_maxRows)) _row(t),
+          if (items.length > _maxRows)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '외 ${items.length - _maxRows}건',
+                style: const TextStyle(color: _muted, fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+    final tail = Padding(
+      padding: EdgeInsets.only(left: tailX - 7),
+      child: CustomPaint(
+        size: const Size(14, 7),
+        painter: _TailPainter(pointDown: above),
+      ),
+    );
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (_) => onDismiss(),
+            onPanDown: (_) => onDismiss(),
+          ),
+        ),
+        Positioned(
+          left: left,
+          width: width,
+          top: above ? null : anchor.dy + 10,
+          bottom: above ? screen.height - anchor.dy + 10 : null,
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: above ? [card, tail] : [tail, card],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _row(Map<String, dynamic> t) {
+    final date = DateTime.tryParse('${t['date']}');
+    final price = t['price'] as num?;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 34,
+            child: Text(
+              date == null ? '' : '${date.month}.${date.day}',
+              style: const TextStyle(color: _muted, fontSize: 11),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              '${t['concert_name'] ?? ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (spending && price != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              '${_number(price)}원',
+              style: const TextStyle(color: _muted, fontSize: 11),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TailPainter extends CustomPainter {
+  const _TailPainter({required this.pointDown});
+  final bool pointDown;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = pointDown
+        ? (Path()
+            ..moveTo(0, 0)
+            ..lineTo(size.width, 0)
+            ..lineTo(size.width / 2, size.height))
+        : (Path()
+            ..moveTo(0, size.height)
+            ..lineTo(size.width, size.height)
+            ..lineTo(size.width / 2, 0));
+    canvas.drawPath(path..close(), Paint()..color = const Color(0xFFFEFDFE));
+  }
+
+  @override
+  bool shouldRepaint(_TailPainter old) => old.pointDown != pointDown;
 }
 
 class _ChartPainter extends CustomPainter {

@@ -540,6 +540,8 @@ class _DiaryScreenState extends State<DiaryScreen>
                           .floor();
             _currentPageIndex = page.clamp(0, _totalPages - 1);
             coordinator.pendingDiaryTicketId = null;
+            _autoOpenTicketId = _tickets[ticketIndex].id;
+            unawaited(_openPendingTicket());
           } else {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) _showSnack('해당 티켓을 찾을 수 없어요. 티켓 목록을 확인해주세요.');
@@ -842,6 +844,26 @@ class _DiaryScreenState extends State<DiaryScreen>
       ignoring: hidden,
       child: Opacity(opacity: hidden ? 0.0 : 1.0, child: child),
     );
+  }
+
+  // [백엔드 수정] 결산 캘린더에서 티켓을 눌러 들어오면 그 티켓 오버레이까지 자동으로 엶.
+  // 열기 동작은 화면에 그려진 티켓만 build 때 등록(눌렀을 때와 같은 동작을 그대로 씀).
+  final Map<String, Future<void> Function()> _ticketOpeners = {};
+  String? _autoOpenTicketId;
+
+  // 탭 전환(페이지 넘김) 중엔 티켓이 움직이는 중이라 시작 위치가 틀어져서 끝날 때까지 기다림
+  Future<void> _openPendingTicket() async {
+    final id = _autoOpenTicketId;
+    if (id == null) return;
+    for (var i = 0; i < 60 && mounted; i++) {
+      if (!TabNavCoordinator.instance.isTransitioning.value) break;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || _autoOpenTicketId != id) return;
+    _autoOpenTicketId = null;
+    if (_isAddTicketExpanded || _interactionLocked) return;
+    await _ticketOpeners[id]?.call();
   }
 
   Rect? _globalRectOf(GlobalKey key) {
@@ -2233,6 +2255,47 @@ class _DiaryScreenState extends State<DiaryScreen>
         // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
         unawaited(TicketPreviewPlayer.instance.prepare(ticket.info?.ticketId));
         final isDue = _isDueForPromotion(ticket);
+        Future<void> openBefore() async {
+          final startRect = _globalRectOf(ticket.overlayKey);
+          if (startRect == null) return;
+
+          // [백엔드 수정]
+          // 오버레이가 떠있는 동안 리스트의 진짜 티켓을 숨겨서
+          // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함.
+          setState(() => _overlayHiddenRegionKey = ticket.overlayKey);
+          await ConcertBeforeOverlay.show(
+            context,
+            startRect: startRect,
+            // startRect 크기로 그대로 채움.
+            collapsedTicket: _buildTicketDecoration(
+              child: _buildTicketBeforeConcert(
+                title: ticket.title,
+                info: ticket.info,
+              ),
+            ),
+            concertTitle: ticket.title,
+            ticketInfo: ticket.info,
+            issueNumber: _issueNumberForIndex(
+              _tickets.indexWhere((t) => t.id == ticket.id),
+            ),
+            // [백엔드 수정]
+            // 이 리스트에서 쓰이는 배율을 그대로 넘김.
+            frameScale:
+                DiaryFrameScale.maybeOf(context) ??
+                diaryScaleFromMediaQuery(context),
+            // [백엔드 수정] 아티스트 연결 수정 반영
+            onTicketInfoChanged: (updated) =>
+                setState(() => ticket.info = updated),
+          );
+          if (mounted) setState(() => _overlayHiddenRegionKey = null);
+        }
+
+        // [백엔드 수정] 결산 캘린더 자동 열기용 - 전환 연출 대상은 페이지 이동만.
+        if (isDue) {
+          _ticketOpeners.remove(ticket.id);
+        } else {
+          _ticketOpeners[ticket.id] = openBefore;
+        }
         final ticketWidget = PressableScale(
           onTap: _isAddTicketExpanded
               ? null
@@ -2240,40 +2303,7 @@ class _DiaryScreenState extends State<DiaryScreen>
               // 공연 시간이 이미 지난 티켓은 눌렀을 때 "공연 후"로의 전환
               // 애니메이션을 재생합니다(공연이 끝났으니 상세 오버레이 대신).
               ? () => unawaited(_runTicketPromotionAnimation(ticket.id))
-              : () async {
-                  final startRect = _globalRectOf(ticket.overlayKey);
-                  if (startRect == null) return;
-
-                  // [백엔드 수정]
-                  // 오버레이가 떠있는 동안 리스트의 진짜 티켓을 숨겨서
-                  // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함.
-                  setState(() => _overlayHiddenRegionKey = ticket.overlayKey);
-                  await ConcertBeforeOverlay.show(
-                    context,
-                    startRect: startRect,
-                    // startRect 크기로 그대로 채움.
-                    collapsedTicket: _buildTicketDecoration(
-                      child: _buildTicketBeforeConcert(
-                        title: ticket.title,
-                        info: ticket.info,
-                      ),
-                    ),
-                    concertTitle: ticket.title,
-                    ticketInfo: ticket.info,
-                    issueNumber: _issueNumberForIndex(
-                      _tickets.indexWhere((t) => t.id == ticket.id),
-                    ),
-                    // [백엔드 수정]
-                    // 이 리스트에서 쓰이는 배율을 그대로 넘김.
-                    frameScale:
-                        DiaryFrameScale.maybeOf(context) ??
-                        diaryScaleFromMediaQuery(context),
-                    // [백엔드 수정] 아티스트 연결 수정 반영
-                    onTicketInfoChanged: (updated) =>
-                        setState(() => ticket.info = updated),
-                  );
-                  if (mounted) setState(() => _overlayHiddenRegionKey = null);
-                },
+              : openBefore,
           child: _hideWhileOverlayOpen(
             regionKey: ticket.overlayKey,
             child: _buildTicketPocket(
@@ -2305,6 +2335,7 @@ class _DiaryScreenState extends State<DiaryScreen>
             issueNumber: _issueNumberForIndex(
               _tickets.indexWhere((t) => t.id == ticket.id),
             ),
+            openerTicketId: ticket.id,
             onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
               setState(() => ticket.tornRevealed = true);
@@ -2598,6 +2629,8 @@ class _DiaryScreenState extends State<DiaryScreen>
     ValueChanged<TicketInfo>? onInfoChanged,
     // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 전달.
     int issueNumber = 1,
+    // [백엔드 수정] 결산 캘린더 자동 열기용 - 리스트의 실제 티켓만 넘김(전환 연출 복사본 제외).
+    String? openerTicketId,
   }) {
     // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
     unawaited(TicketPreviewPlayer.instance.prepare(info?.ticketId));
@@ -2629,6 +2662,8 @@ class _DiaryScreenState extends State<DiaryScreen>
       );
       if (mounted) setState(() => _overlayHiddenRegionKey = null);
     }
+
+    if (openerTicketId != null) _ticketOpeners[openerTicketId] = openAfter;
 
     // 뜯는 부분(관람 완료 라벨/뜯긴 뒤 스텁)을 카드 왼쪽으로, 공연 정보(포스터/
     // 제목)를 오른쪽으로 — 바깥쪽 모서리 둥글림도 함께 뒤집는다.

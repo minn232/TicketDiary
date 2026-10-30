@@ -11,6 +11,7 @@ import '../services/kakao_login_controller.dart';
 import '../services/local_ticket_store.dart';
 import '../services/music_service_links.dart';
 import '../services/notification_settings_service.dart';
+import '../services/notifications_service.dart';
 import '../services/ticket_service.dart';
 import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
 import '../widgets/diary_landscape_cover_panel.dart';
@@ -48,12 +49,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   static const _divider = Divider(height: 1, thickness: 1);
 
+  // [백엔드 수정] 알림함 메뉴 배지 - 안 읽은 알림 수(실패하면 배지 없이).
+  int _unreadNotifications = 0;
+
+  Future<void> _loadUnreadNotifications() async {
+    try {
+      final count = await NotificationsService().unreadCount();
+      if (mounted) setState(() => _unreadNotifications = count);
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
     _appSettings.load();
     _appSettings.addListener(_onAppSettingsChanged);
     _loadNotificationSettings();
+    _loadUnreadNotifications();
   }
 
   @override
@@ -441,12 +453,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Builder(
                         builder: (menuContext) => _MenuRow(
                           title: '알림함',
-                          onTap: () => NotificationsScreen.show(
-                            menuContext,
-                            frameScale:
-                                DiaryFrameScale.maybeOf(menuContext) ??
-                                diaryScaleFromMediaQuery(menuContext),
-                          ),
+                          badgeCount: _unreadNotifications,
+                          // [백엔드 수정] 닫고 나면 읽은 만큼 배지 갱신.
+                          onTap: () async {
+                            await NotificationsScreen.show(
+                              menuContext,
+                              frameScale:
+                                  DiaryFrameScale.maybeOf(menuContext) ??
+                                  diaryScaleFromMediaQuery(menuContext),
+                            );
+                            _loadUnreadNotifications();
+                          },
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -465,8 +482,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 class _MenuRow extends StatelessWidget {
   final String title;
   final VoidCallback onTap;
+  // [백엔드 수정] 0보다 크면 오른쪽에 숫자 배지(알림함 안 읽은 수).
+  final int badgeCount;
 
-  const _MenuRow({required this.title, required this.onTap});
+  const _MenuRow({
+    required this.title,
+    required this.onTap,
+    this.badgeCount = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -490,6 +513,26 @@ class _MenuRow extends StatelessWidget {
                   ),
                 ),
               ),
+              if (badgeCount > 0)
+                Container(
+                  margin: const EdgeInsets.only(right: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE0455E),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badgeCount > 99 ? '99+' : '$badgeCount',
+                    style: TextStyle(
+                      fontSize: context.sp(11),
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
               Icon(
                 Icons.chevron_right,
                 color: Colors.black.withValues(alpha: 0.45),

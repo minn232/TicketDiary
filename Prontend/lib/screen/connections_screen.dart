@@ -9,6 +9,7 @@ import '../widgets/connection_card_view.dart';
 import '../widgets/liquid_rise.dart';
 import '../widgets/pressable_scale.dart';
 import '../widgets/responsive_text.dart';
+import '../widgets/sheet_grab_handle.dart';
 import 'nearby_tap_screen.dart';
 
 // [백엔드 수정]
@@ -240,6 +241,33 @@ class _ConnectionsScreenState extends State<ConnectionsScreen>
     if (mounted) Navigator.of(context).pop();
   }
 
+  // [백엔드 수정] 알림함과 같은 끌어서 닫기 - 제목줄을 끄는 동안엔 손가락에 맞춰 패널을 내림.
+  bool _dragging = false;
+
+  void _onHeaderDragStart(DragStartDetails details) {
+    _dragging = true;
+    _controller.stop();
+  }
+
+  void _onHeaderDragUpdate(DragUpdateDetails details, double panelHeight) {
+    if (!_dragging || panelHeight <= 0) return;
+    final delta = details.primaryDelta ?? 0;
+    _controller.value = (_controller.value - delta / panelHeight).clamp(
+      0.0,
+      1.0,
+    );
+  }
+
+  void _onHeaderDragEnd(DragEndDetails details) {
+    _dragging = false;
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity > 300 || _controller.value < 0.6) {
+      _close();
+    } else {
+      _controller.forward();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return DiaryFrameScale(
@@ -287,57 +315,77 @@ class _ConnectionsScreenState extends State<ConnectionsScreen>
             color: _paperColor,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
             clipBehavior: Clip.antiAlias,
-            child: Stack(
-              children: [
-                SafeArea(
-                  top: false,
-                  child: Column(
-                    children: [
-                      Builder(builder: _buildHeader),
-                      Container(
-                        height: 1,
-                        color: Colors.black.withValues(alpha: 0.08),
-                      ),
-                      Expanded(
-                        child: AnimatedSwitcher(
-                          // 물에 덮인 동안 바뀌면 바로(어차피 안 보임), 목록에서 열면 아래에서 올라옴
-                          duration: Duration(milliseconds: _flooding ? 1 : 480),
-                          reverseDuration: const Duration(milliseconds: 220),
-                          switchInCurve: Curves.easeOutCubic,
-                          transitionBuilder: (child, animation) =>
-                              child.key == const ValueKey('list')
-                              ? FadeTransition(opacity: animation, child: child)
-                              : SlideTransition(
-                                  position: Tween(
-                                    begin: const Offset(0, 1),
-                                    end: Offset.zero,
-                                  ).animate(animation),
-                                  child: child,
-                                ),
-                          child: _openPeer == null
-                              ? KeyedSubtree(
-                                  key: const ValueKey('list'),
-                                  child: Builder(builder: _buildList),
-                                )
-                              : KeyedSubtree(
-                                  key: ValueKey(_openPeer!.userId),
-                                  child: Builder(builder: _buildCard),
-                                ),
+            child: LayoutBuilder(
+              builder: (context, constraints) => Stack(
+                children: [
+                  SafeArea(
+                    top: false,
+                    child: Column(
+                      children: [
+                        // [백엔드 수정] 알림함처럼 손잡이 막대 + 제목줄 어디를 끌어도 닫힘.
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onVerticalDragStart: _onHeaderDragStart,
+                          onVerticalDragUpdate: (d) =>
+                              _onHeaderDragUpdate(d, constraints.maxHeight),
+                          onVerticalDragEnd: _onHeaderDragEnd,
+                          child: Column(
+                            children: [
+                              const SheetGrabHandle(),
+                              Builder(builder: _buildHeader),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                // 제목줄까지 패널 전체를 덮으며 차오르는 물 (패널 모서리로 잘림)
-                if (_flooding)
-                  Positioned.fill(
-                    child: LiquidFlood(
-                      animation: _flood,
-                      color: const Color(0xFF8B5E3C),
-                      fillColor: _paperColor,
+                        Container(
+                          height: 1,
+                          color: Colors.black.withValues(alpha: 0.08),
+                        ),
+                        Expanded(
+                          child: AnimatedSwitcher(
+                            // 물에 덮인 동안 바뀌면 바로(어차피 안 보임), 목록에서 열면 아래에서 올라옴
+                            duration: Duration(
+                              milliseconds: _flooding ? 1 : 480,
+                            ),
+                            reverseDuration: const Duration(milliseconds: 220),
+                            switchInCurve: Curves.easeOutCubic,
+                            transitionBuilder: (child, animation) =>
+                                child.key == const ValueKey('list')
+                                ? FadeTransition(
+                                    opacity: animation,
+                                    child: child,
+                                  )
+                                : SlideTransition(
+                                    position: Tween(
+                                      begin: const Offset(0, 1),
+                                      end: Offset.zero,
+                                    ).animate(animation),
+                                    child: child,
+                                  ),
+                            child: _openPeer == null
+                                ? KeyedSubtree(
+                                    key: const ValueKey('list'),
+                                    child: Builder(builder: _buildList),
+                                  )
+                                : KeyedSubtree(
+                                    key: ValueKey(_openPeer!.userId),
+                                    child: Builder(builder: _buildCard),
+                                  ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-              ],
+                  // 제목줄까지 패널 전체를 덮으며 차오르는 물 (패널 모서리로 잘림)
+                  if (_flooding)
+                    Positioned.fill(
+                      child: LiquidFlood(
+                        animation: _flood,
+                        color: const Color(0xFF8B5E3C),
+                        fillColor: _paperColor,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -348,7 +396,8 @@ class _ConnectionsScreenState extends State<ConnectionsScreen>
   Widget _buildHeader(BuildContext context) {
     final showBack = _openPeer != null && widget.initialPeer == null;
     return Padding(
-      padding: EdgeInsets.fromLTRB(showBack ? 4 : 20, 14, 8, 8),
+      // [백엔드 수정] 위에 손잡이 막대가 생겨 위 여백을 알림함 제목줄과 같게(14 → 8).
+      padding: EdgeInsets.fromLTRB(showBack ? 4 : 20, 8, 8, 8),
       child: Row(
         children: [
           if (showBack)
@@ -391,77 +440,79 @@ class _ConnectionsScreenState extends State<ConnectionsScreen>
 
   Widget _buildList(BuildContext context) {
     final connections = _connections;
-    return RefreshIndicator(
-      onRefresh: _loadList,
-      child: ListView(
-        padding: EdgeInsets.fromLTRB(16, 8, 16, context.rs(24)),
-        children: [
-          // 폰 맞대기는 안드로이드·iOS (iOS는 앱을 띄워 둔 동안만 광고 가능)
-          if (!kIsWeb &&
-              (defaultTargetPlatform == TargetPlatform.android ||
-                  defaultTargetPlatform == TargetPlatform.iOS))
+    // [백엔드 수정] 당겨서 새로고침 끔 - 아래로 끌어 창 닫는 제스처와 겹쳐서.
+    // return RefreshIndicator(
+    //   onRefresh: _loadList,
+    //   child: ListView(
+    return ListView(
+      padding: EdgeInsets.fromLTRB(16, 8, 16, context.rs(24)),
+      children: [
+        // 폰 맞대기는 안드로이드·iOS (iOS는 앱을 띄워 둔 동안만 광고 가능)
+        if (!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.android ||
+                defaultTargetPlatform == TargetPlatform.iOS))
+          Padding(
+            padding: EdgeInsets.only(bottom: context.rs(6)),
+            child: FilledButton.icon(
+              onPressed: () => _startNearbyTap(context),
+              icon: const Icon(Icons.tap_and_play_rounded),
+              label: const Text('폰 맞대서 친구 연결'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF8B5E3C),
+                minimumSize: Size.fromHeight(context.rs(48)),
+              ),
+            ),
+          ),
+        if (_shareNext != null)
+          SwitchListTile.adaptive(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+            title: Text(
+              '내 다음 공연 보여주기',
+              style: TextStyle(
+                fontSize: context.sp(14),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            subtitle: Text(
+              '끄면 친구에겐 둘 다 예매한 공연만 보여요',
+              style: TextStyle(
+                fontSize: context.sp(11.5),
+                color: Colors.black45,
+              ),
+            ),
+            value: _shareNext!,
+            onChanged: _setShareNext,
+            activeThumbColor: const Color(0xFF4E8F5A),
+            activeTrackColor: const Color(0xFF7FB77E),
+          ),
+        SizedBox(height: context.rs(6)),
+        if (_listError != null && connections == null)
+          _EmptyState(
+            icon: Icons.wifi_off_rounded,
+            message: '친구 목록을 불러오지 못했어요.\n$_listError',
+          )
+        else if (connections == null)
+          const Padding(
+            padding: EdgeInsets.only(top: 40),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (connections.isEmpty)
+          const _EmptyState(
+            icon: Icons.people_outline_rounded,
+            message: '아직 연결된 친구가 없어요.\n친구와 폰 윗부분을 맞대면 연결돼요.',
+          )
+        else
+          for (final c in connections)
             Padding(
-              padding: EdgeInsets.only(bottom: context.rs(6)),
-              child: FilledButton.icon(
-                onPressed: () => _startNearbyTap(context),
-                icon: const Icon(Icons.tap_and_play_rounded),
-                label: const Text('폰 맞대서 친구 연결'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF8B5E3C),
-                  minimumSize: Size.fromHeight(context.rs(48)),
-                ),
+              padding: EdgeInsets.only(bottom: context.rs(10)),
+              child: _ConnectionTile(
+                connection: c,
+                onTap: () => _openCard(c.peer),
+                onLongPress: () => _confirmDisconnect(c),
               ),
             ),
-          if (_shareNext != null)
-            SwitchListTile.adaptive(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-              title: Text(
-                '내 다음 공연 보여주기',
-                style: TextStyle(
-                  fontSize: context.sp(14),
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              subtitle: Text(
-                '끄면 친구에겐 둘 다 예매한 공연만 보여요',
-                style: TextStyle(
-                  fontSize: context.sp(11.5),
-                  color: Colors.black45,
-                ),
-              ),
-              value: _shareNext!,
-              onChanged: _setShareNext,
-              activeThumbColor: const Color(0xFF4E8F5A),
-              activeTrackColor: const Color(0xFF7FB77E),
-            ),
-          SizedBox(height: context.rs(6)),
-          if (_listError != null && connections == null)
-            _EmptyState(
-              icon: Icons.wifi_off_rounded,
-              message: '친구 목록을 불러오지 못했어요.\n$_listError',
-            )
-          else if (connections == null)
-            const Padding(
-              padding: EdgeInsets.only(top: 40),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (connections.isEmpty)
-            const _EmptyState(
-              icon: Icons.people_outline_rounded,
-              message: '아직 연결된 친구가 없어요.\n친구와 폰 윗부분을 맞대면 연결돼요.',
-            )
-          else
-            for (final c in connections)
-              Padding(
-                padding: EdgeInsets.only(bottom: context.rs(10)),
-                child: _ConnectionTile(
-                  connection: c,
-                  onTap: () => _openCard(c.peer),
-                  onLongPress: () => _confirmDisconnect(c),
-                ),
-              ),
-        ],
-      ),
+      ],
+      // ),
     );
   }
 }
