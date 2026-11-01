@@ -21,6 +21,7 @@ import 'package:ticketdiary/services/ticket_service.dart';
 import 'package:ticketdiary/services/torn_ticket_store.dart';
 import 'package:ticketdiary/widgets/offline_banner.dart';
 import 'package:ticketdiary/services/connectivity_status.dart';
+import 'package:ticketdiary/services/delivery_attention_store.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/landscape_upcoming_ticket_panel.dart';
@@ -71,6 +72,10 @@ class TicketData {
   /// 인스턴스를 계속 쓰므로, 여기에 저장해두면 뜯긴 상태가 그대로 유지됩니다.
   bool tornRevealed;
 
+  // [백엔드 수정] 관람일 없는 여러 날 공연이면 고를 날짜들(아니면 빈 목록). 공연 후 페이지를
+  // 열 때 고르게 함(관람일이 없으면 서버가 실제 셋리 날짜를 몰라 400).
+  List<DateTime> attendedDayChoices;
+
   static int _nextId = 0;
 
   TicketData({
@@ -79,6 +84,7 @@ class TicketData {
     this.info,
     String? id,
     this.tornRevealed = false,
+    this.attendedDayChoices = const [],
   }) : overlayKey = GlobalKey(),
        posterOverlayKey = GlobalKey(),
        id = id ?? 'ticket_${_nextId++}';
@@ -118,6 +124,9 @@ class TicketData {
     if (time != null && time.isNotEmpty) {
       extraFields['공연 시간'] = time;
     }
+    final days = concert == null || ticket.attendedDate != null
+        ? const <DateTime>[]
+        : _DiaryScreenState._concertDays(concert);
 
     return TicketData(
       title: concert?.name ?? '알 수 없는 공연',
@@ -149,6 +158,7 @@ class TicketData {
       // 전제 — _loadTicketsFromBackend가 보장합니다).
       tornRevealed:
           ticket.tornAt != null || TornTicketStore.instance.isTorn(ticket.id),
+      attendedDayChoices: days.length > 1 ? days : const [],
     );
   }
 }
@@ -344,9 +354,9 @@ class _DiaryScreenState extends State<DiaryScreen>
   /// null이 되기 전까지 해당 티켓의 진동은 멈춥니다.
   String? _deliveryAttentionTicketId;
   bool _deliveryAttentionFadingOut = false;
-  // 다이어리 화면이 탭 전환 등으로 다시 만들어져도 앱을 실행한 동안에는
-  // 배송 완료 안내가 한 번만 재생되도록 상태를 공유합니다.
-  static final Set<String> _deliveryAttentionPlayedIds = {};
+  // [백엔드 수정] 재생 기록은 DeliveryAttentionStore(기기 저장)로 옮겨 앱을 다시 켜도 한 번만 재생.
+  final DeliveryAttentionStore _deliveryAttentionPlayed =
+      DeliveryAttentionStore.instance;
   bool _deliveryAttentionRunning = false;
   bool _deliveryTicketsLoaded = false;
   Timer? _deliveryDateTimer;
@@ -492,7 +502,10 @@ class _DiaryScreenState extends State<DiaryScreen>
   // 모르므로, 조회가 끝나면 이 화면도 다시 그림.
   void _reloadTickets() {
     unawaited(
-      _loadTicketsFromBackend().then((_) {
+      Future.wait([
+        _loadTicketsFromBackend(),
+        _deliveryAttentionPlayed.load(),
+      ]).then((_) {
         if (!mounted) return;
         _deliveryTicketsLoaded = true;
         final coordinator = TabNavCoordinator.instance;
@@ -575,7 +588,7 @@ class _DiaryScreenState extends State<DiaryScreen>
     final ticket = _tickets.cast<TicketData?>().firstWhere(
       (ticket) =>
           ticket?.status == TicketStatus.beforeDelivery &&
-          !_deliveryAttentionPlayedIds.contains(ticket?.id) &&
+          !_deliveryAttentionPlayed.hasPlayed(ticket?.id) &&
           _isDeliveryDue(ticket?.info?.deliveryDate),
       orElse: () => null,
     );
@@ -611,8 +624,15 @@ class _DiaryScreenState extends State<DiaryScreen>
     setState(() => _deliveryAttentionFadingOut = true);
     await Future<void>.delayed(const Duration(seconds: 1));
     if (!mounted) return;
+    unawaited(
+      _deliveryAttentionPlayed.markPlayed(
+        ticket.id,
+        _tickets
+            .where((t) => t.status == TicketStatus.beforeDelivery)
+            .map((t) => t.id),
+      ),
+    );
     setState(() {
-      _deliveryAttentionPlayedIds.add(ticket.id);
       _deliveryAttentionRunning = false;
       _deliveryAttentionFadingOut = false;
       _deliveryAttentionTicketId = null;
@@ -624,7 +644,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       ticket.status == TicketStatus.beforeDelivery &&
       _isDeliveryDue(ticket.info?.deliveryDate) &&
       !_deliveryAttentionRunning &&
-      _deliveryAttentionPlayedIds.contains(ticket.id);
+      _deliveryAttentionPlayed.hasPlayed(ticket.id);
 
   void _syncDeliveryVibration() {
     final shouldVibrate = _tickets.any(_shouldVibrateDeliveryTicket);
@@ -799,6 +819,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       status: TicketStatus.afterConcert,
       info: ticket.info,
       id: ticket.id,
+      attendedDayChoices: ticket.attendedDayChoices,
     );
 
     if (mounted) setState(() {});
@@ -1222,7 +1243,7 @@ class _DiaryScreenState extends State<DiaryScreen>
   // [백엔드 수정] 여러 날 공연 관람일 선택 신규.
   /// 공연 기간의 날짜 목록(시작일~종료일). 서버 날짜는 자정 UTC로 저장된 현지 날짜라
   /// UTC 기준 연월일을 씀.
-  List<DateTime> _concertDays(ConcertResponse concert) {
+  static List<DateTime> _concertDays(ConcertResponse concert) {
     final start = concert.startDate.toUtc();
     final end = concert.endDate.toUtc();
     final first = DateTime(start.year, start.month, start.day);
@@ -1280,12 +1301,15 @@ class _DiaryScreenState extends State<DiaryScreen>
   }
 
   /// 여러 날 공연에서 관람일을 반드시 고르게 하는 시트(좌석 선택 시트와 같은 방식).
-  Future<DateTime?> _pickAttendedDate(List<DateTime> days) {
+  Future<DateTime?> _pickAttendedDate(
+    List<DateTime> days, {
+    bool dismissible = false,
+  }) {
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
     return showPaperSheet<DateTime>(
       context,
       title: '여러 날 열리는 공연이에요.\n관람한 날짜를 선택해주세요.',
-      dismissible: false,
+      dismissible: dismissible,
       rows: (context) => [
         for (final day in days)
           PaperSheetRow(
@@ -1296,6 +1320,32 @@ class _DiaryScreenState extends State<DiaryScreen>
           ),
       ],
     );
+  }
+
+  // [백엔드 수정] 관람일 없는 여러 날 공연 티켓은 공연 후 페이지를 열기 전에 관람일을 고르게 해
+  // 저장함. 고른 뒤의 정보를 돌려주고, 닫거나 저장에 실패하면 null(페이지 안 엶).
+  Future<TicketInfo?> _ensureAttendedDate(TicketData ticket) async {
+    final picked = await _pickAttendedDate(
+      ticket.attendedDayChoices,
+      dismissible: true,
+    );
+    if (picked == null || !mounted) return null;
+    try {
+      final updated = await _ticketService.updateTicket(
+        ticket.id,
+        attendedDate: picked,
+      );
+      if (!mounted) return null;
+      final info = TicketData.fromBackend(updated).info;
+      setState(() {
+        ticket.info = info;
+        ticket.attendedDayChoices = const [];
+      });
+      return info;
+    } catch (_) {
+      if (mounted) _showSnack('관람일을 저장하지 못했어요. 다시 시도해주세요.');
+      return null;
+    }
   }
 
   /// 티켓 사진에 가격/좌석 정보가 없을 때, KOPIS 좌석 등급별 가격표 중
@@ -2452,6 +2502,9 @@ class _DiaryScreenState extends State<DiaryScreen>
               _tickets.indexWhere((t) => t.id == ticket.id),
             ),
             openerTicketId: ticket.id,
+            ensureAttendedDate: ticket.attendedDayChoices.isEmpty
+                ? null
+                : () => _ensureAttendedDate(ticket),
             onInfoChanged: (updated) => setState(() => ticket.info = updated),
             onTorn: () {
               setState(() => ticket.tornRevealed = true);
@@ -2827,12 +2880,19 @@ class _DiaryScreenState extends State<DiaryScreen>
     int issueNumber = 1,
     // [백엔드 수정] 결산 캘린더 자동 열기용 - 리스트의 실제 티켓만 넘김(전환 연출 복사본 제외).
     String? openerTicketId,
+    // [백엔드 수정] 관람일 없는 여러 날 공연이면 열기 전에 관람일을 고르게 함.
+    Future<TicketInfo?> Function()? ensureAttendedDate,
   }) {
     // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
     unawaited(TicketPreviewPlayer.instance.prepare(info?.ticketId));
     // 입장 티켓을 뜯은 뒤에는, 티켓 어디를 눌러도 "공연 후" 페이지가 뜹니다.
     // (예전의 뜯긴 왼쪽 = "공연전" 바로가기/공연 전 페이지 진입은 제거.)
     Future<void> openAfter() async {
+      if (ensureAttendedDate != null) {
+        final picked = await ensureAttendedDate();
+        if (picked == null || !context.mounted) return;
+        info = picked;
+      }
       final startRect = _globalRectOf(posterOverlayKey);
       if (startRect == null) return;
       final frameScale =
