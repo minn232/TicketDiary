@@ -53,6 +53,7 @@ from app.services.ticket import (
     create_ticket,
     get_sorted_tickets,
     get_ticket,
+    mark_ticket_delivered,
     request_ticket_diary,
     update_ticket,
     delete_ticket,
@@ -124,6 +125,18 @@ async def modify_ticket(
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await update_ticket(db, current_user, ticket_id, body)
+    await attach_artist_display_names(db, [ticket.concert])
+    return ticket
+
+
+# 배송 전 티켓을 실물 스캔 없이 공연 전으로 넘김("이미 받았어요"/모바일 티켓)
+@router.post("/{ticket_id}/delivered", response_model=TicketWithConcert)
+async def confirm_ticket_delivered(
+    ticket_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ticket = await mark_ticket_delivered(db, current_user, ticket_id)
     await attach_artist_display_names(db, [ticket.concert])
     return ticket
 

@@ -1,5 +1,5 @@
 from uuid import UUID
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 import asyncio
 import difflib
 import json
@@ -32,6 +32,32 @@ def _initial_status(concert: Concert) -> TicketStatus:
     if concert.end_date + timedelta(hours=15) < now:
         return TicketStatus.AFTER_CONCERT
     return TicketStatus.BEFORE_CONCERT
+
+
+# 배송일 정보가 없는 배송 전 티켓의 추정 배송일(공연 N일 전). 공연 공지상 일괄 배송은 대략 3주 전이라,
+# 늦게 예매해 순차 배송받는 경우까지 덮도록 더 늦게 잡음
+_DELIVERY_ESTIMATE_DAYS = 14
+# 실물 스캔이 없어도 공연 N일 전에는 공연 전으로 강제 전환(예매처 "3일 전까지 미수령 시 문의" 기준)
+_DELIVERY_FORCE_SWITCH_DAYS = 3
+
+
+# 티켓 기준 관람일(KST 날짜). 관람일을 모르면 공연 첫날로 봄(알림 기준과 동일)
+def _ticket_target_date(concert: Concert, attended_date: datetime | None) -> date:
+    return (attended_date or concert.start_date).astimezone(KST).date()
+
+
+# 배송 전 상태로 둘 수 있는지 - 공연이 끝났거나 강제 전환 시점이 지났으면 불가
+def _can_await_delivery(concert: Concert, attended_date: datetime | None) -> bool:
+    if _initial_status(concert) != TicketStatus.BEFORE_CONCERT:
+        return False
+    switch_day = _ticket_target_date(concert, attended_date) - timedelta(days=_DELIVERY_FORCE_SWITCH_DAYS)
+    return datetime.now(KST).date() < switch_day
+
+
+# 크롤링 delivery_date와 같은 UTC 자정 표기로 맞춤
+def _estimated_delivery_date(concert: Concert, attended_date: datetime | None) -> datetime:
+    d = _ticket_target_date(concert, attended_date) - timedelta(days=_DELIVERY_ESTIMATE_DAYS)
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
 
 # 관람일(attended_date)과 concert.start_date/end_date를 비교해 첫콘/막콘 자동 판정.
@@ -176,10 +202,17 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     # 동일 유저-공연-관람일 중복 등록 방지. 여러 날 하는 공연은 KOPIS상 공연 1개라
     # 관람일이 다르면 같은 공연에 티켓 여러 장 허용(2/15, 2/16 양일 관람 등)
     result = await db.execute(
-        select(Ticket.attended_date).where(Ticket.user_id == user.id, Ticket.concert_id == concert.id)
+        select(Ticket)
+        .where(Ticket.user_id == user.id, Ticket.concert_id == concert.id)
+        .options(selectinload(Ticket.concert))
     )
-    if any(_is_same_attended_day(d, body.attended_date) for d in result.scalars().all()):
-        raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
+    same_day = [t for t in result.scalars().all() if _is_same_attended_day(t.attended_date, body.attended_date)]
+    # 배송 전 티켓 하나만 겹치고 이번이 실물 등록이면 중복이 아니라 실물 도착이라 그 티켓을 승격함
+    delivered = None
+    if same_day:
+        if body.awaiting_delivery or len(same_day) > 1 or same_day[0].status != TicketStatus.BEFORE_DELIVERY:
+            raise HTTPException(status_code=409, detail="이미 등록된 공연 티켓입니다.")
+        delivered = same_day[0]
 
     # 실제 티켓(OCR)이 회차를 증명하는 자료이므로 KOPIS 시간과 다르면 OCR을 신뢰하고 로그만 남김
     start_time = body.start_time
@@ -193,6 +226,11 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     elif concert.start_time is None:
         concert.start_time = start_time
 
+    if delivered is not None:
+        return await _promote_delivered_ticket(db, user, delivered, body)
+
+    awaiting = body.awaiting_delivery and _can_await_delivery(concert, body.attended_date)
+
     # 배송일은 예매 사이트 공지(크롤링)가 실물 티켓 OCR보다 신뢰도가 높다고 보고,
     # OCR/유저 입력이 없을 때만 크롤링된 concert.delivery_date로 채움 (seat_type과 같은 방향)
     # delivery_date_synced=True로 표시해두면, 이후 크롤링이 delivery_date를 정정할 때
@@ -202,13 +240,17 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     if delivery_date is None:
         delivery_date = concert.delivery_date
         delivery_date_synced = delivery_date is not None
+    # 배송 전인데 배송일을 끝내 모르면 추정치로 채움 - synced로 둬서 크롤링 값이 오면 덮어쓰게 함
+    if delivery_date is None and awaiting:
+        delivery_date = _estimated_delivery_date(concert, body.attended_date)
+        delivery_date_synced = True
 
     is_first_day, is_last_day = _detect_first_last_day(concert, body.attended_date)
 
     ticket = Ticket(
         user_id=user.id,
         concert_id=concert.id,
-        status=_initial_status(concert),
+        status=TicketStatus.BEFORE_DELIVERY if awaiting else _initial_status(concert),
         delivery_date=delivery_date,
         delivery_date_synced=delivery_date_synced,
         start_time=start_time,
@@ -235,6 +277,45 @@ async def create_ticket(db: AsyncSession, user: User, body: TicketCreate) -> Tic
     # 목적을 다한 것으로 보고 자동으로 찜 해제(안 찜한 공연이면 조용히 넘어감)
     await remove_concert_follow(db, user.id, concert.id)
 
+    return ticket
+
+
+# 배송 전 티켓에 실물이 도착해 다시 스캔한 경우 새 행 대신 그 티켓을 넘김. id가 유지돼
+# 알림/페이지 연결이 안 끊기고, 실물에서 새로 읽힌 값만 덮어씀
+async def _promote_delivered_ticket(db: AsyncSession, user: User, ticket: Ticket, body: TicketCreate) -> Ticket:
+    concert = ticket.concert
+    ticket.status = _initial_status(concert)
+    if body.start_time:
+        ticket.start_time = body.start_time
+    elif ticket.start_time is None:
+        ticket.start_time = concert.start_time
+    if body.ticketing_site is not None:
+        ticket.ticketing_site = body.ticketing_site
+    if body.price is not None:
+        ticket.price = body.price
+    if body.seat_type is not None:
+        ticket.seat_type = _correct_seat_type(body.seat_type, concert)
+    if body.delivery_date is not None:
+        ticket.delivery_date = body.delivery_date
+        ticket.delivery_date_synced = False
+    if body.attended_date is not None:
+        ticket.attended_date = body.attended_date
+        ticket.is_first_day, ticket.is_last_day = _detect_first_last_day(concert, body.attended_date)
+
+    await db.commit()
+    await schedule_ticket_notifications(db, ticket, user)
+    return ticket
+
+
+# 실물 스캔 없이 "이미 받았어요/모바일 티켓"으로 배송 전 티켓을 넘김. 이미 넘어간 티켓은 그대로 반환
+async def mark_ticket_delivered(db: AsyncSession, user: User, ticket_id: UUID) -> Ticket:
+    ticket = await get_ticket(db, user.id, ticket_id)
+    if ticket.status != TicketStatus.BEFORE_DELIVERY or ticket.concert is None:
+        return ticket
+
+    ticket.status = _initial_status(ticket.concert)
+    await db.commit()
+    await schedule_ticket_notifications(db, ticket, user)
     return ticket
 
 
@@ -466,8 +547,8 @@ def _build_ticket_notifications(ticket: Ticket, user: User) -> list[Notification
     # 본문에 넣을 시작 시각 - 티켓에서 읽은 실제 회차 시각 우선
     start_time = ticket.start_time or concert.start_time
 
-    # 배송 예정일 알림 (delivery 설정 on, 배송일 오전 9시)
-    if delivery_on and ticket.delivery_date is not None:
+    # 배송 예정일 알림 (delivery 설정 on, 배송일 오전 9시). 실물을 이미 가진 티켓엔 필요 없어 배송 전만
+    if delivery_on and ticket.status == TicketStatus.BEFORE_DELIVERY and ticket.delivery_date is not None:
         scheduled = _at_9am_kst(ticket.delivery_date)
         if scheduled > now:
             to_add.append(Notification(
@@ -575,9 +656,30 @@ async def backfill_delivery_date_from_concert(
     await schedule_tickets_notifications_bulk(db, list(tickets))
 
 
+# 실물 스캔 없이 강제 전환 시점이 됐거나 공연이 끝난 배송 전 티켓을 넘김(끝났으면 바로 AFTER_CONCERT).
+# 남은 배송 알림을 지우려고 알림도 재스케줄함
+async def _release_overdue_delivery_tickets(db: AsyncSession) -> None:
+    result = await db.execute(
+        select(Ticket)
+        .options(selectinload(Ticket.concert), selectinload(Ticket.user))
+        .where(Ticket.status == TicketStatus.BEFORE_DELIVERY)
+    )
+    released = [
+        t for t in result.scalars().all()
+        if t.concert is not None and not _can_await_delivery(t.concert, t.attended_date)
+    ]
+    for ticket in released:
+        ticket.status = _initial_status(ticket.concert)
+    if released:
+        await schedule_tickets_notifications_bulk(db, released)
+        logger.info(f"배송 전 티켓 자동 전환: {len(released)}건")
+
+
 # BEFORE_CONCERT 티켓 중 공연이 끝난 것을 AFTER_CONCERT로 자동 전환
 # KOPIS end_date는 UTC 자정 저장이므로 +15h(KST 다음날 자정) 기준으로 판단
 async def sync_ticket_statuses(db: AsyncSession) -> None:
+    await _release_overdue_delivery_tickets(db)
+
     now = datetime.now(timezone.utc)
     result = await db.execute(
         select(Ticket)

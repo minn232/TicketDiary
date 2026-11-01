@@ -364,7 +364,11 @@ async def test_schedule_resets_on_ticket_update():
     concert_id = await _create_concert("PF_SCHED_RESET_001", _make_future_xml("PF_SCHED_RESET_001"))
     token = await _get_token()
     headers = {"Authorization": f"Bearer {token}"}
-    ticket_id = await _create_ticket(concert_id, token)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "awaiting_delivery": True}, headers=headers
+        )
+    ticket_id = res.json()["id"]
 
     # 배송일 추가 수정 -> delivery_day 알림 추가 생성 확인
     delivery_date = "2030-05-15"
@@ -390,7 +394,7 @@ async def test_disabling_delivery_setting_cancels_pending_notification():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         await ac.post(
             "/api/v1/tickets",
-            json={"concert_id": concert_id, "delivery_date": "2030-05-15T00:00:00Z"},
+            json={"concert_id": concert_id, "delivery_date": "2030-05-15T00:00:00Z", "awaiting_delivery": True},
             headers=headers,
         )
     assert "delivery_day" in {n["type"] for n in await _get_notifications_from_db(token)}

@@ -43,6 +43,9 @@ class TicketCreate(BaseModel):
     seat_type: str | None = Field(default=None, max_length=200)
     # OCR로 추출한 실제 관람 날짜. 있으면 등록 시점에 is_first_day/is_last_day를 자동 판정하는 데 쓰임
     attended_date: datetime | None = None
+    # 실물 배송을 기다리는 중이면 true(갤러리 등록 때 유저가 고름) - 배송 전 티켓으로 만들고, 같은 공연의
+    # 배송 전 티켓이 있을 때 false로 오면 실물 도착으로 보고 그 티켓을 승격함
+    awaiting_delivery: bool = False
 
     _normalize_dates = field_validator("delivery_date", "attended_date", mode="after")(_ensure_utc)
 

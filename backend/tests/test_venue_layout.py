@@ -682,10 +682,11 @@ async def test_crawl_result_delivery_date_backfills_existing_ticket():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         ticket_res = await ac.post(
             "/api/v1/tickets",
-            json={"concert_id": concert_id},  # delivery_date 없이 등록(OCR로 못 뽑은 경우)
+            # delivery_date 없이 배송 대기로 등록(OCR로 못 뽑은 경우) - 추정 배송일은 크롤링 값으로 덮어써져야 함
+            json={"concert_id": concert_id, "awaiting_delivery": True},
             headers=headers,
         )
-    assert ticket_res.json()["delivery_date"] is None
+    assert ticket_res.json()["status"] == "before_delivery"
 
     body = {"delivery_date": "2030-05-10"}
     with patch("app.core.deps.settings") as mock_settings:
@@ -783,10 +784,10 @@ async def test_crawl_result_delivery_date_backfills_multiple_tickets():
         for token in tokens:
             res = await ac.post(
                 "/api/v1/tickets",
-                json={"concert_id": concert_id},
+                json={"concert_id": concert_id, "awaiting_delivery": True},
                 headers={"Authorization": f"Bearer {token}"},
             )
-            assert res.json()["delivery_date"] is None
+            assert res.json()["status"] == "before_delivery"
             ticket_ids.append(res.json()["id"])
 
     with patch("app.core.deps.settings") as mock_settings:
