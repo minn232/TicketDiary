@@ -36,8 +36,9 @@ class NearbySighting(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-# 유저 간 연결 (쌍당 1행) - user_a_id < user_b_id로 정렬해 저장해 (A,B)/(B,A) 중복을 막음.
-# connected_at이 비어 있으면 양쪽 확인을 기다리는 요청 상태
+# 유저 간 만남 (쌍당 1행) - user_a_id < user_b_id로 정렬해 저장해 (A,B)/(B,A) 중복을 막음.
+# connected_at이 비어 있으면 양쪽 확인을 기다리는 요청 상태. 일회용이라 다시 맞대면 요청 상태로 돌아가고,
+# 카드는 연결 뒤 잠깐만 볼 수 있음
 class UserConnection(Base):
     __tablename__ = "user_connections"
     __table_args__ = (UniqueConstraint("user_a_id", "user_b_id", name="uq_user_connection"),)
@@ -50,7 +51,7 @@ class UserConnection(Base):
     b_confirmed_at = Column(DateTime(timezone=True), nullable=True)
     requested_at = Column(DateTime(timezone=True), nullable=False)
     connected_at = Column(DateTime(timezone=True), nullable=True)
-    # 연결 후에도 다시 맞대면 갱신 - 연결 목록 정렬용
+    # 연결 목록 정렬용이었음 - 목록을 꺼 둬서 지금은 확인 완료 시각만 남음
     last_met_at = Column(DateTime(timezone=True), nullable=True)
     # 이번 시도에서 양쪽 판정이 짝지어진 시각(요청·연결 상태 무관) - 두 폰이 같은 순간에 애니메이션을 시작하는 기준
     matched_at = Column(DateTime(timezone=True), nullable=True)
