@@ -1092,7 +1092,8 @@ class _DiaryScreenState extends State<DiaryScreen>
         final picked = await _pickPriceEntry(tiers);
         if (picked == null || !mounted) return; // 시트 안 고르고 화면 이탈
         finalPrice = picked.price;
-        finalSeat = picked.seatType;
+        // [백엔드 수정] 읽은 좌석 위치(구역/입장번호 등)는 남기고 등급만 교체.
+        finalSeat = _seatWithGrade(finalSeat, picked.seatType);
       }
     }
 
@@ -1338,6 +1339,15 @@ class _DiaryScreenState extends State<DiaryScreen>
       if (target.contains(tierSeat) || tierSeat.contains(target)) return tier;
     }
     return null;
+  }
+
+  // [백엔드 수정] 서버 _SEAT_GRADE_TOKEN_RE와 같은 등급 패턴("R석", "스탠딩석").
+  static final RegExp _seatGradeToken = RegExp(r'[A-Z가-힣]{1,5}석');
+
+  /// OCR 좌석("다구역 입장번호 643번", "객석 3열 5번")의 등급을 [grade]로 바꾸고 위치는 유지.
+  String _seatWithGrade(String? ocrSeat, String grade) {
+    final location = (ocrSeat ?? '').replaceFirst(_seatGradeToken, '').trim();
+    return location.isEmpty ? grade : '$grade $location';
   }
 
   // [백엔드 수정] 수수료 범위 밖 차이는 매칭 제외.
