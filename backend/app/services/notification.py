@@ -36,11 +36,8 @@ def _init_firebase() -> None:
         logger.error(f"Firebase 초기화 실패: {e}")
 
 
-# 알림 목록 조회. 아직 발송 안 된(is_sent=False) 예약 항목은 "받은 알림"이
-# 아니라서 제외 — 예전엔 이 필터가 없어서 몇 주 뒤 예약된 알림까지 인앱
-# 알림함에 "오늘 공연 날이에요" 같은 문구로 떠서 이미 온 것처럼 보이는
-# 문제가 있었음(실기기 테스트로 발견).
-# 발송된 알림은 지우지 않고 쌓여서, 응답이 계속 커지지 않도록 기본 상한을 둠
+# 알림 목록 조회. 아직 발송 안 된(is_sent=False) 예약 항목은 제외 - 몇 주 뒤 예약 알림이 "오늘 공연 날이에요"로
+# 알림함에 먼저 떠 보였음. 발송된 알림은 지우지 않고 쌓이므로 기본 상한을 둠
 _DEFAULT_NOTIFICATION_LIST_LIMIT = 200
 
 
@@ -321,7 +318,7 @@ async def reschedule_user_ticketing_notifications(db: AsyncSession, user: User) 
 # 팔로우한 아티스트의 신규 공연에 NEW_CONCERT 알림 생성 - KOPIS 일별 배치가 "진짜 신규"
 # 공연을 발견했을 때만 호출(온디맨드 조회/검색 경로에선 호출 안 함, 무관한 조회로 뜻하지
 # 않게 발송되는 걸 막기 위함). matched는 kopis.py가 뉴스피드용으로 이미 계산해둔 (팔로워
-# user_id, 매칭된 아티스트명) 목록을 그대로 받아 재계산 안 함.
+# user_id, 매칭된 아티스트명) 목록을 그대로 받아 재계산 안 함
 async def schedule_new_concert_notifications(
     db: AsyncSession, concert: Concert, matched: list[tuple[UUID, str]]
 ) -> None:

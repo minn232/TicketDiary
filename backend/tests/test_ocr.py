@@ -50,11 +50,9 @@ def _httpx_post_mock(status_code: int = 200, json_body: dict | None = None):
     return patch("app.services.ocr.httpx.AsyncClient", return_value=mock_client)
 
 
-# 예매내역 캡처 레이아웃 파싱 테스트용 - Vision 응답의 words/symbols 계층을 직접 만들지
-# 않고, 문단(paragraph) 텍스트 + bbox만으로 annotation을 구성하는 헬퍼.
-# 실제 Vision은 단어 사이 진짜 공백일 때만 detectedBreak=SPACE를 붙이므로(그 외엔
-# 시각적 줄바꿈으로 취급돼 공백이 안 들어감 - _paragraph_text 참고), 여기서도 각 단어
-# 끝에 SPACE break를 명시해야 재구성 시 원래 텍스트대로 공백이 살아남는다
+# 예매내역 레이아웃 파싱 테스트용 - 문단 텍스트 + bbox만으로 Vision annotation을 만드는 헬퍼. 실제 Vision은
+# 진짜 공백에만 detectedBreak=SPACE를 붙이므로(_paragraph_text 참고) 각 단어 끝에 SPACE break를 명시해야
+# 재구성 때 공백이 살아남음
 def _paragraph(text: str, x0: int, y0: int, x1: int, y1: int) -> dict:
     words = text.split(" ")
     word_objs = []
@@ -789,7 +787,7 @@ async def test_scan_success_with_kopis_candidates(get_auth_token):
 # 목록 검색으로만 upsert된 후보(pcseguidance 없음)는 상세 조회를 아직 한 번도
 # 안 해서 price가 비어있으므로, /scan이 자동으로 상세 조회까지 채워 반환해야
 # 함(모바일 티켓처럼 사진 자체에 가격/좌석이 없는 경우 프론트가 이 가격표로
-# 사용자에게 고르게 하는 기능의 전제 조건).
+# 사용자에게 고르게 하는 기능의 전제 조건)
 @pytest.mark.asyncio
 async def test_scan_backfills_price_for_new_candidate(get_auth_token):
     xml = (

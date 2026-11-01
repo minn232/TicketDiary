@@ -78,13 +78,13 @@ def _detect_first_last_day(
 # concert.event_type 초기값은 공연명 키워드 추측이라 부정확할 수 있음(예: "워터밤"은 다중
 # 아티스트인데 SOLO로 분류됨) - 아티스트 추출 결과로 실제 인원이 확인되면 SOLO→FESTIVAL만
 # 승격. 반대(강등)는 안 함 - 페스티벌 1차 라인업은 소수만 공개되는 경우가 흔해 낮은 인원수가
-# "페스티벌 아님"의 근거가 될 수 없음.
+# "페스티벌 아님"의 근거가 될 수 없음
 _MULTI_ARTIST_FESTIVAL_THRESHOLD = 5
 
 # VLM이 포스터를 보고 "FESTIVAL"이라고 판단해도(llm_server event_type) 그 판단만으로 바로
 # 승격하지 않고, 같은 응답의 artist_name 결과가 서로 다른 이름 최소 이 개수 이상이어야
 # 반영(교차검증) - 콜라보 포스터를 페스티벌로 착각했는데 실제 lineup은 1명뿐인 오판을 거름.
-# 위 5명 임계치보다 낮게 잡아 초반 라인업 2~3팀만 공개된 실제 페스티벌을 더 일찍 잡아냄.
+# 위 5명 임계치보다 낮게 잡아 초반 라인업 2~3팀만 공개된 실제 페스티벌을 더 일찍 잡아냄
 _LLM_FESTIVAL_MIN_ARTISTS = 2
 
 
@@ -135,7 +135,7 @@ _SEAT_GRADE_TOKEN_RE = re.compile(r"[A-Z가-힣]{1,5}석")
 # OCR/사용자 입력 seat_type을 concert.price(크롤링 가격표 등급명)와 대조해서 다르면 크롤링
 # 값으로 교정 - 사진 OCR은 글자가 깨지기 쉬운 반면(예: "지정석"→"아지정석") 크롤링은 가격표를
 # 그대로 읽어 더 정확함. 반대로 start_time은 OCR을 신뢰함(실물 티켓이 실제 회차를 증명하는
-# 자료라 필드 성격이 반대).
+# 자료라 필드 성격이 반대)
 def _correct_seat_type(seat_type: str | None, concert: Concert) -> str | None:
     if not seat_type or not concert.price:
         return seat_type
@@ -307,7 +307,7 @@ async def _promote_delivered_ticket(db: AsyncSession, user: User, ticket: Ticket
     return ticket
 
 
-# 실물 스캔 없이 "이미 받았어요/모바일 티켓"으로 배송 전 티켓을 넘김. 이미 넘어간 티켓은 그대로 반환
+# 실물 스캔 없이 배송 전 티켓을 공연 전으로 넘김(배송일 된 카드 터치 / 뒷면 "받았어요"). 이미 넘어간 티켓은 그대로 반환
 async def mark_ticket_delivered(db: AsyncSession, user: User, ticket_id: UUID) -> Ticket:
     ticket = await get_ticket(db, user.id, ticket_id)
     if ticket.status != TicketStatus.BEFORE_DELIVERY or ticket.concert is None:

@@ -208,7 +208,7 @@ async def receive_crawl_result(
 
     # MusicBrainz 정규화 큐잉 - pending row만 적립(외부 호출 없음, 응답 시간과 무관). 원래 이
     # 웹훅은 아티스트명 병합만 하고 큐잉을 안 해서, 크롤링/KOPIS로만 들어온 표기가 정규화 기회를
-    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견).
+    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견)
     queue_names = await _names_to_queue(db, concert, include_lineup=bool(body.lineup))
     if queue_names:
         # updated가 비어있어도(이번 호출로 바뀐 건 없지만 concert.artist_name엔 이미 값이 있는

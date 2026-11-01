@@ -52,7 +52,7 @@ def _reset_spotify_token_cache():
 
 # 응답 캐싱(music_links.py) 도입 후, 여러 테스트가 같은 (service, artist, song) 조합을
 # 다른 기대값으로 재사용하고 있어서(예: "테스트가수"/"테스트곡") 캐시가 테스트 간에 새면
-# 먼저 실행된 테스트의 결과가 나중 테스트에 잘못 적중함 - 매 테스트 전에 비움.
+# 먼저 실행된 테스트의 결과가 나중 테스트에 잘못 적중함 - 매 테스트 전에 비움
 @pytest_asyncio.fixture(autouse=True)
 async def _clean_music_link_cache():
     async with AsyncSessionLocal() as db:
@@ -152,7 +152,7 @@ async def test_resolve_youtube_official_audio_success():
 
 
 # 유튜브 - 공식 오디오와 공식 뮤비가 둘 다 후보에 있으면(오디오가 검색순위 1등이어도) 뮤비를
-# 우선 채택 - 유튜브로 누르는 건 보통 영상을 보고 싶은 거라서.
+# 우선 채택 - 유튜브로 누르는 건 보통 영상을 보고 싶은 거라서
 @pytest.mark.asyncio
 async def test_resolve_youtube_prefers_music_video_over_official_audio():
     token = await _get_token()
@@ -443,7 +443,7 @@ async def test_resolve_youtube_no_official_audio_returns_null():
 
 # 애플뮤직 - artistId가 일치하는 결과만 반환(문자열 유사도 대신 ID 대조로 교체됨 - 아래 3개
 # 테스트 참고). 아티스트 검색으로 먼저 artistId를 확정하고, 곡 검색 결과 중 그 ID와 일치하는
-# 것만 인정.
+# 것만 인정
 @pytest.mark.asyncio
 async def test_resolve_apple_music_success():
     token = await _get_token()
@@ -473,7 +473,7 @@ async def test_resolve_apple_music_success():
 # 애플뮤직 - 곡 제목만 우연히 같은 무관한 아티스트 결과는 artistId가 달라서 걸러짐
 # (실측 사례: 잔나비의 비공식 커버곡 "The Moon Represents My Heart" 검색 시 무관한 클래식
 # 기타리스트의 동명 편곡 트랙이 잡혔던 실제 버그 - 문자열 유사도로는 90점 넘게 나와 오탐이었음).
-# 일반 검색에서 못 찾으면 카탈로그 조회로 한 번 더 시도하므로(아래 참고) lookup도 빈 결과로 채움.
+# 일반 검색에서 못 찾으면 카탈로그 조회로 한 번 더 시도하므로(아래 참고) lookup도 빈 결과로 채움
 @pytest.mark.asyncio
 async def test_resolve_apple_music_different_artist_id_returns_null():
     token = await _get_token()
@@ -596,7 +596,7 @@ async def test_resolve_apple_music_prefers_studio_over_live_version():
 # ---- 캐싱(music_links.py) ----
 
 # 같은 (service, artist, song) 조합을 두 번 조회하면 두 번째는 캐시로 응답하고 리졸버(실제
-# API 호출)를 다시 안 부름 - 유튜브 쿼터 소진 방지가 목적이라 이 부분이 핵심.
+# API 호출)를 다시 안 부름 - 유튜브 쿼터 소진 방지가 목적이라 이 부분이 핵심
 @pytest.mark.asyncio
 async def test_resolve_caches_result_and_skips_second_resolver_call():
     token = await _get_token()
@@ -718,7 +718,7 @@ async def test_resolve_refetches_after_not_found_ttl_expires():
 
 # 리졸버가 예외를 던지면(레이트리밋/네트워크 오류 등) "못 찾음"으로 캐싱하지 않고, url=null만
 # 응답한 뒤 다음 요청 때 다시 시도함 - 실측 버그: 429가 3일짜리 "못 찾음"으로 캐싱돼서 그
-# 이후 진짜로 조회해도 재시도조차 안 됐던 문제(Vaundy "CHAINSAW BLOOD" 등).
+# 이후 진짜로 조회해도 재시도조차 안 됐던 문제(Vaundy "CHAINSAW BLOOD" 등)
 @pytest.mark.asyncio
 async def test_resolve_does_not_cache_when_resolver_raises():
     token = await _get_token()

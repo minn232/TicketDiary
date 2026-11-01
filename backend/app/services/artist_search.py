@@ -15,7 +15,7 @@ def _display_value(canonical: CanonicalArtist) -> str:
 
 # 아티스트 검색(팔로우용) - KOPIS 실시간 검색(예정 공연만 찾김) 대신 우리 DB를 직접 검색.
 # Concert.artist_name(원본, 미정규화까지 커버) + canonical_name/alias(그룹-멤버 관계로만
-# 존재하는 아티스트도 찾음) 세 소스를 합침. 멤버-그룹 노출 규칙은 아래 final_ids 참고.
+# 존재하는 아티스트도 찾음) 세 소스를 합침. 멤버-그룹 노출 규칙은 아래 final_ids 참고
 async def search_artists(db: AsyncSession, query: str, limit: int = 30) -> list[dict]:
     q = query.strip()
     if not q:

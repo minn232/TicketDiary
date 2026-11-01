@@ -1,7 +1,5 @@
-"""연결 카드 - 연결된 두 사람의 티켓/찜/셋리를 겹쳐 우리 사이 / 함께한 기록 / 다음에 같이를 계산
-
-상대 단독 기록은 내리지 않고 겹치는 것과 집계만 내림 (예외: 상대가 공개를 켠 다음 공연 1개)
-"""
+# 연결 카드 - 연결된 두 사람의 티켓/찜/셋리를 겹쳐 우리 사이 / 함께한 기록 / 다음에 같이를 계산
+# 상대 단독 기록은 내리지 않고 겹치는 것과 집계만 내림 (예외: 상대가 공개를 켠 다음 공연 1개)
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field

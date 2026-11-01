@@ -129,7 +129,7 @@ async def test_wait_until_actually_stopped_false_on_timeout():
 
 
 # 실제 v1 응답처럼 runtime 필드도 desiredStatus도 없으면 꺼진 걸로 치지 않음 - 예전 코드는
-# runtime이 없다는 이유로 RUNNING인 pod도 바로 "정지됨"으로 판정했음(10/16 발견)
+# runtime이 없다는 이유로 RUNNING인 pod도 바로 "정지됨"으로 판정했음
 @pytest.mark.asyncio
 async def test_wait_until_actually_stopped_not_fooled_by_missing_fields():
     mock_client = _mock_get_client([{"id": "test-pod", "desiredStatus": "RUNNING"}, {"id": "test-pod"}] * 5)

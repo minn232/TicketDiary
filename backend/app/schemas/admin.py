@@ -7,11 +7,9 @@ from pydantic import BaseModel, model_validator
 class AdminConcertListItem(BaseModel):
     model_config = {"from_attributes": True}
 
-    # 관리자 목록 한 줄 - flagged_count는 unconfirmed/ambiguous 상태인 아티스트 수(0이면 정상).
-    # llm_exclusion_reasons가 비어있지 않으면 send_posters_for_artist_extraction 대상이 아니라는
-    # 뜻(포스터 LLM 추출이 영영 안 옴) - 크롤링 등 다른 경로로만 채워질 수 있으니 우선 확인 대상.
-    # admin_reviewed_at은 NULL이면 미검수. ai_reviewed_at은 Claude가 대신 검수한 경우만 채워짐
-    # (사람 검수와 구분해서 admin.html에 별도 표시)
+    # 관리자 목록 한 줄 - flagged_count는 unconfirmed/ambiguous 아티스트 수(0이면 정상). llm_exclusion_reasons가
+    # 있으면 포스터 LLM 추출 대상이 아니라 다른 경로로만 채워질 수 있어 우선 확인 대상. admin_reviewed_at이
+    # NULL이면 미검수, ai_reviewed_at은 Claude가 대신 검수한 경우만 채워짐(admin.html에 따로 표시)
     id: UUID
     kopis_id: str | None
     name: str
@@ -222,6 +220,7 @@ class AdminCrawlTargetItem(BaseModel):
 
 
 class AdminCrawlTargetsResponse(BaseModel):
+    # 로컬 YES24/MELON 크롤링 스크립트가 받아가는 대상 목록
     items: list[AdminCrawlTargetItem]
 
 

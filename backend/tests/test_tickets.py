@@ -503,7 +503,7 @@ async def test_create_ticket_promotes_before_delivery_ticket():
     assert duplicate.status_code == 409
 
 
-# "이미 받았어요"로 배송 전 티켓을 스캔 없이 넘길 수 있는지 테스트
+# 카드 터치/"받았어요"로 배송 전 티켓을 스캔 없이 넘길 수 있는지 테스트
 @pytest.mark.asyncio
 async def test_mark_ticket_delivered():
     concert_id = await _create_concert("PF_T_AWAIT_004")

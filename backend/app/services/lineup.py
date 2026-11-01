@@ -17,7 +17,7 @@ _SOURCE_PRIORITY = {"poster": 0, "crawl": 1}
 
 # lineup 웹훅 페이로드를 concert_lineups에 union-only(삭제 없음)로 병합 - 새 조합은 추가만
 # 하고, 이미 있는 조합은 더 신뢰도 높은 source가 오면 source만 승격(row 삭제는 안 함, 기존
-# artist_name 합집합 병합과 동일한 방식). entries는 날짜 없는 항목이 이미 걸러진 상태로 옴.
+# artist_name 합집합 병합과 동일한 방식). entries는 날짜 없는 항목이 이미 걸러진 상태로 옴
 async def upsert_concert_lineup(
     db: AsyncSession,
     concert_id: UUID,

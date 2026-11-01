@@ -98,7 +98,7 @@ def _general_candidate(name: str, score: int = 100, mbid: str | None = None) -> 
 
 # normalize_pending_artists()는 concert_id로 스코프되지 않고 큐 전체를 처리하는 배치라, 세션
 # 스코프로 공유되는 테스트 DB에서 다른 테스트가 남겨둔 pending row까지 같이 집어갈 수 있다.
-# 배치를 직접 호출하는 테스트는 실행 전에 이걸로 큐를 비워서 자기 데이터만 처리되게 한다.
+# 배치를 직접 호출하는 테스트는 실행 전에 이걸로 큐를 비워서 자기 데이터만 처리되게 한다
 async def _clear_pending_queue() -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(

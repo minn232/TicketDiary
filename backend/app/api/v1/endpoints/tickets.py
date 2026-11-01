@@ -129,7 +129,7 @@ async def modify_ticket(
     return ticket
 
 
-# 배송 전 티켓을 실물 스캔 없이 공연 전으로 넘김("이미 받았어요"/모바일 티켓)
+# 배송 전 티켓을 실물 스캔 없이 공연 전으로 넘김(배송일 된 카드 터치 / 뒷면 "받았어요")
 @router.post("/{ticket_id}/delivered", response_model=TicketWithConcert)
 async def confirm_ticket_delivered(
     ticket_id: UUID,
@@ -150,11 +150,9 @@ def _ticket_concert_and_date(ticket: Ticket):
     return ticket.concert_id, explicit_date
 
 
-# 티켓 기준 실제 셋리스트 조회 (내부적으로 ticket.concert_id + attended_date로 위임).
-# 결과가 비어있으면(자동 백필 14일 창을 놓친 경우 등) 화면은 그대로 빈 상태로 응답하고,
-# 백그라운드로 한 번 더 채워보기를 시도함(check_real_setlist_on_view - 콘서트+날짜 단위
-# 하루 쿨다운). 응답을 기다리게 하지 않으므로, 채워지더라도 이번 조회엔 안 보이고 다음에
-# 다시 열어야 반영됨.
+# 티켓 기준 실제 셋리스트 조회(ticket.concert_id + attended_date로 위임). 비어 있으면 빈 채로 응답하고
+# 백그라운드로 한 번 더 채워봄(check_real_setlist_on_view, 콘서트+날짜 단위 하루 쿨다운) - 기다리지
+# 않으므로 채워져도 다음에 다시 열어야 보임
 @router.get("/{ticket_id}/setlist", response_model=RealSetlistResponse)
 async def get_ticket_real_setlist(
     ticket_id: UUID,
@@ -208,7 +206,7 @@ async def edit_ticket_real_setlist(
 # show_predicted_setlist는 이제 조회 자체를 막는 스위치가 아니라 프론트 블러
 # 처리용 화면 취향 값이라(꺼도 데이터는 그대로 내려줘야 롱탭/홀드로 잠깐
 # 풀어볼 수 있는 기능을 만들 수 있음), 아래 세 엔드포인트에서 하던 403
-# 게이팅을 제거함. 값 자체(GET/PATCH /settings)는 그대로 유지.
+# 게이팅을 제거함. 값 자체(GET/PATCH /settings)는 그대로 유지
 
 
 # 예상 셋리스트는 아티스트 과거 통계 기반 추측이라 곡 자체는 날짜에 안 묶이지만, 페스티벌처럼

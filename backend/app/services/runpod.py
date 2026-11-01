@@ -43,12 +43,9 @@ async def _graphql(query: str, variables: dict) -> dict:
     return data.get("data") or {}
 
 
-# RunPod pod을 재개(resume)시킨다. LLM팀 GPU 비용 절감을 위해 pod을 KST 00시 전후에만
-# 띄워두는 정책이라, 크롤링/아티스트 추출 배치 전송 전에 호출해서 미리 깨워둔다.
-# REST /start는 GPU 개수를 못 받아 pod에 남은 값을 그대로 씀 → 보조 pod이 GPU 0개(메모리 한도
-# 488MB)로 켜져 pip install vllm이 OOM으로 죽었음(10/16~10/17). 그래서 GraphQL podResume에
-# gpuCount 1을 지정하고(GPU 없으면 바로 실패), 켜진 뒤 GPU 개수도 다시 확인함
-# 이미 떠 있으면 다시 resume하지 않고 GPU 개수만 확인. pod_id를 안 주면 기본 pod(수동 스크립트용)
+# RunPod pod 재개 - GPU 비용 절감으로 KST 00시 전후에만 띄우는 정책이라 배치 전송 전에 깨움. REST /start는 GPU
+# 개수를 못 받아 GPU 0개로 켜져 vllm 설치가 OOM으로 죽었음 → GraphQL podResume에 gpuCount 1 지정 후 GPU 개수
+# 재확인. 이미 떠 있으면 GPU 개수만 확인, pod_id 없으면 기본 pod(수동 스크립트용)
 async def start_pod(pod_id: str | None = None) -> bool:
     pod_id = pod_id or settings.RUNPOD_POD_ID
     if not settings.RUNPOD_API_KEY or not pod_id:
@@ -174,13 +171,9 @@ async def wait_until_llm_server_ready(
     return False
 
 
-# RunPod의 SSH 포트(공인 IP는 고정이어도 22번의 외부 매핑 포트)가 pod을 stop/start(resume)
-# 할 때마다 바뀌는 걸 실제로 확인함(같은 세션에서 세 번 바뀜) - .env에 고정값을 박아두면
-# 재시작마다 수동으로 고쳐야 해서, 접속 직전에 RunPod API로 그때그때 조회함. 캐싱 안 함 -
-# 매 호출 최신값 보장이 중요하고 이 함수는 pod 시작 시퀀스 안에서만 불려 비용도 무시할 만함.
-# REST v1의 portMappings는 {"22": 포트} 한 칸뿐인데 pod이 22/tcp와 22/udp를 둘 다 열고 있어서
-# 둘 중 아무거나(udp일 때가 많음) 들어옴 → udp 포트로 접속해 Connection refused(10/16 확인,
-# tcp 40162/udp 40163). GraphQL은 포트별 type을 주므로 거기서 tcp 22만 고름
+# RunPod SSH 외부 매핑 포트는 pod을 stop/start할 때마다 바뀌어(.env 고정값 불가) 접속 직전에 API로 조회함(캐싱
+# 안 함, pod 시작 때만 불려 비용 무시). REST v1 portMappings는 {"22": 포트} 한 칸에 tcp/udp 중 아무거나(주로 udp)
+# 들어와 Connection refused가 났음 - GraphQL은 포트별 type을 줘서 tcp 22만 고름
 _SSH_PORTS_QUERY = (
     "query($id: String!) { pod(input: {podId: $id}) "
     "{ runtime { ports { ip isIpPublic privatePort publicPort type } } } }"
@@ -208,7 +201,7 @@ async def _fetch_ssh_endpoint(pod_id: str) -> tuple[str, int]:
 
 # Container Start Command 자동화가 리스크로 무산돼(pod 편집이 리셋 유발) SSH 원격 실행으로
 # 대체함. known_hosts=None으로 호스트키 검증 생략 - 우리가 통제하는 전용 pod 하나뿐이라
-# 안 바뀔 걸로 보이지만 100% 확신은 못 해서, 바뀌어도 자동화가 안 끊기게 일부러 뺌.
+# 안 바뀔 걸로 보이지만 100% 확신은 못 해서, 바뀌어도 자동화가 안 끊기게 일부러 뺌
 async def _ssh_connect(pod_id: str, **overrides):
     host, port = await _fetch_ssh_endpoint(pod_id)
     return await asyncssh.connect(

@@ -63,7 +63,7 @@ class NewsFeedConcert(BaseModel):
     # 예매처 바로가기 버튼용 (concert.py의 ConcertResponse와 동일 형식)
     ticketing_links: dict[str, str] | None
     # 티켓팅 날짜 타일용. 예전엔 빠져 있어서 아티스트 소식 카드는 항상 "미정"으로
-    # 뜨고 찜한 공연 카드(로컬 조회라 별도 경로)만 값이 채워지던 불일치가 있었음.
+    # 뜨고 찜한 공연 카드(로컬 조회라 별도 경로)만 값이 채워지던 불일치가 있었음
     ticketing_date: datetime | None = None
     ticketing_phases: list[TicketingPhaseEntry] | None = None
 

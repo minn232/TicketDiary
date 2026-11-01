@@ -236,7 +236,7 @@ async def test_generate_pre_setlist_api_502():
 
 # 아티스트별로 다른 응답을 주는 Setlist.fm 모킹. by_artist에 없는 아티스트로 검색하면
 # 404(데이터 없음)로 취급 - "아티스트 하나만 데이터 없어도 나머지로 계속 진행"하는
-# 로직을 검증할 때 씀.
+# 로직을 검증할 때 씀
 def _setlistfm_artist_mock_multi(by_artist: dict[str, dict]):
     async def _get(url, headers=None, params=None):
         mock_response = MagicMock()
@@ -259,7 +259,7 @@ def _setlistfm_artist_mock_multi(by_artist: dict[str, dict]):
 
 # 아티스트 2명 각각 top_n(단독 공연과 동일한 기본 20곡 한도)만큼 뽑혀서 artist 태그와 함께
 # 합쳐지는지 테스트. 페스티벌이라고 곡 수를 줄이지 않음 - 프론트가 필요한 만큼(예: 미리보기 3곡)
-# 만 잘라 쓰도록 넉넉히 다 보냄.
+# 만 잘라 쓰도록 넉넉히 다 보냄
 @pytest.mark.asyncio
 async def test_generate_pre_setlist_festival_uses_all_artists():
     artist_a = "우주여행자밴드"
@@ -314,7 +314,7 @@ async def test_generate_pre_setlist_festival_partial_artist_data_missing():
 
 # concert_lineups에 날짜별 배정이 생기면, 저장된 예상 셋리스트(둘 다 섞여 있음)를 그 날짜에
 # 배정된 아티스트로만 좁혀서 응답하는지 테스트. PreSetlist 원본 row는 안 바뀌어야 하므로
-# 배정 정보가 없을 때(생성 직후) 조회하면 여전히 전체가 나오는지도 같이 확인.
+# 배정 정보가 없을 때(생성 직후) 조회하면 여전히 전체가 나오는지도 같이 확인
 @pytest.mark.asyncio
 async def test_get_pre_setlist_scoped_to_date_lineup():
     artist_a = "우주여행자밴드"
@@ -760,7 +760,7 @@ async def test_get_ticket_pre_setlist_schedules_generation_when_empty():
 
 # show_predicted_setlist는 더 이상 조회/생성을 막는 스위치가 아니라(프론트가
 # 롱탭/홀드로 블러를 잠깐 풀어 보여주는 기능을 만들 수 있도록, 꺼져 있어도
-# 데이터는 그대로 내려줘야 함) 아래 두 테스트는 "꺼도 안 막힌다"로 뒤집음.
+# 데이터는 그대로 내려줘야 함) 아래 두 테스트는 "꺼도 안 막힌다"로 뒤집음
 
 # 설정을 꺼도 조회가 막히지 않는지 테스트
 @pytest.mark.asyncio
