@@ -123,6 +123,8 @@ class SummaryCalendar extends StatelessWidget {
       );
       void move(int delta) {
         final nextIndex = (monthIndex + delta).clamp(0, months.length - 1);
+        // [백엔드 수정] 첫/마지막 달에서 더 넘기면 달도 소리도 그대로.
+        if (nextIndex == monthIndex) return;
         final next = months[nextIndex];
         final attendedDays =
             grouped.keys
