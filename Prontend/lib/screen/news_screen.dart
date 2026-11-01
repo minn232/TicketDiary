@@ -466,9 +466,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       collapsedCard: _PolaroidCard(data: item, angle: angle),
       news: item,
       // [백엔드 수정]
-      // 이 그리드에서 쓰이는 배율을 그대로 넘김 - DiaryPageFrame은
-      // NewsScreen.build()가 반환하는 결과물(자손)이라, State 자신의
-      // context가 아니라 카드 자체의 context(ctx)로 조회해야 함.
+      // 카드 자체 context(ctx)로 조회한 배율을 그대로 넘김.
       frameScale: DiaryFrameScale.maybeOf(ctx) ?? diaryScaleFromMediaQuery(ctx),
     );
     if (mounted) setState(() => _overlayHiddenRegionKey = null);

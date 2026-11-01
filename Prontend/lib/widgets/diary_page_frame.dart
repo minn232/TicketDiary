@@ -189,9 +189,7 @@ class DiaryPageFrame extends StatelessWidget {
   final double? marginEachSideOverride;
 
   // [백엔드 수정]
-  // 가로모드 2페이지 스프레드용 왼쪽 동반 패널 추가. 페이지 두 장이
-  // 나란히 들어갈 폭일 때만 그려지고, null(기본값)이면 기존 단일 페이지
-  // 레터박스 그대로.
+  // 가로모드 2페이지 스프레드용 왼쪽 동반 패널 추가(null이면 기존 단일 페이지).
   final Widget? landscapeCompanionPanel;
 
   /// 설정 탭을 제외한 다이어리 속지에 공연 후 페이지 크라프트지와 같은
@@ -241,9 +239,7 @@ class DiaryPageFrame extends StatelessWidget {
       pageHeight * aspectRatio;
 
   // [백엔드 수정]
-  // 2페이지 모드 레이아웃(오른쪽 페이지 크기/위치) 계산 추가. [build]와
-  // DiaryTabFlipTransition이 반드시 이 함수 하나만 공유해서 써야
-  // 회전축이 안 어긋남.
+  // 2페이지 모드 레이아웃 계산 추가([build]와 DiaryTabFlipTransition이 반드시 이 함수만 공유).
   static ({
     double pageWidth,
     double rightPageLeft,
@@ -309,9 +305,7 @@ class DiaryPageFrame extends StatelessWidget {
   static const double _landscapeRingLengthScale = 1.3;
 
   // [백엔드 수정]
-  // 2페이지 모드 이음새([visualSeamX])에 확대 바인더 링 추가. 크기는
-  // 페이지 링(computeRingMetrics)에 [_landscapeRingScale]/
-  // [_landscapeRingLengthScale]만 곱함. [showCircle] 기본 false(막대만).
+  // 2페이지 모드 이음새([visualSeamX])에 확대 바인더 링 추가([showCircle] 기본 false).
   Widget _buildLandscapeSpineRing({
     required double visualSeamX,
     required double barWidth,
@@ -624,9 +618,7 @@ class DiaryPageFrame extends StatelessWidget {
         }
 
         // [백엔드 수정]
-        // 가로모드 2페이지 스프레드 추가 — 페이지 두 장이 나란히 들어갈
-        // 폭일 때만 동반 패널을 함께 그리고, 안 맞으면(세로/좁은 가로)
-        // 기존 단일 페이지 레터박스로 폴백.
+        // 가로모드 2페이지 스프레드 추가 - 폭이 안 맞으면 기존 단일 페이지로 폴백.
         final companionPanel = landscapeCompanionPanel;
         if (companionPanel != null && availableHeight.isFinite) {
           final pageHeight = availableHeight;
@@ -710,9 +702,7 @@ class DiaryPageFrame extends StatelessWidget {
         }
 
         // [백엔드 수정]
-        // indexTabTopReserve만큼 위 여백을 떼고 나머지 공간에 프레임 배치.
-        // scaleOverride가 있으면(스플래시 미리보기) 이미 최종 크기로 계산돼
-        // 들어온 값이라 여기서 또 빼면 이중 축소되므로 reserve를 0으로 둠.
+        // indexTabTopReserve만큼 위 여백을 뗌(scaleOverride가 있으면 이중 축소 방지로 0).
         final effectiveTopReserve = scaleOverride == null
             ? indexTabTopReserve
             : 0.0;
@@ -903,10 +893,7 @@ class DiaryPageFrame extends StatelessWidget {
 
         /// 5.5. 페이지 위 자유 레이어. 소식 탭의 검색 풀탭처럼 페이지 규격과
         /// 별개로 충분한 터치 영역이 필요한 요소를 올립니다.
-        // [백엔드 수정] includeFrameAbovePage=false(단일 페이지 모드)면 여기서
-        // 안 그리고 build()의 바깥쪽 Stack에서 대신 그립니다 - 이 Stack은
-        // AspectRatio로 타이트하게 제약돼 top이 음수인 자식이 안 눌리는
-        // 문제가 있었습니다(태블릿에서 발견). 2페이지 모드는 미적용(범위 밖).
+        // [백엔드 수정] includeFrameAbovePage=false(단일 페이지 모드)면 build()의 바깥쪽 Stack에서 그림.
         if (frameAbovePage != null && includeFrameAbovePage)
           Positioned(
             top: -frameAbovePageTopOverflow,

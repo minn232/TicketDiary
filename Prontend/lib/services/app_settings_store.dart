@@ -15,8 +15,7 @@ import 'notification_settings_service.dart';
 ///
 // [백엔드 수정]
 // show_predicted_setlist 서버에 저장.
-// SharedPreferences는 네트워크 왕복 전 첫 프레임에 곧장 보여줄 캐시 용도로만 남김(source of
-// truth는 서버).
+// SharedPreferences는 첫 프레임용 캐시로만 남김.
 /// [NotificationSettingsService]를 통해 백엔드 `show_predicted_setlist`
 /// 필드와 동기화.
 class AppSettingsStore extends ChangeNotifier {

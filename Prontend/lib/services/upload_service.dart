@@ -18,10 +18,7 @@ abstract class UploadService {
 }
 
 // [백엔드 수정]
-// 게스트도 카카오와 동일하게 이 서비스로 서버(S3)에 업로드하도록 변경.
-// 예전엔 게스트면 LocalTicketStore.saveImageLocally로 기기에만 저장하는
-// GuestAwareUploadService를 대신 썼는데, 그 분기를 제거하고 이 클래스
-// 하나로 통일함(호출부는 concert_after_page_contents.dart 참고).
+// 게스트도 이 서비스로 서버(S3)에 업로드하도록 변경(GuestAwareUploadService 분기 제거).
 /// 백엔드 `/upload/*` 연동 구현체. 업로드된 파일은 S3에 저장되고, 응답의
 /// `url`을 그대로 티켓의 `concert_photo_urls`에 이어붙여 저장하면 됩니다.
 class BackendUploadService implements UploadService {

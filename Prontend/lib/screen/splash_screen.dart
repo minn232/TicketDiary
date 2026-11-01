@@ -374,10 +374,7 @@ class _SplashScreenState extends State<SplashScreen>
     _navigated = true;
     _splashSound?.stop();
     // [백엔드 수정]
-    // pushReplacement -> pushAndRemoveUntil(false). pushReplacement는 새 라우트
-    // 진입 중 스플래시 라우트를 한 프레임 남겨둬서, 둘이 동시에 그려져 바인더
-    // 링이 두 겹으로 보이는 버그가 있었음(실기기 녹화로 확인). 이전 라우트를
-    // 전환 애니메이션 없이 즉시 제거해 그 프레임 자체를 없앰.
+    // pushReplacement → pushAndRemoveUntil로 바꿔 스플래시 라우트를 즉시 제거(바인더 링 두 겹 방지).
     Navigator.of(context).pushAndRemoveUntil(
       PageRouteBuilder(
         settings: const RouteSettings(name: DiaryRoutes.diary),
@@ -476,10 +473,7 @@ class _SplashScreenState extends State<SplashScreen>
           // 위아래(또는 좌우) 위치가 살짝 어긋나 보였습니다. 그 차이만큼
           // 미리 상쇄해둡니다.
           // [백엔드 수정]
-          // 가로모드 2페이지 스프레드 지원 추가 — 실제 DiaryPageFrame이
-          // 화면 정중앙이 아니라 오른쪽 페이지 자리에 놓이므로,
-          // resolveTwoPageLayout으로 같은 위치를 계산해 스플래시 종료
-          // 시 위치가 안 튀게 함.
+          // 가로모드 2페이지 지원 - resolveTwoPageLayout으로 실제 프레임과 같은 위치 계산.
           final twoPageLayout = DiaryPageFrame.resolveTwoPageLayout(
             pageHeight: screenH,
           );
@@ -498,9 +492,7 @@ class _SplashScreenState extends State<SplashScreen>
                 }()
               : 0.0;
 
-          // [백엔드 수정] DiaryPageFrame.indexTabTopReserve 참고 - 1페이지
-          // 모드만 실제 프레임이 이만큼 밀려 배치되므로, 세로 예산과
-          // 중앙정렬 오프셋도 똑같이 반영(2페이지는 여백 자체가 없음).
+          // [백엔드 수정] DiaryPageFrame.indexTabTopReserve 반영(1페이지 모드만, 2페이지는 여백 없음).
           final topReserve = usesTwoPage
               ? 0.0
               : DiaryPageFrame.indexTabTopReserve;
@@ -636,9 +628,7 @@ class _SplashScreenState extends State<SplashScreen>
           if (dustT > 0.0 && dustT < 1.0)
             Positioned.fill(
               // [백엔드 수정]
-              // 가로모드 2페이지 스프레드에서 책은 centeringOffset만큼 옆으로
-              // 옮겨가는데 먼지는 안 따라가 화면 가운데에 그대로 남아있던
-              // 문제 - 책과 같은 offset을 그대로 적용.
+              // 먼지도 책과 같은 centeringOffset 적용.
               child: Transform.translate(
                 offset: centeringOffset / sceneScale,
                 child: CustomPaint(
@@ -831,9 +821,8 @@ class _SplashScreenState extends State<SplashScreen>
           // ---- 실제 화면 미리보기 ----
           //
           // [백엔드 수정]
-          // 마지막 장 뒤에 실제 DiaryScreen을 끼워 넣어 페이지가 도는 만큼
-          // 드러나게 함(FittedBox+MediaQuery로 book 칸에 크기 맞춤). scene
-          // 밖으로 빼는 방법은 화면이 통째로 덮여버려서 되돌림 - 재시도 금지.
+          // 마지막 장 뒤에 실제 DiaryScreen을 끼워 넣음(FittedBox+MediaQuery로 크기 맞춤).
+          // scene 밖으로 빼는 방식은 화면이 통째로 덮여 되돌림 - 재시도 금지.
           //
           // [백엔드 수정]
           // 시간 기준 대신 마지막 속지 회전각(_tabRevealAngleDeg 이상)
@@ -847,11 +836,7 @@ class _SplashScreenState extends State<SplashScreen>
                   height: h * bookGrowth,
                   child: MediaQuery(
                     // [백엔드 수정]
-                    // padding만 0으로 덮으면 DiaryPageFrame의
-                    // SafeArea(maintainBottomViewPadding: true)가 padding 대신
-                    // viewPadding.bottom을 그대로 써서, 그 인셋 크기만큼 미리보기
-                    // 높이가 진짜 화면보다 작게 계산되던 버그(실기기 녹화+로그로
-                    // 확인). viewPadding/viewInsets도 같이 0으로 덮어야 함.
+                    // padding과 함께 viewPadding/viewInsets도 0으로 덮음(미리보기 높이가 작게 계산되던 버그).
                     data: MediaQuery.of(context).copyWith(
                       size: Size(w * bookGrowth, h * bookGrowth),
                       padding: EdgeInsets.zero,

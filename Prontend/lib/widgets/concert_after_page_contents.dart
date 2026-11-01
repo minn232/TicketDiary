@@ -377,9 +377,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
 }
 
 // [백엔드 수정]
-// /concerts/{concertId}/setlist → /tickets/{ticketId}/setlist.
-// 티켓 기준 라우트로 날짜를 자동으로 확인. 게스트도 이제 서버 ticketId를
-// 가지므로, 예전에 있던 concertId 기준 게스트 전용 폴백은 제거.
+// /concerts/{concertId}/setlist → /tickets/{ticketId}/setlist, 게스트 전용 폴백 제거.
 /// "실제 셋리스트" 포스트잇 안에 들어가는 내용. ticketId가 있으면
 /// `GET /tickets/{ticketId}/setlist`로 실제 데이터를 불러오고, 없거나
 /// 아직 등록 전이면 안내 문구 표시.
@@ -485,11 +483,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   }
 
   // [백엔드 수정]
-  // 서버가 이 화면 조회 시점에 실제 셋리스트가 비어있으면 백그라운드로 한 번 더
-  // 채우기를 시도하는데(check_real_setlist_on_view), 응답은 그 결과를 기다리지 않고
-  // 즉시 오므로 처음엔 항상 비어있음. 채워지면 화면을 나갔다 들어와야만 보이던 걸,
-  // 1초 간격으로 최대 10번(~10초)만 짧게 재확인해서 그 안에 채워지면 자동 반영.
-  // 10초 넘어가도 안 채워지면 포기 - 그 이상은 실패했거나 너무 늦게 나타나 어색함.
+  // 비어 있으면 1초 간격 최대 10번 재확인해 서버 백그라운드 채움을 자동 반영.
   Future<void> _pollForUpdate(String ticketId) async {
     try {
       for (var attempt = 0; attempt < 10; attempt++) {
@@ -583,9 +577,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   }
 
   // [백엔드 수정]
-  // 셋리스트 유저 수정 진입점 신규. 저장 성공 시 서버 응답(res.songs/
-  // artistNames)을 그대로 반영 - 태그/그룹핑까지 서버 응답 기준으로 다시
-  // 계산되도록 로컬에서 임의로 합치지 않음.
+  // 셋리스트 유저 수정 진입점 신규. 저장 성공 시 서버 응답(songs/artistNames)을 그대로 반영.
   Future<void> _openEditor(BuildContext context) async {
     final ticketId = widget.ticketId;
     if (ticketId == null) {

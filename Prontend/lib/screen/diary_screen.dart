@@ -164,9 +164,7 @@ class TicketData {
 }
 
 // [백엔드 수정]
-// 가로모드 왼쪽 동반 패널용 "다가오는 공연" 조회 함수 추가. 다이어리
-// 화면이 이미 불러와둔 티켓 캐시([_DiaryScreenState._tickets])를 그대로
-// 읽어, 소식/결산/설정 탭도 따로 다시 불러오지 않고 공유. 없으면 null.
+// 가로모드 동반 패널용 "다가오는 공연" 조회 함수 추가(다이어리 티켓 캐시 공유, 없으면 null).
 TicketData? nearestUpcomingTicketGlobally() {
   final now = DateTime.now();
   TicketData? nearest;
@@ -182,9 +180,7 @@ TicketData? nearestUpcomingTicketGlobally() {
 }
 
 // [백엔드 수정]
-// nearestUpcomingTicketGlobally 결과를 LandscapeUpcomingTicketPanel로
-// 바꿔주는 함수 추가(없으면 빈 위젯) — 네 탭이 전부 이 함수 하나로
-// 가로모드 왼쪽 동반 패널 내용을 만듦.
+// 가로모드 동반 패널 위젯을 만드는 함수 추가(네 탭 공용, 없으면 빈 위젯).
 Widget buildUpcomingTicketLandscapePanel() {
   final nearest = nearestUpcomingTicketGlobally();
   if (nearest == null) return const SizedBox.shrink();
@@ -2249,10 +2245,7 @@ class _DiaryScreenState extends State<DiaryScreen>
   }
 
   // [백엔드 수정]
-  // context를 매개변수로 받도록 변경 - 기존엔 암묵적으로 State의 context를
-  // 써서 DiaryFrameScale을 못 찾고 항상 MediaQuery 폭으로 폴백했음(D-day
-  // 배너 글자 크기가 화면마다 다르게 나오는 걸로 발견). 호출부(LayoutBuilder)의
-  // 이미 스코핑된 context를 그대로 전달받음.
+  // context를 매개변수로 받도록 변경(호출부의 DiaryPageFrame 하위 context 사용).
   Widget _buildPageContent(
     BuildContext context,
     int pageIndex,
@@ -2539,10 +2532,8 @@ class _DiaryScreenState extends State<DiaryScreen>
     // 모양을 그대로 따라갑니다.
     //
     // [백엔드 수정]
-    // context.sp(26)가 DiaryFrameScale을 못 찾던 버그 - Builder로 감싸서
-    // DiaryPageFrame 하위 context로 바꿈.
-    // 빈 흰 상자에 글자만 있어 미완성처럼 보이던 것 - 점선 테두리(빈 자리)
-    // + 아이콘 + 보조 문구로 "여기에 티켓을 넣는 칸"임을 보이게 함
+    // Builder로 감싸 DiaryPageFrame 하위 context 사용.
+    // 빈 칸에 점선 테두리 + 아이콘 + 보조 문구 추가.
     return _buildTicketPocket(
       child: Builder(
         builder: (context) {

@@ -37,9 +37,7 @@ class ConcertBeforeOverlay extends StatefulWidget {
   /// 탭한 순간 다이어리 리스트에서 쓰이던 [DiaryFrameScale] 배율.
   //
   // [백엔드 수정]
-  // showGeneralDialog는 DiaryPageFrame 바깥의 새 라우트라 안에서
-  // DiaryFrameScale을 못 찾고 화면 전체 폭 기준으로 폴백함
-  // 탭 시점의 배율을 그대로 넘겨받아 오버레이 안에서도 동일하게 사용.
+  // 탭 시점의 배율을 넘겨받아 오버레이 안에서도 같은 배율 사용.
   final double frameScale;
 
   /// 이 티켓이 몇 번째로 등록됐는지(신문 "제 N 호"). 다이어리에서 계산해 넘김.
@@ -110,9 +108,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   late final Animation<double> _postItOpacity;
 
   // [백엔드 수정]
-  // 축소 티켓 <-> 확장 콘텐츠 크로스페이드 투명도를 매 프레임 double로
-  // 계산해서 매 프레임 다시 빌드되던걸 Animation<double>로 미리 만들어두고
-  // FadeTransition으로 씌우면 프레임마다 투명도만 갱신.
+  // 크로스페이드 투명도를 Animation<double>로 미리 만들어 FadeTransition으로 씌움(투명도만 갱신).
   late final Animation<double> _expandedOpacity;
   late final Animation<double> _collapsedOpacity;
 
@@ -171,9 +167,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   /// 보입니다(예전엔 SafeArea를 빼먹은 화면 전체 크기를 기준으로 계산해서
   /// 규격이 달랐습니다).
   // [백엔드 수정]
-  // t와 무관한 최종(화면 전체로 다 커졌을 때) Rect만 따로 뽑음 - 확장
-  // 콘텐츠를 이 고정 크기로 한 번만 레이아웃하고 FittedBox로 지금 박스
-  // 크기에 맞춰 통째로 확대/축소하기 위함(아래 _getRectForT 설명 참고).
+  // 확장 끝 크기 Rect만 따로 계산(이 크기로 한 번 레이아웃 후 FittedBox로 확대/축소).
   Rect _endRect(Size screen, EdgeInsets safePadding) {
     const ratio = DiaryPageFrame.diaryAspectRatio;
     final safeWidth = screen.width - safePadding.left - safePadding.right;
@@ -282,9 +276,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     );
 
     // [백엔드 수정]
-    // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
-    // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
-    // context.sp()가 리스트에서 보이던 것과 같은 배율 사용.
+    // 탭 시점에 넘겨받은 배율을 DiaryFrameScale로 다시 제공.
     return DiaryFrameScale(
       scale: widget.frameScale,
       marginEachSide: 0,

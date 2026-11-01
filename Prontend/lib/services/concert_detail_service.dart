@@ -20,11 +20,8 @@ class ConcertDetailService {
   }
 
   // [백엔드 수정]
-  // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre.
-  // concertId만으로는 페스티벌처럼 날짜가 여러 개인 공연에서 어느 날짜인지 특정이 안 돼 400.
-  // 티켓 기준 라우트는 ticket.attended_date로 내부에서 날짜를 자동으로 잡아줌.
-  // 게스트도 이제 서버 ticketId를 갖게 돼서(TicketService 참고), 예전에
-  // 있던 concertId 기준 게스트 전용 폴백(getPreSetlistByConcert)은 제거.
+  // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre(날짜는 ticket.attended_date로 서버가 잡음).
+  // 게스트 전용 폴백(getPreSetlistByConcert) 제거.
   /// 예상 셋리스트 조회(`GET /tickets/{ticketId}/setlist/pre`).
   Future<PreSetlistResponse> getPreSetlist(String ticketId) async {
     final json = await _client.get('/tickets/$ticketId/setlist/pre');
@@ -33,8 +30,7 @@ class ConcertDetailService {
 
   // [백엔드 수정]
   // /concerts/{concertId}/setlist → /tickets/{ticketId}/setlist.
-  // 위 예상 셋리스트와 같은 이유(다중 날짜 400 회피). 게스트 전용 폴백
-  // (getRealSetlistByConcert)도 같은 이유로 제거.
+  // 게스트 전용 폴백(getRealSetlistByConcert) 제거.
   /// 실제 셋리스트 조회(`GET /tickets/{ticketId}/setlist`).
   Future<RealSetlistResponse> getRealSetlist(String ticketId) async {
     final json = await _client.get('/tickets/$ticketId/setlist');
@@ -55,9 +51,7 @@ class ConcertDetailService {
   }
 
   // [백엔드 수정]
-  // 셋리스트 유저 수정 신규 - PATCH는 곡 배열을 통째로 교체(부분 수정 아님).
-  // is_user_edited가 true로 바뀌어, 이후 자동 채움(check_real_setlist_on_view)이
-  // 이 값을 덮어쓰지 않게 서버가 알아서 보호함.
+  // 셋리스트 유저 수정 신규 - PATCH는 곡 배열을 통째로 교체.
   /// 실제 셋리스트 수정(`PATCH /tickets/{ticketId}/setlist`).
   Future<RealSetlistResponse> editRealSetlist(
     String ticketId,

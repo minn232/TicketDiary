@@ -18,8 +18,7 @@ class OfflineBanner extends StatefulWidget {
 }
 
 // [백엔드 수정]
-// 계속 떠 있지 않고 몇 초만 보여준 뒤 페이드아웃 - isOffline/forceVisible이
-// false->true로 새로 바뀔 때마다 다시 나타나고 타이머가 재시작됩니다.
+// 몇 초만 보여준 뒤 페이드아웃, 오프라인이 새로 될 때마다 다시 나타남.
 class _OfflineBannerState extends State<OfflineBanner> {
   static const _visibleDuration = Duration(seconds: 3);
   static const _fadeDuration = Duration(milliseconds: 500);

@@ -19,9 +19,7 @@ class PriceEntry {
 }
 
 // [백엔드 수정]
-// 예매 단계 1건(예: {"phase": "선예매", "date": "2030-05-01"}). 백엔드
-// `schemas/concert.py`의 `TicketingPhaseEntry`와 대응. date는 크롤링이 아직
-// 특정 못 했으면 null.
+// 예매 단계 1건(백엔드 `TicketingPhaseEntry`와 대응). date는 크롤링이 못 찾았으면 null.
 @immutable
 class TicketingPhaseEntry {
   final String phase;

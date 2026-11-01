@@ -16,14 +16,7 @@ class TicketNotFoundException implements Exception {
 }
 
 // [백엔드 수정]
-// 게스트도 카카오와 동일하게 서버 `/tickets` API를 쓰도록 변경. 이전엔
-// AuthService.isGuest로 분기해서 LocalTicketStore(기기 로컬 저장)로
-// 보냈는데, 그러면 티켓이 서버에 없어서 알림/예상 셋리스트 자동생성/
-// 첫콘·막콘 자동판정/AI 일기 생성이 전부 게스트에서 동작 안 했음(전부
-// "서버에 등록되는 순간"에 트리거되는 구조). 게스트↔카카오의 유일한
-// 차이는 이제 "앱 삭제 시 데이터가 사라지는지"만 남음(게스트는 토큰/
-// device_id가 기기에만 있어서 삭제하면 서버 데이터에 다시 접근할
-// 방법이 없어짐 — 서버 저장 여부와는 별개로 자연히 유지되는 차이).
+// 게스트도 카카오와 동일하게 서버 `/tickets` API를 쓰도록 변경(LocalTicketStore 분기 제거).
 /// 티켓 CRUD 서비스. 그대로 백엔드 `/tickets` API를 씁니다.
 class TicketService {
   TicketService({ApiClient? client}) : _client = client ?? ApiClient.instance;

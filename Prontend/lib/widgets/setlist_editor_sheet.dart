@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/setlist.dart';
 
 // [백엔드 수정]
-// 셋리스트(실제/예상) 유저 수정 UI 신규. 백엔드 PATCH가 곡 배열을 통째로
-// 교체하는 방식이라, 여기서도 전체 목록을 들고 있다가 저장 시 한 번에 넘김.
-// 앱 전반의 크림지/갈색 잉크 톤(공연 전/후 페이지와 같은 계열)에 맞춤.
+// 셋리스트(실제/예상) 유저 수정 UI 신규. 전체 목록을 들고 있다가 저장 시 한 번에 넘김.
 const Color _paperColor = Color(0xFFF4F1E1);
 const Color _ink = Color(0xFF463C2E);
 const Color _accent = Color(0xFF8B5E3C);

@@ -234,9 +234,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       scale: widget.frameScale,
       marginEachSide: 0,
       // [백엔드 수정]
-      // 뒤로가기 키가 기본 팝 전환(페이드)으로 바로 닫혀서 X버튼/드래그로
-      // 닫을 때(슬라이드다운)와 안 맞던 것 - PopScope로 가로채 _close()를
-      // 타도록 통일.
+      // 뒤로가기도 PopScope로 가로채 _close()(슬라이드다운)를 타도록 통일.
       child: PopScope(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) {

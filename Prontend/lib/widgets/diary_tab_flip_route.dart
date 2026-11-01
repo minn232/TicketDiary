@@ -497,17 +497,10 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
         final doneThreshold = widget.forward
             ? DiaryTabFlipTransition.lastLeafEnd
             : 1.0;
-        // [백엔드 수정] 예전엔 앞으로 넘김 내내 고정 배경(+코사인 페이드)을
-        // 덮어 소식 탭 풀탭 노출을 막았는데, 실기기 확인 결과 이전 라우트는
-        // 전환 시작 즉시 사라져 커버가 불필요했고 오히려 리프와 다른
-        // 리듬으로 움직여 뒤로 넘김보다 뚝 끊겨 보이는 원인이었음 - 제거.
+        // [백엔드 수정] 앞으로 넘김 내내 덮던 고정 배경(+코사인 페이드) 제거.
         if (t < doneThreshold) {
           final scene = _buildScene(context, t, child!);
-          // [백엔드 수정] 맨 위 속지(leaf 0)는 대기 상태(p=0)에서 cornerLead가
-          // 최댓값이라 프레임 상단 바깥(상태바 영역)에 쐐기 모양 틈이 아주
-          // 짧게 생김 - t<_earlyCoverEnd 구간만 배경판으로 메움. 페이드를
-          // 줬더니 틈이 가장 뚜렷한 구간 초반에 이미 옅어져 있어(실사용
-          // 재보고로 발견) 페이드 없이 완전 불투명 유지 후 한번에 걷어냄.
+          // [백엔드 수정] 맨 위 속지의 상단 쐐기 틈을 t<_earlyCoverEnd 구간만 불투명 배경판으로 메움(페이드 없음).
           if (widget.forward && t < _earlyCoverEnd) {
             return Stack(
               fit: StackFit.expand,
@@ -572,10 +565,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
           const aspectRatio = DiaryPageFrame.diaryAspectRatio;
 
           // [백엔드 수정]
-          // 2페이지 모드 지원 추가 — 목적지 화면(DiaryPageFrame.build)과
-          // 반드시 같은 계산을 써야 회전축이 안 어긋나므로
-          // resolveTwoPageLayout을 그대로 공유. 안 맞으면 기존 단일
-          // 페이지 규칙으로 폴백.
+          // 2페이지 모드 지원 - 목적지 화면과 같은 resolveTwoPageLayout 공유, 안 맞으면 단일 페이지로 폴백.
           final twoPageLayout = DiaryPageFrame.resolveTwoPageLayout(
             pageHeight: availableHeight,
             aspectRatio: aspectRatio,

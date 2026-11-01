@@ -326,9 +326,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   }
 
   // [백엔드 수정]
-  // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre.
-  // 게스트도 이제 서버 ticketId를 가지므로, 예전에 있던 concertId 기준
-  // 게스트 전용 폴백은 제거.
+  // /concerts/{concertId}/setlist/pre → /tickets/{ticketId}/setlist/pre, 게스트 전용 폴백 제거.
   // [백엔드 수정] 비어 있으면 서버가 백그라운드로 생성하므로 2초 간격 최대 8번 재확인.
   Future<void> _pollPreSetlist(String ticketId) async {
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -356,9 +354,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       if (!mounted) return;
       setState(() {
         // [백엔드 수정]
-        // artist 태그를 그대로 들고 있어야 페스티벌일 때 아티스트별로 묶어서
-        // 보여줄 수 있어서, 여기서 문자열로 바로 뭉개지 않고 SongEntry
-        // 그대로 둠(표시 문구 변환은 위젯에서).
+        // 페스티벌 아티스트별 묶음용으로 SongEntry 그대로 보관(표시 문구 변환은 위젯에서).
         _fetchedSetlist = res.songs;
         _fetchedArtistNames = res.artistNames;
         _presetlistStatus = _FetchStatus.loaded;
@@ -523,9 +519,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
       return local.isEmpty
           ? const _UndecidedText()
           // [백엔드 수정]
-          // 로컬(오프라인) 셋리스트는 아티스트 구분이 없는 단순 문자열
-          // 목록이라, SongEntry로 감싸기만 하면 그대로 재사용 가능(항상
-          // 단독 공연처럼 평범한 번호 목록으로 보임).
+          // 로컬(오프라인) 셋리스트는 SongEntry로 감싸 단독 공연 번호 목록으로 표시.
           : _SetlistNumbered(
               setlist: [for (final name in local) SongEntry(name: name)],
               selection: _musicServiceSelection,
@@ -1054,9 +1048,7 @@ class _NewsTimeRow extends StatelessWidget {
 }
 
 // [백엔드 수정]
-// 페스티벌(아티스트 2명 이상) 예상 셋리스트 지원 - setlist가 List<String>에서
-// List<SongEntry>로 바뀜(artist 태그 포함). 아티스트별 아코디언 그룹핑은
-// 아래 _SetlistGroupedByArtist 참고.
+// 페스티벌 예상 셋리 지원 - setlist가 List<SongEntry>로 바뀜(그룹핑은 _SetlistGroupedByArtist).
 /// 예상 셋 리스트 본문.
 /// 아티스트가 1명(또는 없음)이면 번호만 매긴 목록,
 /// 페스티벌이면 아티스트별로 곡을 묶어서 아코디언.

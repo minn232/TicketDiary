@@ -85,9 +85,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // [백엔드 수정]
-  // show_predicted_setlist가 이제 백엔드에 저장되므로, 다른 알림 토글들과
-  // 마찬가지로 저장 실패 시 안내를 띄웁니다(값 되돌리기는 AppSettingsStore가
-  // 이미 처리해 _onAppSettingsChanged로 반영됨).
+  // 저장 실패 시 안내 표시(값 되돌리기는 AppSettingsStore가 처리).
   Future<void> _setShowExpectedSetlist(bool v) async {
     try {
       await _appSettings.setShowExpectedSetlist(v);
@@ -251,11 +249,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // [백엔드 수정]
-                    // Builder로 감싸 DiaryPageFrame 자손 context에서 sp()를 계산하도록
-                    // 수정 — 이전엔 State 레벨 context를 써서 DiaryFrameScale을 못 찾고
-                    // MediaQuery 폭(가로모드 2페이지 스프레드에선 페이지 한 장이 아니라
-                    // 전체 화면 폭)으로 fallback해, 가로모드에서 이 글자만 과하게 커지던
-                    // 버그가 있었음([[diary_frame_scale_context_scoping_bug]] 패턴).
+                    // Builder로 감싸 DiaryPageFrame 자손 context에서 sp() 계산.
                     Builder(
                       builder: (innerContext) => Padding(
                         padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
@@ -450,9 +444,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           _divider,
                           // [백엔드 수정]
-                          // GET/PATCH/DELETE /notifications 신규 진입 메뉴 추가.
-                          // Builder로 감싼 이유: DiaryFrameScale 조회에 필요한
-                          // 자손 context를 얻기 위함.
+                          // GET/PATCH/DELETE /notifications 진입 메뉴 추가(Builder는 DiaryFrameScale용 자손 context).
                           Builder(
                             builder: (menuContext) => _MenuRow(
                               title: '알림함',
@@ -945,12 +937,7 @@ class _MemberSettingsSheetState extends State<_MemberSettingsSheet> {
   }
 
   // [백엔드 수정]
-  // 게스트도 이제 서버에 티켓을 저장하므로(TicketService 참고), 옮길 데이터가
-  // 있는지 로컬(LocalTicketStore, 레거시 전용)만 보면 안 되고 서버 티켓
-  // 개수도 같이 확인해야 함. 이전엔 로컬만 봐서, 게스트 기능 동등화 이후
-  // 서버에만 티켓이 있는(=지금은 거의 항상 이 경우) 상황에서 이 다이얼로그가
-  // 아예 안 뜨고 조용히 일반 로그인으로 빠지면서 그 티켓들이 버려지는
-  // 버그가 있었음(사용자가 실기기 테스트로 발견).
+  // 옮길 데이터 확인에 서버 티켓 개수도 포함(게스트도 서버에 저장하므로).
   /// 지금 게스트 계정에 카카오로 넘어갈 때 물어볼 만한 데이터(로컬 레거시
   /// 티켓이든, 서버에 이미 등록된 티켓이든)가 하나라도 있는지 확인합니다.
   Future<bool> _hasGuestDataToMigrate() async {

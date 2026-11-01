@@ -60,9 +60,7 @@ class TicketInfo {
   final List<String>? concertPhotoUrls;
 
   // [백엔드 수정]
-  // 공연 예매처 바로가기 링크 필드 추가(`ConcertResponse.ticketingLinks`와
-  // 대응, 키: YES24/INTERPARK/TICKETLINK/MELON). 이미 산 티켓의 실제
-  // 구매처(vendorName)와는 별개.
+  // 공연 예매처 바로가기 링크 필드 추가(키: YES24/INTERPARK/TICKETLINK/MELON, 구매처 vendorName과 별개).
   final Map<String, String>? ticketingLinks;
 
   // [백엔드 수정]

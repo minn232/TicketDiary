@@ -3,9 +3,8 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 // [백엔드 수정]
-// 전역 오프라인 신호 신규 - connectivity_plus 없이 [ApiClient] 요청 성패로
-// 판단(서버 응답 자체를 못 받으면 오프라인, 4xx/5xx는 온라인으로 취급).
-// 오프라인이 되면 다른 요청이 없어도 풀릴 수 있게 주기적으로/앱 복귀 시 [probe]로 재확인.
+// 전역 오프라인 신호 신규 - [ApiClient] 요청 성패로 판단(응답을 못 받으면 오프라인).
+// 오프라인이면 주기적으로/앱 복귀 시 [probe]로 재확인.
 class ConnectivityStatus with WidgetsBindingObserver {
   ConnectivityStatus._() {
     isOffline.addListener(_onChanged);

@@ -10,10 +10,8 @@ import '../models/ticket_scan.dart';
 import 'ticket_service.dart' show TicketAlreadyRegisteredException, TicketNotFoundException;
 
 // [백엔드 수정]
-// 게스트도 서버에 직접 저장(TicketService/UploadService)하도록 변경.
-// 쓰기 경로(createTicket/updateTicket/deleteTicket/saveImageLocally)는
-// 이제 호출 안 됨. listTickets/clearAll만 GuestMigrationService의
-// 레거시 데이터 마이그레이션용으로 남김.
+// 게스트도 서버에 직접 저장하도록 변경 - 쓰기 경로는 안 쓰임.
+// listTickets/clearAll만 레거시 마이그레이션용으로 남김.
 /// 게스트 로그인 상태의 티켓/사진을 "서버로 보내지 않고" 기기에만 저장하던
 /// 저장소. 새 쓰기 경로에서는 안 쓰임(위 주석 참고) — [GuestMigrationService]가
 /// 이 변경 이전 레거시 데이터를 읽어 서버에 올리는 용도로만 남아있습니다.

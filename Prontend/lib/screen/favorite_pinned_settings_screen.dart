@@ -116,11 +116,8 @@ class _FavoritePinnedPanelState extends State<FavoritePinnedPanel> {
   Set<String> _newlyRecommendedConcertNames = const {};
 
   // [백엔드 수정]
-  // 테두리 글로우가 언제 끝나는지 절대 시각으로 기록 - 그리드가 화면
-  // 밖으로 나갔다 다시 들어오면 카드 위젯이 새로 만들어져서 로컬 애니메이션
-  // 경과 시간이 초기화되는데, 이 값 기준으로 "남은 시간"만 계산해서 재생하면
-  // 스크롤할 때마다 글로우가 처음부터 다시 나오지 않고 딱 한 번만 재생됨.
-  // 카테고리별로 독립된 시점을 가져야 해서 아티스트/공연 값을 따로 둡니다.
+  // 테두리 글로우 종료를 절대 시각으로 기록(카드가 다시 만들어져도 한 번만 재생).
+  // 아티스트/공연 값을 따로 둠.
   DateTime? _newHighlightExpiresAt;
   DateTime? _concertNewHighlightExpiresAt;
 
@@ -957,10 +954,7 @@ class _ThumbCard extends StatelessWidget {
   final bool isNew;
 
   // [백엔드 수정]
-  // 글로우 종료 절대 시각 - 위젯 자체 경과 시간이 아니라 이 값 기준
-  // "남은 시간"만 재생해서, 스크롤로 카드가 화면 밖에 나갔다 다시
-  // 들어와도(=위젯이 새로 만들어져도) 글로우가 처음부터 다시 재생되지
-  // 않고 한 번만 나옴(만료 후 재진입하면 아예 안 나옴).
+  // 글로우 종료 절대 시각 - 이 값 기준 남은 시간만 재생.
   final DateTime? newHighlightExpiresAt;
 
   const _ThumbCard({
@@ -985,9 +979,7 @@ class _ThumbCard extends StatelessWidget {
             child: Stack(
               children: [
                 // [백엔드 수정]
-                // 테두리가 이미지 뒤로 가려 보이던 문제 - 이미지는
-                // ClipRRect로 꽉 채워 클리핑만 하고, 테두리는 별도 레이어로
-                // 그 위에 그려서 항상 온전히 보이게 분리.
+                // 이미지는 ClipRRect로 클리핑만 하고 테두리는 별도 레이어로 위에 그림.
                 Positioned.fill(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(8),
@@ -1042,9 +1034,7 @@ class _ThumbCard extends StatelessWidget {
                     ),
                   ),
                 // [백엔드 수정]
-                // 테두리 글로우: newHighlightExpiresAt까지 "남은 시간"만
-                // 재생(위젯이 새로 만들어져도 처음부터 다시 재생 안 됨,
-                // 이미 만료됐으면 아예 안 나옴). 아래 NEW 배지와는 분리.
+                // 테두리 글로우는 newHighlightExpiresAt까지 남은 시간만 재생(NEW 배지와 분리).
                 if (isNew &&
                     newHighlightExpiresAt != null &&
                     newHighlightExpiresAt!.isAfter(DateTime.now()))
@@ -1278,9 +1268,7 @@ class _FavoritedChip extends StatelessWidget {
             Stack(
               children: [
                 // [백엔드 수정]
-                // 테두리가 이미지 뒤로 가려 보이던 문제 - 이미지는
-                // ClipRRect로 꽉 채워 클리핑만 하고, 테두리는 별도 레이어로
-                // 그 위에 그려서 항상 온전히 보이게 분리.
+                // 이미지는 ClipRRect로 클리핑만 하고 테두리는 별도 레이어로 위에 그림.
                 SizedBox(
                   width: 54,
                   height: 54,

@@ -11,11 +11,7 @@ import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 
 // [백엔드 수정]
-// splash_screen.dart가 BentLeafPainter(다이어리 탭 페이지 넘김과 같은
-// 곡면 렌더링) 방식으로 교체되기 전, 단순 Transform+rotateY 트릭으로
-// 구현했던 예전 버전을 참고용으로 보관합니다. 어디에서도 import하지
-// 않는 죽은 코드라 앱 동작에는 전혀 영향 없습니다 - 새 방식이 마음에
-// 안 들 때 돌아갈 수 있도록 남겨둔 백업입니다.
+// 예전 Transform+rotateY 방식 스플래시 백업(어디서도 import 안 하는 참고용).
 
 /// 앱 실행 시 보여주는 시작 애니메이션.
 ///
@@ -469,22 +465,14 @@ class _SplashScreenOldState extends State<SplashScreenOld>
     final lift = math.sin(p * math.pi);
 
     // [백엔드 수정]
-    // 90도를 넘으면 "이미 넘어간 페이지 더미 위에 얹히듯" 왼쪽으로 추가로
-    // 밀어주던 보조 애니메이션(settleShiftX)을 제거했습니다 - 이 이동이
-    // 회전 축(Transform) 밖에서, 즉 이미 회전된 결과물 전체를 통째로
-    // 옮기는 방식이라, 축과 무관하게 페이지가 축에서 점점 멀어지며 따로
-    // 노는 것처럼 보였습니다(디버그 축 선으로 확인: 이미 넘어간 주황
-    // 장이 분홍 축 선에 붙어있지 않고 떨어진 채로 돌다가 축에서 꽤
-    // 멀리 떨어진 자리에서 멈춤). 이제는 순수하게 축을 중심으로만 돌아서,
-    // 90도를 넘어도 항상 축에 붙어있습니다.
+    // 90도 넘을 때 왼쪽으로 밀던 보조 애니메이션(settleShiftX) 제거 - 축 중심으로만 회전.
 
     // 메인 페이지 종이와 같은 모서리(오른쪽만 둥근 15px 비례).
     final radius = BorderRadius.horizontal(right: Radius.circular(15 * k));
 
     // [백엔드 수정]
-    // 속지는 스프링 안쪽이 기준으로 잡혀있었음. 박스 왼쪽을 책등(x=0)까지 넓히고
-    // Transform.origin으로 회전축을 정확히 그 책등에 고정, 실제 종이는
-    // 그 안에서 pageRect.left만큼 들여써서 겉보기 위치는 그대로 유지.
+    // 박스 왼쪽을 책등(x=0)까지 넓히고 Transform.origin으로 회전축을 책등에 고정.
+    // 종이는 pageRect.left만큼 들여씀.
     final axisX = math.min(0.0, pageRect.left);
     return Positioned(
       left: axisX,
@@ -500,14 +488,7 @@ class _SplashScreenOldState extends State<SplashScreenOld>
           // 오른쪽 끝이 화면 뒤로 자연스럽게 젖혀지도록 함.
           //
           // [백엔드 수정]
-          // setEntry(3,2,val)의 원근감 값이 축에서 먼 지점일수록(가로
-          // 위치, x가 클수록) 세로 위치(y)까지 같이 밀어버려서 - 축에
-          // 가까운 쪽은 y가 그대로 유지되지만 먼 쪽은 각도가 커질수록
-          // 위/아래로 밀려나 사다리꼴처럼 찌그러짐(원색 디버그 색으로
-          // 확인: 초록 장의 위쪽 모서리가 대각선으로 위로 밀려 올라감).
-          // 값(원근감 계수 × 페이지 폭 × sin(각도))이 90도 근처에서
-          // 페이지 절반 가까이를 밀 만큼 컸음 - 계수를 10배 낮춰서
-          // 찌그러짐을 거의 없앰(입체감은 그만큼 약해짐).
+          // 원근감 계수를 10배 낮춰 사다리꼴 찌그러짐을 줄임.
           transform: Matrix4.identity()
             ..setEntry(3, 2, 0.00016)
             ..rotateY(angle),

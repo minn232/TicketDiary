@@ -159,10 +159,7 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
           0.98,
         );
     // [백엔드 수정]
-    // 가로모드 태블릿에서 90%x90%가 극단적으로 넓어지는 것 방지 —
-    // 티켓 오버레이와 같은 diaryAspectRatio를 폭 상한으로 둠.
-    // `width > height` 조건 필수(없으면 아이패드 세로모드처럼 화면비만
-    // 넓은 세로 화면까지 잘못 발동함).
+    // 가로모드 태블릿에선 diaryAspectRatio를 폭 상한으로 둠(`width > height`일 때만).
     const maxAspectRatio = DiaryPageFrame.diaryAspectRatio;
     if (width > height && width / height > maxAspectRatio) {
       width = height * maxAspectRatio;
@@ -225,9 +222,7 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     final end = _endRect(media.size, media.padding);
 
     // [백엔드 수정]
-    // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김(다이어리 티켓
-    // 오버레이와 동일) - 애니메이션 중엔 위치/크기만 갱신되고 콘텐츠
-    // 서브트리는 매 프레임 재빌드되지 않습니다.
+    // 두 레이어 콘텐츠를 여기서 한 번만 만들어 넘김(애니메이션 중엔 위치/크기만 갱신).
     //
     // [백엔드 수정]
     // startRect/rect 가로세로 비율 차이가 커서 contain의 레터박스 여백이
@@ -269,9 +264,7 @@ class _NewsDetailOverlayState extends State<NewsDetailOverlay>
     );
 
     // [백엔드 수정]
-    // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
-    // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
-    // context.sp()가 그리드에서 보이던 것과 같은 배율 사용.
+    // 탭 시점에 넘겨받은 배율을 DiaryFrameScale로 다시 제공.
     return DiaryFrameScale(
       scale: widget.frameScale,
       marginEachSide: 0,
@@ -651,9 +644,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
               ),
               label: '티켓팅 날짜',
               // [백엔드 수정]
-              // 예매 단계 정보가 있으면 가장 가까운 다음 단계만 요약해서
-              // 보여주고, 탭하면 전체 단계 목록을 봄. 없으면(구버전 크롤링
-              // 데이터 등) 기존처럼 단일 날짜 캘린더로 폴백.
+              // 예매 단계가 있으면 다음 단계만 요약하고 탭하면 전체 목록. 없으면 단일 날짜 캘린더로 폴백.
               value: nextTicketingPhase != null
                   ? '${nextTicketingPhase.phase}\n${_phaseDDayLabel(nextTicketingPhase.date)}'
                   : news.ticketingText ?? '미정',
@@ -734,9 +725,7 @@ String _keepWords(String text) {
 }
 
 // [백엔드 수정]
-// 공연장 타일에서 옛 이름 괄호("...홀 (구. 악스코리아)") 앞에서 줄바꿈 - 안
-// 그러면 자동 줄바꿈된 텍스트가 밑줄이 타일 전체 폭으로 늘어나 보임
-// (_InfoTileLine 참고). 첫 " (" 위치로 나눠서 중첩 괄호도 바깥쪽이 통째로 묶임.
+// 공연장 옛 이름 괄호 앞(첫 " (")에서 줄바꿈.
 String _splitVenueLine(String venue) {
   final idx = venue.indexOf(' (');
   if (idx == -1 || !venue.endsWith(')')) return venue;
@@ -744,9 +733,7 @@ String _splitVenueLine(String venue) {
 }
 
 // [백엔드 수정]
-// 공연 기간이 여러 날("2026.10.03 ~ 2026.10.04")이면 자동 줄바꿈에 맡길 때
-// 위와 같은 이유로 밑줄이 타일 전체 폭으로 늘어나 보여서, "~" 뒤에서
-// 명시적으로 줄바꿈합니다.
+// 여러 날 공연 기간은 "~" 뒤에서 줄바꿈.
 String _splitPeriodLine(String period) {
   const sep = ' ~ ';
   final idx = period.indexOf(sep);
@@ -1139,10 +1126,7 @@ class _InfoTile extends StatelessWidget {
             ),
             SizedBox(height: 4 * k),
             // [백엔드 수정]
-            // `\n`으로 나뉜 줄마다 따로 그려서, 줄 하나하나가 자기 폭에 맞는
-            // 밑줄을 가짐(TextDecoration.underline은 숫자/띄어쓰기 경계에서
-            // 폰트 대체로 끊겨 보이고, 여러 줄 전체를 한 Text로 감싸면 밑줄이
-            // 가장 넓은 줄 기준으로 늘어나 다른 줄엔 너무 길어 보였음).
+            // `\n`으로 나뉜 줄마다 따로 그려 줄마다 자기 폭의 밑줄을 가짐.
             for (final (i, line) in lines.indexed) ...[
               if (i > 0) SizedBox(height: 2 * k),
               _InfoTileLine(
@@ -1190,11 +1174,7 @@ class _InfoTileLine extends StatelessWidget {
     );
     if (!underline) return label;
     // [백엔드 수정]
-    // 긴 공연장명이 자동 줄바꿈되면 아래 테두리 방식은 마지막 줄 아래에만, 그것도
-    // 타일 전체 폭으로 그어져 어색했음 - Text와 같은 조건으로 줄을 계산해 실제로
-    // 그려진 줄마다 그 줄 글자 폭만큼만 밑줄을 그음.
-    // (LayoutBuilder는 이 타일을 감싼 intrinsic 레이아웃에서 못 써서, 페인트 때 Text가
-    // 실제로 차지한 폭으로 다시 계산함)
+    // 실제로 그려진 줄마다 그 줄 글자 폭만큼만 밑줄을 그음(페인트 때 Text와 같은 조건으로 줄 계산).
     return CustomPaint(
       foregroundPainter: _LineUnderlinePainter(
         text: TextSpan(
@@ -1289,9 +1269,8 @@ class _CalendarDayIcon extends StatelessWidget {
 }
 
 // [백엔드 수정]
-// KOPIS가 준 예매처만(ticketingLinks) 버튼으로 보여줌. 버튼 UI/앱 우선
-// 실행/폴백 로직은 vendor_ticketing_buttons.dart로 공용화(가로모드 패널과
-// 공유). 비어있으면 섹션 숨김.
+// KOPIS 예매처(ticketingLinks)만 버튼으로 표시, 로직은 vendor_ticketing_buttons.dart로 공용화.
+// 비어있으면 섹션 숨김.
 class _VendorButtons extends StatelessWidget {
   const _VendorButtons({required this.ticketingLinks, required this.scale});
 

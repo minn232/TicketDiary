@@ -42,9 +42,7 @@ class ConcertAfterOverlay extends StatefulWidget {
   /// 탭한 순간 다이어리 리스트에서 쓰이던 [DiaryFrameScale] 배율.
   //
   // [백엔드 수정]
-  // showGeneralDialog는 DiaryPageFrame 바깥의 새 라우트라 안에서
-  // DiaryFrameScale을 못 찾고 화면 전체 폭 기준으로 폴백함
-  // 탭 시점의 배율을 그대로 넘겨받아 오버레이 안에서도 동일하게 사용.
+  // 탭 시점의 배율을 넘겨받아 오버레이 안에서도 같은 배율 사용.
   final double frameScale;
 
   // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 신규.
@@ -106,9 +104,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   late final Animation<double> _postItOpacity;
 
   // [백엔드 수정]
-  // 축소 티켓 <-> 확장 콘텐츠 크로스페이드 투명도를 매 프레임 double로
-  // 계산해서 매 프레임 다시 빌드되던걸 Animation<double>로 미리 만들어두고
-  // FadeTransition으로 씌우면 프레임마다 투명도만 갱신.
+  // 크로스페이드 투명도를 Animation<double>로 미리 만들어 FadeTransition으로 씌움(투명도만 갱신).
   late final Animation<double> _expandedOpacity;
   late final Animation<double> _collapsedOpacity;
 
@@ -270,9 +266,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     );
 
     // [백엔드 수정]
-    // 이 오버레이는 DiaryPageFrame 바깥의 새 라우트라 안에서 DiaryFrameScale을
-    // 못 찾음 - 탭 시점에 넘겨받은 값을 여기서 다시 제공해서, 안의 모든
-    // context.sp()가 리스트에서 보이던 것과 같은 배율 사용.
+    // 탭 시점에 넘겨받은 배율을 DiaryFrameScale로 다시 제공.
     return DiaryFrameScale(
       scale: widget.frameScale,
       marginEachSide: 0,

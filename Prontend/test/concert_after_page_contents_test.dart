@@ -24,12 +24,8 @@ void main() {
   });
 
   // [백엔드 수정]
-  // 게스트도 이제 실제 서버 PATCH /tickets/{id}를 타도록 바뀌면서(TicketService
-  // 참고, 예전엔 게스트면 LocalTicketStore로 우회해 네트워크 없이 검증했음)
-  // 이 테스트는 더 이상 통과할 수 없어 주석 처리함. flutter_test 환경에서는
-  // HttpClient 요청이 전부 400으로 막혀서, 네트워크를 실제로 모킹하는 별도
-  // 인프라 없이는 저장 성공 경로를 검증할 방법이 없음. 아래는 원래 검증하던
-  // 내용 그대로 남겨둔 것 — 나중에 네트워크 모킹 방식을 정하면 그대로 되살리면 됨.
+  // 게스트도 서버 PATCH를 타게 되면서 flutter_test에서 통과할 수 없어 주석 처리.
+  // 네트워크 모킹 방식을 정하면 그대로 되살림.
   /*
   testWidgets('공연 소감을 저장하면 onTicketInfoChanged가 최신 review로 호출된다', (
     tester,

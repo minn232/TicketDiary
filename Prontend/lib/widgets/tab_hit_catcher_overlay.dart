@@ -37,8 +37,7 @@ class TabHitCatcherOverlay extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, outerConstraints) {
               final availableWidth = outerConstraints.maxWidth;
-              // [백엔드 수정] DiaryPageFrame.indexTabTopReserve 참고 - 실제
-              // 프레임도 이만큼 밀려 배치되므로 여기서도 똑같이 반영합니다.
+              // [백엔드 수정] DiaryPageFrame.indexTabTopReserve만큼 똑같이 밀어 배치.
               return Stack(
                 children: [
                   Positioned(
