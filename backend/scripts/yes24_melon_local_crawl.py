@@ -38,6 +38,7 @@ YES24/멜론에 차단당해 _TEMPORARILY_DISABLED_SITES로 막아둔 상태)의
 """
 
 import argparse
+import json
 import os
 import random
 import sys
@@ -113,8 +114,12 @@ async def main(
     limit: int | None,
     dry_run: bool,
     new_only: bool,
+    targets_file: str | None,
 ) -> None:
-    targets = _fetch_targets(base_url, admin_key, basic_auth, new_only)
+    if targets_file:
+        targets = json.loads(Path(targets_file).read_text(encoding="utf-8"))["items"]
+    else:
+        targets = _fetch_targets(base_url, admin_key, basic_auth, new_only)
     if limit:
         targets = targets[:limit]
     print(f"대상 {len(targets)}건")
@@ -184,6 +189,14 @@ if __name__ == "__main__":
             "피하려고 같은 공연을 또 크롤링하지 않게 함"
         ),
     )
+    parser.add_argument(
+        "--targets-file",
+        default=None,
+        help=(
+            "서버 API 대신 이 JSON 파일의 대상으로 크롤링 - send_backfill_to_llm_once.py --export-local "
+            "결과. 이미 올린 건은 서버에서 다시 뽑을 때 빠지므로 이어서 돌릴 땐 파일을 새로 뽑을 것"
+        ),
+    )
     args = parser.parse_args()
 
     if not (args.base_url and args.admin_key and args.basic_user and args.basic_pass):
@@ -205,5 +218,6 @@ if __name__ == "__main__":
             args.limit,
             args.dry_run,
             args.new_only,
+            args.targets_file,
         )
     )
