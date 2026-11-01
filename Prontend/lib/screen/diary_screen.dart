@@ -1096,10 +1096,21 @@ class _DiaryScreenState extends State<DiaryScreen>
       }
     }
 
+    // [백엔드 수정] 갤러리 등록은 배송 대기 여부를 물음(같은 공연 배송 전 티켓이 있으면 실물 도착이라 생략).
+    var awaitingDelivery = false;
+    if (fromGallery &&
+        _canAwaitDelivery(attendedDate ?? selected.startDate) &&
+        !_hasBeforeDeliveryTicket(selected.id, attendedDate)) {
+      final answer = await _askAwaitingDelivery();
+      if (answer == null || !mounted) return;
+      awaitingDelivery = answer;
+    }
+
     showPaperLoading(context, '다이어리에 붙이는 중이에요…');
 
     try {
       final ticket = await _ticketService.createTicket(
+        awaitingDelivery: awaitingDelivery,
         concertId: selected.id,
         deliveryDate: _parseYmd(extracted.shippingDate),
         // [백엔드 수정]
@@ -1121,7 +1132,15 @@ class _DiaryScreenState extends State<DiaryScreen>
         matchConcertId: ticket.concertId,
         matchTitle: ticket.concert?.name ?? selected.name,
       );
-      _showSnack('다이어리에 티켓이 추가되었습니다.');
+      if (ticket.status == 'before_delivery') {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _syncDeliveryVibration();
+          unawaited(_startDeliveryAttentionIfNeeded());
+        });
+        _showSnack('배송 전 티켓으로 추가했어요.');
+      } else {
+        _showSnack('다이어리에 티켓이 추가되었습니다.');
+      }
     } on TicketAlreadyRegisteredException {
       if (!mounted) return;
       Navigator.pop(context);
@@ -1217,6 +1236,48 @@ class _DiaryScreenState extends State<DiaryScreen>
     ];
   }
 
+  // [백엔드 수정] 서버와 같은 기준: 공연 3일 전부터는 배송 전으로 두지 않음.
+  // 서버 값(UTC 자정)과 OCR 값(로컬 자정) 모두 자기 기준 연/월/일이 공연일이라 변환하지 않음.
+  bool _canAwaitDelivery(DateTime concertDate) {
+    final switchDay = DateTime(
+      concertDate.year,
+      concertDate.month,
+      concertDate.day,
+    ).subtract(const Duration(days: 3));
+    return DateUtils.dateOnly(DateTime.now()).isBefore(switchDay);
+  }
+
+  bool _hasBeforeDeliveryTicket(String concertId, DateTime? attendedDate) {
+    return _tickets.any((t) {
+      if (t.status != TicketStatus.beforeDelivery) return false;
+      if (t.info?.concertId != concertId) return false;
+      final date = t.info?.date;
+      return attendedDate == null ||
+          date == null ||
+          DateUtils.isSameDay(date.toLocal(), attendedDate.toLocal());
+    });
+  }
+
+  // [백엔드 수정] 갤러리 등록 시 배송 대기 여부 선택. 고르지 않고 닫으면 null.
+  Future<bool?> _askAwaitingDelivery() {
+    return showPaperSheet<bool>(
+      context,
+      title: '실물 티켓 배송을 기다리는 중인가요?',
+      rows: (context) => [
+        PaperSheetRow(
+          title: '네, 배송을 기다리고 있어요',
+          subtitle: '배송 전 티켓으로 붙여두고, 도착하면 실물을 등록해요',
+          onTap: () => Navigator.pop(context, true),
+        ),
+        PaperSheetRow(
+          title: '아니요, 이미 받은 티켓이에요',
+          subtitle: '모바일 티켓도 여기에 해당해요',
+          onTap: () => Navigator.pop(context, false),
+        ),
+      ],
+    );
+  }
+
   /// 여러 날 공연에서 관람일을 반드시 고르게 하는 시트(좌석 선택 시트와 같은 방식).
   Future<DateTime?> _pickAttendedDate(List<DateTime> days) {
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
@@ -1308,6 +1369,68 @@ class _DiaryScreenState extends State<DiaryScreen>
   void _showSnack(String message) {
     if (!mounted) return;
     showPaperSnackBar(context, message);
+  }
+
+  // [백엔드 수정] 배송일 전 "받았어요" - 카드 뒤집기 탭과 헷갈리지 않게 한 번 확인.
+  Future<void> _confirmTicketReceived(TicketData ticket) async {
+    final confirmed = await showPaperDialog<bool>(
+      context,
+      title: '티켓을 받으셨나요?',
+      emphasis: ticket.title,
+      message: '공연 전 티켓으로 바꿀게요.',
+      actions: const [
+        PaperDialogAction(
+          label: '아직이에요',
+          value: false,
+          style: PaperButtonStyle.outline,
+        ),
+        PaperDialogAction(label: '받았어요', value: true),
+      ],
+    );
+    if (confirmed != true || !mounted) return;
+    await _markTicketDelivered(ticket);
+  }
+
+  // [백엔드 수정] 스캔 없이 공연 전으로 넘기고 실물 등록과 같은 교체/낙하 연출을 씀.
+  Future<void> _markTicketDelivered(TicketData ticket) async {
+    if (ticket.info?.ticketId == null) {
+      // 등록된 적 없는 테스트 티켓은 화면에서만 교체.
+      _insertTicketReplacingBeforeDelivery(
+        TicketData(
+          title: ticket.title,
+          status: TicketStatus.beforeConcert,
+          info: ticket.info,
+        ),
+        matchTitle: ticket.title,
+      );
+      _syncDeliveryVibration();
+      return;
+    }
+    showPaperLoading(context, '티켓을 꺼내는 중이에요…');
+    try {
+      final updated = await _ticketService.markDelivered(ticket.id);
+      if (!mounted) return;
+      Navigator.pop(context);
+      _insertTicketReplacingBeforeDelivery(
+        TicketData.fromBackend(updated),
+        matchConcertId: updated.concertId,
+        matchTitle: updated.concert?.name ?? ticket.title,
+      );
+      _syncDeliveryVibration();
+    } on TicketNotFoundException {
+      if (!mounted) return;
+      Navigator.pop(context);
+      setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
+      _showSnack('이미 삭제된 티켓이에요.');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('처리에 실패했어요: ${e.message}');
+    } catch (_) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      _showSnack('알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+    }
   }
 
   /// 티켓을 길게 누르면 삭제를 확인합니다.
@@ -2203,6 +2326,7 @@ class _DiaryScreenState extends State<DiaryScreen>
         final ticketFace = _buildTicketBeforeDelivery(
           title: ticket.title,
           info: ticket.info,
+          ticket: ticket,
         );
         final isDeliveryDue = _isDeliveryDue(ticket.info?.deliveryDate);
         final shouldVibrate = _shouldVibrateDeliveryTicket(ticket);
@@ -2230,7 +2354,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                   clipBehavior: Clip.antiAlias,
                   borderRadius: BorderRadius.circular(8),
                   front: ticketFace,
-                  back: _buildTicketBeforeDeliveryBack(info: ticket.info),
+                  back: _buildTicketBeforeDeliveryBack(ticket: ticket),
                 ),
         );
       case TicketStatus.beforeConcert:
@@ -2563,16 +2687,19 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
-  Widget _buildTicketBeforeDelivery({required String title, TicketInfo? info}) {
+  // [백엔드 수정] 배송일이 되면 카메라 스캔 대신 터치 한 번으로 공연 전으로 넘김([ticket]이 있을 때만).
+  Widget _buildTicketBeforeDelivery({
+    required String title,
+    TicketInfo? info,
+    TicketData? ticket,
+  }) {
     final dDayLabel = _deliveryDDayLabel(info?.deliveryDate);
     final isRegisterReady = _isDeliveryDue(info?.deliveryDate);
 
-    // 배송 예정일이 되면(isRegisterReady) 실물 티켓을 등록하라는 안내
-    // 문구를 함께 보여주고, "티켓 추가" 버튼을 거치지 않고도 이 카드를
-    // 직접 눌러 바로 카메라 스캔으로 실물 티켓을 등록할 수 있게 합니다.
-    final readyMessage = isRegisterReady ? '터치하여 배송된 티켓을 등록하세요' : null;
-    final onReadyTap = isRegisterReady && !_isAddTicketExpanded
-        ? () => _startCameraScan()
+    final readyMessage = isRegisterReady ? '터치해서 도착한 티켓을 꺼내보세요' : null;
+    final onReadyTap =
+        isRegisterReady && !_isAddTicketExpanded && ticket != null
+        ? () => unawaited(_markTicketDelivered(ticket))
         : null;
 
     return GestureDetector(
@@ -2581,19 +2708,27 @@ class _DiaryScreenState extends State<DiaryScreen>
       child: _PosterTicketFace(
         title: title,
         info: info,
-        bigCenterText: isRegisterReady ? '배송 완료' : dDayLabel,
+        // [백엔드 수정] 공연 D-day로 오해하지 않게 "배송" 표기.
+        bigCenterText: isRegisterReady ? '배송 완료' : '배송 $dDayLabel',
         centerMessage: readyMessage,
         fullRadius: true,
       ),
     );
   }
 
-  Widget _buildTicketBeforeDeliveryBack({TicketInfo? info}) {
+  Widget _buildTicketBeforeDeliveryBack({required TicketData ticket}) {
+    final info = ticket.info;
     return DeliveryTicketBack(
-      date: _formatDeliveryDate(info?.deliveryDate),
+      // [백엔드 수정] 날짜는 공연 날짜, 배송일은 따로 표시.
+      date: info?.formattedDate ?? '-',
+      delivery: '${_formatDeliveryDate(info?.deliveryDate)} 예정',
+      onReceived: () => unawaited(_confirmTicketReceived(ticket)),
       venue: info?.venueName ?? '알 수 없는 공연장',
-      seat: info?.seat ?? '미정',
-      price: info?.price ?? '미정',
+      // [백엔드 수정] 서버 값이 비면 '' 로 오므로 미정 처리, 가격은 원 단위 표기.
+      seat: info == null || info.seat.isEmpty ? '미정' : info.seat,
+      price: info == null || info.price.isEmpty ? '미정' : info.formattedPrice,
+      // [백엔드 수정] 서버 start_time(공연 시간) 연결.
+      time: info?.extraFields['공연 시간'] ?? '미정',
     );
   }
 
@@ -3157,7 +3292,11 @@ class _PosterTicketFace extends StatelessWidget {
 /// 티켓 반권 영역: 라벨 + 공연 날짜(월.일/요일)를 표시합니다. 날짜가 없으면
 /// 라벨만 가운데 표시합니다.
 class _TicketStub extends StatelessWidget {
-  const _TicketStub({required this.label, this.date, this.radiusOnLeft = false});
+  const _TicketStub({
+    required this.label,
+    this.date,
+    this.radiusOnLeft = false,
+  });
 
   static const List<String> _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
 

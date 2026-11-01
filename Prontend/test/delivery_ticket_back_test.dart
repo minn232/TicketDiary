@@ -37,4 +37,33 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('받았어요 버튼은 콜백이 있을 때만 보이고 누르면 호출된다', (tester) async {
+    var received = 0;
+    Widget build(VoidCallback? onReceived) => MaterialApp(
+      home: Center(
+        child: SizedBox(
+          width: 360,
+          height: 120,
+          child: DeliveryTicketBack(
+            date: '2026.11.25',
+            venue: '테스트 공연장',
+            seat: '스탠딩',
+            price: '77,000원',
+            delivery: '2026.11.11 예정',
+            onReceived: onReceived,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(build(null));
+    expect(find.byKey(const ValueKey('delivery-received')), findsNothing);
+
+    await tester.pumpWidget(build(() => received++));
+    await tester.tap(find.byKey(const ValueKey('delivery-received')));
+    expect(received, 1);
+    expect(find.text('2026.11.11 예정'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

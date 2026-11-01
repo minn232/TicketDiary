@@ -44,6 +44,8 @@ class TicketService {
     String? ticketingSite,
     int? price,
     String? seatType,
+    // [백엔드 수정] 실물 배송을 기다리는 중이면 배송 전 티켓으로 등록.
+    bool awaitingDelivery = false,
   }) async {
     assert(
       concertId != null || kopisId != null,
@@ -64,6 +66,7 @@ class TicketService {
           if (ticketingSite != null) 'ticketing_site': ticketingSite,
           if (price != null) 'price': price,
           if (seatType != null) 'seat_type': seatType,
+          if (awaitingDelivery) 'awaiting_delivery': true,
         },
       );
       final ticket = TicketWithConcert.fromJson(json);
@@ -150,6 +153,17 @@ class TicketService {
           if (pageLayout != null) 'page_layout': pageLayout.toJson(),
         },
       );
+      return TicketWithConcert.fromJson(json);
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) throw const TicketNotFoundException();
+      rethrow;
+    }
+  }
+
+  // [백엔드 수정] 배송 전 티켓을 스캔 없이 공연 전으로 넘김(이미 받았거나 모바일 티켓).
+  Future<TicketWithConcert> markDelivered(String ticketId) async {
+    try {
+      final json = await _client.post('/tickets/$ticketId/delivered');
       return TicketWithConcert.fromJson(json);
     } on ApiException catch (e) {
       if (e.statusCode == 404) throw const TicketNotFoundException();

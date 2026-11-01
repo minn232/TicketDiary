@@ -10,8 +10,16 @@ class DeliveryTicketBack extends StatelessWidget {
     required this.seat,
     required this.price,
     this.time = '00:00',
+    this.delivery,
+    this.onReceived,
   });
   final String date, venue, seat, price, time;
+
+  // [백엔드 수정] 배송 예정일(공연 날짜와 구분해 오른쪽 빈 칸에 표시).
+  final String? delivery;
+
+  // [백엔드 수정] 배송일 전에 티켓을 먼저 받았을 때 공연 전으로 넘기는 버튼(null이면 숨김).
+  final VoidCallback? onReceived;
 
   @override
   Widget build(BuildContext context) {
@@ -60,13 +68,32 @@ class DeliveryTicketBack extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                '공연 정보',
-                style: TextStyle(
-                  fontSize: size,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                ),
+              Row(
+                children: [
+                  Text(
+                    '공연 정보',
+                    style: TextStyle(
+                      fontSize: size,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (onReceived != null)
+                    GestureDetector(
+                      key: const ValueKey('delivery-received'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onReceived,
+                      child: Text(
+                        '받았어요 ›',
+                        style: TextStyle(
+                          fontSize: size,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 4),
               Expanded(
@@ -90,7 +117,10 @@ class DeliveryTicketBack extends StatelessWidget {
                         children: [
                           field('좌석', seat),
                           field('가격', price),
-                          const Spacer(),
+                          if (delivery != null)
+                            field('배송일', delivery!)
+                          else
+                            const Spacer(),
                         ],
                       ),
                     ),
