@@ -79,7 +79,12 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   bool get muted => _muted;
 
   /// 오버레이가 열릴 때 재생 시작(예시 티켓/설정 꺼짐이면 무시).
-  Future<void> start(String? ticketId, Object owner) async {
+  /// [otherAudio]: 열림 효과음 전에 [checkOtherAudio]로 미리 잰 결과.
+  Future<void> start(
+    String? ticketId,
+    Object owner, {
+    Future<bool>? otherAudio,
+  }) async {
     if (ticketId == null || !AppSettingsStore.instance.playTicketPreview) {
       return;
     }
@@ -91,7 +96,7 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final tracks = await _tracksFor(ticketId);
       if (token != _token || tracks.isEmpty) return;
-      if (await _isOtherAudioPlaying()) return;
+      if (await (otherAudio ?? _isOtherAudioPlaying())) return;
       if (token != _token) return;
       final prepared = _preparedTicket == ticketId ? _prepared : null;
       await _play(prepared ?? _pick(tracks), token);
@@ -395,6 +400,10 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
     _fadeGenerations[player] = (_fadeGenerations[player] ?? 0) + 1;
     await player.setVolume(_muted ? 0 : level * AudioVolumeStore.instance.music);
   }
+
+  /// 다른 앱 음악 재생 여부를 지금 확인.
+  /// 안드로이드 isMusicActive는 우리 효과음도 잡으므로 효과음 나기 전에 불러둠.
+  Future<bool> checkOtherAudio() => _isOtherAudioPlaying();
 
   // 다른 앱이 음악 재생 중인지 확인(우리 재생 중엔 건너뜀)
   Future<bool> _isOtherAudioPlaying() async {

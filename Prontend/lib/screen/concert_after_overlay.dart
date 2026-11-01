@@ -137,6 +137,8 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
       Tween<double>(begin: 1.0, end: 0.0),
     );
 
+    // [백엔드 수정] 열림 효과음이 나기 전에 다른 앱 재생 여부를 재 둠(안드로이드 미리듣기 무음 수정).
+    final otherAudio = TicketPreviewPlayer.instance.checkOtherAudio();
     _transitionSound = TicketTransitionSound(
       controller: _controller,
       pageOpacity: _expandedOpacity,
@@ -144,7 +146,11 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     _controller.forward().then((_) {
       if (!mounted || _isClosing) return;
       unawaited(
-        TicketPreviewPlayer.instance.start(widget.ticketInfo?.ticketId, this),
+        TicketPreviewPlayer.instance.start(
+          widget.ticketInfo?.ticketId,
+          this,
+          otherAudio: otherAudio,
+        ),
       );
     });
   }
