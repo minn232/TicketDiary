@@ -1344,3 +1344,58 @@ def test_date_anchor_prefers_center_date_and_joins_two_line_title():
     assert date == "2025-04-18"
     assert titles[:2] == ["Not Just A Memory Live In Korea", "Rokudenashi 1st Oneman Live"]
     assert "Rokudenashi 1st Oneman Live Not Just A Memory Live In Korea" in titles
+
+
+# 좌석 등급+위치 추출 테스트 (_extract_seat_detail)
+
+# 앨범 사진: 뒤 티켓의 등급/입장번호보다 메인 티켓 날짜에 가까운 위치 줄과, 그 옆 등급을 합치는지
+# 테스트 (실사용 사진 Rokudenashi 케이스 - 예전엔 뒤 티켓의 "스탠딩석"만 남았음)
+def test_seat_detail_prefers_main_ticket_and_nearest_grade():
+    from app.services.ocr import _extract_seat_detail, _find_date_anchor
+
+    annotation = _page_annotation([
+        _paragraph_with_word_boxes("스탠딩석 99,000원", 250, 980, 730, 1040),
+        _paragraph_with_word_boxes("2025-05-10 [토]", 250, 1440, 730, 1500),
+        _paragraph_with_word_boxes("1층 스탠딩 입장번호150번", 250, 1780, 980, 1840),
+        _paragraph_with_word_boxes("2025-04-18 (금) 20:00", 1416, 1243, 2258, 1322),
+        _paragraph_with_word_boxes("전석", 2880, 1380, 3000, 1440),
+        _paragraph_with_word_boxes("2층 Y구역 4열 4번", 1430, 1450, 2230, 1550),
+        _paragraph_with_word_boxes("예약번호 : M252424143", 1430, 1800, 2300, 1860),
+    ])
+    _, box = _find_date_anchor(annotation)
+
+    assert _extract_seat_detail(annotation, "", box) == "전석 2층 Y구역 4열 4번"
+
+
+# 안내문 속 "객석"은 등급으로 쓰지 않고 실제 등급("스탠딩 R석")을 붙이는지 테스트 (back number 케이스)
+def test_seat_detail_skips_generic_grade_words():
+    from app.services.ocr import _extract_seat_detail
+
+    annotation = _page_annotation([
+        _paragraph_with_word_boxes("스탠딩 R석", 1300, 600, 1460, 650),
+        _paragraph_with_word_boxes("스탠딩A구역 입장번호1251번", 600, 770, 1200, 830),
+        _paragraph_with_word_boxes("객석 입장부터 퇴장까지 모든 종류의 촬영 절대 금지", 580, 950, 1100, 990),
+    ])
+
+    assert _extract_seat_detail(annotation, "", None) == "R석 스탠딩A구역 입장번호1251번"
+
+
+# 예매내역은 "좌석(1)" 라벨 다음 줄 값을 그대로 쓰는지 테스트 (YES24 지난관람상세 케이스)
+def test_seat_detail_uses_line_after_seat_label():
+    from app.services.ocr import _extract_seat_detail
+
+    raw_text = "예매번호\nY9347045301\n좌석(1)\n스탠딩석 1층 스탠딩A구역 입장번호116번\n좌석위치"
+
+    assert _extract_seat_detail({}, raw_text, None) == "스탠딩석 1층 스탠딩A구역 입장번호116번"
+
+
+# 위치 줄이 없으면 None이라 기존 등급 추출 결과를 그대로 두는지 테스트
+def test_seat_detail_none_without_position_line():
+    from app.services.ocr import _extract_seat_detail
+
+    annotation = _page_annotation([
+        _paragraph_with_word_boxes("스탠딩석 88,000원", 100, 100, 500, 150),
+        _paragraph_with_word_boxes("예매번호: Y9271792462", 100, 200, 600, 250),
+    ])
+
+    assert _extract_seat_detail(annotation, "스탠딩석 88,000원\n예매번호: Y9271792462", None) is None

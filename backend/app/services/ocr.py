@@ -842,6 +842,81 @@ def _extract_seat(text: str) -> str | None:
     return None
 
 
+# 좌석 위치 줄(입장번호/열·번/구역·번/층·번). 실물 티켓은 등급("스탠딩석")과 위치가 다른 줄에 찍히고
+# 위치 표기도 공연마다 달라 _SEAT_RE로는 등급만 남았음
+_SEAT_DETAIL_RE = re.compile(
+    r"(?:입장|정리)\s*번호\s*\d+"
+    r"|\d+\s*열\s*\d+\s*번"
+    r"|구역\s*\d+\s*번"
+    r"|\d+\s*층\s*\S+\s*\d+\s*번"
+)
+_SEAT_DETAIL_EXCLUDE_RE = re.compile(r"예매|예약|전화|휴대폰|송장|문의")
+# 예매내역의 좌석 라벨 줄("좌석(1)", "좌석정보") - 값은 다음 줄에 옴
+_SEAT_LABEL_LINE_RE = re.compile(r"좌석\s*(?:\(\d+\)|정보)?")
+# 같은 줄에 붙은 라벨("좌석 : R석 ...")은 값만 남김(_extract_seat와 같은 표기)
+_SEAT_INLINE_LABEL_RE = re.compile(r"^\s*(?:좌석(?:정보)?|SEAT)\s*[:：]\s*", re.IGNORECASE)
+_SEAT_GRADE_TOKEN_RE = re.compile(r"[A-Z가-힣]{1,5}석")
+# 등급처럼 보이지만 일반 단어("객석 입장부터 ...", "좌석 안내")라 등급으로 안 씀
+_SEAT_GRADE_STOPWORDS = {"객석", "좌석"}
+_SEAT_GRADE_LINE_MAX_LEN = 25
+# 등급 줄은 위치 줄과 떨어져 찍히기도 해서(오른쪽 열 등) 위치 줄 높이의 이 배수까지 같은 티켓으로 봄
+_SEAT_GRADE_MAX_DISTANCE = 20
+
+
+def _is_seat_detail(text: str) -> bool:
+    return bool(_SEAT_DETAIL_RE.search(text)) and not _SEAT_DETAIL_EXCLUDE_RE.search(text)
+
+
+# 짧은 줄에서 좌석 등급만 뽑음("스탠딩석 99,000원" -> "스탠딩석"), 안내문 속 단어는 제외
+def _seat_grade_of(text: str) -> str | None:
+    if len(text) > _SEAT_GRADE_LINE_MAX_LEN:
+        return None
+    for m in _SEAT_GRADE_TOKEN_RE.finditer(text):
+        if m.group(0) not in _SEAT_GRADE_STOPWORDS:
+            return m.group(0)
+    return None
+
+
+def _center(b: dict) -> tuple[float, float]:
+    return (b["x0"] + b["x1"]) / 2, (b["y0"] + b["y1"]) / 2
+
+
+def _distance(a: dict, b: dict) -> float:
+    (ax, ay), (bx, by) = _center(a), _center(b)
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
+
+# 좌석 등급+위치 추출. 예매내역은 "좌석(1)" 다음 줄, 실물은 위치 줄 + 가장 가까운 등급 줄을 합침.
+# 앨범 사진엔 뒤에 겹친 티켓 좌석도 찍혀서 위치 줄은 메인 티켓 날짜(anchor_box)에 가장 가까운 걸 씀
+def _extract_seat_detail(annotation: dict, raw_text: str, anchor_box: dict | None) -> str | None:
+    lines = [line.strip() for line in raw_text.splitlines()]
+    for i, line in enumerate(lines[:-1]):
+        if _SEAT_LABEL_LINE_RE.fullmatch(line):
+            value = lines[i + 1]
+            if value and (_is_seat_detail(value) or _seat_grade_of(value)):
+                return value
+
+    blocks = _flatten_paragraphs(annotation)
+    details = [b for b in blocks if _is_seat_detail(b["text"])]
+    if not details:
+        return None
+    if anchor_box is not None:
+        detail = min(details, key=lambda b: _distance(b, anchor_box))
+    else:
+        detail = details[0]
+    text = _SEAT_INLINE_LABEL_RE.sub("", detail["text"]).strip()
+    if _seat_grade_of(text):
+        return text
+
+    height = (detail["y1"] - detail["y0"]) or 1
+    graded = [(b, g) for b in blocks if b is not detail and (g := _seat_grade_of(b["text"]))]
+    if graded:
+        block, grade = min(graded, key=lambda bg: _distance(bg[0], detail))
+        if _distance(block, detail) <= height * _SEAT_GRADE_MAX_DISTANCE:
+            return f"{grade} {text}"
+    return text
+
+
 # 티켓팅 플랫폼 추출
 def _extract_platform(text: str) -> str | None:
     lower = text.lower()
@@ -899,6 +974,7 @@ async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     annotation = await call_vision(jpeg_bytes)
     raw_text = _full_text_from_annotation(annotation)
 
+    anchor = None
     fields = _parse_ticket_fields_from_layout(annotation, raw_text)
     if fields is None:
         fields = _parse_ticket_fields(raw_text)
@@ -914,4 +990,7 @@ async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
                 ]
     if not fields.get("date"):
         fields["date"] = _extract_stacked_date_from_words(annotation)
+    seat = _extract_seat_detail(annotation, raw_text, anchor[1] if anchor else None)
+    if seat:
+        fields["seat"] = seat
     return fields
