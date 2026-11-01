@@ -42,6 +42,7 @@ import 'package:ticketdiary/widgets/ticket_scan_camera_screen.dart';
 import 'package:ticketdiary/widgets/app_network_image.dart';
 import 'package:ticketdiary/widgets/paper_style.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
+import 'package:ticketdiary/widgets/shake_to_meet.dart';
 
 class TicketData {
   final String title;
@@ -1559,43 +1560,51 @@ class _DiaryScreenState extends State<DiaryScreen>
     final nextPageIndex = _totalPages > 1
         ? (_currentPageIndex + 1) % _totalPages
         : null;
-    return Stack(
-      key: _diaryStackKey,
-      children: [
-        AbsorbPointer(
-          absorbing: _arrivingTicketId != null,
-          child: _buildDiaryPageFrameWithFlip(_currentPageIndex, nextPageIndex),
-        ),
-        _buildTransitionSpotlightOverlay(),
-        _buildDeliveryAttentionOverlay(),
-        OfflineBanner(forceVisible: _usingCachedTickets),
-        // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
-        // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
-        _buildDebugTestTicketTab(),
-        // ===== [TEST-ONLY] 끝 =====
-        if (_arrivingTicketId != null)
-          const Positioned.fill(child: AbsorbPointer(child: SizedBox.expand())),
-        if (_arrivalTarget != null && _arrivingTicketId != null)
-          Positioned.fill(
-            child: FeatherTicketArrival(
-              key: ValueKey(_arrivingTicketId),
-              target: _arrivalTarget!,
-              onComplete: _finishTicketArrival,
-              child: DiaryFrameScale(
-                scale: _arrivalFrameScale,
-                marginEachSide: 0,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: _buildSpotlightTicketVisual(
-                    _arrivingTicketId!,
-                    vibrate: false,
-                    includePocket: false,
+    // [백엔드 수정] 흔들어 친구 만나기 - 스플래시 미리보기(frameScaleOverride)와 다이어리가 바쁠 땐 끔.
+    return ShakeToMeet(
+      enabled:
+          widget.frameScaleOverride == null &&
+          !_isAddTicketExpanded &&
+          !_interactionLocked &&
+          _arrivingTicketId == null,
+      child: Stack(
+        key: _diaryStackKey,
+        children: [
+          AbsorbPointer(
+            absorbing: _arrivingTicketId != null,
+            child: _buildDiaryPageFrameWithFlip(_currentPageIndex, nextPageIndex),
+          ),
+          _buildTransitionSpotlightOverlay(),
+          _buildDeliveryAttentionOverlay(),
+          OfflineBanner(forceVisible: _usingCachedTickets),
+          // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
+          // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
+          _buildDebugTestTicketTab(),
+          // ===== [TEST-ONLY] 끝 =====
+          if (_arrivingTicketId != null)
+            const Positioned.fill(child: AbsorbPointer(child: SizedBox.expand())),
+          if (_arrivalTarget != null && _arrivingTicketId != null)
+            Positioned.fill(
+              child: FeatherTicketArrival(
+                key: ValueKey(_arrivingTicketId),
+                target: _arrivalTarget!,
+                onComplete: _finishTicketArrival,
+                child: DiaryFrameScale(
+                  scale: _arrivalFrameScale,
+                  marginEachSide: 0,
+                  child: Material(
+                    type: MaterialType.transparency,
+                    child: _buildSpotlightTicketVisual(
+                      _arrivingTicketId!,
+                      vibrate: false,
+                      includePocket: false,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 

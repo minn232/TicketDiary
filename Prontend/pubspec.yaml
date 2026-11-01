@@ -71,6 +71,7 @@ dependencies:
   reactive_ble_mobile: 5.5.0
   flutter_ble_peripheral: 3.1.0
   permission_handler: 12.0.1
+  sensors_plus: ^7.1.1
 
 dev_dependencies:
   flutter_test:

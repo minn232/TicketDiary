@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import '../widgets/media_volume_control.dart';
 
-import 'connections_screen.dart';
+// import 'connections_screen.dart';
 import 'notifications_screen.dart';
 import '../services/api_client.dart';
 import '../services/app_settings_store.dart';
 import '../services/auth_service.dart';
+import '../services/connection_service.dart';
 import '../services/guest_migration_service.dart';
 import '../services/kakao_login_controller.dart';
 import '../services/local_ticket_store.dart';
@@ -57,6 +58,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // [백엔드 수정] 알림함 메뉴 배지 - 안 읽은 알림 수(실패하면 배지 없이).
   int _unreadNotifications = 0;
 
+  // [백엔드 수정] 흔들어 만난 친구 카드에 내 다음 공연 보여주기(서버 설정, 못 불러오면 줄 숨김).
+  bool? _shareNextConcert;
+
+  Future<void> _loadShareNextConcert() async {
+    try {
+      final value = await ConnectionService().getShareNextConcert();
+      if (mounted) setState(() => _shareNextConcert = value);
+    } catch (_) {}
+  }
+
+  Future<void> _setShareNextConcert(bool v) async {
+    final prev = _shareNextConcert;
+    setState(() => _shareNextConcert = v);
+    try {
+      await ConnectionService().setShareNextConcert(v);
+    } catch (e) {
+      if (mounted) setState(() => _shareNextConcert = prev);
+      _showSaveError(e, label: '내 다음 공연 보여주기');
+    }
+  }
+
   Future<void> _loadUnreadNotifications() async {
     try {
       final count = await NotificationsService().unreadCount();
@@ -71,6 +93,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _appSettings.addListener(_onAppSettingsChanged);
     _loadNotificationSettings();
     _loadUnreadNotifications();
+    _loadShareNextConcert();
   }
 
   @override
@@ -463,18 +486,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                           const _SectionLabel('친구'),
                           // [백엔드 수정]
-                          // 폰 맞대기로 연결된 친구 목록·연결 카드.
-                          Builder(
-                            builder: (menuContext) => _MenuRow(
-                              title: '연결된 친구',
-                              onTap: () => ConnectionsScreen.show(
-                                menuContext,
-                                frameScale:
-                                    DiaryFrameScale.maybeOf(menuContext) ??
-                                    diaryScaleFromMediaQuery(menuContext),
-                              ),
-                            ),
+                          // 연결된 친구 목록은 일회용 만남(다이어리에서 흔들기)으로 바뀌어 꺼 둠.
+                          // Builder(
+                          //   builder: (menuContext) => _MenuRow(
+                          //     title: '연결된 친구',
+                          //     onTap: () => ConnectionsScreen.show(
+                          //       menuContext,
+                          //       frameScale:
+                          //           DiaryFrameScale.maybeOf(menuContext) ??
+                          //           diaryScaleFromMediaQuery(menuContext),
+                          //     ),
+                          //   ),
+                          // ),
+                          _SwitchRow(
+                            title: '흔들어서 친구 만나기',
+                            value: _appSettings.shakeToMeet,
+                            onChanged: _appSettings.setShakeToMeet,
                           ),
+                          if (_shareNextConcert != null) ...[
+                            _divider,
+                            _SwitchRow(
+                              title: '친구에게 내 다음 공연 보여주기',
+                              value: _shareNextConcert!,
+                              onChanged: _setShareNextConcert,
+                            ),
+                          ],
                           const SizedBox(height: 10),
                         ],
                       ),

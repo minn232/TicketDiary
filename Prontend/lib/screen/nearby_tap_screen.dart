@@ -439,7 +439,14 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     try {
       await Future.wait([drop, barrier]);
     } catch (_) {}
-    if (mounted) Navigator.of(context).pop(peer);
+    if (!mounted) return;
+    // [백엔드 수정] onConnected가 카드 화면을 위에 띄웠으면 pop이 그걸 닫으므로 이 화면만 뺌.
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) {
+      Navigator.of(context).removeRoute(route);
+    } else {
+      Navigator.of(context).pop(peer);
+    }
   }
 
   Future<void> _close({ConnectionPeer? result}) async {
@@ -551,7 +558,8 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       _Phase.checking => '친구를 확인하고 있어요',
       _ => '친구와 폰 윗부분을 맞대주세요',
     };
-    final sub = _phase == _Phase.failed ? _message : '친구도 이 화면을 열어둬야 해요';
+    // [백엔드 수정] 다이어리에서 흔들어 여는 방식으로 바뀌어 안내 문구 변경.
+    final sub = _phase == _Phase.failed ? _message : '친구도 폰을 흔들어 이 화면을 열어주세요';
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -691,7 +699,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
             connected
                 ? (_reMeet
                       ? '${peer.displayName}님을 다시 만났어요!'
-                      : '${peer.displayName}님과 연결됐어요!')
+                      : '${peer.displayName}님을 만났어요!')
                 : waiting
                 ? '${peer.displayName}님의 확인을 기다리고 있어요'
                 : '${peer.displayName}님 맞나요?',
@@ -735,7 +743,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
                               style: FilledButton.styleFrom(
                                 backgroundColor: _accent,
                               ),
-                              child: const Text('맞아요, 연결할게요'),
+                              child: const Text('맞아요, 보여줄게요'),
                             ),
                           ],
                         ),

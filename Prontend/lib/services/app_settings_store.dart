@@ -36,12 +36,16 @@ class AppSettingsStore extends ChangeNotifier {
   // 티켓 미리듣기 자동재생 - 기기 로컬에만 저장.
   static const _playTicketPreviewPrefsKey = 'play_ticket_preview_v1';
 
+  // [백엔드 수정] 다이어리에서 흔들어 친구 만나기 - 기기 로컬에만 저장.
+  static const _shakeToMeetPrefsKey = 'shake_to_meet_v1';
+
   final NotificationSettingsService _settingsService =
       NotificationSettingsService();
 
   bool _showExpectedSetlist = true;
   MusicService _preferredMusicService = MusicService.spotify;
   bool _playTicketPreview = true;
+  bool _shakeToMeet = true;
   bool _loaded = false;
 
   /// 마지막으로 load()를 실행했던 유저 id.
@@ -67,6 +71,8 @@ class AppSettingsStore extends ChangeNotifier {
   // [백엔드 수정] 티켓 미리듣기 자동재생 설정 추가.
   bool get playTicketPreview => _playTicketPreview;
 
+  bool get shakeToMeet => _shakeToMeet;
+
   Future<void> load() async {
     if (_loaded) return;
     _loaded = true;
@@ -80,6 +86,7 @@ class AppSettingsStore extends ChangeNotifier {
         prefs.getString(_preferredMusicServicePrefsKey),
       );
       _playTicketPreview = prefs.getBool(_playTicketPreviewPrefsKey) ?? true;
+      _shakeToMeet = prefs.getBool(_shakeToMeetPrefsKey) ?? true;
       notifyListeners();
     } catch (_) {
       // 로컬 저장소를 못 읽어도 기본값(true/스포티파이)으로 시작합니다.
@@ -137,6 +144,16 @@ class AppSettingsStore extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_playTicketPreviewPrefsKey, value);
+    } catch (_) {}
+  }
+
+  /// 기기 로컬에만 저장(서버 동기화 없음).
+  Future<void> setShakeToMeet(bool value) async {
+    _shakeToMeet = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_shakeToMeetPrefsKey, value);
     } catch (_) {}
   }
 }
