@@ -3,6 +3,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'probe.dart';
+import 'shake_probe.dart';
 
 void main() {
   runApp(const ProbeApp());
@@ -16,7 +17,39 @@ class ProbeApp extends StatelessWidget {
     return MaterialApp(
       title: 'BLE 실측',
       theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
-      home: const ProbeScreen(),
+      home: const LauncherScreen(),
+    );
+  }
+}
+
+// BLE 실측은 열자마자 권한·광고·스캔을 시작해서, 흔들기 실측만 할 땐 안 켜지게 첫 화면에서 고름
+class LauncherScreen extends StatelessWidget {
+  const LauncherScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    void open(Widget screen) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+    return Scaffold(
+      appBar: AppBar(title: const Text('실측')),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FilledButton.icon(
+              onPressed: () => open(const ShakeProbeScreen()),
+              icon: const Icon(Icons.vibration),
+              label: const Text('흔들기 실측'),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => open(const ProbeScreen()),
+              icon: const Icon(Icons.bluetooth),
+              label: const Text('BLE 맞대기 실측'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
