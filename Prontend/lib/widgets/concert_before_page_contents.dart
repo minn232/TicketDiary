@@ -551,7 +551,11 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
                   ),
                 ],
               )
-            : const _UndecidedText();
+            // 공연에 아티스트가 아직 없으면 찾기 링크를 띄울 대상도 없어 "미정"만
+            // 나오던 것 - 왜 비었는지 알려줌
+            : _UndecidedText(
+                message: _fetchedArtistNames.isEmpty ? '아티스트 정보가 아직 없어요' : '미정',
+              );
       }
       final list = _SetlistNumbered(
         setlist: _fetchedSetlist,
@@ -854,9 +858,9 @@ class _ColumnRule extends StatelessWidget {
 }
 
 /// 스프레드 가운데 상단의 포스터. 신문 사진처럼 얇은 검정 프레임 + 캡션 +
-/// 확대 힌트 아이콘. 더블탭하면 전체화면으로 확대([showFullscreenPoster],
-/// 소식 탭 포스터 확대와 동일). 단일 탭은 흡수해, 지면을 눌러 오버레이가
-/// 닫히는 것과 헷갈리지 않게 합니다.
+/// 확대 힌트 아이콘. 누르면 전체화면으로 확대([showFullscreenPoster],
+/// 소식 탭 포스터 확대와 동일 - 더블탭이라 잘 안 눌려서 한 번 탭으로 바꿈).
+/// 포스터를 누른 탭은 여기서 받아 오버레이 닫기로 넘어가지 않습니다.
 class _SpreadPoster extends StatelessWidget {
   final String? imageUrl;
   final String caption;
@@ -871,8 +875,7 @@ class _SpreadPoster extends StatelessWidget {
       children: [
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () {}, // 단일 탭 흡수(오버레이 닫힘 방지).
-          onDoubleTap: () => showFullscreenPoster(context, imageUrl),
+          onTap: () => showFullscreenPoster(context, imageUrl),
           child: Stack(
             children: [
               DecoratedBox(

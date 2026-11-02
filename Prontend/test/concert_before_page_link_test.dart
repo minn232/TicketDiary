@@ -54,7 +54,11 @@ void main() {
     // 공연 정보 칸은 칸 안에서 스크롤됨 - 썸네일이 보이게 내린 뒤 누름.
     await tester.ensureVisible(find.byType(ConcertBeforeThumbnail));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(ConcertBeforeThumbnail));
+    // 2칸 뒷면에선 썸네일 아랫부분이 잘려(끼운 모양) 가운데가 안 보일 수 있어 윗부분을 누름.
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(ConcertBeforeThumbnail)) +
+          const Offset(20, 20),
+    );
     await tester.pumpAndSettle();
 
     expect(openedFrom, isNotNull);

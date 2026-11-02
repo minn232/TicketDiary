@@ -2795,21 +2795,45 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final row in _backInfoRows())
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: row.length == 1
-                        ? _backInfoField(row.single)
-                        : Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              for (final (i, field) in row.indexed) ...[
-                                if (i > 0) const SizedBox(width: 8),
-                                Expanded(child: _backInfoField(field)),
-                              ],
-                            ],
-                          ),
+                // 라벨/값 목록만 있던 칸을 실제 티켓 반쪽처럼 - 아티스트는 페스티벌이면
+                // 길어서 티켓 밖 아래에 그대로 둠
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _TicketStub(
+                    top: [
+                      for (final row in _backInfoRows())
+                        if (row.every((f) => _stubTopKeys.contains(f.key))) row,
+                    ],
+                    bottom: [
+                      for (final row in _backInfoRows())
+                        if (row.every((f) => _stubBottomKeys.contains(f.key)))
+                          row,
+                    ],
+                    field: _backInfoField,
+                    issueNumber: widget.issueNumber,
+                    seed: widget.concertTitle.hashCode,
                   ),
+                ),
+                for (final row in _backInfoRows())
+                  if (row.every(
+                    (f) =>
+                        !_stubTopKeys.contains(f.key) &&
+                        !_stubBottomKeys.contains(f.key),
+                  ))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: row.length == 1
+                          ? _backInfoField(row.single)
+                          : Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final (i, field) in row.indexed) ...[
+                                  if (i > 0) const SizedBox(width: 8),
+                                  Expanded(child: _backInfoField(field)),
+                                ],
+                              ],
+                            ),
+                    ),
                 if (!_twoColumnBack) _beforePageThumbBlock(),
               ],
             ),
@@ -2961,6 +2985,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                   imageUrl: widget.ticketInfo?.posterImageUrl,
                   paperColor: _envelopeColor,
                   instant: widget.exportMode,
+                  enlargeOnTap: !_edit && !widget.exportMode,
                 ),
               ),
             ),
@@ -4034,10 +4059,14 @@ class _PosterMemo extends StatelessWidget {
   final String? imageUrl;
   final Color paperColor;
   final bool instant;
+
+  /// 눌러서 크게 보기. 편집 모드에선 메모 옮기기와 겹치지 않게 끔.
+  final bool enlargeOnTap;
   const _PosterMemo({
     required this.imageUrl,
     required this.paperColor,
     this.instant = false,
+    this.enlargeOnTap = true,
   });
 
   void _showPosterPreview(BuildContext context, Widget poster) {
@@ -4117,8 +4146,9 @@ class _PosterMemo extends StatelessWidget {
                 )
               : Image.file(File(url), fit: BoxFit.cover));
 
+    // 더블탭이라 잘 안 눌렸음(소식 탭 포스터는 한 번 탭) - 한 번 탭으로
     return GestureDetector(
-      onDoubleTap: () => _showPosterPreview(context, img),
+      onTap: enlargeOnTap ? () => _showPosterPreview(context, img) : null,
       child: RepaintBoundary(
         child: _PostagePosterFrame(
           paperColor: paperColor,
@@ -4637,4 +4667,270 @@ class _RealTimetableNoteState extends State<_RealTimetableNote> {
     }
     return body;
   }
+}
+
+/// 뒷면 티켓 반쪽에서 절취선 위/아래에 들어가는 공연 정보 칸.
+const _stubTopKeys = {'공연장', '날짜', '가격'};
+const _stubBottomKeys = {'좌석', '공연 유형'};
+
+/// 뒷면 "공연 정보"를 종이 티켓 반쪽(stub)처럼. 위는 ADMIT ONE 띠 + 공연장·날짜·
+/// 가격, 양옆 반원 홈 사이 절취선, 아래는 좌석·공연 유형 + 바코드.
+class _TicketStub extends StatelessWidget {
+  const _TicketStub({
+    required this.top,
+    required this.bottom,
+    required this.field,
+    required this.issueNumber,
+    required this.seed,
+  });
+
+  final List<List<MapEntry<String, String>>> top, bottom;
+  final Widget Function(MapEntry<String, String>) field;
+  final int issueNumber;
+  final int seed;
+
+  static const _paper = Color(0xFFF8F4E8);
+  static const _notch = 7.0;
+
+  Widget _rows(List<List<MapEntry<String, String>>> rows) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (final (r, row) in rows.indexed)
+        Padding(
+          padding: EdgeInsets.only(top: r == 0 ? 0 : 8),
+          child: row.length == 1
+              ? field(row.single)
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final (i, f) in row.indexed) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(child: field(f)),
+                    ],
+                  ],
+                ),
+        ),
+    ],
+  );
+
+  Widget _half({
+    required bool notchTop,
+    required bool notchBottom,
+    required Widget child,
+  }) => DecoratedBox(
+    decoration: ShapeDecoration(
+      color: _paper,
+      shape: _StubBorder(
+        notchTop: notchTop,
+        notchBottom: notchBottom,
+        radius: _notch,
+        color: _kraftInk.withValues(alpha: .35),
+      ),
+      shadows: [
+        BoxShadow(
+          color: _kraftInk.withValues(alpha: .12),
+          blurRadius: 3,
+          offset: const Offset(0, 1.5),
+        ),
+      ],
+    ),
+    child: child,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final bandStyle = TextStyle(
+      fontSize: 9.5,
+      fontWeight: FontWeight.w900,
+      letterSpacing: 1.6,
+      color: _paper.withValues(alpha: .95),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _half(
+          notchTop: false,
+          notchBottom: bottom.isNotEmpty,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: const BoxDecoration(
+                  color: _kraftInk,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(3)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'ADMIT ONE',
+                        maxLines: 1,
+                        overflow: TextOverflow.clip,
+                        style: bandStyle,
+                      ),
+                    ),
+                    Text('No.$issueNumber', style: bandStyle),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+                child: _rows(top),
+              ),
+            ],
+          ),
+        ),
+        if (bottom.isNotEmpty)
+          _half(
+            notchTop: true,
+            notchBottom: false,
+            child: CustomPaint(
+              painter: _PerforationPainter(
+                inset: _notch + 3,
+                color: _kraftInk.withValues(alpha: .4),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 11, 10, 9),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _rows(bottom),
+                    const SizedBox(height: 9),
+                    SizedBox(
+                      height: 20,
+                      child: CustomPaint(
+                        painter: _BarcodePainter(
+                          seed: seed,
+                          color: _kraftInk.withValues(alpha: .75),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 티켓 반쪽 테두리. 절취선 쪽 두 모서리를 반원으로 파냄(위 조각은 아래 모서리,
+/// 아래 조각은 위 모서리) - 두 조각을 붙이면 양옆에 동그란 홈이 생김.
+class _StubBorder extends ShapeBorder {
+  const _StubBorder({
+    required this.notchTop,
+    required this.notchBottom,
+    required this.radius,
+    required this.color,
+  });
+
+  final bool notchTop, notchBottom;
+  final double radius;
+  final Color color;
+
+  @override
+  EdgeInsetsGeometry get dimensions => EdgeInsets.zero;
+
+  @override
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
+      getOuterPath(rect, textDirection: textDirection);
+
+  @override
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
+    final r = Radius.circular(radius);
+    const c = Radius.circular(3);
+    final l = rect.left, t = rect.top, rt = rect.right, b = rect.bottom;
+    final p = Path();
+    if (notchTop) {
+      p.moveTo(l, t + radius);
+      p.arcToPoint(Offset(l + radius, t), radius: r, clockwise: false);
+      p.lineTo(rt - radius, t);
+      p.arcToPoint(Offset(rt, t + radius), radius: r, clockwise: false);
+    } else {
+      p.moveTo(l, t + c.y);
+      p.arcToPoint(Offset(l + c.x, t), radius: c);
+      p.lineTo(rt - c.x, t);
+      p.arcToPoint(Offset(rt, t + c.y), radius: c);
+    }
+    if (notchBottom) {
+      p.lineTo(rt, b - radius);
+      p.arcToPoint(Offset(rt - radius, b), radius: r, clockwise: false);
+      p.lineTo(l + radius, b);
+      p.arcToPoint(Offset(l, b - radius), radius: r, clockwise: false);
+    } else {
+      p.lineTo(rt, b - c.y);
+      p.arcToPoint(Offset(rt - c.x, b), radius: c);
+      p.lineTo(l + c.x, b);
+      p.arcToPoint(Offset(l, b - c.y), radius: c);
+    }
+    return p..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
+    canvas.drawPath(
+      getOuterPath(rect),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = .8
+        ..color = color,
+    );
+  }
+
+  @override
+  ShapeBorder scale(double t) => _StubBorder(
+    notchTop: notchTop,
+    notchBottom: notchBottom,
+    radius: radius * t,
+    color: color,
+  );
+}
+
+/// 티켓 아래 조각 윗변의 절취선(점선).
+class _PerforationPainter extends CustomPainter {
+  const _PerforationPainter({required this.inset, required this.color});
+  final double inset;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+    final end = size.width - inset;
+    for (var x = inset; x < end; x += 6) {
+      canvas.drawLine(Offset(x, .5), Offset(math.min(x + 2.5, end), .5), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PerforationPainter old) =>
+      old.inset != inset || old.color != color;
+}
+
+/// 장식용 바코드. 공연마다 무늬가 다르게 제목으로 시드를 정함(읽히는 코드 아님).
+class _BarcodePainter extends CustomPainter {
+  const _BarcodePainter({required this.seed, required this.color});
+  final int seed;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = math.Random(seed);
+    final paint = Paint()..color = color;
+    var x = 0.0;
+    while (x < size.width) {
+      final w = 0.8 + rnd.nextInt(3) * .9;
+      if (x + w > size.width) break;
+      canvas.drawRect(Rect.fromLTWH(x, 0, w, size.height), paint);
+      x += w + 0.9 + rnd.nextInt(3) * .9;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _BarcodePainter old) =>
+      old.seed != seed || old.color != color;
 }
