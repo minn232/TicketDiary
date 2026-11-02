@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,6 +38,9 @@ class NearbyTapScreen extends StatefulWidget {
       transitionDuration: const Duration(milliseconds: 320),
       pageBuilder: (context, animation, secondaryAnimation) =>
           NearbyTapScreen(frameScale: frameScale, onConnected: onConnected),
+      // 배경·카드가 각자 움직이므로 기본 페이드는 끔(떨어지는 카드가 반투명해 보임)
+      transitionBuilder: (context, animation, secondaryAnimation, child) =>
+          child,
     );
   }
 
@@ -59,9 +63,16 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
   final _service = ConnectionService();
   final _engine = NearbyTapEngine();
   StreamSubscription<NearbyDetection>? _detectionSub;
+  // 어두운 배경
   late final AnimationController _slide;
+  // 준비 카드가 화면 위에서 떨어져 매달린 채 흔들리다 멈춤(흔들어 연 느낌)
+  late final AnimationController _enter;
+  // 닫을 때 준비 카드가 위로 당겨 올라감
+  late final AnimationController _away;
+  // 카드가 내려앉을 때 폰 아이콘이 흔들림(흔들어 연 느낌)
+  late final AnimationController _wobble;
   late final AnimationController _pulse;
-  // 상대를 찾으면 윗면에서 카드가 펼쳐져 나옴 - 그동안 아래 시트는 내려감
+  // 상대를 찾으면 윗면에서 카드가 펼쳐져 나옴 - 그동안 준비 카드는 위로 접혀 들어감
   late final AnimationController _reveal;
   // 연결 완료 뒤 윗면 카드가 물방울로 오므라들어 떨어짐
   late final AnimationController _handoff;
@@ -93,6 +104,24 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       duration: const Duration(milliseconds: 320),
       reverseDuration: const Duration(milliseconds: 220),
     )..forward();
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..forward();
+    _away = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 360),
+    );
+    _wobble = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
+    );
+    // 카드가 떨어져 걸리는 순간 진동 + 아이콘 흔들림
+    Future<void>.delayed(const Duration(milliseconds: 230), () {
+      if (!mounted || _isClosing) return;
+      HapticFeedback.selectionClick();
+      _wobble.forward();
+    });
     _pulse = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
@@ -120,6 +149,9 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     _engine.removeListener(_onEngineChanged);
     _engine.dispose();
     _slide.dispose();
+    _enter.dispose();
+    _away.dispose();
+    _wobble.dispose();
     _pulse.dispose();
     _reveal.dispose();
     _handoff.dispose();
@@ -456,20 +488,39 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     try {
       await Future.wait([
         _slide.reverse(),
+        _away.forward(),
         if (!_reveal.isDismissed) _reveal.reverse(),
       ]);
     } catch (_) {}
     if (mounted) Navigator.of(context).pop(result);
   }
 
+  // 준비 카드 입장: 0~0.3 위에서 떨어져 살짝 늘어났다 걸림, 처음부터 끝까지 진자처럼 잦아드는 흔들림.
+  // 연결될 때의 물방울 연출과 다른 느낌으로
+  static const _enterFall = Interval(0, 0.3);
+  static const _enterSettle = Interval(0.5, 1, curve: Curves.easeInOut);
+  // 상대 카드가 나오기 시작하면 준비 카드는 먼저 위로 당겨 올라감(살짝 내려갔다가)
+  static const _revealAway = Interval(0, 0.3, curve: Curves.easeInBack);
+  static const _cardTop = 16.0;
+  // 화면 밖 시작 위치(카드 높이 배수)
+  static const _offscreen = 1.4;
+
+  // 떨어짐 - 앞 절반은 가속하며 떨어져 8% 더 내려가고, 뒤 절반은 줄에 걸린 듯 잦아들며 제자리
+  static double _fall(double t) {
+    if (t < 0.5) return 1.08 * (t / 0.5) * (t / 0.5);
+    final u = (t - 0.5) / 0.5;
+    return 1 + 0.08 * math.exp(-5 * u) * math.cos(3 * math.pi * u);
+  }
+
+  // 흔들림 각도 - 처음 비스듬히 떨어져 좌우로 몇 번 흔들리다 멈춤
+  static double _swing(double e) =>
+      0.16 * math.exp(-3.2 * e) * math.cos(2 * math.pi * 2.1 * e) * (1 - e);
+
   @override
   Widget build(BuildContext context) {
     final t = CurvedAnimation(parent: _slide, curve: Curves.easeOutCubic);
-    // 윗면 카드가 나오기 시작하면 아래 시트는 먼저 내려감
-    final sheetAway = CurvedAnimation(
-      parent: _reveal,
-      curve: const Interval(0, 0.3, curve: Curves.easeInCubic),
-    );
+    final away = CurvedAnimation(parent: _away, curve: Curves.easeInBack);
+    final topInset = MediaQuery.paddingOf(context).top;
     return DiaryFrameScale(
       scale: widget.frameScale,
       marginEachSide: 0,
@@ -479,70 +530,119 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
           if (!didPop) _close();
         },
         child: AnimatedBuilder(
-          animation: Listenable.merge([t, sheetAway]),
-          builder: (context, child) => Stack(
-            children: [
-              Positioned.fill(
-                child: GestureDetector(
-                  onTap: _close,
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.45 * t.value),
-                  ),
-                ),
-              ),
-              Align(
-                alignment: Alignment.bottomCenter,
-                child: FractionallySizedBox(
-                  heightFactor: 0.75,
-                  child: FractionalTranslation(
-                    translation: Offset(0, 1 - t.value + sheetAway.value),
-                    child: child,
-                  ),
-                ),
-              ),
-              if (_revealRequest != null)
+          animation: Listenable.merge([t, _enter, away, _reveal, _pulse]),
+          builder: (context, child) {
+            final e = _enter.value;
+            // 올라간 정도 - 닫기와 상대 카드 등장 중 큰 쪽
+            final r = math.max(
+              away.value,
+              _revealAway.transform(_reveal.value),
+            );
+            final searching =
+                _phase == _Phase.searching || _phase == _Phase.checking;
+            // 찾는 동안 윗면이 숨 쉬듯 빛남 - "윗부분을 맞대주세요"
+            final breathe = searching
+                ? 0.5 - 0.5 * math.cos(2 * math.pi * _pulse.value)
+                : 0.0;
+            return Stack(
+              children: [
                 Positioned.fill(
-                  child: IgnorePointer(
-                    // 들어가는 중인 카드의 버튼은 누를 수 없게
-                    ignoring: _reveal.status == AnimationStatus.reverse,
-                    child: NearbyPeerReveal(
-                      animation: _reveal,
-                      exit: _handoff,
-                      color: _accent,
-                      cardColor: _paperColor,
-                      child: _buildPeerCard(context, _revealRequest!),
+                  child: GestureDetector(
+                    onTap: _close,
+                    child: Container(
+                      color: Colors.black.withValues(alpha: 0.45 * t.value),
                     ),
                   ),
                 ),
-            ],
-          ),
-          child: Material(
-            color: _paperColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            clipBehavior: Clip.antiAlias,
-            child: SafeArea(
-              top: false,
-              child: Column(
-                children: [
-                  Align(
-                    alignment: Alignment.topRight,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                      child: IconButton(
-                        onPressed: _close,
-                        icon: const Icon(Icons.close),
-                        color: Colors.black.withValues(alpha: 0.55),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _TopGlowPainter(
+                        strength: breathe * _enterSettle.transform(e) * (1 - r),
+                        color: _accent,
                       ),
                     ),
                   ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 28),
-                      child: Builder(builder: _buildBody),
+                ),
+                Positioned(
+                  top: topInset + _cardTop,
+                  left: 16,
+                  right: 16,
+                  child: IgnorePointer(
+                    ignoring: r > 0,
+                    child: FractionalTranslation(
+                      translation: Offset(
+                        0,
+                        -_offscreen * (1 - _fall(_enterFall.transform(e))) -
+                            _offscreen * r,
+                      ),
+                      // 화면 윗면에 매달린 듯 카드 위쪽 바깥을 축으로 흔들림
+                      child: Transform.rotate(
+                        angle: _swing(e) * (1 - r),
+                        alignment: Alignment.topCenter,
+                        origin: Offset(0, -(topInset + _cardTop)),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: _paperColor,
+                            borderRadius: BorderRadius.circular(28),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.22),
+                                blurRadius: 18,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: child,
+                        ),
+                      ),
                     ),
                   ),
-                ],
-              ),
+                ),
+                if (_revealRequest != null)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      // 들어가는 중인 카드의 버튼은 누를 수 없게
+                      ignoring: _reveal.status == AnimationStatus.reverse,
+                      child: NearbyPeerReveal(
+                        animation: _reveal,
+                        exit: _handoff,
+                        color: _accent,
+                        cardColor: _paperColor,
+                        child: _buildPeerCard(context, _revealRequest!),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(
+                  alignment: Alignment.topRight,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                    child: IconButton(
+                      onPressed: _close,
+                      icon: const Icon(Icons.close),
+                      color: Colors.black.withValues(alpha: 0.55),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(28, 0, 28, context.rs(36)),
+                  // 실패 안내·버튼이 붙으면 카드가 아래로 부드럽게 늘어남
+                  child: AnimatedSize(
+                    duration: const Duration(milliseconds: 280),
+                    curve: Curves.easeOutCubic,
+                    alignment: Alignment.topCenter,
+                    child: Builder(builder: _buildBody),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -561,38 +661,73 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     // [백엔드 수정] 다이어리에서 흔들어 여는 방식으로 바뀌어 안내 문구 변경.
     final sub = _phase == _Phase.failed ? _message : '친구도 폰을 흔들어 이 화면을 열어주세요';
     return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
       children: [
         SizedBox(
           width: context.rs(160),
           height: context.rs(160),
           child: AnimatedBuilder(
-            animation: _pulse,
-            builder: (context, _) => CustomPaint(
-              painter: _PulsePainter(
-                progress: searching ? _pulse.value : 0,
-                color: _accent,
-              ),
-              child: Center(
-                child: Icon(
-                  _phase == _Phase.failed
-                      ? Icons.portable_wifi_off_rounded
-                      : Icons.tap_and_play_rounded,
-                  size: context.rs(56),
+            animation: Listenable.merge([_pulse, _wobble]),
+            builder: (context, _) {
+              // 내려앉을 때 잦아드는 흔들림, 찾는 동안은 윗면 쪽으로 살짝 들썩임
+              final w = _wobble.value;
+              final angle = math.sin(w * math.pi * 6) * (1 - w) * 0.32;
+              final lift = searching
+                  ? -context.rs(6) *
+                        (0.5 - 0.5 * math.cos(2 * math.pi * _pulse.value))
+                  : 0.0;
+              return CustomPaint(
+                painter: _PulsePainter(
+                  progress: searching ? _pulse.value : 0,
                   color: _accent,
                 ),
-              ),
-            ),
+                child: Center(
+                  child: Transform.translate(
+                    offset: Offset(0, lift),
+                    child: Transform.rotate(
+                      angle: angle,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: Icon(
+                          _phase == _Phase.failed
+                              ? Icons.portable_wifi_off_rounded
+                              : Icons.tap_and_play_rounded,
+                          key: ValueKey(_phase == _Phase.failed),
+                          size: context.rs(56),
+                          color: _accent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
         SizedBox(height: context.rs(24)),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: context.sp(18),
-            fontWeight: FontWeight.w900,
-            color: Colors.black87,
+        // 문구가 바뀌면 위에서 살짝 내려오며 바뀜
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          // 옛 문구는 빨리 걷어서 두 줄이 겹쳐 보이지 않게
+          reverseDuration: const Duration(milliseconds: 90),
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: SlideTransition(
+              position: Tween(begin: const Offset(0, -0.35), end: Offset.zero)
+                  .chain(CurveTween(curve: Curves.easeOutCubic))
+                  .animate(animation),
+              child: child,
+            ),
+          ),
+          child: Text(
+            title,
+            key: ValueKey(title),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: context.sp(18),
+              fontWeight: FontWeight.w900,
+              color: Colors.black87,
+            ),
           ),
         ),
         SizedBox(height: context.rs(8)),
@@ -752,6 +887,37 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       ],
     );
   }
+}
+
+/// 찾는 동안 화면 윗면을 따라 숨 쉬듯 빛나는 띠.
+class _TopGlowPainter extends CustomPainter {
+  final double strength;
+  final Color color;
+
+  const _TopGlowPainter({required this.strength, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (strength <= 0.01) return;
+    final width = size.width * (0.45 + 0.35 * strength);
+    final rect = Rect.fromLTWH((size.width - width) / 2, 0, width, 8);
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [
+            color.withValues(alpha: 0),
+            color.withValues(alpha: 0.75 * strength),
+            color.withValues(alpha: 0),
+          ],
+        ).createShader(rect)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_TopGlowPainter old) =>
+      old.strength != strength || old.color != color;
 }
 
 /// 찾는 중 퍼져나가는 동심원.

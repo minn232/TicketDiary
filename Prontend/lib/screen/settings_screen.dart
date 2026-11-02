@@ -43,6 +43,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool pushExpanded = false;
   bool _audioExpanded = false;
   bool _listeningExpanded = false;
+  bool _friendsExpanded = false;
   bool pushDayBefore = false;
   bool pushOnTheDay = false;
   bool pushTicketDelivery = false;
@@ -498,19 +499,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           //     ),
                           //   ),
                           // ),
-                          _SwitchRow(
-                            title: '흔들어서 친구 만나기',
-                            value: _appSettings.shakeToMeet,
-                            onChanged: _appSettings.setShakeToMeet,
-                          ),
-                          if (_shareNextConcert != null) ...[
-                            _divider,
-                            _SwitchRow(
-                              title: '친구에게 내 다음 공연 보여주기',
-                              value: _shareNextConcert!,
-                              onChanged: _setShareNextConcert,
+                          // [백엔드 수정] 친구 토글 2개를 "공연 감상 설정"처럼 펼치는 항목 하나로 묶음.
+                          Theme(
+                            data: Theme.of(context).copyWith(
+                              dividerColor: Colors.transparent,
+                              splashColor: Colors.transparent,
+                              highlightColor: Colors.transparent,
                             ),
-                          ],
+                            child: ExpansionTile(
+                              key: const PageStorageKey('friend-settings'),
+                              initiallyExpanded: _friendsExpanded,
+                              onExpansionChanged: (value) =>
+                                  setState(() => _friendsExpanded = value),
+                              trailing: Icon(
+                                _friendsExpanded
+                                    ? Icons.keyboard_arrow_down
+                                    : Icons.keyboard_arrow_right,
+                                color: PaperColors.muted,
+                              ),
+                              tilePadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
+                              childrenPadding: EdgeInsets.zero,
+                              title: Builder(
+                                builder: (innerContext) => Text(
+                                  '친구 만나기 설정',
+                                  style: TextStyle(
+                                    fontSize: innerContext.sp(15),
+                                    fontWeight: FontWeight.w800,
+                                    color: PaperColors.ink,
+                                  ),
+                                ),
+                              ),
+                              children: [
+                                _SwitchRow(
+                                  title: '흔들어서 친구 만나기',
+                                  value: _appSettings.shakeToMeet,
+                                  onChanged: _appSettings.setShakeToMeet,
+                                  indent: true,
+                                ),
+                                if (_shareNextConcert != null) ...[
+                                  _divider,
+                                  _SwitchRow(
+                                    title: '친구에게 내 다음 공연 보여주기',
+                                    value: _shareNextConcert!,
+                                    onChanged: _setShareNextConcert,
+                                    indent: true,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                           const SizedBox(height: 10),
                         ],
                       ),
