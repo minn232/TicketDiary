@@ -13,6 +13,7 @@ import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/screen/diary_screen.dart'
     show buildUpcomingTicketLandscapePanel;
 import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
+import 'package:ticketdiary/widgets/dday_stamp.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
@@ -630,8 +631,13 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
                   // [상태 4] 성공: 리스트 렌더링. 바깥 여백은 이제 액자
                   // 테두리([_NewsFrame])가 담당하므로, 창 안쪽에서는 카드가
                   // 테두리에 딱 붙지 않을 정도의 작은 여백만 둡니다.
+                  // [백엔드 수정] 좌우 여백 중 카드 간격 절반(9)은 각 장 안쪽으로 옮김 - 장 사이도
+                  // 카드 간격과 같아져 넘길 때 카드가 붙지 않음(카드 크기는 그대로).
                   return Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 12 - _newsCardSpacing / 2,
+                    ),
                     child: _buildNewsGrid(constraints, snapshot.data!),
                   );
                 },
@@ -696,11 +702,13 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     );
   }
 
+  static const double _newsCardSpacing = 18;
+
   Widget _buildNewsGrid(BoxConstraints constraints, List<NewsModel> items) {
     const rowCount = 2;
-    const spacing = 18.0;
+    const spacing = _newsCardSpacing;
     const firstPageVisualOrder = [0, 2, 1, 3];
-    // 이 그리드를 감싸는 Padding(all: 12) 만큼, 실제로 카드가 놓일 폭은
+    // 이 그리드를 감싸는 Padding(좌우 3 + 각 장 안쪽 9 = 12) 만큼, 실제로 카드가 놓일 폭은
     // [constraints]보다 좌우 12씩(총 24) 더 좁다. 이걸 빼지 않고 계산하면
     // 카드 2열의 실제 폭이 창보다 24 더 커져 오른쪽 카드가 잘려 보인다.
     const outerPadding = 12.0;
@@ -784,10 +792,13 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         },
         itemCount: pageCount,
         physics: const PageScrollPhysics(),
+        // [백엔드 수정] NEW 도장·그림자가 칸/장 경계에서 잘리지 않게 함(바깥 액자 창이 자름).
+        clipBehavior: Clip.none,
         itemBuilder: (context, page) {
           final pageItems = ordered.skip(page * 4).take(4).toList();
           return GridView.builder(
-            padding: EdgeInsets.zero,
+            padding: const EdgeInsets.symmetric(horizontal: spacing / 2),
+            clipBehavior: Clip.none,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: gridDelegate,
             itemCount: pageItems.length,
@@ -1245,26 +1256,58 @@ class _PolaroidCard extends StatelessWidget {
   }
 
   Widget _content(BuildContext context) {
+    final artistStyle = TextStyle(
+      fontSize: context.sp(11),
+      fontWeight: FontWeight.w800,
+      color: _muted,
+      letterSpacing: 0.3,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
           // NEW 도장과 겹치지 않게 오른쪽을 비워 둠
           padding: EdgeInsets.only(right: data.isRead ? 0 : 26),
-          child: data.isFavoritedConcert
-              // 찜한 공연은 아티스트 대신 공연 D-day(며칠 남았는지)
-              ? _DDayLabel(label: data.concertDDayLabel)
-              : Text(
-                  data.artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: context.sp(11),
-                    fontWeight: FontWeight.w800,
-                    color: _muted,
-                    letterSpacing: 0.3,
+          // [백엔드 수정] 찜한 공연도 출연진을 같은 자리에(D-day는 포스터 위 도장으로 옮김).
+          // " 외 N팀"은 이름이 말줄임돼도 보이게 따로 붙임. 2팀 "A, B"가 한 줄에 안 들어가면 "A 외 1팀".
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              var label = data.artist;
+              var suffix = data.artistSuffix;
+              if (suffix == null && data.leadArtist != null) {
+                final painter = TextPainter(
+                  text: TextSpan(
+                    style: DefaultTextStyle.of(context).style,
+                    children: [TextSpan(text: label, style: artistStyle)],
                   ),
-                ),
+                  textDirection: Directionality.of(context),
+                  textScaler: MediaQuery.textScalerOf(context),
+                  maxLines: 1,
+                )..layout();
+                if (painter.width > constraints.maxWidth) {
+                  label = data.leadArtist!;
+                  suffix = ' 외 1팀';
+                }
+                painter.dispose();
+              }
+              return Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      // 말줄임 뒤 남는 폭 없이 " 외 N팀"이 바로 붙게
+                      textWidthBasis: TextWidthBasis.longestLine,
+                      style: artistStyle,
+                    ),
+                  ),
+                  if (suffix != null)
+                    Text(suffix, maxLines: 1, style: artistStyle),
+                ],
+              );
+            },
+          ),
         ),
         const SizedBox(height: 6),
         Expanded(
@@ -1274,8 +1317,17 @@ class _PolaroidCard extends StatelessWidget {
             ),
             // 포스터가 없거나 로드에 실패하면 그라데이션 플레이스홀더로
             // 폴백합니다(깨진 이미지 아이콘 대신).
-            child: SizedBox.expand(
-              child: PosterBackground(imageUrl: data.imageUrl),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                PosterBackground(imageUrl: data.imageUrl),
+                // [백엔드 수정] 모든 카드 포스터 오른쪽 아래에 공연 D-day 도장.
+                Positioned(
+                  right: 5,
+                  bottom: 6,
+                  child: DDayStamp(label: data.concertDDayLabel),
+                ),
+              ],
             ),
           ),
         ),
@@ -1303,43 +1355,6 @@ class _PolaroidCard extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 찜한 공연 D-day. 공연 당일·임박(7일 이내)은 빨간 잉크로 강조.
-class _DDayLabel extends StatelessWidget {
-  final String label;
-
-  const _DDayLabel({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final days = label.startsWith('D-')
-        ? int.tryParse(label.substring(2))
-        : null;
-    final urgent = label == 'D-DAY' || (days != null && days <= 7);
-    final color = urgent ? _stampRed : _ink.withValues(alpha: .75);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-        decoration: BoxDecoration(
-          border: Border.all(color: color.withValues(alpha: .7), width: 1.2),
-          borderRadius: BorderRadius.circular(2),
-        ),
-        child: Text(
-          label,
-          maxLines: 1,
-          style: TextStyle(
-            fontSize: context.sp(11),
-            fontWeight: FontWeight.w900,
-            color: color,
-            letterSpacing: 0.5,
-            height: 1.2,
-          ),
-        ),
-      ),
     );
   }
 }

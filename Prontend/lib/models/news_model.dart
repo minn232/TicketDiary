@@ -21,6 +21,18 @@ class NewsModel {
   bool isRead;
 
   final String artist;
+
+  // [백엔드 수정] 찜한 공연 카드의 출연진이 3팀 이상이면 " 외 N팀" - 이름이 말줄임돼도 보이게 따로 둠.
+  final String? artistSuffix;
+
+  // [백엔드 수정] 아티스트 소식이 매칭된 팔로우 아티스트 - [artist]가 출연진 표시로 바뀌어 팔로우 필터는 이걸 씀.
+  final String? matchedArtist;
+
+  // [백엔드 수정] 공연 전체 출연진(상세 화면 출연진 줄·목록용). 없으면 빈 목록.
+  final List<String> lineup;
+
+  // [백엔드 수정] 2팀 공연의 앞 아티스트 - 카드 윗줄 "A, B"가 한 줄에 안 들어가면 "A 외 1팀"으로.
+  final String? leadArtist;
   final String concert;
   final String imageUrl;
 
@@ -54,7 +66,7 @@ class NewsModel {
   final DateTime? concertDate;
 
   /// true면 [FavoritesStore]의 찜 공연을 그대로 보여주는 카드입니다.
-  /// 카드 좌상단 라벨을 아티스트 이름 대신 공연 D-day로 표시하는 데 씁니다.
+  /// [백엔드 수정] 카드 윗줄을 출연진(팔로우 우선, 외 N팀)으로 만드는 데 씁니다.
   final bool isFavoritedConcert;
 
   /// 상세 화면 정보 타일용 구조화 값 — 공연 기간(예: "2026.09.04 ~ 09.06").
@@ -78,6 +90,10 @@ class NewsModel {
 
   NewsModel({
     required this.artist,
+    this.artistSuffix,
+    this.matchedArtist,
+    this.lineup = const [],
+    this.leadArtist,
     required this.concert,
     required this.imageUrl,
     required this.description,
@@ -98,7 +114,7 @@ class NewsModel {
     this.ticketingPhases,
   });
 
-  /// 카드 좌상단에 보여줄 공연 D-day 라벨. 날짜 정보가 없으면 "미정".
+  /// [백엔드 수정] 카드 포스터 도장에 보여줄 공연 D-day. 날짜 정보가 없으면 "미정".
   String get concertDDayLabel => _concertDDay(concertDate);
 
   static String _concertDDay(DateTime? date) {
@@ -149,7 +165,28 @@ class NewsModel {
         ?.map((e) => TicketingPhaseEntry.fromJson(e as Map<String, dynamic>))
         .toList();
 
-    final descriptionParts = <String>['새 공연이 등록됐어요!', ?period];
+    // [백엔드 수정] 페스티벌이면 매칭된 아티스트를 맨 앞에 두고 " 외 N팀"(출연진이 안 오면 이름 하나).
+    final lineup = (concertJson?['artist_name'] as List<dynamic>?)
+        ?.whereType<String>()
+        .toList();
+    final matchedKeys = _nameKeys(artistName);
+    final inLineup =
+        lineup?.any((n) => _nameKeys(n).any(matchedKeys.contains)) ?? false;
+    final hasLineup = lineup != null && lineup.any((n) => n.trim().isNotEmpty);
+    // 표기가 달라 출연진에 안 보이면 매칭된 이름을 앞에 붙임(같은 사람 두 번 세지 않게)
+    final fullLineup = !hasLineup
+        ? <String>[]
+        : (inLineup ? lineup : [artistName, ...lineup]);
+    final (label, suffix) = hasLineup
+        ? lineupLabel(fullLineup, [artistName])
+        : (artistName, null);
+    final ordered = orderLineup(fullLineup, [artistName]);
+
+    // [백엔드 수정] 팔로우 직후 생긴 소식도 "새 공연"이라 뜨던 고정 문구 대신 예매 정보(새 소식 표시는 NEW 도장이 함).
+    final descriptionParts = <String>[
+      ticketingSummary(ticketingDate, ticketingPhases),
+      ?period,
+    ];
 
     final contentTopLines = <String>[
       '$artistName의 새 공연 <$concertName>이(가) 등록되었습니다.',
@@ -162,10 +199,14 @@ class NewsModel {
       id: json['id'] as String?,
       concertId: json['concert_id'] as String?,
       isRead: json['is_read'] as bool? ?? true,
-      artist: artistName,
+      artist: label,
+      artistSuffix: suffix,
+      matchedArtist: artistName,
+      lineup: fullLineup,
+      leadArtist: ordered.length == 2 ? ordered.first : null,
       concert: concertName,
       imageUrl: posterUrl,
-      description: descriptionParts.join(' '),
+      description: descriptionParts.join('\n'),
       contentTop: contentTopLines.join('\n'),
       contentBottom: contentBottomLines.join('\n'),
       articleImageUrl: posterUrl,
@@ -192,12 +233,69 @@ class NewsModel {
   /// 일수를 T-day로 보여줍니다. 상세 본문에는 출연진/공연 기간
   /// ([contentTop])과 티케팅 날짜([contentBottom])를 채워 넣고, 그 사이에
   /// 공연장([venue])이 들어갑니다.
-  factory NewsModel.fromFavoritedConcert(ConcertModel concert) {
+  // [백엔드 수정]
+  // 찜한 공연 카드 윗줄 - 팔로우한 아티스트를 맨 앞에, 1팀은 이름, 2팀은 "A, B", 3팀 이상은 "A" + " 외 N팀".
+  static (String, String?) lineupLabel(
+    List<String> lineup,
+    Iterable<String> followed,
+  ) {
+    final ordered = orderLineup(lineup, followed);
+    if (ordered.isEmpty) return ('라인업 발표 전', null);
+    if (ordered.length == 1) return (ordered.first, null);
+    if (ordered.length == 2) return (ordered.join(', '), null);
+    return (ordered.first, ' 외 ${ordered.length - 1}팀');
+  }
+
+  // [백엔드 수정] 출연진 정리(빈 이름·중복 제거) 후 팔로우한 아티스트를 앞으로.
+  static List<String> orderLineup(
+    List<String> lineup,
+    Iterable<String> followed,
+  ) {
+    final names = <String>[];
+    for (final raw in lineup) {
+      final name = raw.trim();
+      if (name.isNotEmpty && !names.contains(name)) names.add(name);
+    }
+    return [
+      ...names.where((n) => isFollowedArtist(n, followed)),
+      ...names.where((n) => !isFollowedArtist(n, followed)),
+    ];
+  }
+
+  // [백엔드 수정] 표기가 조금 달라도(괄호·대소문자·공백) 팔로우한 아티스트인지.
+  static bool isFollowedArtist(String name, Iterable<String> followed) {
+    final keys = _nameKeys(name);
+    return followed.any((f) => _nameKeys(f).any(keys.contains));
+  }
+
+  // "데이식스 (DAY6)"와 "DAY6"가 같은 아티스트로 맞게 - 전체·괄호 밖·괄호 안을 공백·대소문자 없이 비교.
+  static Set<String> _nameKeys(String name) {
+    String norm(String s) => s.toLowerCase().replaceAll(RegExp(r'\s+'), '');
+    final keys = {norm(name)};
+    final m = RegExp(r'^(.*?)\((.*?)\)\s*$').firstMatch(name.trim());
+    if (m != null) {
+      keys.add(norm(m.group(1)!));
+      keys.add(norm(m.group(2)!));
+    }
+    keys.remove('');
+    return keys;
+  }
+
+  factory NewsModel.fromFavoritedConcert(
+    ConcertModel concert, {
+    Iterable<String> followedArtists = const [],
+  }) {
     final period = _formatPeriod(
       concert.startDate?.toIso8601String(),
       concert.endDate?.toIso8601String(),
     );
     final dDay = _ticketingDDay(concert.ticketingDate);
+    // [백엔드 수정] 카드 요약 - "T-22"/"미정"만으로는 무엇인지 몰라 예매 단계·공연 날짜를 붙임.
+    final summary = [
+      ticketingSummary(concert.ticketingDate, concert.ticketingPhases),
+      ?period,
+    ].join('\n');
+    final ordered = orderLineup(concert.artistName, followedArtists);
     final artists = concert.artistName.isNotEmpty
         ? concert.artistName.join(', ')
         : null;
@@ -207,13 +305,18 @@ class NewsModel {
       if (period != null) '공연 기간  $period',
     ];
 
+    final (label, suffix) = lineupLabel(concert.artistName, followedArtists);
+
     return NewsModel(
       concertId: concert.id.isNotEmpty ? concert.id : null,
       isRead: true,
-      artist: '찜한 공연',
+      artist: label,
+      artistSuffix: suffix,
+      lineup: concert.artistName,
+      leadArtist: ordered.length == 2 ? ordered.first : null,
       concert: concert.name,
       imageUrl: concert.posterImageUrl,
-      description: dDay,
+      description: summary,
       contentTop: contentTopLines.join('\n'),
       contentBottom: dDay,
       articleImageUrl: concert.posterImageUrl,
@@ -237,6 +340,10 @@ class NewsModel {
     'concertId': concertId,
     'isRead': isRead,
     'artist': artist,
+    'artistSuffix': artistSuffix,
+    'matchedArtist': matchedArtist,
+    'lineup': lineup,
+    'leadArtist': leadArtist,
     'concert': concert,
     'imageUrl': imageUrl,
     'description': description,
@@ -260,6 +367,12 @@ class NewsModel {
       concertId: json['concertId'] as String?,
       isRead: json['isRead'] as bool? ?? true,
       artist: json['artist'] as String? ?? '',
+      artistSuffix: json['artistSuffix'] as String?,
+      matchedArtist: json['matchedArtist'] as String?,
+      lineup:
+          (json['lineup'] as List<dynamic>?)?.whereType<String>().toList() ??
+          const [],
+      leadArtist: json['leadArtist'] as String?,
       concert: json['concert'] as String? ?? '',
       imageUrl: json['imageUrl'] as String? ?? '',
       description: json['description'] as String? ?? '',
@@ -290,6 +403,42 @@ class NewsModel {
 
   /// 티케팅(예매) 오픈일까지 남은 일수. 크롤러가 아직 수집 못 한 공연은
   /// 값이 없어 "미정"으로 표시됩니다.
+  // [백엔드 수정]
+  // 예매 단계 중 다음(날짜 미정이거나 아직 안 지난) 단계. 전부 지났으면 마지막 단계
+  // (예매가 이미 열렸다는 뜻). 단계가 없으면 null. 상세 화면 티켓팅 타일과 같은 규칙.
+  static TicketingPhaseEntry? nextTicketingPhase(
+    List<TicketingPhaseEntry>? phases,
+  ) {
+    if (phases == null || phases.isEmpty) return null;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    for (final phase in phases) {
+      if (phase.date == null || !phase.date!.isBefore(today)) return phase;
+    }
+    return phases.last;
+  }
+
+  // [백엔드 수정] 카드용 예매 요약 - "팬클럽 선예매 D-22" / "예매 D-3" / "예매 오늘" / "예매 중" / "예매일 미정".
+  static String ticketingSummary(
+    DateTime? ticketingDate,
+    List<TicketingPhaseEntry>? phases,
+  ) {
+    final next = nextTicketingPhase(phases);
+    final name = next?.phase ?? '예매';
+    final date = next != null ? next.date : ticketingDate;
+    if (date == null) return next != null ? '$name 날짜 미정' : '예매일 미정';
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final diff = DateTime(
+      date.year,
+      date.month,
+      date.day,
+    ).difference(today).inDays;
+    if (diff > 0) return '$name D-$diff';
+    if (diff == 0) return '$name 오늘';
+    return '예매 중';
+  }
+
   static String _ticketingDDay(DateTime? date) {
     if (date == null) return '미정';
     final now = DateTime.now();

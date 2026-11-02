@@ -51,7 +51,11 @@ class NewsListService {
             e['artist_name'] as String,
       };
       filteredFeed = feed
-          .where((item) => currentFollows.contains(item.artist))
+          // [백엔드 수정] artist는 출연진 표시라 매칭된 아티스트로 비교.
+          .where(
+            (item) =>
+                currentFollows.contains(item.matchedArtist ?? item.artist),
+          )
           .toList();
     } catch (_) {
       // 팔로우 목록 조회에 실패하면 필터링 없이 원본 그대로 보여줍니다.
@@ -72,7 +76,11 @@ class NewsListService {
             start.day,
           ).isAfter(todayDate);
         })
-        .map(NewsModel.fromFavoritedConcert)
+        // [백엔드 수정] 출연진 중 팔로우한 아티스트를 카드 윗줄 맨 앞에.
+        .map(
+          (c) =>
+              NewsModel.fromFavoritedConcert(c, followedArtists: artistNames),
+        )
         .toList();
 
     // 이미 찜한 공연 카드로 나온 concertId는 아티스트 소식 카드에서 제외합니다

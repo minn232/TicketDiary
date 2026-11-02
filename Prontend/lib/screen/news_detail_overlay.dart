@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/news_model.dart';
 import '../models/ticket_scan.dart' show TicketingPhaseEntry;
+import '../services/favorites_store.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/paper_style.dart';
 import '../widgets/poster_background.dart';
@@ -481,6 +482,7 @@ class _ExpandedNewsDetail extends StatelessWidget {
                             (18 * 2 + 14 + 14 + 16) * k +
                             (titleLines * 24) * k +
                             (96 + (venueLines - 1) * 14) * k +
+                            (news.lineup.isEmpty ? 0 : 26 * k) +
                             _VendorButtons.estimatedHeight(vendorCount, k);
                         final availablePosterHeight =
                             cardConstraints.maxHeight -
@@ -504,6 +506,11 @@ class _ExpandedNewsDetail extends StatelessWidget {
                                     _poster(context, k, posterHeight),
                                     SizedBox(height: 14 * k),
                                     _titleRow(context, k),
+                                    // [백엔드 수정] 제목 아래 출연진 한 줄(누르면 전체 목록).
+                                    if (news.lineup.isNotEmpty) ...[
+                                      SizedBox(height: 6 * k),
+                                      _LineupLine(news: news),
+                                    ],
                                     SizedBox(height: 14 * k),
                                     _infoTiles(context, k),
                                     SizedBox(height: 16 * k),
@@ -669,6 +676,299 @@ class _ExpandedNewsDetail extends StatelessWidget {
   }
 }
 
+// [백엔드 수정] 팔로우한 아티스트(찜 패널 + 이 소식이 매칭된 아티스트)를 앞에 둔 출연진.
+(List<String>, Set<String>) _orderedLineup(NewsModel news) {
+  final followed = [
+    for (final a in FavoritesStore.instance.favoriteArtists) a.name,
+    ?news.matchedArtist,
+  ];
+  final ordered = NewsModel.orderLineup(news.lineup, followed);
+  return (
+    ordered,
+    {
+      for (final n in ordered)
+        if (NewsModel.isFollowedArtist(n, followed)) n,
+    },
+  );
+}
+
+// [백엔드 수정] 팔로우한 아티스트 표시 - 형광펜으로 칠한 듯한 바탕.
+const _highlighter = PaperColors.tapeMustard;
+
+/// [백엔드 수정] 상세 화면 제목 아래 출연진 한 줄. 팔로우한 아티스트를 앞에 형광펜으로.
+/// 한 줄에 들어가는 만큼만 이름을 보이고, 남은 출연진은 끝에 "외 N팀 ›" 이름표 - 누르면 전체 목록.
+/// 다 들어가면 더 볼 게 없어 이름표도 없고 눌러도 아무 일 없음.
+class _LineupLine extends StatelessWidget {
+  final NewsModel news;
+
+  const _LineupLine({required this.news});
+
+  // 형광펜 칠한 이름의 좌우 여백
+  static const _markPadding = 2.0;
+  // "외 N팀 ›" 이름표 여백·간격
+  static const _chipGap = 6.0;
+  static const _chipPaddingH = 7.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final (names, followed) = _orderedLineup(news);
+    final mutedStyle = TextStyle(
+      fontSize: context.sp(12),
+      fontWeight: FontWeight.w700,
+      color: PaperColors.muted,
+      height: 1.3,
+    );
+    final nameStyle = TextStyle(
+      fontSize: context.sp(13),
+      fontWeight: FontWeight.w700,
+      color: PaperColors.ink,
+      height: 1.3,
+    );
+    final followedStyle = nameStyle.copyWith(fontWeight: FontWeight.w900);
+    final chipStyle = TextStyle(
+      fontSize: context.sp(11.5),
+      fontWeight: FontWeight.w800,
+      color: PaperColors.ink,
+      height: 1.3,
+    );
+    final chevronSize = context.sp(14);
+    TextStyle styleOf(String n) =>
+        followed.contains(n) ? followedStyle : nameStyle;
+    const separator = ' · ';
+    String chipText(int count) => '외 ${names.length - count}팀';
+
+    Widget nameMark(String n, {bool shrink = false}) {
+      final isFollowed = followed.contains(n);
+      return Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isFollowed ? _markPadding : 0,
+        ),
+        color: isFollowed ? _highlighter.withValues(alpha: 0.38) : null,
+        child: Text(
+          n,
+          maxLines: 1,
+          overflow: shrink ? TextOverflow.ellipsis : TextOverflow.visible,
+          softWrap: false,
+          textWidthBasis: TextWidthBasis.longestLine,
+          style: styleOf(n),
+        ),
+      );
+    }
+
+    // 목록 창 이름표와 같은 모양 + 화살표라 "더 있고 누르면 열린다"가 바로 읽힘
+    Widget moreChip(String text) => Container(
+      margin: const EdgeInsets.only(left: _chipGap),
+      padding: const EdgeInsets.only(left: _chipPaddingH, right: 3),
+      decoration: BoxDecoration(
+        color: PaperColors.tile,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: PaperColors.ink.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(text, maxLines: 1, style: chipStyle),
+          Icon(
+            Icons.chevron_right_rounded,
+            size: chevronSize,
+            color: PaperColors.muted,
+          ),
+        ],
+      ),
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaler = MediaQuery.textScalerOf(context);
+        final direction = Directionality.of(context);
+        // 실제 그릴 때처럼 앱 기본 글꼴(DefaultTextStyle) 위에서 잼
+        final base = DefaultTextStyle.of(context).style;
+        double widthOf(String text, TextStyle style) {
+          final painter = TextPainter(
+            text: TextSpan(
+              style: base,
+              children: [TextSpan(text: text, style: style)],
+            ),
+            textDirection: direction,
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          final w = painter.width;
+          painter.dispose();
+          return w;
+        }
+
+        double namesWidth(int count) {
+          var w = 0.0;
+          for (final (i, n) in names.take(count).indexed) {
+            if (i > 0) w += widthOf(separator, mutedStyle);
+            w += widthOf(n, styleOf(n));
+            if (followed.contains(n)) w += _markPadding * 2;
+          }
+          return w;
+        }
+
+        double chipWidth(int count) => count >= names.length
+            ? 0
+            : _chipGap +
+                  _chipPaddingH +
+                  3 +
+                  2 +
+                  widthOf(chipText(count), chipStyle) +
+                  chevronSize;
+
+        // 한 줄에 "출연 + 이름들 + 이름표"가 들어가는 가장 많은 이름 수
+        final available = constraints.maxWidth - widthOf('출연  ', mutedStyle);
+        var count = names.length;
+        while (count > 1 && namesWidth(count) + chipWidth(count) > available) {
+          count--;
+        }
+        final shown = names.take(count).toList();
+        final hasMore = count < names.length;
+        return GestureDetector(
+          onTap: hasMore
+              ? () => showDialog<void>(
+                  context: context,
+                  builder: (context) =>
+                      _LineupDialog(names: names, followed: followed),
+                )
+              : null,
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            // 글자 크기가 다른 "출연"·구분점·이름표도 이름과 같은 글자 기준선에
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text('출연  ', style: mutedStyle),
+              for (final (i, n) in shown.indexed) ...[
+                if (i > 0) Text(separator, style: mutedStyle),
+                // 마지막 이름만 줄어들 수 있게(이름 하나도 다 안 들어가면 말줄임,
+                // 이름표는 그대로)
+                if (i == shown.length - 1)
+                  Flexible(child: nameMark(n, shrink: true))
+                else
+                  nameMark(n),
+              ],
+              if (hasMore) moreChip(chipText(count)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// [백엔드 수정] 전체 출연진 목록. 팔로우한 아티스트는 맨 앞에 형광펜으로 칠함.
+class _LineupDialog extends StatelessWidget {
+  final List<String> names;
+  final Set<String> followed;
+
+  const _LineupDialog({required this.names, required this.followed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: PaperColors.card,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    '출연진',
+                    style: TextStyle(
+                      fontSize: context.sp(16),
+                      fontWeight: FontWeight.w900,
+                      color: PaperColors.ink,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${names.length}팀',
+                    style: TextStyle(
+                      fontSize: context.sp(13),
+                      fontWeight: FontWeight.w700,
+                      color: PaperColors.muted,
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).pop(),
+                    behavior: HitTestBehavior.opaque,
+                    child: Icon(
+                      Icons.close_rounded,
+                      size: context.sp(20),
+                      color: PaperColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+              if (followed.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  '칠해진 이름은 팔로우한 아티스트예요',
+                  style: TextStyle(
+                    fontSize: context.sp(11),
+                    fontWeight: FontWeight.w600,
+                    color: PaperColors.muted,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final n in names)
+                        _chip(context, n, followed.contains(n)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chip(BuildContext context, String name, bool isFollowed) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: isFollowed
+            ? Color.alphaBlend(
+                _highlighter.withValues(alpha: 0.38),
+                PaperColors.tile,
+              )
+            : PaperColors.tile,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: PaperColors.ink.withValues(alpha: 0.12)),
+      ),
+      child: Text(
+        name,
+        style: TextStyle(
+          fontSize: context.sp(13),
+          fontWeight: isFollowed ? FontWeight.w900 : FontWeight.w700,
+          color: PaperColors.ink,
+        ),
+      ),
+    );
+  }
+}
+
 /// 공연 기간/티켓팅 날짜를 캘린더로 보여줍니다. [start]~[end] 구간의 날짜에
 /// [color]로 색을 칠합니다(티켓팅처럼 하루면 start==end).
 Future<void> _showCalendar(
@@ -694,15 +994,8 @@ Future<void> _showCalendar(
 // [백엔드 수정]
 // 예매 단계 중 다음(날짜 미정이거나 아직 안 지난) 단계. 전부 지났으면
 // 마지막 단계를 돌려줌(예매가 이미 열렸다는 뜻). 단계가 없으면 null.
-TicketingPhaseEntry? _nextTicketingPhase(List<TicketingPhaseEntry>? phases) {
-  if (phases == null || phases.isEmpty) return null;
-  final today = DateTime.now();
-  final todayDate = DateTime(today.year, today.month, today.day);
-  for (final phase in phases) {
-    if (phase.date == null || !phase.date!.isBefore(todayDate)) return phase;
-  }
-  return phases.last;
-}
+TicketingPhaseEntry? _nextTicketingPhase(List<TicketingPhaseEntry>? phases) =>
+    NewsModel.nextTicketingPhase(phases);
 
 // [백엔드 수정] 단계 하나의 D-day 라벨. NewsModel._ticketingDDay와 동일한 규칙.
 String _phaseDDayLabel(DateTime? date) {
@@ -1092,6 +1385,10 @@ class _InfoTile extends StatelessWidget {
     this.underlineLastLineOnly = false,
   });
 
+  // [백엔드 수정] 타일 안 글자 폭. 카드 폭 350k에서 좌우 여백 18k씩, 타일 사이 10k씩,
+  // 타일 안 좌우 여백 4k씩과 테두리를 뺀 값(_infoTiles 배치를 바꾸면 같이 바꿀 것).
+  double get _lineWidth => (314 * scale - 20 * scale) / 3 - 8 * scale - 2;
+
   @override
   Widget build(BuildContext context) {
     final k = scale;
@@ -1131,6 +1428,7 @@ class _InfoTile extends StatelessWidget {
               if (i > 0) SizedBox(height: 2 * k),
               _InfoTileLine(
                 text: line,
+                maxWidth: _lineWidth,
                 underline:
                     onTap != null &&
                     (!underlineLastLineOnly || i == lines.length - 1),
@@ -1156,21 +1454,29 @@ class _InfoTileLine extends StatelessWidget {
   final bool underline;
   final TextStyle style;
 
+  // 줄이 들어갈 폭 - 타일들이 IntrinsicHeight 안이라 LayoutBuilder를 못 써서 계산값을 받음
+  final double maxWidth;
+
   const _InfoTileLine({
     required this.text,
     required this.underline,
     required this.style,
+    required this.maxWidth,
   });
+
+  // 줄어들 수 있는 최소 배율 - 이보다 작아지면 읽기 힘들어 그냥 줄바꿈함
+  static const _minScale = 0.75;
 
   @override
   Widget build(BuildContext context) {
     final text = _keepWords(this.text);
+    final fitted = _fitStyle(context);
     final label = Text(
       text,
       textAlign: TextAlign.center,
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
-      style: style,
+      style: fitted,
     );
     if (!underline) return label;
     // [백엔드 수정]
@@ -1179,7 +1485,7 @@ class _InfoTileLine extends StatelessWidget {
       foregroundPainter: _LineUnderlinePainter(
         text: TextSpan(
           text: text,
-          style: DefaultTextStyle.of(context).style.merge(style),
+          style: DefaultTextStyle.of(context).style.merge(fitted),
         ),
         textDirection: Directionality.of(context),
         textScaler: MediaQuery.textScalerOf(context),
@@ -1187,6 +1493,35 @@ class _InfoTileLine extends StatelessWidget {
       ),
       child: label,
     );
+  }
+
+  // [백엔드 수정]
+  // 타일 폭보다 긴 낱말이 있으면 글자를 조금 줄여 낱말 중간 줄바꿈("(화랑/홀))")을 막음.
+  // 괄호로 시작하는 줄("(구. 악스코리아)")은 통째로 한 덩어리로 봐서 한 줄에 둠.
+  TextStyle _fitStyle(BuildContext context) {
+    final fontSize = style.fontSize;
+    if (fontSize == null || maxWidth <= 0) return style;
+    final base = DefaultTextStyle.of(context).style.merge(style);
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    final units = text.startsWith('(') ? [text] : text.split(' ');
+    var widest = 0.0;
+    for (final unit in units) {
+      // 실제로 그리는 글자(낱말 안 WORD JOINER 포함)로 재야 폭이 맞음
+      final painter = TextPainter(
+        text: TextSpan(text: _keepWords(unit), style: base),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      if (painter.width > widest) widest = painter.width;
+      painter.dispose();
+    }
+    // 반올림 오차로 끝 글자 하나가 넘어가지 않게 여유를 둠
+    final room = maxWidth - 4;
+    if (widest <= room) return style;
+    final scale = (room / widest).clamp(_minScale, 1.0);
+    return style.copyWith(fontSize: fontSize * scale);
   }
 }
 

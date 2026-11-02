@@ -31,7 +31,12 @@ void main() {
         venue: '테스트홀',
       ),
       NewsModel.fromFavoritedConcert(
-        const ConcertModel(name: '찜한 테스트 공연', posterImageUrl: ''),
+        const ConcertModel(
+          name: '찜한 테스트 공연',
+          posterImageUrl: '',
+          artistName: ['잔나비', '넬', '자우림'],
+        ),
+        followedArtists: ['넬'],
       ),
     ];
 
@@ -44,23 +49,28 @@ void main() {
     expect(loaded[0].artist, '아이유');
     expect(loaded[0].venue, '테스트홀');
     expect(loaded[0].isRead, isFalse);
-    expect(loaded[1].artist, '찜한 공연');
+    // [백엔드 수정] 찜한 공연 카드 윗줄이 출연진(팔로우 우선, 외 N팀)으로 바뀜.
+    expect(loaded[1].artist, '넬');
+    expect(loaded[1].artistSuffix, ' 외 2팀');
   });
 
-  test('저장 당시와 revision이 다르면(찜 목록이 바뀌었으면) 캐시를 못 미더운 것으로 보고 null을 돌려준다', () async {
-    final items = [
-      NewsModel(
-        artist: '아이유',
-        concert: '테스트 공연',
-        imageUrl: '',
-        description: '',
-      ),
-    ];
+  test(
+    '저장 당시와 revision이 다르면(찜 목록이 바뀌었으면) 캐시를 못 미더운 것으로 보고 null을 돌려준다',
+    () async {
+      final items = [
+        NewsModel(
+          artist: '아이유',
+          concert: '테스트 공연',
+          imageUrl: '',
+          description: '',
+        ),
+      ];
 
-    await NewsCacheStore.instance.save(items, favoritesRevision: 1);
-    // 찜 목록을 바꾼 뒤(revision이 2로 늘어난 상황) 소식 탭에 들어온 경우.
-    final loaded = await NewsCacheStore.instance.load(favoritesRevision: 2);
+      await NewsCacheStore.instance.save(items, favoritesRevision: 1);
+      // 찜 목록을 바꾼 뒤(revision이 2로 늘어난 상황) 소식 탭에 들어온 경우.
+      final loaded = await NewsCacheStore.instance.load(favoritesRevision: 2);
 
-    expect(loaded, isNull);
-  });
+      expect(loaded, isNull);
+    },
+  );
 }
