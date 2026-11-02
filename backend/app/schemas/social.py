@@ -66,6 +66,9 @@ class NewsFeedConcert(BaseModel):
     # 뜨고 찜한 공연 카드(로컬 조회라 별도 경로)만 값이 채워지던 불일치가 있었음
     ticketing_date: datetime | None = None
     ticketing_phases: list[TicketingPhaseEntry] | None = None
+    # 공연 전체 출연진. 페스티벌 카드에서 "팔로우한 아티스트 외 N팀"을 보여주려고 추가함
+    # (artist_name은 팔로우해서 매칭된 아티스트 한 명뿐)
+    artist_name: list[str] = []
 
 
 class NewsFeedResponse(BaseModel):

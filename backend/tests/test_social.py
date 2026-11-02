@@ -385,6 +385,8 @@ async def test_news_feed_created_on_artist_concert_detail():
     assert feed[0]["artist_name"] == artist_name
     assert feed[0]["is_read"] is False
     assert feed[0]["concert"] is not None
+    # 페스티벌 "외 N팀" 표시용 공연 전체 출연진
+    assert artist_name in feed[0]["concert"]["artist_name"]
 
 
 # NewsFeedConcert에 ticketing_date/ticketing_phases가 빠져있어 아티스트 소식 카드가 항상
