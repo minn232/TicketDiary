@@ -13,7 +13,7 @@ const _paper = Color(0xFFE5D3B9);
 const _diaryPaper = Color(0xFFF4F1E1);
 const _weekdayNames = ['일', '월', '화', '수', '목', '금', '토'];
 
-class SummaryCalendar extends StatelessWidget {
+class SummaryCalendar extends StatefulWidget {
   const SummaryCalendar({
     super.key,
     required this.tickets,
@@ -27,6 +27,65 @@ class SummaryCalendar extends StatelessWidget {
   final List<NewsModel> news;
   final ValueChanged<NewsModel>? onNewsTap;
   final ValueChanged<Map<String, dynamic>>? onTicketTap;
+
+  @override
+  State<SummaryCalendar> createState() => _SummaryCalendarState();
+}
+
+/// 월 달력 + 연 모아보기. 월 제목을 누르면 달 종이가 작아지며 1년 종이의 제 칸으로
+/// 들어가고(줌아웃), 연 화면에서 달 칸을 누르면 그 칸이 커지며 월 달력이 됨(줌인).
+class _SummaryCalendarState extends State<SummaryCalendar>
+    with SingleTickerProviderStateMixin {
+  ValueNotifier<DateTime> get selection => widget.selection;
+  List<Map<String, dynamic>> get tickets => widget.tickets;
+  List<NewsModel> get news => widget.news;
+  ValueChanged<NewsModel>? get onNewsTap => widget.onNewsTap;
+  ValueChanged<Map<String, dynamic>>? get onTicketTap => widget.onTicketTap;
+
+  /// 0 = 월 달력, 1 = 연 모아보기
+  late final AnimationController _zoom;
+
+  /// 연 화면에서 보고 있는 해
+  int _year = DateTime.now().year;
+
+  /// 연 화면에서 달을 골라 돌아올 때 올림 - 월 넘김(찢김) 연출 없이 새 달 종이로 시작
+  int _sheetEpoch = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _zoom = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 480),
+    );
+  }
+
+  @override
+  void dispose() {
+    _zoom.dispose();
+    super.dispose();
+  }
+
+  void _zoomOut(DateTime month) {
+    if (_zoom.isAnimating) return;
+    setState(() => _year = month.year);
+    _zoom.forward();
+    SoundEffectService.instance.start(
+      SoundEffect.pageFlipBack,
+      maxDuration: const Duration(milliseconds: 280),
+    );
+  }
+
+  void _zoomIn(DateTime date) {
+    if (_zoom.isAnimating) return;
+    setState(() => _sheetEpoch++);
+    selection.value = date;
+    _zoom.reverse();
+    SoundEffectService.instance.start(
+      SoundEffect.pageFlip,
+      maxDuration: const Duration(milliseconds: 280),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<DateTime>(
@@ -148,231 +207,504 @@ class SummaryCalendar extends StatelessWidget {
         );
       }
 
+      // 연 모아보기: 관람 기록이 있는 해 + 올해
+      final years = <int>{
+        now.year,
+        for (final date in grouped.keys)
+          if ((grouped[date] ?? const []).any((item) => item['kind'] == null))
+            date.year,
+      }.toList()..sort();
+      void moveYear(int delta) {
+        final index = years.indexOf(_year);
+        final next = index + delta;
+        if (index < 0 || next < 0 || next >= years.length) return;
+        setState(() => _year = years[next]);
+        SoundEffectService.instance.start(
+          delta > 0 ? SoundEffect.pageFlip : SoundEffect.pageFlipBack,
+          maxDuration: const Duration(milliseconds: 280),
+        );
+      }
+
+      /// 연 화면에서 달 칸을 누르면 그 달의 첫 관람일(없으면 이번 달은 오늘, 아니면 1일)로
+      void openMonth(DateTime target) {
+        final attendedDays =
+            grouped.keys
+                .where(
+                  (date) =>
+                      date.year == target.year &&
+                      date.month == target.month &&
+                      (grouped[date] ?? const []).any(
+                        (item) => item['kind'] == null,
+                      ),
+                )
+                .toList()
+              ..sort();
+        final day = attendedDays.isNotEmpty
+            ? attendedDays.first.day
+            : target.year == now.year && target.month == now.month
+            ? now.day
+            : 1;
+        _zoomIn(DateTime(target.year, target.month, day));
+      }
+
       return GestureDetector(
         // 카드가 없는 하단 여백에서도 월 이동 제스처를 받습니다.
         behavior: HitTestBehavior.opaque,
         onHorizontalDragEnd: (details) {
+          if (_zoom.isAnimating) return;
           final velocity = details.primaryVelocity ?? 0;
           if (velocity.abs() < 100) return;
-          move(velocity < 0 ? 1 : -1);
+          if (_zoom.value == 1) {
+            moveYear(velocity < 0 ? 1 : -1);
+          } else {
+            move(velocity < 0 ? 1 : -1);
+          }
         },
         child: LayoutBuilder(
           builder: (context, box) {
             // 배치는 달력 3 : 아래 2 그대로, 그리는 순서만 달력을 맨 위로 - Column이면
             // 뒤에 오는 아래 일정 영역이 위에 그려져, 찢겨 떨어지는 장이 그 밑으로 깔렸음
             final calendarHeight = (box.maxHeight - 20) * 3 / 5;
-            return Stack(
-              clipBehavior: Clip.none,
+            final geometry = _YearGeometry(box.biggest);
+            final detail = Column(
               children: [
-                Positioned(
-                  top: calendarHeight,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
+                const Divider(height: 20, color: _ink, thickness: .5),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: KeyedSubtree(
+                      key: ValueKey(selected),
+                      child: _dayDetail(selected, entries, grouped, now),
+                    ),
+                  ),
+                ),
+              ],
+            );
+            final yearView = _yearSheet(
+              geometry,
+              years,
+              months,
+              now,
+              moveYear,
+              openMonth,
+            );
+            final sheet = _SheetTapes(
+              child: _MonthFlip(
+                key: ValueKey(_sheetEpoch),
+                monthIndex: month.year * 12 + month.month,
+                child: _SheetPaper(
                   child: Column(
                     children: [
-                      const Divider(height: 20, color: _ink, thickness: .5),
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: '이전 달',
+                            onPressed: () => move(-1),
+                            icon: const Icon(Icons.chevron_left, color: _ink),
+                          ),
+                          Expanded(
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              // 휠로 달 고르기 대신 연 모아보기로 줌아웃 -
+                              // 연 화면의 달 칸이 달 고르기를 겸함
+                              // onTap: () => _showMonthPicker(
+                              //   context,
+                              //   months,
+                              //   monthIndex,
+                              //   selected,
+                              // ),
+                              onTap: () => _zoomOut(month),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 280),
+                                  transitionBuilder: (child, animation) =>
+                                      FadeTransition(
+                                        opacity: animation,
+                                        child: child,
+                                      ),
+                                  child: Text(
+                                    '${month.year}년 ${month.month}월',
+                                    key: ValueKey(
+                                      '${month.year}-${month.month}',
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: _ink,
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '다음 달',
+                            onPressed: () => move(1),
+                            icon: const Icon(Icons.chevron_right, color: _ink),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          for (var weekday = 0; weekday < 7; weekday++)
+                            Expanded(
+                              child: Text(
+                                _weekdayNames[weekday],
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: weekday == 0
+                                      ? const Color(0xFFD05252)
+                                      : weekday == 6
+                                      ? const Color(0xFF477DBA)
+                                      : _ink,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                       Expanded(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 200),
-                          child: KeyedSubtree(
-                            key: ValueKey(selected),
-                            child: _dayDetail(selected, entries, grouped, now),
+                        child: CustomPaint(
+                          painter: _GridLinesPainter(rows: rows, cols: 7),
+                          child: Column(
+                            children: [
+                              for (var row = 0; row < rows; row++)
+                                Expanded(
+                                  child: Row(
+                                    children: [
+                                      for (var col = 0; col < 7; col++)
+                                        Expanded(
+                                          child: Builder(
+                                            builder: (context) {
+                                              final day =
+                                                  row * 7 + col - offset + 1;
+                                              if (day < 1 || day > days) {
+                                                return const SizedBox.shrink();
+                                              }
+                                              final date = DateTime(
+                                                month.year,
+                                                month.month,
+                                                day,
+                                              );
+                                              final todayDate = DateTime(
+                                                now.year,
+                                                now.month,
+                                                now.day,
+                                              );
+                                              final items =
+                                                  grouped[date] ?? const [];
+                                              final count = items.length;
+                                              final hasAttended = items.any(
+                                                (item) => item['kind'] == null,
+                                              );
+                                              final selectable =
+                                                  !date.isBefore(todayDate) ||
+                                                  hasAttended;
+                                              return Semantics(
+                                                label:
+                                                    '${month.month}월 $day일, 관람 $count회',
+                                                selected: date == selected,
+                                                button: true,
+                                                child: InkWell(
+                                                  key: ValueKey(
+                                                    'calendar-${month.year}-${month.month}-$day',
+                                                  ),
+                                                  onTap: selectable
+                                                      ? () {
+                                                          selection.value =
+                                                              date;
+                                                        }
+                                                      : null,
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
+                                                  child: _DayCell(
+                                                    day: day,
+                                                    items: items,
+                                                    active: date == selected,
+                                                    today: date == todayDate,
+                                                    dimmed: !selectable,
+                                                    weekday: col,
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: calendarHeight,
-                  child: _SheetTapes(
-                    child: _MonthFlip(
-                      monthIndex: month.year * 12 + month.month,
-                      child: _SheetPaper(
-                        child: Column(
-                          children: [
-                            Row(
-                              children: [
-                                IconButton(
-                                  tooltip: '이전 달',
-                                  onPressed: () => move(-1),
-                                  icon: const Icon(
-                                    Icons.chevron_left,
-                                    color: _ink,
-                                  ),
-                                ),
-                                Expanded(
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(10),
-                                    onTap: () => _showMonthPicker(
-                                      context,
-                                      months,
-                                      monthIndex,
-                                      selected,
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      child: AnimatedSwitcher(
-                                        duration: const Duration(
-                                          milliseconds: 280,
-                                        ),
-                                        transitionBuilder: (child, animation) =>
-                                            FadeTransition(
-                                              opacity: animation,
-                                              child: child,
-                                            ),
-                                        child: Text(
-                                          '${month.year}년 ${month.month}월',
-                                          key: ValueKey(
-                                            '${month.year}-${month.month}',
-                                          ),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                            color: _ink,
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: '다음 달',
-                                  onPressed: () => move(1),
-                                  icon: const Icon(
-                                    Icons.chevron_right,
-                                    color: _ink,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Row(
-                              children: [
-                                for (var weekday = 0; weekday < 7; weekday++)
-                                  Expanded(
-                                    child: Text(
-                                      _weekdayNames[weekday],
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        color: weekday == 0
-                                            ? const Color(0xFFD05252)
-                                            : weekday == 6
-                                            ? const Color(0xFF477DBA)
-                                            : _ink,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            Expanded(
-                              child: CustomPaint(
-                                painter: _GridLinesPainter(rows: rows),
-                                child: Column(
-                                  children: [
-                                    for (var row = 0; row < rows; row++)
-                                      Expanded(
-                                        child: Row(
-                                          children: [
-                                            for (var col = 0; col < 7; col++)
-                                              Expanded(
-                                                child: Builder(
-                                                  builder: (context) {
-                                                    final day =
-                                                        row * 7 +
-                                                        col -
-                                                        offset +
-                                                        1;
-                                                    if (day < 1 || day > days) {
-                                                      return const SizedBox.shrink();
-                                                    }
-                                                    final date = DateTime(
-                                                      month.year,
-                                                      month.month,
-                                                      day,
-                                                    );
-                                                    final todayDate = DateTime(
-                                                      now.year,
-                                                      now.month,
-                                                      now.day,
-                                                    );
-                                                    final items =
-                                                        grouped[date] ??
-                                                        const [];
-                                                    final count = items.length;
-                                                    final hasAttended = items
-                                                        .any(
-                                                          (item) =>
-                                                              item['kind'] ==
-                                                              null,
-                                                        );
-                                                    final selectable =
-                                                        !date.isBefore(
-                                                          todayDate,
-                                                        ) ||
-                                                        hasAttended;
-                                                    return Semantics(
-                                                      label:
-                                                          '${month.month}월 $day일, 관람 $count회',
-                                                      selected:
-                                                          date == selected,
-                                                      button: true,
-                                                      child: InkWell(
-                                                        key: ValueKey(
-                                                          'calendar-${month.year}-${month.month}-$day',
-                                                        ),
-                                                        onTap: selectable
-                                                            ? () {
-                                                                selection
-                                                                        .value =
-                                                                    date;
-                                                              }
-                                                            : null,
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              10,
-                                                            ),
-                                                        child: _DayCell(
-                                                          day: day,
-                                                          items: items,
-                                                          active:
-                                                              date == selected,
-                                                          today:
-                                                              date == todayDate,
-                                                          dimmed: !selectable,
-                                                          weekday: col,
-                                                        ),
-                                                      ),
-                                                    );
-                                                  },
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
+            );
+            return _zoomStack(
+              box.biggest,
+              calendarHeight,
+              geometry.cell(month.month),
+              detail,
+              sheet,
+              yearView,
             );
           },
         ),
       );
     },
   );
+
+  /// 월 달력(종이 + 아래 일정)과 연 모아보기를 겹쳐 줌으로 오감. 연 종이는 고른 달
+  /// 칸이 달 종이 자리를 덮도록 크게 키운 상태에서 제 크기로 줄어들고, 달 종이는 같은
+  /// 비율로 줄어들며 그 칸 안으로 들어가 흐려짐 - 두 장이 한 장처럼 함께 움직임.
+  Widget _zoomStack(
+    Size size,
+    double calendarHeight,
+    Rect cell,
+    Widget detail,
+    Widget sheet,
+    Widget yearView,
+  ) {
+    final sheetRect = Rect.fromLTWH(0, 0, size.width, calendarHeight);
+    // 달 종이가 칸 안에 다 들어가는 배율(가로/세로 중 더 많이 줄여야 하는 쪽)
+    final s0 = math.max(
+      sheetRect.width / cell.width,
+      sheetRect.height / cell.height,
+    );
+    return AnimatedBuilder(
+      animation: _zoom,
+      builder: (context, _) {
+        final v = _zoom.value;
+        final t = Curves.easeInOutCubic.transform(v);
+        final k = s0 + (1 - s0) * t;
+        final center = Offset.lerp(sheetRect.center, cell.center, t)!;
+        // origin 점이 center로 가도록 scale배 확대/축소
+        Matrix4 scaleAround(Offset origin, double scale) =>
+            Matrix4.diagonal3Values(scale, scale, 1)..setTranslationRaw(
+              center.dx - origin.dx * scale,
+              center.dy - origin.dy * scale,
+              0,
+            );
+        final settled = !_zoom.isAnimating;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            if (v < 1)
+              Positioned(
+                key: const ValueKey('calendar-detail'),
+                top: calendarHeight,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  ignoring: v > 0,
+                  child: Opacity(
+                    opacity: (1 - t * 3.5).clamp(0.0, 1.0),
+                    child: Transform.translate(
+                      offset: Offset(0, t * 40),
+                      child: detail,
+                    ),
+                  ),
+                ),
+              ),
+            if (v > 0)
+              Positioned.fill(
+                key: const ValueKey('calendar-year'),
+                child: IgnorePointer(
+                  ignoring: !(settled && v == 1),
+                  child: Opacity(
+                    // 달 종이가 아직 클 때 크게 키운 이웃 칸이 아래 일정 위로
+                    // 흐리게 비쳐 지저분했음 - 어느 정도 줄어든 뒤부터 보이게
+                    opacity: ((t - .25) / .4).clamp(0.0, 1.0),
+                    // 크게 키운 연 종이가 결산 탭 밖으로 넘치지 않게 잘라냄
+                    child: ClipRect(
+                      clipBehavior: settled ? Clip.none : Clip.hardEdge,
+                      child: Transform(
+                        transform: scaleAround(cell.center, k),
+                        child: yearView,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (v < 1)
+              Positioned(
+                key: const ValueKey('calendar-month'),
+                top: 0,
+                left: 0,
+                right: 0,
+                height: calendarHeight,
+                child: IgnorePointer(
+                  ignoring: v > 0,
+                  child: Opacity(
+                    opacity: (1 - (t - .55) / .4).clamp(0.0, 1.0),
+                    child: Transform(
+                      transform: scaleAround(sheetRect.center, k / s0),
+                      child: sheet,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 연 모아보기 종이 - 달 종이와 같은 크림색 종이·테이프에 12달 칸, 칸마다 그 달에
+  /// 본 공연 포스터를 겹쳐 붙임. 칸 위치는 [_YearGeometry]와 똑같이 맞춰야 줌이 맞음.
+  Widget _yearSheet(
+    _YearGeometry geometry,
+    List<int> years,
+    List<DateTime> months,
+    DateTime now,
+    void Function(int delta) moveYear,
+    void Function(DateTime month) openMonth,
+  ) {
+    final year = _year;
+    final byMonth = <int, List<Map<String, dynamic>>>{};
+    for (final ticket in tickets) {
+      final date = DateTime.tryParse('${ticket['date']}');
+      if (date == null || date.year != year) continue;
+      (byMonth[date.month] ??= []).add(ticket);
+    }
+    for (final list in byMonth.values) {
+      list.sort((a, b) => '${a['date']}'.compareTo('${b['date']}'));
+    }
+    final total = byMonth.values.fold<int>(0, (sum, l) => sum + l.length);
+    int? busiest;
+    for (final entry in byMonth.entries) {
+      if (busiest == null || entry.value.length > byMonth[busiest]!.length) {
+        busiest = entry.key;
+      }
+    }
+    final yearIndex = years.indexOf(year);
+    // 월 달력에서 넘겨 갈 수 있는 달만 누를 수 있게(기록 없는 지난 달은 흐리게)
+    final openable = {for (final m in months) m.year * 12 + m.month};
+
+    Widget arrow(IconData icon, String tooltip, int delta) {
+      final next = yearIndex + delta;
+      final enabled = yearIndex >= 0 && next >= 0 && next < years.length;
+      return IconButton(
+        tooltip: tooltip,
+        onPressed: enabled ? () => moveYear(delta) : null,
+        icon: Icon(icon, color: enabled ? _ink : _ink.withValues(alpha: .25)),
+      );
+    }
+
+    return _SheetTapes(
+      child: _MonthFlip(
+        monthIndex: year,
+        child: _SheetPaper(
+          child: Column(
+            children: [
+              SizedBox(
+                height: _YearGeometry.header,
+                child: Row(
+                  children: [
+                    arrow(Icons.chevron_left, '이전 해', -1),
+                    Expanded(
+                      child: Text(
+                        '$year년',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: _ink,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    arrow(Icons.chevron_right, '다음 해', 1),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CustomPaint(
+                  painter: _GridLinesPainter(
+                    rows: geometry.rows,
+                    cols: geometry.cols,
+                  ),
+                  child: Column(
+                    children: [
+                      for (var row = 0; row < geometry.rows; row++)
+                        Expanded(
+                          child: Row(
+                            children: [
+                              for (var col = 0; col < geometry.cols; col++)
+                                Expanded(
+                                  child: Builder(
+                                    builder: (context) {
+                                      final m = row * geometry.cols + col + 1;
+                                      final shows = byMonth[m] ?? const [];
+                                      final enabled = openable.contains(
+                                        year * 12 + m,
+                                      );
+                                      return Semantics(
+                                        label:
+                                            '$year년 $m월, 관람 ${shows.length}회',
+                                        button: enabled,
+                                        child: InkWell(
+                                          key: ValueKey(
+                                            'calendar-year-$year-$m',
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          onTap: enabled
+                                              ? () =>
+                                                    openMonth(DateTime(year, m))
+                                              : null,
+                                          child: _MonthCell(
+                                            month: m,
+                                            posters: [
+                                              for (final t in shows)
+                                                t['poster_url'] as String?,
+                                            ],
+                                            current:
+                                                year == now.year &&
+                                                m == now.month,
+                                            dimmed: !enabled,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              SizedBox(
+                height: _YearGeometry.footer,
+                child: Center(
+                  child: Text(
+                    total == 0
+                        ? '$year년엔 아직 관람 기록이 없어요'
+                        : '$year년 관람 $total회 · 가장 많이 간 달 $busiest월',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _ink.withValues(alpha: .7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   /// 고른 날의 머리말 + 일정 목록. 비어 있으면 다음 일정 한 건만 한 줄로
   /// (세로/가로 모두 좁은 페이지라 정보를 많이 쌓지 않음).
@@ -998,8 +1330,8 @@ class _SheetTapes extends StatelessWidget {
 
 /// 달력 칸을 구분하는 옅은 인쇄 선(플래너 느낌).
 class _GridLinesPainter extends CustomPainter {
-  const _GridLinesPainter({required this.rows});
-  final int rows;
+  const _GridLinesPainter({required this.rows, required this.cols});
+  final int rows, cols;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1010,15 +1342,15 @@ class _GridLinesPainter extends CustomPainter {
       final y = size.height * r / rows;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
     }
-    for (var c = 1; c < 7; c++) {
-      final x = size.width * c / 7;
+    for (var c = 1; c < cols; c++) {
+      final x = size.width * c / cols;
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
     }
   }
 
   @override
   bool shouldRepaint(covariant _GridLinesPainter oldDelegate) =>
-      oldDelegate.rows != rows;
+      oldDelegate.rows != rows || oldDelegate.cols != cols;
 }
 
 /// 월이 바뀌면 달력 장을 넘기는 연출. 다음 달: 지금 장이 테이프 바로 아래에서
@@ -1026,7 +1358,7 @@ class _GridLinesPainter extends CustomPainter {
 /// 이전 달: 이전 장이 위에서 내려와 테이프 밑에 붙음. (윗변 축 3D 회전은 내용이
 /// 찌그러져 카드 뒤집기처럼 보여 바꿈)
 class _MonthFlip extends StatefulWidget {
-  const _MonthFlip({required this.monthIndex, required this.child});
+  const _MonthFlip({super.key, required this.monthIndex, required this.child});
   final int monthIndex;
   final Widget child;
   @override
@@ -1194,4 +1526,206 @@ class _TearClipper extends CustomClipper<Path> {
       oldClipper.seed != seed ||
       oldClipper.tearY != tearY ||
       oldClipper.top != top;
+}
+
+/// 연 모아보기 종이 안 달 칸의 위치. [_SummaryCalendarState._yearSheet]의 배치
+/// (테이프 여백 8 + 종이 안쪽 여백 4/6 + 머리 줄 + 칸 + 요약 줄)와 같은 값으로 계산해,
+/// 줌 연출이 실제 칸 자리로 정확히 들어가게 함.
+class _YearGeometry {
+  _YearGeometry(this.size)
+    : cols = size.width > size.height * 1.3
+          ? 6
+          : size.width > size.height * .8
+          ? 4
+          : 3;
+
+  static const header = 48.0;
+  static const footer = 28.0;
+  static const _tapeTop = 8.0;
+  static const _paperX = 4.0;
+  static const _paperY = 6.0;
+
+  final Size size;
+
+  /// 세로 화면은 3×4, 넓은 화면(태블릿·가로)은 4×3이나 6×2 - 칸이 포스터처럼 세로로
+  /// 길쭉하게 남도록
+  final int cols;
+  int get rows => 12 ~/ cols;
+
+  Rect get grid => Rect.fromLTRB(
+    _paperX,
+    _tapeTop + _paperY + header,
+    size.width - _paperX,
+    size.height - _paperY - footer,
+  );
+
+  Rect cell(int month) {
+    final g = grid;
+    final w = g.width / cols;
+    final h = g.height / rows;
+    final i = month - 1;
+    return Rect.fromLTWH(
+      g.left + (i % cols) * w,
+      g.top + (i ~/ cols) * h,
+      w,
+      h,
+    );
+  }
+}
+
+/// 연 모아보기의 달 한 칸. 그 달에 본 공연 포스터를 최대 3장까지 살짝 기울여 겹쳐
+/// 붙이고(늦은 공연이 위), 더 있으면 +N. 달 이름은 날짜 칸처럼 왼쪽 위 작은 딱지.
+class _MonthCell extends StatelessWidget {
+  const _MonthCell({
+    required this.month,
+    required this.posters,
+    required this.current,
+    required this.dimmed,
+  });
+
+  final int month;
+  final List<String?> posters;
+  final bool current, dimmed;
+
+  static const _maxStack = 3;
+
+  Widget _sticker(String? poster) => Container(
+    decoration: BoxDecoration(
+      color: _diaryPaper,
+      borderRadius: BorderRadius.circular(3),
+      border: Border.all(color: Colors.white, width: 1.5),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: .22),
+          blurRadius: 3,
+          offset: const Offset(1, 2),
+        ),
+      ],
+    ),
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(2),
+      child: poster == null || poster.isEmpty
+          ? _DayCell._ticketIcon()
+          : AppNetworkImage(
+              poster,
+              memCacheWidth: 160,
+              errorBuilder: (_) => _DayCell._ticketIcon(),
+            ),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final count = posters.length;
+    final shown = posters.take(_maxStack).toList();
+    final attended = count > 0;
+    return Padding(
+      padding: const EdgeInsets.all(2),
+      child: LayoutBuilder(
+        builder: (context, box) {
+          const labelHeight = 18.0;
+          final areaTop = labelHeight;
+          final areaHeight = math.max(0.0, box.maxHeight - areaTop - 4);
+          // 포스터 비율 3:4, 겹쳐 펼친 폭(약 1.8장)이 칸 안에 들어오게
+          final width = math.min(
+            box.maxWidth * (shown.length > 1 ? .5 : .62),
+            areaHeight * .75,
+          );
+          final height = width * 4 / 3;
+          final cx = box.maxWidth / 2;
+          final cy = areaTop + areaHeight / 2;
+          final spread = width * .42;
+          // 칸마다 기울기를 조금씩 달리해 손으로 붙인 느낌
+          const tilts = [-.13, .04, .12];
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              if (current)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: _ink.withValues(alpha: .06),
+                      ),
+                    ),
+                  ),
+                ),
+              for (var i = 0; i < shown.length; i++)
+                Positioned(
+                  left: cx + (i - (shown.length - 1) / 2) * spread - width / 2,
+                  top: cy - height / 2,
+                  width: width,
+                  height: height,
+                  child: Transform.rotate(
+                    angle: shown.length == 1
+                        ? (month % 3 - 1) * .06
+                        : tilts[(i + month) % tilts.length],
+                    child: _sticker(shown[i]),
+                  ),
+                ),
+              Positioned(
+                left: 2,
+                top: 1,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 1,
+                  ),
+                  decoration: attended
+                      ? BoxDecoration(
+                          color: _ink,
+                          borderRadius: BorderRadius.circular(6),
+                        )
+                      : null,
+                  child: Text(
+                    '$month월',
+                    style: TextStyle(
+                      color: attended
+                          ? Colors.white
+                          : dimmed
+                          ? _ink.withValues(alpha: .4)
+                          : _ink,
+                      fontSize: 12,
+                      fontWeight: attended || current
+                          ? FontWeight.w900
+                          : FontWeight.w600,
+                      decoration: current && !attended
+                          ? TextDecoration.underline
+                          : null,
+                      decorationColor: _ink,
+                      decorationThickness: 2,
+                    ),
+                  ),
+                ),
+              ),
+              if (count > _maxStack)
+                Positioned(
+                  right: 2,
+                  bottom: 2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _ink,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '+${count - _maxStack}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
