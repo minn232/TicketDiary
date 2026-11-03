@@ -66,14 +66,11 @@ async def get_blog_draft(db: AsyncSession, user_id: UUID, ticket_id: UUID) -> Bl
 
 
 # 감상 글만 저장하고 즉시 반환 - 실제 생성은 밤 LLM 배치(send_blog_drafts_to_llm)가 하고, 클라이언트는
-# GET으로 status가 done이 되는지 확인함. 다시 요청하면 이전 초안을 지우고 새 글로 재생성 대기.
-# 페스티벌은 아티스트별 셋리 구성이 정해지지 않아 일단 제외
+# GET으로 status가 done이 되는지 확인함. 다시 요청하면 이전 초안을 지우고 새 글로 재생성 대기
 async def request_blog_draft(db: AsyncSession, user_id: UUID, ticket_id: UUID, emotion: str) -> BlogDraftResponse:
     ticket = await get_ticket(db, user_id, ticket_id)
     if ticket.concert is None:
         raise HTTPException(status_code=400, detail="공연 정보가 연결된 티켓만 블로그 글을 만들 수 있습니다.")
-    if ticket.concert.event_type == EventType.FESTIVAL.value:
-        raise HTTPException(status_code=400, detail="페스티벌은 아직 블로그 글 생성을 지원하지 않습니다.")
 
     draft = await _find_draft(db, ticket_id)
     if draft is None:
@@ -101,12 +98,13 @@ def _performance_date(ticket: Ticket) -> date | None:
 
 
 # LLM 요청 바디. 셋리는 그날 실제 셋리만 - 예상 셋리를 넣으면 "○○를 불러주었어요"처럼 안 부른
-# 곡이 글에 들어갈 수 있어서 없으면 빈 목록
+# 곡이 글에 들어갈 수 있어서 없으면 빈 목록. 페스티벌은 아티스트별 셋리 구성이 정해지지 않아
+# 곡이 엉뚱한 아티스트에 붙을 수 있어서 안 보냄
 async def _build_payload(db: AsyncSession, draft: BlogDraft, ticket: Ticket) -> dict:
     concert = ticket.concert
     performance_date = _performance_date(ticket)
     setlist: list[str] = []
-    if performance_date is not None:
+    if performance_date is not None and concert.event_type != EventType.FESTIVAL.value:
         result = await db.execute(
             select(RealSetlist).where(
                 RealSetlist.concert_id == concert.id, RealSetlist.performance_date == performance_date

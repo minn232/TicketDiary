@@ -87,14 +87,25 @@ async def test_draft_rejects_empty_or_too_long_emotion():
 
 
 @pytest.mark.asyncio
-async def test_draft_rejects_festival():
+async def test_festival_draft_sends_without_setlist():
     token, concert_id, ticket_id = await _ticket("PF_BLOG_FEST")
     async with AsyncSessionLocal() as db:
         concert = await db.get(Concert, uuid.UUID(concert_id))
         concert.event_type = EventType.FESTIVAL.value
+        db.add(RealSetlist(concert_id=uuid.UUID(concert_id), performance_date=date(2030, 6, 1),
+                           songs=[{"name": "실제곡1"}]))
         await db.commit()
 
-    assert (await _post_draft(ticket_id, token)).status_code == 400
+    assert (await _post_draft(ticket_id, token)).status_code == 202
+
+    calls: list[dict] = []
+    with _blog_url(), _llm_client(calls):
+        await send_blog_drafts_to_llm()
+
+    sent = next(c for c in calls if c["concert_name"].startswith("PF_BLOG_FEST"))
+    # 페스티벌은 실제 셋리가 있어도 안 보냄
+    assert sent["setlist"] == []
+    assert (await _get_draft(ticket_id, token)).json()["status"] == "done"
 
 
 @pytest.mark.asyncio
