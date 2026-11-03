@@ -12,6 +12,7 @@ import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_back_handler.dart';
 import '../models/page_layout.dart';
 import '../main/orientation_policy.dart';
 import '../models/setlist.dart';
@@ -2940,7 +2941,39 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AppBackHandler(
+    canHandle: () =>
+        !widget.exportMode &&
+        (_flip.isAnimating ||
+            _activeMemoKey != null ||
+            (_textCanvasKey.currentState?.hasActiveText ?? false) ||
+            _edit ||
+            _showBack),
+    onBack: () {
+      if (_flip.isAnimating) return;
+      if (_textCanvasKey.currentState?.hasActiveText ?? false) {
+        _textCanvasKey.currentState?.finishEditing();
+      } else if (_activeMemoKey != null) {
+        setState(() {
+          _activeMemoKey = null;
+          _activeMemoOverDeleteZone = false;
+        });
+        FocusManager.instance.primaryFocus?.unfocus();
+        _syncDeleteOverlay();
+      } else if (_edit) {
+        _toggleMode();
+      } else if (_showBack) {
+        setState(() {
+          _showBack = false;
+          _flipDirection = -1;
+        });
+        _flip.forward(from: 0);
+      }
+    },
+    child: _buildCanvas(context),
+  );
+
+  Widget _buildCanvas(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
         final w = c.maxWidth;

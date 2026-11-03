@@ -91,11 +91,9 @@ def _search_filter(keyword: str):
     return or_(Concert.name.ilike(like), Concert.kopis_id.ilike(like), joined_artists.ilike(like))
 
 
-# "크롤링 스크린샷을 LLM_CRAWL_URL로 보내는" 경로(send_screenshots_to_llm)의 대상 여부.
-# crawl_screenshot_url만 있으면 매일 밤 전부 보내고 응답의 artist_name은 병합됨(/crawl-result
-# 웹훅). crawl_screenshot_url은 찜/티켓등록 시점이나 재시도 배치로 채워지고, FESTIVAL이면
-# 크롤링 전이어도 라인업 재확인 배치가 채움 - "4명 이상이면 이미 페스티벌"이라는 가정은
-# 틀려서(승격 기준은 THRESHOLD=5) event_type을 직접 봐야 사각지대가 없다.
+# "크롤링 스크린샷을 LLM_CRAWL_URL로 보내는" 경로(send_screenshots_to_llm) 대상 여부. crawl_screenshot_url만
+# 있으면 매일 밤 보내고 artist_name은 /crawl-result에서 병합됨. FESTIVAL은 크롤링 전이어도 라인업 재확인
+# 배치가 채우므로 인원수("4명 이상") 대신 event_type을 직접 봄(승격 기준은 THRESHOLD=5)
 def _auto_covered_by_crawl_filter():
     return or_(
         Concert.crawl_screenshot_url.isnot(None),
@@ -103,11 +101,9 @@ def _auto_covered_by_crawl_filter():
     )
 
 
-# 관리자 페이지 "자동 채움 안 되는 공연만 보기" 필터(unsent_to_llm_only)가 이 조건으로 골라냄.
-# 포스터 파이프라인의 자체 대상 조건(장르/4명 미만/포스터 있음/쿨다운)은 일부러 안 봄 - 같이
-# 걸면 사실상 "4명에서 멈춘 공연"만 남아 의미가 흐려짐(장르는 대중음악 전용이라 항상 통과,
-# 포스터 없음/재시도 소진은 드묾). 크롤링 경로에 걸리는지만으로 판단해 "크롤링 쪽으로도 안
-# 넘어간다"는 사실만 명확히 보여줌.
+# 관리자 "자동 채움 안 되는 공연만 보기"(unsent_to_llm_only) 필터 조건. 포스터 파이프라인 조건(장르/4명 미만/
+# 포스터/쿨다운)은 일부러 안 봄 - 같이 걸면 "4명에서 멈춘 공연"만 남아 의미가 흐려짐. 크롤링 경로에도
+# 안 걸린다는 사실만 보여줌
 def _needs_manual_artist_fill_filter():
     return not_(_auto_covered_by_crawl_filter())
 
@@ -458,11 +454,9 @@ async def mark_concert_reviewed(concert_id: UUID, db: AsyncSession = Depends(get
     return await get_concert_detail(concert_id, db)
 
 
-# "실제로는 페스티벌인데 event_type이 아니라서 크롤링/포스터 파이프라인 어느 쪽 자동 대상도
-# 아닌" 공연을 admin이 발견했을 때 쓰는 버튼용 - event_type만 바꿔서 이후 라인업 재확인
-# 배치(24시간마다) 대상에 편입시킨다. LLM 전송 타이밍은 자정 배치로 고정해두고 싶다는 요청이라
-# 여기서 즉시 보내지 않음. 아티스트가 아직 안 채워진 상태이므로 검수 완료로도 취급하면 안 됨
-# (_mark_reviewed 호출 안 함)
+# 실제로는 페스티벌인데 event_type이 달라 크롤링/포스터 어느 자동 대상도 아닌 공연을 고치는 버튼용 -
+# event_type만 바꿔 라인업 재확인 배치(24시간마다)에 편입. LLM 전송은 자정 배치에 맡겨 즉시 안 보내고,
+# 아티스트가 아직 비어 있어 검수 완료로도 안 침(_mark_reviewed 호출 안 함)
 async def _mark_festival(db: AsyncSession, concert_id: UUID) -> None:
     concert = await db.get(Concert, concert_id)
     if concert is None:

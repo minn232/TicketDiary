@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'paper_style.dart';
+import 'app_back_handler.dart';
 
 import '../models/summary_report_data.dart';
 import '../services/artist_search_service.dart';
@@ -91,7 +92,13 @@ class _SummaryReportState extends State<SummaryReport> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AppBackHandler(
+    canHandle: () => _page > 0,
+    onBack: () => _go(-1),
+    child: _buildReport(context),
+  );
+
+  Widget _buildReport(BuildContext context) {
     if (_int(widget.data['concert_count']) == 0) {
       return const Center(
         child: Text(
@@ -620,7 +627,13 @@ class _MonthlyChartState extends State<_MonthlyChart> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AppBackHandler(
+    canHandle: () => _detail != null,
+    onBack: _hideDetail,
+    child: _buildChart(context),
+  );
+
+  Widget _buildChart(BuildContext context) {
     final years = widget.months.map((m) => m.month.year).toSet().toList()
       ..sort();
     final selectionKey = widget.spending ? 'spent' : 'count';

@@ -24,6 +24,23 @@ class _KakaoLoginWebViewScreenState extends State<KakaoLoginWebViewScreen> {
   late final WebViewController _controller;
   bool _loading = true;
   bool _resultHandled = false;
+  bool _goingBack = false;
+
+  Future<void> _back() async {
+    if (_goingBack || _resultHandled) return;
+    _goingBack = true;
+    try {
+      final hasHistory = await _controller.canGoBack();
+      if (!mounted) return;
+      if (hasHistory) {
+        await _controller.goBack();
+      } else {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _goingBack = false;
+    }
+  }
 
   @override
   void initState() {
@@ -62,7 +79,15 @@ class _KakaoLoginWebViewScreenState extends State<KakaoLoginWebViewScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => PopScope(
+    canPop: false,
+    onPopInvokedWithResult: (didPop, _) {
+      if (!didPop) _back();
+    },
+    child: _buildWebView(context),
+  );
+
+  Widget _buildWebView(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('카카오 로그인'),

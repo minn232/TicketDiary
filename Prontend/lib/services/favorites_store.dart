@@ -161,11 +161,6 @@ class FavoritesStore extends ChangeNotifier {
 
     try {
       final entries = await _social.getConcertFollowEntries();
-      final serverIds = {
-        for (final e in entries)
-          if ((e['concert_id'] as String? ?? '').isNotEmpty)
-            e['concert_id'] as String,
-      };
       final localIds = {
         for (final c in _concerts.values)
           if (c.id.isNotEmpty) c.id,

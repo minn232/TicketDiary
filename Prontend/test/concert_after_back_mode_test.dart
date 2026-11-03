@@ -101,10 +101,25 @@ void main() {
       await tester.tap(find.byTooltip('셋리스트 편집'));
       await tester.pumpAndSettle();
       expect(find.byType(SetlistEditorSheet), findsOneWidget);
-      Navigator.of(tester.element(find.byType(SetlistEditorSheet))).pop();
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
       expect(find.text('공연 정보'), findsOneWidget);
+      // 시스템 뒤로가기: 뒷면 → 앞면, 편집 모드 → 잠금, 마지막에 상세 닫기.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('공연 정보'), findsNothing);
+      expect(find.byType(ConcertAfterPageContents), findsOneWidget);
+      await tester.longPressAt(const Offset(500, 450));
+      await tester.pumpAndSettle();
+      expect(find.text('편집 모드'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('편집 모드'), findsNothing);
+      expect(find.byType(ConcertAfterPageContents), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(ConcertAfterPageContents), findsNothing);
       await tester.pumpWidget(const SizedBox());
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 300)),

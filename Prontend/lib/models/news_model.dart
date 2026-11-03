@@ -1,4 +1,5 @@
 import 'concert_model.dart';
+import 'artist_model.dart';
 import 'ticket_scan.dart' show TicketingPhaseEntry;
 
 /// 소식(뉴스 피드) 데이터 모델.
@@ -33,6 +34,28 @@ class NewsModel {
 
   // [백엔드 수정] 2팀 공연의 앞 아티스트 - 카드 윗줄 "A, B"가 한 줄에 안 들어가면 "A 외 1팀"으로.
   final String? leadArtist;
+
+  // 카드 윗변 표시용 찜한 아티스트(프로필 포함). [matchFavorites]로 채움.
+  List<ArtistModel> matchedArtists;
+
+  /// 출연진·매칭된 팔로우 아티스트 중 찜한 아티스트를 [matchedArtists]에 채움.
+  /// [artist]는 출연진 표시 문자열("A 외 N팀")이라 비교에 쓰지 않음.
+  void matchFavorites(
+    List<ArtistModel> favorites, {
+    Iterable<String> related = const [],
+  }) {
+    final names = {
+      ...lineup,
+      ?matchedArtist,
+      ...related,
+    }.expand(_nameKeys).toSet();
+    final seen = <String>{};
+    matchedArtists = favorites.where((a) {
+      final keys = _nameKeys(a.name);
+      return keys.any(names.contains) && seen.add(keys.first);
+    }).toList();
+  }
+
   final String concert;
   final String imageUrl;
 
@@ -94,6 +117,7 @@ class NewsModel {
     this.matchedArtist,
     this.lineup = const [],
     this.leadArtist,
+    this.matchedArtists = const [],
     required this.concert,
     required this.imageUrl,
     required this.description,
@@ -344,6 +368,9 @@ class NewsModel {
     'matchedArtist': matchedArtist,
     'lineup': lineup,
     'leadArtist': leadArtist,
+    'matchedArtists': matchedArtists
+        .map((a) => {'name': a.name, 'image': a.profileImageUrl})
+        .toList(),
     'concert': concert,
     'imageUrl': imageUrl,
     'description': description,
@@ -373,6 +400,14 @@ class NewsModel {
           (json['lineup'] as List<dynamic>?)?.whereType<String>().toList() ??
           const [],
       leadArtist: json['leadArtist'] as String?,
+      matchedArtists: (json['matchedArtists'] as List? ?? [])
+          .map(
+            (a) => ArtistModel(
+              name: a['name'] as String,
+              profileImageUrl: a['image'] as String? ?? '',
+            ),
+          )
+          .toList(),
       concert: json['concert'] as String? ?? '',
       imageUrl: json['imageUrl'] as String? ?? '',
       description: json['description'] as String? ?? '',

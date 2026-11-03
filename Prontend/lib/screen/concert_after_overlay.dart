@@ -1,3 +1,4 @@
+import '../widgets/app_back_handler.dart';
 import '../services/ticket_transition_sound.dart';
 import 'dart:async';
 import 'dart:ui';
@@ -278,8 +279,9 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
       marginEachSide: 0,
       child: PopScope(
         canPop: false,
-        onPopInvokedWithResult: (didPop, result) {
+        onPopInvokedWithResult: (didPop, result) async {
           if (didPop) return;
+          if (await AppBackHandler.handle(context) || !mounted) return;
           _close();
         },
         child: Material(

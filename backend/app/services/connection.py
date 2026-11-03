@@ -36,6 +36,8 @@ _RSSI_STRONG = -55
 _RSSI_WEAK = -62
 # 짝지어진 뒤 두 폰이 애니메이션을 시작하기까지 여유 - 기다리던 쪽이 폴링으로 알아챌 시간
 _SYNC_DELAY = timedelta(milliseconds=1200)
+# 일회용 만남 - 연결 뒤 이 시간 동안만 카드를 볼 수 있음(받다 끊긴 폰이 다시 받을 여유)
+MEETING_TTL = timedelta(minutes=10)
 
 
 def _rssi_pair_ok(mine: int | None, theirs: int | None) -> bool:
@@ -133,8 +135,8 @@ async def get_or_issue_nearby_code(db: AsyncSession, user_id: UUID) -> NearbyCod
     return NearbyCodeResponse(code=row.code, valid_until=row.valid_until)
 
 
-# 맞댐 판정 등록 - 상대도 짧은 시간 안에 나를 봤다고 올렸으면 연결 요청을 만들거나(첫 만남)
-# 다시 만난 시각을 갱신(이미 연결). 두 폰이 동시에 올려도 서로를 놓치지 않게 쌍 단위로 잠금
+# 맞댐 판정 등록 - 상대도 짧은 시간 안에 나를 봤다고 올렸으면 이번 만남의 연결 요청을 만듦.
+# 두 폰이 동시에 올려도 서로를 놓치지 않게 쌍 단위로 잠금
 async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingCreate) -> NearbySightingResponse:
     now = _now()
     seen_at = body.seen_at if body.seen_at.tzinfo else body.seen_at.replace(tzinfo=timezone.utc)
@@ -187,6 +189,11 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
         )
     )
     row = result.scalar_one_or_none()
+    # 둘 중 하나라도 화면을 다시 열었으면 새 시도
+    my_session = await _session_started_at(db, user_id)
+    new_attempt = row is None or row.matched_at is None or any(
+        s is not None and row.matched_at < s for s in (my_session, peer_session)
+    )
     if row is None:
         row = UserConnection(
             user_a_id=user_a_id,
@@ -198,16 +205,16 @@ async def report_sighting(db: AsyncSession, user_id: UUID, body: NearbySightingC
             last_met_at=None,
         )
         db.add(row)
-    elif row.connected_at is not None:
-        row.last_met_at = now
-    elif _pending_expired(row, now):
+    elif new_attempt or _pending_expired(row, now):
+        # 일회용 만남이라 예전에 연결됐던 사이도 매번 확인부터 다시
         row.requested_at = now
         row.a_confirmed_at = None
         row.b_confirmed_at = None
+        row.connected_at = None
+        row.last_met_at = None
     # 기다리던 쪽이 더 강한 판정을 다시 올려도 같은 시도면 시작 시각을 옮기지 않음 - 옮기면 먼저 받은
-    # 폰과 어긋남. 둘 중 하나라도 화면을 다시 열었으면 새 시도
-    my_session = await _session_started_at(db, user_id)
-    if row.matched_at is None or any(s is not None and row.matched_at < s for s in (my_session, peer_session)):
+    # 폰과 어긋남
+    if new_attempt:
         row.matched_at = now
     await db.commit()
 
@@ -313,7 +320,7 @@ async def confirm_connection_request(
     )
 
 
-# 연결 요청 거절 - 아직 연결 전인 요청만 지움 (이미 연결된 사이는 연결 끊기로)
+# 연결 요청 거절 - 아직 연결 전인 요청만 지움
 async def reject_connection_request(db: AsyncSession, user_id: UUID, connection_id: UUID) -> None:
     row = await _get_my_connection(db, user_id, connection_id)
     if row.connected_at is not None:
@@ -365,7 +372,8 @@ _EXPIRED_REQUEST_KEEP = timedelta(days=1)
 
 
 # 오래된 맞대기 기록 정리(매일) - 판정은 늦은 업로드 허용(72시간)+짝짓기 창이 지나면 짝지을 일이 없고,
-# 코드는 그 기간 안의 판정 해석·코드 중복 확인에만 쓰임. 확인 안 된 채 만료된 연결 요청도 지움
+# 코드는 그 기간 안의 판정 해석·코드 중복 확인에만 쓰임. 확인 안 된 채 만료된 연결 요청과 카드 볼 시간이
+# 지난 만남도 지움
 async def cleanup_nearby_records(db: AsyncSession) -> dict[str, int]:
     now = _now()
     sightings = await db.execute(
@@ -378,5 +386,13 @@ async def cleanup_nearby_records(db: AsyncSession) -> dict[str, int]:
             UserConnection.requested_at < now - _PENDING_TTL - _EXPIRED_REQUEST_KEEP,
         )
     )
+    meetings = await db.execute(
+        delete(UserConnection).where(UserConnection.connected_at < now - MEETING_TTL - _EXPIRED_REQUEST_KEEP)
+    )
     await db.commit()
-    return {"sightings": sightings.rowcount, "codes": codes.rowcount, "requests": requests.rowcount}
+    return {
+        "sightings": sightings.rowcount,
+        "codes": codes.rowcount,
+        "requests": requests.rowcount,
+        "meetings": meetings.rowcount,
+    }

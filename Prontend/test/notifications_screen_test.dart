@@ -5,6 +5,7 @@ import 'package:ticketdiary/models/notification_display.dart';
 import 'package:ticketdiary/models/notification_model.dart';
 import 'package:ticketdiary/screen/notifications_screen.dart';
 import 'package:ticketdiary/services/notifications_service.dart';
+import 'package:ticketdiary/services/fcm_service.dart';
 import 'package:ticketdiary/widgets/diary_route.dart';
 import 'package:ticketdiary/widgets/tab_nav_coordinator.dart';
 
@@ -371,5 +372,22 @@ void main() {
     expect(nav.pendingDiaryTicketId, 't1');
     expect(find.text('탭 이동: diary'), findsOneWidget);
     expect(find.text('알림함'), findsNothing);
+  });
+  testWidgets('푸시 수신 신호가 오면 열려 있는 알림함을 갱신한다', (tester) async {
+    final service = _FakeNotificationsService([_item(id: '1', title: '기존 알림')]);
+    await _openOverlay(tester, service);
+    service._items.add(_item(id: '2', title: '새 푸시 알림'));
+    FcmService.instance.changes.value++;
+    await tester.pumpAndSettle();
+    expect(find.text('새 푸시 알림'), findsOneWidget);
+    // 알림함이 열린 상태에서 다른 푸시를 눌러도 시트를 중복 생성하지 않습니다.
+    NotificationsScreen.show(
+      tester.element(find.byType(NotificationsScreen)),
+      frameScale: 1,
+      service: service,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(NotificationsScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

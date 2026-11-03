@@ -44,7 +44,7 @@ async def throttle_kopis_request() -> None:
 
 
 # KOPIS 방화벽은 정상 검색어도 무작위로 400(Request Blocked)을 돌려줌(서버에서 같은 검색어 반복 시
-# 약 30%, 10/21 실측) - 한 번 막힌 걸 실패로 처리하면 스캔 장소+날짜 검색이 통째로 빠짐. 잠깐 쉬고 재시도
+# 약 30%) - 한 번 막힌 걸 실패로 처리하면 스캔 장소+날짜 검색이 통째로 빠짐. 잠깐 쉬고 재시도
 _KOPIS_BLOCKED_RETRIES = 2
 _KOPIS_BLOCKED_RETRY_DELAY = 0.5
 
@@ -307,11 +307,9 @@ def _venue_overlaps(a: str, b: str) -> bool:
     return match.size >= 4 and not _is_generic_venue_name(a_norm[match.a:match.a + match.size])
 
 
-# OCR 공연장 텍스트에서 KOPIS 시설 검색(/prfplc)에 걸릴 후보를 순서대로 생성 - "인터파크
-# 유니플렉스 2관" 전체가 아니라 "유니플렉스"처럼 시설 본체 이름만 걸리는 경우가 많아, 끝의
-# 세부관(N관/N홀) 제거 + 접미사를 순서대로 시도. 숫자 붙은 것만 세부관으로 봄(숫자 없이
-# 관/홀로 끝나면 "세종문화회관"처럼 본체 이름일 수 있어 그대로 둠). 영문 표기는 한글로 바꾼
-# 후보부터 시도(_VENUE_ALIASES)
+# OCR 공연장 텍스트로 KOPIS 시설 검색(/prfplc) 후보를 순서대로 생성 - "인터파크 유니플렉스 2관"보다 "유니플렉스"
+# 같은 본체 이름만 걸리는 경우가 많아 숫자 붙은 세부관(N관/N홀) 제거 + 접미사 순서대로 시도("세종문화회관"처럼
+# 숫자 없는 관/홀은 그대로). 영문 표기는 한글로 바꾼 후보부터(_VENUE_ALIASES)
 def _venue_candidates(location: str) -> list[str]:
     location = location.strip()
     if not location:
@@ -434,7 +432,7 @@ def _sort_by_date_match(
 # 검색 결과가 OCR로 뽑은 날짜와 겹치는지 확인(이미 받아온 start_date/end_date로 교차검증).
 # 장소는 확신 조건으로 안 씀 - KOPIS 목록 검색의 fcltynm은 "잠실종합운동장"처럼 상위 시설명만
 # 주는 경우가 많아, OCR의 "잠실실내체육관" 같은 구체적 표기와는 같은 장소여도 텍스트가 안
-# 겹칠 수 있음. tie-break 용도로만 사용.
+# 겹칠 수 있음. tie-break 용도로만 사용
 def _is_confident_match(concert: Concert, target_date: date) -> bool:
     return concert.start_date.date() <= target_date <= concert.end_date.date()
 
@@ -532,11 +530,9 @@ def _query_specificity(q: str) -> int:
     return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in q)
 
 
-# 제목 후보를 전부 시도해 날짜로 교차검증된 결과 중, 실제로 결과가 나온(축소된) 검색어가 가장 구체적인
-# 후보의 결과를 반환. 첫 확신 매칭을 바로 쓰면 "FESTIVAL" 같은 흔한 단어가 기간 긴 무관한 공연에 날짜만
-# 맞아 걸려서 진짜 제목까지 못 가므로 전부 비교함. 동률이면 앞쪽 후보 우선, 다른 후보 결과는 섞지 않음.
-# 날짜 정보가 없으면 교차검증이 불가능해 첫 매칭도 실패 처리함(실사용 샘플 98%가 날짜 추출돼 손실 거의 없음 확인).
-# 중복 키워드는 한 번만 시도, 후보 전체가 HTTP client 하나를 공유.
+# 제목 후보를 전부 시도해, 날짜로 교차검증된 결과 중 실제로 결과가 나온 검색어가 가장 구체적인 후보의 결과를 반환
+# ("FESTIVAL" 같은 흔한 단어가 기간 긴 무관한 공연에 걸리는 걸 막음). 동률이면 앞 후보, 다른 후보 결과는 안 섞음.
+# 날짜가 없으면 교차검증 불가라 실패 처리(실샘플 98%는 날짜 추출됨). 중복 키워드는 한 번만, HTTP client는 공유
 async def search_concerts_multi(
     db: AsyncSession,
     keywords: list[str],
@@ -969,7 +965,7 @@ async def get_concert_detail(
 # 다중 아티스트로 확정된(FESTIVAL) 공연의 ticketing_links를 KOPIS에서 다시 받아와 갱신 -
 # kopis_detail_synced_at이 채워지면 GET 재호출 안 해서 유저 최초 조회 시점에 고정되는 문제.
 # 라인업 재확인 배치에서 같이 호출돼 ticketing_links만 덮어씀(artist_name은 안 건드림).
-# KOPIS가 새 값을 안 주면 기존 링크 유지(크롤링 대상을 잃는 회귀 방지).
+# KOPIS가 새 값을 안 주면 기존 링크 유지(크롤링 대상을 잃는 회귀 방지)
 async def refresh_ticketing_links(concert: Concert) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

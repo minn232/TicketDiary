@@ -136,7 +136,7 @@ async def _is_blank_page(page) -> bool:
 
 # NOL 상세페이지의 "상품 상세"/"공지사항"은 기본 접힘 상태라 안 누르면 스크린샷이 잘림.
 # "가격 전체보기"는 모달이라 스코프 밖(구 인터파크엔 이 버튼이 없어 count()==0으로 넘어감).
-# 인터파크 NOL 서비스 이관으로 crawl_interpark 안에서 같이 처리함.
+# 인터파크 NOL 서비스 이관으로 crawl_interpark 안에서 같이 처리함
 _SHOW_MORE_BUTTON_TEXTS = ("상품 상세 더보기", "공지사항 더보기")
 
 
@@ -154,7 +154,7 @@ async def _expand_collapsed_sections(page) -> None:
 
     if clicked:
         # 버튼 클릭 시 자동 스크롤된 상태로 스크린샷을 찍으면 position:fixed 헤더가 스크롤된
-        # 지점에 고정된 채 본문 중간에 찍힘(실측 확인) - 스크린샷 직전 항상 맨 위로 되돌림.
+        # 지점에 고정된 채 본문 중간에 찍힘(실측 확인) - 스크린샷 직전 항상 맨 위로 되돌림
         try:
             await page.evaluate("window.scrollTo(0, 0)")
             await page.wait_for_timeout(200)
@@ -164,11 +164,11 @@ async def _expand_collapsed_sections(page) -> None:
 
 # 팝업이 스크린샷에 찍히는 걸 막는 범용 닫기 로직 - 닫기 버튼이 <button> 태그가 아니거나
 # ×가 아이콘/이미지라 선택자로 못 잡는 경우가 많아서(실측 확인), 클릭 후 매번 컨테이너가
-# 실제로 사라졌는지 재확인하며 여러 방법을 순서대로 시도. 전부 실패해도 조용히 넘어감.
+# 실제로 사라졌는지 재확인하며 여러 방법을 순서대로 시도. 전부 실패해도 조용히 넘어감
 
 # 팝업 컨테이너 class 패턴(대략적, 사이트마다 다름) - 구체적 키워드(alert)를 먼저 시도하고
 # 넓은 패턴("pop")은 맨 뒤로 미룸. "pop"은 무관한 요소가 많이 섞여(YES24 실측) 잘못된
-# 쿠폰 팝업을 클릭한 사고가 실제로 있었음.
+# 쿠폰 팝업을 클릭한 사고가 실제로 있었음
 _POPUP_CONTAINER_SELECTORS = (
     '[role="dialog"]',
     '[class*="alert" i]',
@@ -232,7 +232,7 @@ async def _try_close_container(page, container, allow_position_click: bool) -> b
 
     # 2) 텍스트 기반 - 짧은 텍스트만 실제 "버튼"으로 인정(긴 본문에 우연히 같은 단어가 섞인
     # 경우 배제). 텍스트 노드 자신은 스크린리더 전용이라 숨겨진 경우가 흔해서(실측 확인),
-    # 안 보이면 가장 가까운 버튼류 조상을 대신 찾아 클릭함.
+    # 안 보이면 가장 가까운 버튼류 조상을 대신 찾아 클릭함
     for text in _CLOSE_TEXT_CANDIDATES:
         try:
             candidates = container.get_by_text(text, exact=False)
@@ -262,7 +262,7 @@ async def _try_close_container(page, container, allow_position_click: bool) -> b
 
     # 3) 최후 수단 - 텍스트/속성 어디에도 안 걸리는 좌표 기반 클릭(멜론은 닫기 아이콘이
     # 배경이미지라 이 방법밖에 안 통함, 실측 확인). "닫기 버튼은 우측 상단 근처"라는 UI
-    # 관례로 그 근방 여러 지점을 순서대로 클릭 - container가 실제 팝업으로 특정된 경우에만 시도.
+    # 관례로 그 근방 여러 지점을 순서대로 클릭 - container가 실제 팝업으로 특정된 경우에만 시도
     if allow_position_click:
         try:
             box = await container.bounding_box()
@@ -342,7 +342,7 @@ _DIGIT_RE = re.compile(r"\d+")
 
 # 인터파크 상세 페이지의 "{아티스트명} 더 알아보기" 한 줄이 방문할 때마다 무작위로 바뀌는
 # 걸 실측 확인(같은 라인업인데 이 줄 때문에 해시가 달라짐) - 숫자가 아닌 노이즈라 위 digit
-# 제거로는 못 잡아서 별도로 거름.
+# 제거로는 못 잡아서 별도로 거름
 _LEARN_MORE_LINE_RE = re.compile(r"^.*더\s*알아보기.*$", re.MULTILINE)
 
 
@@ -369,11 +369,9 @@ def _normalize_lineup_img_srcs(srcs: list[str]) -> list[str]:
     return sorted(normalized)
 
 
-# 사이트별로 실제 공연 정보만 담긴 컨테이너 셀렉터 - 사이트 전역 노이즈(회전 광고 배너 등)를
-# 캡처 범위 밖에 둔다(셀렉터가 안 맞아도 body로 안전 폴백되므로 리스크는 낮음).
-# interpark는 야놀자(NOL) 이관으로 DOM이 바뀌어 ".productMain"이 없어져 매번 조용히 body
-# 전체로 폴백되고 있었음 - 실시간으로 바뀌는 "찜 N명" 위시리스트 수 때문에 라인업이 안 바뀌어도
-# "변경"으로 계속 오탐되던 원인이었음. LINE UP 텍스트가 실제로 들어있는 "#important-info"로 교체
+# 사이트별 공연 정보 컨테이너 셀렉터 - 회전 광고 배너 등 사이트 전역 노이즈를 캡처에서 뺌(안 맞으면 body로
+# 폴백). interpark는 NOL 이관으로 ".productMain"이 없어져 body로 폴백되며 "찜 N명" 변화가 라인업 변경으로
+# 오탐됐음 - LINE UP이 실제로 있는 "#important-info"로 교체
 _LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
     "interpark": "#important-info",
     "yes24": ".renew-content",
@@ -385,7 +383,7 @@ _LINEUP_CAPTURE_CONTAINER: dict[str, str] = {
 # 라인업 변경 감지용 스냅샷(원본 텍스트 + 해시 + 이미지 경로 목록) 캡처 - 스크린샷과 같은
 # 페이지 방문에서 함께 뽑음. container_selector가 주어지면 그 안쪽만 캡처해 사이트 전역 배너
 # 노이즈를 제외하고, 셀렉터가 안 잡히면 body로 폴백. 스크린샷(LLM 입력)은 각 크롤러가 항상
-# full_page로 따로 캡처하므로 이 범위 축소는 LLM이 보는 정보엔 영향 없음.
+# full_page로 따로 캡처하므로 이 범위 축소는 LLM이 보는 정보엔 영향 없음
 async def _capture_lineup_snapshot(page, container_selector: str | None = None) -> tuple[str, str, list[str]]:
     scope = container_selector
     if scope:
@@ -671,7 +669,7 @@ _CRAWLERS: dict[str, callable] = {
 
 # 크롤링 지원 사이트 우선순위 - 원래는 YES24 > INTERPARK > MELON이었으나, YES24/MELON이
 # AWS IP 차단으로 100% 실패 확정이라 임시로 INTERPARK만 남김(헛된 재시도 낭비 방지).
-# 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것.
+# 차단이 해결되면 ["YES24", "INTERPARK", "MELON"]로 되돌릴 것
 _PREFERRED_SITES = ["INTERPARK"]
 
 # 크롤링 미지원 사이트
@@ -679,7 +677,7 @@ _UNSUPPORTED_SITES = {"TICKETLINK", "티켓링크"}
 
 # 크롤러 자체는 있지만(_CRAWLERS에 매핑됨) 위와 같은 이유로 임시 비활성화된 사이트.
 # ticketing_site로 명시적으로 지정돼 들어와도 후보에서 제외(_pick_crawl_candidates) - 어차피
-# 실패가 확정이라 시도할수록 리소스 낭비. 해결되면 이 세트를 비우면 됨.
+# 실패가 확정이라 시도할수록 리소스 낭비. 해결되면 이 세트를 비우면 됨
 _TEMPORARILY_DISABLED_SITES = {"YES24", "MELON"}
 
 
@@ -771,7 +769,7 @@ async def _crawl_candidates_or_kopis(
 # 티켓등록/찜(follow) 시 백그라운드 호출 - 크롤링 후 crawl_screenshot_url 갱신. 찜 경로는
 # ticketing_site가 None일 수 있어(아직 아무도 안 삼) ticketing_links만으로 시도.
 # "완료" 판단은 스크린샷 존재가 아니라 ticketing_date 확보 여부 - 예전엔 오픈 전 빈 페이지가
-# 한 번 찍히면 영구히 재시도를 안 해서 나중에 진짜 정보를 못 얻는 문제가 있었음.
+# 한 번 찍히면 영구히 재시도를 안 해서 나중에 진짜 정보를 못 얻는 문제가 있었음
 async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
     if ticketing_site and normalize_site_key(ticketing_site) not in _KNOWN_SITE_KEYS:
         logger.info(f"크롤링 미지원 사이트: {ticketing_site}")
@@ -794,11 +792,9 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
         if concert.ticketing_date is not None:
             return
 
-        # LLM이 이미 지금 스크린샷을 분석해서 결과를 줬는데 ticketing_date를 못 찾은 경우 -
-        # _upload_screenshot의 업로드 키가 concert_id당 고정(타임스탬프 없음)이라 재크롤링해도
-        # URL이 그대로라서 pod dedup에 걸려 재분석 자체가 안 됨. 재크롤링해봤자 소용없으므로
-        # 포기. 페스티벌 라인업 재확인(_check_festival_lineup)은 이 함수를 안 쓰고 타임스탬프
-        # URL을 쓰는 별도 경로라 무관 - 새 스크린샷이 생기면 그쪽에서 이 값을 다시 None으로 리셋함
+        # LLM이 지금 스크린샷을 이미 분석했는데 ticketing_date를 못 찾은 경우 - 업로드 키가 concert_id당 고정이라
+        # 재크롤링해도 URL이 같아 pod dedup에 걸려 재분석이 안 되므로 포기. 페스티벌 라인업 재확인은 타임스탬프
+        # URL을 쓰는 별도 경로라 무관(새 스크린샷이 생기면 그쪽에서 이 값을 None으로 리셋함)
         if concert.crawl_result_received_at is not None:
             return
 
@@ -842,18 +838,10 @@ async def crawl_and_save(concert_id, ticketing_site: str | None = None) -> None:
             logger.info(f"크롤링 완료: {concert.name} → {url}")
 
 
-# 자동 크롤링(_PREFERRED_SITES=INTERPARK만)으로는 절대 못 뽑는 공연 - YES24/MELON 링크만
-# 있고 인터파크는 없는 경우. 배송일/티켓팅일은 실제 예매 사이트 페이지에만 있어서 KOPIS 폴백
-# 으론 못 얻으므로, 이 최초 크롤링만 사람이 로컬(데이터센터 아닌 네트워크)에서 직접 돌리기로
-# 함(YES24/MELON은 AWS 서버 IP에서 차단 확정). 이 함수는 대상 목록만 뽑고, 실제 크롤링은
-# scripts/yes24_melon_local_crawl.py가 로컬에서 수행 후 save_manual_crawl_screenshot으로 반영
-#
-# 대상 조건이 ticketing_date IS NULL이라, 스크린샷은 이미 로컬에서 성공적으로 올렸어도(=
-# crawl_screenshot_url은 채워짐) 그걸 읽어 ticketing_date를 뽑는 LLM 분석 배치가 아직 안
-# 돌았으면 계속 대상에 남는다. LLM 분석이 밀리는 동안(RunPod 자리 문제 등) 이미 스크린샷을
-# 올린 건까지 매번 다시 크롤링 대상으로 잡혀 로컬 스크립트를 반복 실행하면 매크로 탐지
-# 위험이 커지므로, exclude_already_crawled=True면 crawl_screenshot_url이 이미 있는 건
-# (=로컬 크롤링은 끝났고 LLM 분석만 밀린 건) 제외하고 진짜 신규만 남긴다
+# 자동 크롤링(INTERPARK만)으로 못 뽑는 YES24/MELON 전용 공연 목록 - 배송일/티켓팅일은 예매 페이지에만 있고
+# 두 사이트는 AWS IP에서 차단돼, 최초 크롤링만 scripts/yes24_melon_local_crawl.py가 로컬에서 돌려
+# save_manual_crawl_screenshot으로 반영함. 조건이 ticketing_date IS NULL이라 LLM 분석이 밀리면 이미 올린 건도
+# 남는데, 반복 크롤링은 매크로 탐지 위험이라 exclude_already_crawled=True면 crawl_screenshot_url 있는 건 제외
 async def get_yes24_melon_crawl_targets(
     db: AsyncSession, exclude_already_crawled: bool = False
 ) -> list[Concert]:
@@ -883,11 +871,9 @@ async def get_yes24_melon_crawl_targets(
     return list(result.scalars().all())
 
 
-# get_yes24_melon_crawl_targets가 뽑은 공연을 로컬에서 직접 크롤링한 결과를 받아 저장 -
-# crawl_and_save가 성공했을 때와 동일한 상태로 맞춘다(crawl_screenshot_url 갱신 +
-# crawl_attempted_at/attempt_count 갱신 - 안 하면 그날 밤 자동배치가 바로 KOPIS 스크린샷으로
-# 덮어씀). ticketing_date는 여기서 안 채움 - LLM 분석 단계의 몫. S3 키는 _check_festival_lineup과
-# 동일하게 매번 시각을 붙여서(고정 키 아님) 이미 쌓여있는 과거 이력을 지우지 않고 추가만 함
+# get_yes24_melon_crawl_targets 공연을 로컬에서 크롤링한 결과 저장 - crawl_and_save 성공 때와 같은 상태로 맞춤
+# (안 하면 그날 밤 자동배치가 KOPIS 스크린샷으로 덮어씀). ticketing_date는 LLM 분석 몫이라 안 채우고, S3 키는
+# _check_festival_lineup처럼 시각을 붙여 과거 이력을 지우지 않음
 async def save_manual_crawl_screenshot(
     db: AsyncSession, concert_id, site: str, image_bytes: bytes
 ) -> Concert:
@@ -999,7 +985,7 @@ def artist_extraction_target_filter(now: datetime):
 # 자정 배치: 포스터를 VLM팀에 보내 아티스트 추출 요청. 한 번도 안 보냈으면 즉시 대상, 쿨다운
 # 지났고 시도 횟수가 상한 미만이면 재대상. KOPIS가 이미 채운 공연도 포함 - prfcast가 예명/
 # 그룹명 대신 본명/멤버명인 경우가 많아서(merge는 합집합이라 기존 값은 안 지워짐). 4명 이상이면
-# SOLO->FESTIVAL 오승격 위험(THRESHOLD=5 코앞)이라 제외. limit은 수동 트리거용, 자정 배치는 안 넘김.
+# SOLO->FESTIVAL 오승격 위험(THRESHOLD=5 코앞)이라 제외. limit은 수동 트리거용, 자정 배치는 안 넘김
 async def send_posters_for_artist_extraction(limit: int | None = None) -> int:
     if not settings.LLM_ARTIST_URL:
         logger.info("LLM_ARTIST_URL 미설정, 전송 건너뜀")
@@ -1118,7 +1104,7 @@ async def retry_pending_crawls() -> None:
     await asyncio.gather(*(_crawl_and_save_limited(semaphore, cid) for cid in concert_ids))
 
 
-# 페스티벌 라인업 재확인 쿨다운.
+# 페스티벌 라인업 재확인 쿨다운
 _FESTIVAL_LINEUP_CHECK_COOLDOWN = timedelta(hours=24)
 
 # 실측 결과 사이트 하나가 응답 없이 멈추면(크롤링 함수 내부에 전체를 감싸는 타임아웃이 없어서)
@@ -1130,7 +1116,7 @@ _FESTIVAL_LINEUP_CHECK_TIMEOUT = 120
 # FESTIVAL 공연 하나의 라인업이 직전 방문과 달라졌는지 확인, 달라졌으면(최초 방문 포함)
 # 새 스크린샷을 버전별 키로 업로드해 crawl_screenshot_url 갱신.
 # ticketing_date 유무를 안 보는 게 crawl_and_save와의 차이 - 페스티벌은 1차 라인업 공개
-# 직후 ticketing_date가 바로 채워져서, 그 기준이면 봐야 할 시점부터 재크롤링 대상에서 빠짐.
+# 직후 ticketing_date가 바로 채워져서, 그 기준이면 봐야 할 시점부터 재크롤링 대상에서 빠짐
 async def _check_festival_lineup(concert_id) -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.id == concert_id))
@@ -1152,7 +1138,7 @@ async def _check_festival_lineup(concert_id) -> None:
         # 크롤링 대상을 고르기 전에 먼저 KOPIS 예매링크를 최신화 - 최초 등록 시점(1차 라인업
         # 공개 직후, 얼리버드/블라인드 판매와 겹칠 수 있음)에 캡처된 링크가 이후 실제 판매 링크로
         # 바뀌어도 우리 DB가 영원히 못 따라가는 문제 대응 (자세한 이유는 kopis.py의
-        # refresh_ticketing_links 참고). 여기서 갱신된 값이 실패 없이 반영되도록 즉시 커밋한다.
+        # refresh_ticketing_links 참고). 여기서 갱신된 값이 실패 없이 반영되도록 즉시 커밋한다
         await refresh_ticketing_links(concert)
         await db.commit()
 

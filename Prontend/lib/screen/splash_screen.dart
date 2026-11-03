@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../widgets/first_launch_choice_sheet.dart';
 
 import 'package:ticketdiary/screen/diary_screen.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
@@ -19,7 +21,7 @@ import 'package:ticketdiary/widgets/responsive_text.dart'
 
 // [백엔드 수정]
 // 다이어리 탭 페이지 넘김과 같은 곡면 렌더링(BentLeafPainter)을 스플래시
-// 인트로에도 사용. 예전 방식(splash_screen_old.dart)은 죽은 코드로 남김.
+// 인트로에도 사용합니다.
 
 /// 앱 실행 시 보여주는 시작 애니메이션.
 ///
@@ -322,12 +324,30 @@ class _SplashScreenState extends State<SplashScreen>
     //
     // 로딩이 어떤 이유로든 지나치게 오래 걸리거나 멈춰도 앱이 스플래시에
     // 갇히지 않도록, 애니메이션 길이보다 조금 긴 타임아웃을 둡니다.
+    final prefs = await SharedPreferences.getInstance();
+    final choice = prefs.getString(FirstLaunchChoiceSheet.preferenceKey);
+    // 기존 설치의 계정·티켓은 그대로 유지합니다. 신규 설치는 완료 전까지
+    // pending을 남겨 강제 종료 후 다시 켜도 선택창을 건너뛰지 못하게 합니다.
+    final needsChoice =
+        choice == 'pending' ||
+        (choice == null &&
+            !(prefs.getBool('auth_first_launch_cleanup_done') ?? false));
+    if (needsChoice) {
+      await prefs.setString(FirstLaunchChoiceSheet.preferenceKey, 'pending');
+    }
     final timeout = _totalDuration + const Duration(seconds: 2);
     await Future.wait([
       AppSettingsStore.instance.load(),
       // 저장된 로그인 세션을 불러오거나(없으면) 게스트 세션을 새로 만듭니다.
-      AuthService.instance.ensureSession(),
+      if (!needsChoice) AuthService.instance.ensureSession(),
     ]).timeout(timeout, onTimeout: () => const []);
+    if (needsChoice) {
+      await AuthService.instance.ensureSession();
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      await FirstLaunchChoiceSheet.show(context);
+      if (!mounted) return;
+    }
     // [백엔드 수정]
     // 세션이 준비된 뒤 티켓을 미리 불러옴. 느리면 3초만 기다리고 넘어감.
     await DiaryScreen.preloadTickets().timeout(
@@ -392,6 +412,9 @@ class _SplashScreenState extends State<SplashScreen>
       ),
       (route) => false,
     );
+    Future<void>.delayed(_fadeToMainDuration, () {
+      FcmService.instance.markNavigationReady();
+    });
   }
 
   @override
@@ -1710,32 +1733,6 @@ class _MainPageReplica extends StatelessWidget {
               ],
             ),
             padding: EdgeInsets.symmetric(horizontal: 25 * k),
-            // [임시 주석처리] 로고 없는 모습 비교용 - 원래는 아래 child:
-            // Center(...)에 아이콘+"TICKET DIARY" 로고가 있었습니다.
-            /*
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.local_activity_outlined,
-                    size: 105 * k,
-                    color: _leatherColor.withValues(alpha: 0.55),
-                  ),
-                  SizedBox(height: 18 * k),
-                  Text(
-                    'TICKET DIARY',
-                    style: TextStyle(
-                      fontSize: 39 * k,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 4.5 * k,
-                      color: _leatherColor.withValues(alpha: 0.75),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            */
           ),
         ),
       ],

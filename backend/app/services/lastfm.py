@@ -23,11 +23,8 @@ _REQUEST_INTERVAL = 0.3
 # 포스터/크롤링과 달리 Last.fm 카탈로그가 나중에 갱신될 수도 있어 쿨다운을 길게(1주) 잡음
 _LASTFM_RETRY_COOLDOWN = timedelta(days=7)
 _MAX_LASTFM_ATTEMPTS = 5
-# [2026-09-14] 예전엔 _MAX_LASTFM_ATTEMPTS(5회)를 넘기면 영구 제외했는데, 그러면 등록 당시
-# 무명/신인이라 Last.fm에 데이터가 없던 아티스트가 나중에 유명해져도 다시는 확인 안 하는 문제가
-# 있었음(사용자 지적). 그래서 완전 포기 대신 5회 이후엔 훨씬 긴 주기(한 달)로 계속 재확인.
-# API 부담은 무시할 수준(하루 300건 상한 대비, 이 장기재시도 몫은 하루 수십 건 정도)이라
-# 굳이 영구히 끊을 이유가 없음
+# _MAX_LASTFM_ATTEMPTS를 넘겨도 영구 제외하지 않고 한 달 주기로 계속 재확인 - 등록 당시 Last.fm에 없던 신인이
+# 나중에 유명해져도 다시 확인하게 함. 이 몫은 하루 수십 건이라 부담 없음(하루 300건 상한)
 _LASTFM_LONG_TAIL_RETRY_COOLDOWN = timedelta(days=30)
 # 성공적으로 캐싱된 것도 무기한 고정하지 않고 이 주기가 지나면 재조회 대상에 다시 포함시킴
 # (아티스트 스타일 변화/Last.fm 태그 누적으로 장르·유사아티스트 관계가 실제로 바뀔 수 있음)
@@ -40,11 +37,9 @@ _LASTFM_CACHE_TTL = timedelta(days=180)
 _MAX_LASTFM_SYNC_PER_RUN = 300
 
 
-# names 중 아직 Last.fm 재시도가 허용되는 것만 골라 우선순위대로 정렬해 반환 - 실패 기록이
-# 없는(한 번도 안 시도한) 이름을 먼저, 그 다음 재시도 가능한 이름을 오래 기다린 순으로.
-# 재시도 쿨다운은 2단계: 상한(_MAX_LASTFM_ATTEMPTS) 미만이면 짧은 쿨다운(1주), 상한을 넘겼으면
-# 완전히 끊지 않고 긴 쿨다운(한 달)으로 계속 재확인(_LASTFM_LONG_TAIL_RETRY_COOLDOWN 참고).
-# limit을 넘기면 그만큼만 잘라 반환(_MAX_LASTFM_SYNC_PER_RUN 참고 - 하루치 부담을 분산시키는 핵심 장치)
+# names 중 Last.fm 재시도가 허용되는 것만 우선순위대로 반환 - 한 번도 안 시도한 이름 먼저, 그다음 오래 기다린 순.
+# 쿨다운은 상한(_MAX_LASTFM_ATTEMPTS) 미만이면 1주, 넘겼으면 한 달. limit만큼만 잘라 하루치 부담을 분산함
+# (_MAX_LASTFM_SYNC_PER_RUN 참고)
 async def _filter_lastfm_retry_eligible(
     names: list[str], sync_type: str, *, limit: int | None = None
 ) -> list[str]:
@@ -115,7 +110,7 @@ async def _clear_lastfm_failure(db: AsyncSession, artist_name: str, sync_type: s
 # Last.fm 태그(자유 텍스트, 소문자 기준)를 결산에 보여줄 장르 라벨로 정규화하는 화이트리스트.
 # "seen live"/"female vocalists"/아티스트 이름 자체 같은 비-장르 태그가 섞여 들어오는 걸 막기 위해,
 # getTopTags가 이미 커뮤니티 가중치(count) 내림차순으로 준 순서를 그대로 믿고 훑다가 이 목록에
-# 처음 걸리는 태그의 라벨을 채택한다(=Last.fm 순위 + 화이트리스트 교집합의 상위 1개).
+# 처음 걸리는 태그의 라벨을 채택한다(=Last.fm 순위 + 화이트리스트 교집합의 상위 1개)
 GENRE_TAG_MAP: dict[str, str] = {
     tag: label
     for label, tags in {
@@ -258,11 +253,9 @@ async def fetch_top_tracks(
     return (top.get("@attr") or {}).get("artist", ""), tracks
 
 
-# 아티스트 한 명의 Last.fm 태그를 가져와 화이트리스트로 정규화한 장르를 캐싱.
-# 태그 자체를 못 받아오면(API 키 없음/호출 실패/Last.fm에 없는 이름) 실패로 기록해 쿨다운
-# 재시도가 걸리게 하고 조용히 리턴 - 안 그러면 매 배치/이벤트마다 똑같이 재시도됨.
-# artist_name이 unique라 재조회(TTL 만료) 케이스에선 기존 행이 있을 수 있어 delete 후 insert로
-# 처리(fetched_at도 새 값으로 자연스럽게 갱신됨) - artist_similarities와 동일 패턴
+# 아티스트 한 명의 Last.fm 태그를 화이트리스트로 정규화해 장르 캐싱. 태그를 못 받으면(키 없음/호출 실패/없는 이름)
+# 실패로 기록해 쿨다운이 걸리게 함(안 그러면 매 배치마다 재시도). artist_name이 unique라 재조회 땐 delete 후
+# insert(artist_similarities와 동일 패턴)
 async def _fetch_and_cache_artist_genre(artist_name: str) -> None:
     tags = await fetch_top_tags(artist_name)
     if not tags:
@@ -279,7 +272,7 @@ async def _fetch_and_cache_artist_genre(artist_name: str) -> None:
 # 캐싱 안 됐거나 캐싱한 지 오래된(_LASTFM_CACHE_TTL 경과) 아티스트를 Last.fm 태그로 (재)조회해서
 # 저장 (genres=None도 "확인했지만 태그 없었음"으로 캐싱해 TTL 전까진 재조회 안 함).
 # "안전망" 역할 - 실제론 티켓 등록 시점에 ensure_artist_genres_cached가 즉시 캐싱해서
-# 평소 신규분 처리 대상이 거의 없어야 정상(TTL 만료로 인한 재조회 대상은 이 배치가 전담).
+# 평소 신규분 처리 대상이 거의 없어야 정상(TTL 만료로 인한 재조회 대상은 이 배치가 전담)
 async def sync_artist_genres() -> None:
     stale_cutoff = datetime.now(timezone.utc) - _LASTFM_CACHE_TTL
     async with AsyncSessionLocal() as db:

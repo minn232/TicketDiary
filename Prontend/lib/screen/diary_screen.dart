@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../widgets/app_back_handler.dart';
 import 'concert_after_overlay.dart';
 import 'concert_before_overlay.dart';
 import 'package:ticketdiary/models/ticket_info.dart';
@@ -1297,16 +1298,13 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
-  /// 여러 날 공연에서 관람일을 반드시 고르게 하는 시트(좌석 선택 시트와 같은 방식).
-  Future<DateTime?> _pickAttendedDate(
-    List<DateTime> days, {
-    bool dismissible = false,
-  }) {
+  /// 관람일 선택. 뒤로가기로 닫으면 티켓 등록을 취소합니다.
+  Future<DateTime?> _pickAttendedDate(List<DateTime> days) {
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
     return showPaperSheet<DateTime>(
       context,
       title: '여러 날 열리는 공연이에요.\n관람한 날짜를 선택해주세요.',
-      dismissible: dismissible,
+      dismissible: true,
       rows: (context) => [
         for (final day in days)
           PaperSheetRow(
@@ -1322,10 +1320,7 @@ class _DiaryScreenState extends State<DiaryScreen>
   // [백엔드 수정] 관람일 없는 여러 날 공연 티켓은 공연 후 페이지를 열기 전에 관람일을 고르게 해
   // 저장함. 고른 뒤의 정보를 돌려주고, 닫거나 저장에 실패하면 null(페이지 안 엶).
   Future<TicketInfo?> _ensureAttendedDate(TicketData ticket) async {
-    final picked = await _pickAttendedDate(
-      ticket.attendedDayChoices,
-      dismissible: true,
-    );
+    final picked = await _pickAttendedDate(ticket.attendedDayChoices);
     if (picked == null || !mounted) return null;
     try {
       final updated = await _ticketService.updateTicket(
@@ -1346,13 +1341,12 @@ class _DiaryScreenState extends State<DiaryScreen>
   }
 
   /// 티켓 사진에 가격/좌석 정보가 없을 때, KOPIS 좌석 등급별 가격표 중
-  /// 하나를 반드시 고르게 하는 시트 - 가격/좌석이 항상 채워지도록 바깥
-  /// 탭·드래그·뒤로가기로는 못 닫고 항목을 선택해야만 닫힙니다.
+  /// 하나를 고르는 시트. 뒤로가기로 닫으면 티켓 등록을 취소합니다.
   Future<PriceEntry?> _pickPriceEntry(List<PriceEntry> prices) {
     return showPaperSheet<PriceEntry>(
       context,
       title: '티켓에서 가격/좌석 정보를 찾지 못했어요.\n예매한 좌석을 선택해주세요.',
-      dismissible: false,
+      dismissible: true,
       rows: (context) => [
         for (final entry in prices)
           PaperSheetRow(
@@ -1572,7 +1566,10 @@ class _DiaryScreenState extends State<DiaryScreen>
         children: [
           AbsorbPointer(
             absorbing: _arrivingTicketId != null,
-            child: _buildDiaryPageFrameWithFlip(_currentPageIndex, nextPageIndex),
+            child: _buildDiaryPageFrameWithFlip(
+              _currentPageIndex,
+              nextPageIndex,
+            ),
           ),
           _buildTransitionSpotlightOverlay(),
           _buildDeliveryAttentionOverlay(),
@@ -1582,7 +1579,9 @@ class _DiaryScreenState extends State<DiaryScreen>
           _buildDebugTestTicketTab(),
           // ===== [TEST-ONLY] 끝 =====
           if (_arrivingTicketId != null)
-            const Positioned.fill(child: AbsorbPointer(child: SizedBox.expand())),
+            const Positioned.fill(
+              child: AbsorbPointer(child: SizedBox.expand()),
+            ),
           if (_arrivalTarget != null && _arrivingTicketId != null)
             Positioned.fill(
               child: FeatherTicketArrival(
@@ -2099,7 +2098,24 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
-  Widget _buildDiaryPageFrameWithFlip(int pageIndex, int? nextPageIndex) {
+  Widget _buildDiaryPageFrameWithFlip(int pageIndex, int? nextPageIndex) =>
+      AppBackHandler(
+        canHandle: () =>
+            _interactionLocked || _isAddTicketExpanded || _currentPageIndex > 0,
+        onBack: () {
+          if (_interactionLocked) return;
+          setState(() {
+            if (_isAddTicketExpanded) {
+              _isAddTicketExpanded = false;
+            } else if (_currentPageIndex > 0) {
+              _currentPageIndex--;
+            }
+          });
+        },
+        child: _buildDiaryFrameContent(pageIndex, nextPageIndex),
+      );
+
+  Widget _buildDiaryFrameContent(int pageIndex, int? nextPageIndex) {
     final prevPageIndex = pageIndex > 0 ? pageIndex - 1 : null;
     final allTabs = buildDiarySideTabs(context, active: DiaryTab.diary);
     // "다이어리" 탭만 페이지 잎에 붙여서 함께 넘어가고, 소식/결산/설정은
@@ -2107,7 +2123,7 @@ class _DiaryScreenState extends State<DiaryScreen>
     final diaryTab = allTabs.where((t) => t.isActive).toList(growable: false);
     final fixedTabs = allTabs.where((t) => !t.isActive).toList(growable: false);
     return DiaryPageFrame(
-      isTabRoot: _currentPageIndex == pageIndex && pageIndex == 0,
+      isTabRoot: _currentPageIndex == pageIndex,
       scaleOverride: widget.frameScaleOverride,
       marginEachSideOverride: widget.frameMarginOverride,
       sideTabs: fixedTabs,

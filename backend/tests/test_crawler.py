@@ -1003,6 +1003,7 @@ async def test_crawl_and_save_crawler_returns_none_skips_upload():
 
 # crawl_melon 테스트
 
+# 멜론 mock: page.url 속성 지원 포함
 def _make_melon_pw_mock(
     screenshot: bytes,
     current_url: str = "https://ticket.melon.com/search",
@@ -1010,7 +1011,6 @@ def _make_melon_pw_mock(
     img_srcs: list[str] | None = None,
     body_text: str = "정상적으로 로딩된 공연 상세 페이지 콘텐츠입니다",
 ):
-    """멜론 mock: page.url 속성 지원 포함"""
     mock_link = None
     if link_href:
         mock_link = AsyncMock()
@@ -1346,7 +1346,7 @@ async def test_send_screenshots_posts_to_llm():
 # 검수완료(admin_reviewed_at) 공연은 제외돼야 함 - 이 파이프라인의 콜백도 artist_name을
 # 바꿀 수 있어 검수 상태가 다시 풀리는 노이즈를 막기 위함. mock_db 대신 실제 DB로 쿼리
 # 자체를 검증(위 mock 스타일 테스트들은 execute() 반환값을 그대로 통과시키기만 해서
-# WHERE 절 자체는 검증하지 못함).
+# WHERE 절 자체는 검증하지 못함)
 @pytest.mark.asyncio
 async def test_send_screenshots_skips_reviewed_concert():
     from app.core.database import AsyncSessionLocal
@@ -1471,7 +1471,7 @@ def test_hash_lineup_text_ignores_rotating_learn_more_line():
 
 # container_selector 스코핑 테스트 - 인터파크 상단 회전 광고 배너가 body 전체 캡처에 섞여
 # 들어가 라인업이 안 바뀌어도 "변경"으로 오탐시켰던 걸 실데이터로 확인함.
-# .productMain 안쪽만 캡처하면 배너가 원천적으로 제외됨.
+# .productMain 안쪽만 캡처하면 배너가 원천적으로 제외됨
 
 @pytest.mark.asyncio
 async def test_capture_lineup_snapshot_scopes_to_container_when_present():

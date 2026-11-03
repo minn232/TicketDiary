@@ -1,7 +1,5 @@
-"""결산 부가 통계 - 티켓/아티스트/셋리스트에서 뽑는 값들(공연장, 요일, 지출, 예매처, 첫 관람, 곡 등).
-
-get_summary가 이미 읽어온 티켓/셋리스트를 받아 계산만 하고, 표시 방식(몇 개를 보여줄지 등)은 앱이 정함.
-"""
+# 결산 부가 통계 - 티켓/아티스트/셋리스트에서 뽑는 값들(공연장, 요일, 지출, 예매처, 첫 관람, 곡 등)
+# get_summary가 이미 읽어온 티켓/셋리스트를 받아 계산만 하고, 표시 방식(몇 개를 보여줄지 등)은 앱이 정함
 import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone

@@ -118,7 +118,7 @@ async def _get_user_notifications(user_id: uuid.UUID) -> list[Notification]:
 # 해당 유저의 첫 번째 알림 ID 조회 (목록 최신순 기준)
 # GET /notifications는 이제 is_sent=True만 주므로, PATCH(읽음)/DELETE 테스트용으로
 # "아무 알림이나 id 하나"가 필요한 이 헬퍼는 API 대신 DB에서 직접 가져옴(아직
-# 미발송이어도 상관없이 id만 필요한 용도).
+# 미발송이어도 상관없이 id만 필요한 용도)
 async def _get_first_notification_id(token: str) -> str:
     notifications = await _get_notifications_from_db(token)
     assert len(notifications) > 0
@@ -141,7 +141,7 @@ async def test_list_notifications_empty():
 
 # 미래 공연 티켓 등록 시 알림 자동 생성 테스트 (day_before + concert_day)
 # GET /notifications가 이제 is_sent=True만 주므로, 등록 직후엔(아직 미발송)
-# 목록이 비어있는 게 맞음 - 그것부터 확인하고, 스케줄 자체는 DB로 직접 확인.
+# 목록이 비어있는 게 맞음 - 그것부터 확인하고, 스케줄 자체는 DB로 직접 확인
 @pytest.mark.asyncio
 async def test_list_notifications_created_by_ticket():
     concert_id = await _create_concert("PF_NOTIF_LIST_001", _make_future_xml("PF_NOTIF_LIST_001"))
@@ -242,7 +242,7 @@ async def test_mark_notification_other_user_404():
 
 # 삭제 성공 후 목록에서 사라지는 테스트
 # 방금 등록해서 아직 미발송인 알림이라 GET /notifications(이제 is_sent=True만
-# 줌)로는 삭제 여부를 확인할 수 없음 - DB에서 직접 없어졌는지 확인.
+# 줌)로는 삭제 여부를 확인할 수 없음 - DB에서 직접 없어졌는지 확인
 @pytest.mark.asyncio
 async def test_delete_notification_success():
     concert_id = await _create_concert("PF_NOTIF_DEL_001", _make_future_xml("PF_NOTIF_DEL_001"))

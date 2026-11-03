@@ -146,7 +146,7 @@ async def update_concert_follow(
 # 찜 공연은 티켓팅 날짜를 추적하려는 목적이라, 그 공연 티켓을 등록하면 목적을
 # 다한 것으로 보고 자동으로 찜 해제(ticket.py의 create_ticket에서 호출). 애초에
 # 안 찜한 공연이면 조용히 넘어감. 아티스트 찜은 건드리지 않음(그 아티스트의
-# 다음 공연들도 계속 소식 받고 싶은 별개 목적이라 유지).
+# 다음 공연들도 계속 소식 받고 싶은 별개 목적이라 유지)
 async def remove_concert_follow(db: AsyncSession, user_id: UUID, concert_id: UUID) -> None:
     result = await db.execute(select(ConcertFollow).where(ConcertFollow.user_id == user_id))
     row = result.scalar_one_or_none()
@@ -164,7 +164,7 @@ async def remove_concert_follow(db: AsyncSession, user_id: UUID, concert_id: UUI
 
 # 찜 공연 중 종료된 공연을 매일 배치로 자동 해제 (스케줄러 호출).
 # "종료" 기준은 sync_ticket_statuses와 동일(end_date+15h < now). 전체 콘서트
-# 대신 찜된 concert_id만 모아 대조해 스캔량을 줄임.
+# 대신 찜된 concert_id만 모아 대조해 스캔량을 줄임
 async def cleanup_ended_concert_follows(db: AsyncSession) -> None:
     now = datetime.now(timezone.utc)
     result = await db.execute(select(ConcertFollow))
@@ -213,7 +213,7 @@ _DEFAULT_NEWS_FEED_LIMIT = 200
 # D-day(공연 당일)/지나간 공연은 소식에서 아예 안 보이게 필터링. NewsFeed는 한 번 만들어지면
 # 안 지워지는 정책이라(팔로우 해제해도 유지) 조회 시점 기준으로 매번 다시 걸러야 함.
 # start_date는 "그 날짜의 KST 자정을 UTC로 표기"한 값이라(예: KST 9/10 → 9/10 00:00+00
-# 저장), 오늘 KST 날짜도 같은 방식으로 만들어야 날짜 하나 단위로 정확히 비교됨.
+# 저장), 오늘 KST 날짜도 같은 방식으로 만들어야 날짜 하나 단위로 정확히 비교됨
 async def get_news_feed(
     db: AsyncSession, user_id: UUID, limit: int = _DEFAULT_NEWS_FEED_LIMIT, offset: int = 0
 ) -> list[NewsFeed]:

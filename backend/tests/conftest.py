@@ -18,7 +18,7 @@ if sys.platform == 'win32':
 
 # 세션 시작 시 1회 로컬 dev DB를 비운다 - 이 DB가 dev용으로도 쓰여 테스트마다 데이터가
 # 누적되면 아티스트명 퍼지매칭 오탐 확률이 올라감. host가 localhost/127.0.0.1이 아니면
-# 실행하지 않음(원격/프로덕션에 TRUNCATE가 나가는 참사 방지).
+# 실행하지 않음(원격/프로덕션에 TRUNCATE가 나가는 참사 방지)
 @pytest_asyncio.fixture(scope="session", loop_scope="session", autouse=True)
 async def _clean_db_before_session():
     from app.core.config import settings
@@ -39,11 +39,9 @@ async def _clean_db_before_session():
         if tables:
             await conn.execute(text(f"TRUNCATE TABLE {', '.join(tables)} RESTART IDENTITY CASCADE"))
 
-    # 이 픽스처는 세션 스코프 이벤트 루프에서 도는데, 각 테스트는 함수 스코프 이벤트 루프를
-    # 쓴다(pytest.ini의 asyncio_default_fixture_loop_scope = function). engine이 여기서
-    # 세션 루프에 연결을 맺어두면 이후 테스트들이 다른 루프에서 그 커넥션을 재사용하려다
-    # "attached to a different loop" 에러가 남 - 여기서 바로 dispose해서 다음 사용(각
-    # 테스트의 함수 스코프 루프) 시 새 커넥션을 새로 맺게 한다(_reset_db_pool과 같은 이유).
+    # 이 픽스처는 세션 루프에서, 각 테스트는 함수 스코프 루프에서 돎(asyncio_default_fixture_loop_scope
+    # = function). 세션 루프에 맺은 연결을 다른 루프에서 재사용하면 "attached to a different loop"가 나서
+    # 바로 dispose해 테스트마다 새로 맺게 함(_reset_db_pool과 같은 이유)
     await engine.dispose()
     print(f"\n[conftest] 테스트 세션 시작 전 로컬 DB 초기화 완료 ({len(tables)}개 테이블)")
 
@@ -79,12 +77,9 @@ def _reset_apple_link_miss_cache():
     yield
 
 
-# 티켓 등록(POST /tickets)이 백그라운드로 Last.fm 장르 즉시 캐싱(ensure_artist_genres_cached)을
-# 트리거하는데, 이걸 기본으로 막아두지 않으면 티켓을 만드는 모든 테스트가 로컬 .env의 진짜
-# LASTFM_API_KEY로 실제 네트워크 호출을 하게 됨(느려지고, 테스트용 아티스트명이 실제 캐시
-# 테이블에 쌓임). fetch_top_tags 자체를 patch하지 않고 API 키만 빈 값으로 덮어써서, 이 함수의
-# "키 없으면 빈 리스트" 동작(정상 동작)을 그대로 타게 함 - fetch_top_tags 내부 로직을 직접
-# 테스트하는 케이스는 거기서 다시 settings.LASTFM_API_KEY를 patch해서 오버라이드하면 됨
+# 티켓 등록이 백그라운드로 Last.fm 장르 캐싱을 부르므로, 막지 않으면 모든 티켓 테스트가 .env의 진짜 키로
+# 실제 호출을 함(느리고 테스트 아티스트가 캐시에 쌓임). API 키만 비워 "키 없으면 빈 리스트" 경로를 타게 하고,
+# fetch_top_tags 자체를 테스트할 땐 거기서 settings.LASTFM_API_KEY를 다시 patch함
 @pytest.fixture(autouse=True)
 def _stub_lastfm_genre_fetch():
     with patch("app.services.lastfm.settings.LASTFM_API_KEY", ""):
@@ -176,7 +171,7 @@ def kopis_mock(content: bytes, status_code: int = 200):
 
 # GET /notifications가 이제 is_sent=True(실제 발송된 것)만 돌려주도록 바뀜(진짜
 # "받은 알림함"으로 만들어달라는 요청). 그래서 "언제/무엇이 예약됐는지" 스케줄링
-# 자체를 검증하던 기존 테스트들은 API 대신 이 헬퍼로 DB를 직접 봐야 함.
+# 자체를 검증하던 기존 테스트들은 API 대신 이 헬퍼로 DB를 직접 봐야 함
 async def _get_notifications_from_db(token: str) -> list[dict]:
     from app.core.database import AsyncSessionLocal
     from app.models.notification import Notification

@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../widgets/news_card_reason.dart';
 import '../services/news_list_service.dart';
 import '../services/news_card_identity.dart';
 
@@ -7,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:ticketdiary/models/news_model.dart';
 import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/favorites_store.dart';
-import 'package:ticketdiary/services/news_cache_store.dart';
 import 'package:ticketdiary/services/social_service.dart';
 import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/screen/diary_screen.dart'
@@ -219,8 +219,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // 화면 초기화 시 데이터 호출 시작. 진입 시 페이지 넘김은 이제 이
     // 로딩을 기다리지 않고 곧바로 이 화면을 드러내며, 로딩 중에는 아래
     // 소식 본문 위에 백색 유리 글레어를 씌웠다가 로딩이 끝나면 걷어냅니다.
-    // [백엔드 수정] 소식 탭 캐싱 비활성화(정확도 우선, 코드는 보존) - 직접 호출로 대체.
-    // _newsFuture = _loadNewsWithCache();
+    // 진입 시 캐시 대신 최신 목록을 조회합니다.
     _newsFuture = _loadNews();
     NewsListService.updates.addListener(_onNewsListUpdated);
     _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -369,7 +368,6 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     });
 
     // [백엔드 수정] 소식 탭 캐싱을 껐으므로(위 initState 참고) 여기도 동일하게 직접 호출.
-    // _fetchAndCacheNews()
     _loadNews()
         .then((items) => markReady(Future.value(items)))
         .catchError((Object e) => markReady(Future.error(e)));
@@ -381,46 +379,6 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       _phase = _FlipPhase.toNews;
     });
     _slide.reverse(from: 1); // 1 → 0: 풀탭이 왼쪽으로 돌아오며 역체커보드.
-  }
-
-  /// 캐시가 있으면 즉시 그걸로 화면을 채우고, 그 뒤 조용히 최신 데이터를
-  /// 다시 불러와 캐시와 화면을 함께 갱신합니다("stale while revalidate").
-  /// 캐시가 없으면(첫 방문 등) 기존처럼 네트워크 응답을 기다립니다.
-  Future<List<NewsModel>> _loadNewsWithCache() async {
-    // FavoritesStore.load()/syncFromServer()는 이미 로드/동기화됐으면 곧장
-    // 반환하므로(멱등), 여기서 먼저 호출해도 안전합니다.
-    // [백엔드 수정] syncFromServer() 호출 추가.
-    await FavoritesStore.instance.load();
-    await FavoritesStore.instance.syncFromServer();
-    final cached = await NewsCacheStore.instance.load(
-      favoritesRevision: FavoritesStore.instance.revision,
-    );
-    if (cached != null && cached.isNotEmpty) {
-      unawaited(_refreshInBackground());
-      return cached;
-    }
-    return _fetchAndCacheNews();
-  }
-
-  Future<void> _refreshInBackground() async {
-    try {
-      final fresh = await _fetchAndCacheNews();
-      if (!mounted) return;
-      setState(() => _newsFuture = Future.value(fresh));
-    } catch (_) {
-      // 백그라운드 갱신 실패는 조용히 무시합니다 — 캐시된 화면을 그대로 둡니다.
-    }
-  }
-
-  Future<List<NewsModel>> _fetchAndCacheNews() async {
-    final items = await _loadNews();
-    unawaited(
-      NewsCacheStore.instance.save(
-        items,
-        favoritesRevision: FavoritesStore.instance.revision,
-      ),
-    );
-    return items;
   }
 
   Future<List<NewsModel>> _loadNews() => NewsListService().load();
@@ -683,7 +641,6 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       actionLabel: '다시 시도',
       onAction: () {
         // [백엔드 수정] 소식 탭 캐싱을 껐으므로(initState 참고) 여기도 직접 호출.
-        // setState(() => _newsFuture = _fetchAndCacheNews());
         setState(() => _newsFuture = _loadNews());
         _armGlassReveal(_newsFuture);
       },
@@ -1242,6 +1199,14 @@ class _PolaroidCard extends StatelessWidget {
             child: Center(
               child: MaskingTape(tint: _tapeTint, angle: -angle * 2 - 0.04),
             ),
+          ),
+          // 내부 레이아웃을 밀지 않고 종이 윗변과 배경에 걸쳐 놓습니다.
+          Positioned(
+            top: 0,
+            left: 6,
+            right: data.isRead ? 0 : context.rs(30) + 4,
+            height: 20,
+            child: NewsCardReason(data: data),
           ),
           // 안 읽은 소식 도장(상세를 열면 사라짐)
           if (!data.isRead)

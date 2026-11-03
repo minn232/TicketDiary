@@ -211,7 +211,7 @@ async def _run_crawl_group() -> None:
 
 
 # Last.fm 유사 아티스트 -> 장르 캐싱을 한 job으로 이음. 고정 시각(20분/22분)일 땐 유사도가 22분을
-# 넘기면 두 작업이 Last.fm API를 동시에 호출했음(10/4 실측 약 1분 겹침). 한쪽이 실패해도 나머지는 진행
+# 넘기면 두 작업이 Last.fm API를 동시에 호출했음(약 1분 겹침). 한쪽이 실패해도 나머지는 진행
 async def _run_lastfm_sync() -> None:
     try:
         await sync_artist_similarities()

@@ -23,7 +23,8 @@ class NotificationSettingsModel {
   });
 
   factory NotificationSettingsModel.fromJson(Map<String, dynamic> json) {
-    final ns = json['notification_settings'] as Map<String, dynamic>? ?? const {};
+    final ns =
+        json['notification_settings'] as Map<String, dynamic>? ?? const {};
     return NotificationSettingsModel(
       delivery: ns['delivery'] as bool? ?? true,
       dayBefore: ns['day_before'] as bool? ?? true,
@@ -38,7 +39,8 @@ class NotificationSettingsModel {
 /// 백엔드 `GET/PATCH /settings`(알림 설정 + `show_predicted_setlist`)와
 /// 통신하는 서비스.
 class NotificationSettingsService {
-  NotificationSettingsService({ApiClient? client}) : _client = client ?? ApiClient.instance;
+  NotificationSettingsService({ApiClient? client})
+    : _client = client ?? ApiClient.instance;
 
   final ApiClient _client;
 
@@ -60,19 +62,18 @@ class NotificationSettingsService {
     final json = await _client.patch(
       '/settings',
       body: {
-        if (showPredictedSetlist != null)
-          'show_predicted_setlist': showPredictedSetlist,
+        'show_predicted_setlist': ?showPredictedSetlist,
         if (delivery != null ||
             dayBefore != null ||
             concertDay != null ||
             ticketing != null ||
             newConcert != null)
           'notification_settings': {
-            if (delivery != null) 'delivery': delivery,
-            if (dayBefore != null) 'day_before': dayBefore,
-            if (concertDay != null) 'concert_day': concertDay,
-            if (ticketing != null) 'ticketing': ticketing,
-            if (newConcert != null) 'new_concert': newConcert,
+            'delivery': ?delivery,
+            'day_before': ?dayBefore,
+            'concert_day': ?concertDay,
+            'ticketing': ?ticketing,
+            'new_concert': ?newConcert,
           },
       },
     );

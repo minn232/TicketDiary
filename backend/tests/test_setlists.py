@@ -327,7 +327,7 @@ async def test_fetch_real_setlist_api_502():
 # 페스티벌(아티스트 2명 이상) 실제 셋리스트 자동 생성 테스트
 
 # 아티스트별로 다른 검색 응답을 주는 Setlist.fm 모킹. by_artist에 없는 아티스트로
-# 검색하면 404(데이터 없음)로 취급.
+# 검색하면 404(데이터 없음)로 취급
 def _setlistfm_search_mock_multi(by_artist: dict[str, dict]):
     async def _get(url, headers=None, params=None):
         mock_response = MagicMock()
@@ -423,7 +423,7 @@ async def test_generate_real_setlist_for_festival_no_match_404():
 # concert_lineups에 날짜별 배정이 있으면(같은 아티스트가 여러 날 아니라 날짜마다 다른
 # 아티스트), 그 날짜에 배정 안 된 아티스트는 자동 생성에서 아예 검색 대상에서 빠지는지 테스트.
 # artist_b도 Setlist.fm 데이터를 주지만(모킹), 배정된 아티스트가 artist_a뿐인 날짜라 결과에
-# artist_b 곡이 안 섞여야 함 - 필터링이 실제로 걸린다는 증거.
+# artist_b 곡이 안 섞여야 함 - 필터링이 실제로 걸린다는 증거
 @pytest.mark.asyncio
 async def test_generate_real_setlist_scoped_to_date_lineup():
     artist_a = "우주여행자밴드"
@@ -704,7 +704,7 @@ async def test_ticket_setlist_route_without_attended_date_on_multiday_concert_40
 
 # 실제 셋리스트 자동 채움 백필 잡(retry_real_setlist_generation) 테스트.
 # _create_concert가 KOPIS mock으로 항상 미래(2030.06.01) 날짜로 만드니, 여기서는 직접 DB에서
-# start_date/end_date를 원하는 시점으로 옮겨서 "이미 끝난 공연"을 재현함.
+# start_date/end_date를 원하는 시점으로 옮겨서 "이미 끝난 공연"을 재현함
 async def _set_concert_dates(concert_id: str, start: datetime, end: datetime) -> None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))
@@ -869,7 +869,7 @@ async def test_retry_real_setlist_generation_retries_empty_attempt_row():
 
 # ---- 조회 시점 실제 셋리스트 확인 (check_real_setlist_on_view) ----
 # 자동 백필(14일 창)을 놓친 공연도, 사용자가 "공연 후" 화면을 열 때마다(티켓 기준 실제
-# 셋리스트 GET) 비어있으면 백그라운드로 한 번 더 채워보기를 시도하는 기능.
+# 셋리스트 GET) 비어있으면 백그라운드로 한 번 더 채워보기를 시도하는 기능
 
 # 같은 공연·날짜 검색이 도는 중에 또 조회돼도 검색을 겹쳐 돌리지 않는지(끝나면 다시 가능) 테스트
 @pytest.mark.asyncio
@@ -1062,7 +1062,7 @@ async def test_get_ticket_setlist_never_overwrites_user_edited_empty_setlist():
 # ---- Setlist.fm 검색 별칭 폴백 ----
 # 콘서트에 저장된 원어 표기(예: 한자/가나)로는 Setlist.fm 검색이 0건이어도, 우리 DB에
 # 이미 저장된 MusicBrainz 별칭(예: 로마자 표기)으로 재시도하면 찾을 수 있는 실제 사례
-# ("ずっと真夜中でいいのに。" -> Setlist.fm엔 "ZUTOMAYO"로만 검색됨) 대응 테스트.
+# ("ずっと真夜中でいいのに。" -> Setlist.fm엔 "ZUTOMAYO"로만 검색됨) 대응 테스트
 
 # 원어 표기로 검색하면 0건이지만 별칭으로 재시도하면 찾아지는지 테스트
 @pytest.mark.asyncio

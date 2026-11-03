@@ -1,6 +1,6 @@
 # kopis_cross_check.py의 순수 비교 로직만 단위 테스트 (DB/네트워크 불필요).
 # KOPIS 재조회 자체는 kopis.py의 기존 _fetch_kopis_detail_data를 그대로 재사용하므로 여기서
-# 따로 검증하지 않음.
+# 따로 검증하지 않음
 
 from scripts.ongoing.kopis_cross_check import _is_covered
 

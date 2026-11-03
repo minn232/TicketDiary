@@ -8,7 +8,7 @@ class SongEntry(BaseModel):
     name: str
     encore: bool = False
     # 페스티벌처럼 아티스트가 여럿인 공연에서, 이 곡이 누구 예상/실제 셋리스트
-    # 소속인지 표시. 단독 공연이면 그냥 None(불필요).
+    # 소속인지 표시. 단독 공연이면 그냥 None(불필요)
     artist: str | None = None
     # 곡 출처 - "representative"면 과거 셋리가 없어 대신 채운 대표곡(화면에서 예상 셋리와
     # 구분 표시), None이면 Setlist.fm 셋리 기반
@@ -51,7 +51,7 @@ class RealSetlistResponse(BaseModel):
 
     # 실제 셋리스트 조회 응답. row가 없어도(Setlist.fm 매칭 실패 등) id=None/songs=[]로
     # 200을 반환할 수 있음 - artist_names는 그 경우에도 채워져서 프론트가 아티스트별
-    # 안내 문구를 보여줄 수 있음.
+    # 안내 문구를 보여줄 수 있음
     id: UUID | None = None
     concert_id: UUID
     performance_date: date
@@ -86,7 +86,7 @@ class PreSetlistResponse(BaseModel):
     is_user_edited: bool
     edited_user_nickname: str | None
     # RealSetlistResponse와 동일 패턴 - 프론트가 단독 공연에서 song.artist가
-    # 비어있는 곡을 음악앱 검색으로 연결할 때 폴백 아티스트로 씀.
+    # 비어있는 곡을 음악앱 검색으로 연결할 때 폴백 아티스트로 씀
     artist_names: list[str] = []
 
 

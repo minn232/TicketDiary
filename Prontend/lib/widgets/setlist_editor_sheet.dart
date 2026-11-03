@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_back_handler.dart';
 import '../models/setlist.dart';
 
 // [백엔드 수정]
@@ -40,6 +41,8 @@ class SetlistEditorSheet extends StatefulWidget {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
       backgroundColor: _paperColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
@@ -232,7 +235,27 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => DiscardChangesGuard(
+    isSaving: () => _saving,
+    isDirty: () {
+      if (_newSongController.text.trim().isNotEmpty ||
+          _songs.length != widget.initialSongs.length) {
+        return true;
+      }
+      for (var i = 0; i < _songs.length; i++) {
+        final initial = widget.initialSongs[i];
+        if (_controllers[i].text != initial.name ||
+            _songs[i].encore != initial.encore ||
+            _songs[i].artist != initial.artist) {
+          return true;
+        }
+      }
+      return false;
+    },
+    child: _buildEditor(context),
+  );
+
+  Widget _buildEditor(BuildContext context) {
     final viewInsets = MediaQuery.viewInsetsOf(context);
     return Padding(
       padding: EdgeInsets.only(bottom: viewInsets.bottom),
@@ -266,6 +289,12 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
                           color: _ink,
                         ),
                       ),
+                    ),
+                    TextButton(
+                      onPressed: _saving
+                          ? null
+                          : () => Navigator.of(context).maybePop(),
+                      child: const Text('취소'),
                     ),
                     TextButton(
                       onPressed: _saving ? null : _handleSave,

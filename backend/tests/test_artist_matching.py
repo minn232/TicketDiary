@@ -106,11 +106,8 @@ def test_normalize_romanization_does_not_false_positive_different_person():
 
 
 def test_normalize_romanization_skips_when_both_sides_are_hangul():
-    # 실사례(admin 신규등록 버그): "김중연"을 신규 등록하려는데 전혀 다른 사람인 "김정균"과
-    # 병합돼버림 - 원문 fuzz.ratio는 66.7%(안 걸림)인데, 로마자 변환하면 "중"/"정"처럼 다른
-    # 음절이 근사 로마자표에서 우연히 겹쳐 95% 이상으로 잘못 매치됐던 게 원인. 둘 다 한글이면
-    # 로마자 경유 비교를 아예 안 태우도록 고쳐서, 서로 다른 사람이 같은 canonical로 조용히
-    # 흡수되지 않아야 함
+    # 실사례(admin 신규등록 버그): "김중연"이 다른 사람인 "김정균"과 병합됨 - 원문 fuzz.ratio는 66.7%인데
+    # 로마자로 바꾸면 "중"/"정"이 겹쳐 95% 이상으로 매치됐음. 둘 다 한글이면 로마자 비교를 안 태워야 함
     known = {"김정균"}
     result = normalize_artist_names(["김중연"], known)
     assert result == ["김중연"]
@@ -736,6 +733,51 @@ async def test_crawl_result_also_replaces_solo_kopis_sourced_artist():
     assert concert.artist_name == [crawl_name]
 
 
+# 검수된 공연은 1회성 백필로만 콜백이 오는데, artist_name은 그대로 두고 lineup도 검수된 아티스트의
+# 출연일만 받아야 함 - 안 그러면 사람이 고친 아티스트가 바뀌고 검수 표시까지 풀림
+@pytest.mark.asyncio
+async def test_crawl_result_keeps_artist_for_reviewed_concert():
+    token = await _get_token()
+    reviewed_name = f"검수확정명_{uuid.uuid4().hex[:6]}"
+    concert_id = await _create_concert(f"PF_CR_REVIEWED_{uuid.uuid4().hex[:6]}", reviewed_name, token)
+    reviewed_at = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(concert_id)).values(ai_reviewed_at=reviewed_at)
+        )
+        await db.commit()
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={
+                    "artist_name": [f"크롤다른이름_{uuid.uuid4().hex[:6]}"],
+                    "lineup": [
+                        {"artist": reviewed_name, "performance_date": "2030-06-02"},
+                        {"artist": "크롤다른이름", "performance_date": "2030-06-01"},
+                    ],
+                    "ticketing_date": "2030-05-01",
+                    "timetable": [{"date": "2030-06-01", "time": "18:00", "stage": None, "event": "입장"}],
+                },
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+    updated = res.json()["updated"]
+    assert "ticketing_date" in updated and "timetable" in updated
+    assert "artist_name" not in updated and "lineup" in updated
+
+    async with AsyncSessionLocal() as db:
+        concert = (await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))).scalar_one()
+        lineup_rows = (
+            await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))
+        ).scalars().all()
+    assert concert.artist_name == [reviewed_name]
+    assert concert.ai_reviewed_at is not None
+    assert [(r.artist, r.performance_date) for r in lineup_rows] == [(reviewed_name, date(2030, 6, 2))]
+
+
 # 다인원(2명+)/페스티벌 공연은 크롤링 결과를 처음 받으면 1회 교체(크롤링이 KOPIS보다 정보가
 # 많고 재시도도 여러 번이라 더 신뢰할 만하다는 사용자 판단) - 그 다음부터는 합집합만
 # (merge_crawl_artist_names 참고)
@@ -873,29 +915,3 @@ async def test_crawl_result_queues_even_when_nothing_else_changed():
         )
         row = result.scalar_one()
     assert row.status == "pending"
-
-
-# admin이 검수 완료로 표시해둔 공연이라도, 자동 파이프라인(크롤링 웹훅)이 artist_name을 실제로
-# 바꾸면 검수 상태가 무효화(admin_reviewed_at=None)돼야 함 - 최신 데이터 기준을 유지하기 위함
-@pytest.mark.asyncio
-async def test_crawl_result_clears_admin_review_when_artist_name_changes():
-    token = await _get_token()
-    concert_id = await _create_concert(f"PF_CR_REVIEWCLEAR_{uuid.uuid4().hex[:6]}", "기존아티스트", token)
-
-    async with AsyncSessionLocal() as db:
-        concert = await db.get(Concert, uuid.UUID(concert_id))
-        concert.admin_reviewed_at = datetime.now(timezone.utc)
-        await db.commit()
-
-    with patch("app.core.deps.settings") as mock_settings:
-        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            await ac.post(
-                f"/api/v1/concerts/{concert_id}/crawl-result",
-                json={"artist_name": ["새로크롤링된아티스트"]},
-                headers=_llm_headers(),
-            )
-
-    async with AsyncSessionLocal() as db:
-        concert = await db.get(Concert, uuid.UUID(concert_id))
-    assert concert.admin_reviewed_at is None

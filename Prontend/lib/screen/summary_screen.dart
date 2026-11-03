@@ -1,3 +1,4 @@
+import '../widgets/app_back_handler.dart';
 import '../services/sound_effect_service.dart';
 import 'dart:async';
 
@@ -268,7 +269,16 @@ class _SummaryScreenState extends State<SummaryScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => AppBackHandler(
+    canHandle: () => !_calendarMode,
+    onBack: () => setState(() {
+      _calendarMode = true;
+      _page = 0;
+    }),
+    child: _buildFrame(context),
+  );
+
+  Widget _buildFrame(BuildContext context) {
     // 실제 결산탭처럼 일기 프레임 안에 그림(옆 인덱스 탭은 결산 탭 활성)
     return DiaryPageFrame(
       isTabRoot: true,
@@ -293,18 +303,34 @@ class _SummaryScreenState extends State<SummaryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: _ModeButton(
-                      label: _calendarMode ? '캘린더' : '$_periodLabel 보고서',
-                      active: true,
-                      onTap: () {
-                        unawaited(
-                          SoundEffectService.instance.play(SoundEffect.bookSip),
-                        );
-                        _advanceSummaryMode();
-                      },
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _ModeButton(
+                          label: _calendarMode ? '캘린더' : '보고서',
+                          cornerRadius: 6,
+                          active: true,
+                          onTap: () {
+                            _playSwitchSound();
+                            setState(() {
+                              _calendarMode = !_calendarMode;
+                              _page = 0;
+                              if (!_calendarMode) _period = '6m';
+                            });
+                            if (!_calendarMode) _load();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ModeButton(
+                          label: _calendarMode ? _todayLabel : _periodLabel,
+                          showArrow: false,
+                          active: !_calendarMode,
+                          onTap: _calendarMode ? null : _advancePeriod,
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   Expanded(child: _content()),
@@ -317,32 +343,26 @@ class _SummaryScreenState extends State<SummaryScreen> {
     );
   }
 
-  void _advanceSummaryMode() {
-    if (_calendarMode) {
-      setState(() {
-        _calendarMode = false;
-        _period = '6m';
-        _page = 0;
-      });
-      _load();
-    } else if (_period == '6m') {
-      setState(() {
-        _period = '1y';
-        _page = 0;
-      });
-      _load();
-    } else if (_period == '1y') {
-      setState(() {
-        _period = 'all';
-        _page = 0;
-      });
-      _load();
-    } else {
-      setState(() {
-        _calendarMode = true;
-        _page = 0;
-      });
-    }
+  String get _todayLabel {
+    final today = DateTime.now();
+    return '${today.year}.${today.month.toString().padLeft(2, '0')}.${today.day.toString().padLeft(2, '0')}';
+  }
+
+  void _playSwitchSound() {
+    unawaited(SoundEffectService.instance.play(SoundEffect.bookSip));
+  }
+
+  void _advancePeriod() {
+    _playSwitchSound();
+    setState(() {
+      _period = switch (_period) {
+        '6m' => '1y',
+        '1y' => 'all',
+        _ => '6m',
+      };
+      _page = 0;
+    });
+    _load();
   }
 }
 
@@ -354,37 +374,57 @@ class _ModeButton extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.showArrow = true,
+    this.cornerRadius = 18,
   });
+  final bool showArrow;
+  final double cornerRadius;
   final String label;
   final bool active;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) => Material(
-    color: active ? summaryInk : summaryPaper,
-    borderRadius: BorderRadius.circular(18),
-    elevation: 3,
+    color: active ? summaryInk : summaryInk.withValues(alpha: .08),
+    borderRadius: BorderRadius.circular(cornerRadius),
+    elevation: active ? 3 : 0,
     shadowColor: Colors.black.withValues(alpha: .22),
     child: InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(cornerRadius),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            Icon(
-              Icons.swap_horiz_rounded,
-              size: 18,
-              color: active ? summaryPaper : summaryInk,
-            ),
-            const SizedBox(width: 7),
-            Text(
-              label,
-              style: TextStyle(
-                color: active ? summaryPaper : summaryInk,
-                fontWeight: FontWeight.bold,
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: active && showArrow ? 23 : 0,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: active
+                        ? summaryPaper
+                        : summaryInk.withValues(alpha: .45),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ),
             ),
+            if (active && showArrow)
+              const Positioned(
+                left: 0,
+                child: Icon(
+                  Icons.swap_horiz_rounded,
+                  size: 18,
+                  color: summaryPaper,
+                ),
+              ),
           ],
         ),
       ),
