@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../services/sound_effect_service.dart';
 
 import 'diary_route.dart';
+import 'diary_tab_flip_route.dart';
 
 /// 인덱스 탭(다이어리/소식/결산/설정) 전환을 조율합니다.
 ///
@@ -157,6 +158,8 @@ class TabNavCoordinator {
       } catch (_) {
         // 타임아웃/예외여도 전환 자체는 막지 않고 계속 진행.
       }
+      // [백엔드 수정] 퇴장 연출로 화면이 바뀌었으니 미리 찍어 둔 사진은 버림.
+      DiaryTabFlipTransition.invalidatePrecapture();
     }
 
     final navigator = navigatorKey.currentState;

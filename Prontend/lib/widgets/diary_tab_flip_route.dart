@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -111,7 +112,58 @@ class DiaryTabFlipTransition extends StatefulWidget {
   );
 
   /// 지금 그려진 화면 전체를 찍습니다. 못 찍으면 null(빈 속지로 폴백).
+  // [백엔드 수정] 미리 찍어 둔 사진이 아직 유효하면 그걸 씀(누르는 순간 찍던 60~90ms 제거).
   static ui.Image? captureScreen() {
+    final pre = _precaptured;
+    final firstFrame = _firstFrameAfterPrecapture;
+    if (pre != null &&
+        (firstFrame == null || firstFrame.elapsed <= _precapturePressWindow)) {
+      return pre.clone();
+    }
+    return _snapshotScreen();
+  }
+
+  // [백엔드 수정] 화면이 멈추면 미리 찍어 둠 - 찍은 뒤 프레임이 없거나, 누르는 동안(0.3초 안)에만 있었으면 유효.
+  static const Duration _precaptureIdle = Duration(milliseconds: 500);
+  static const Duration _precapturePressWindow = Duration(milliseconds: 300);
+  static ui.Image? _precaptured;
+  static Stopwatch? _firstFrameAfterPrecapture;
+  static Timer? _precaptureTimer;
+  static bool _precaptureStarted = false;
+
+  /// [백엔드 수정] 미리 찍기 시작(앱에서 한 번).
+  static void startPrecapture() {
+    if (_precaptureStarted) return;
+    _precaptureStarted = true;
+    SchedulerBinding.instance.addPersistentFrameCallback((_) {
+      if (_precaptured != null) {
+        _firstFrameAfterPrecapture ??= Stopwatch()..start();
+      }
+      _precaptureTimer?.cancel();
+      _precaptureTimer = Timer(_precaptureIdle, _precaptureNow);
+    });
+  }
+
+  /// [백엔드 수정] 떠나기 전 연출처럼 미리 찍은 뒤 화면이 바뀌는 경우 버림.
+  static void invalidatePrecapture() {
+    _precaptured?.dispose();
+    _precaptured = null;
+    _firstFrameAfterPrecapture = null;
+  }
+
+  static void _precaptureNow() {
+    if (_precaptured != null && _firstFrameAfterPrecapture == null) return;
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      return;
+    }
+    final shot = _snapshotScreen();
+    if (shot == null) return;
+    _precaptured?.dispose();
+    _precaptured = shot;
+    _firstFrameAfterPrecapture = null;
+  }
+
+  static ui.Image? _snapshotScreen() {
     final context = screenBoundaryKey.currentContext;
     final boundary = context?.findRenderObject();
     if (context == null ||

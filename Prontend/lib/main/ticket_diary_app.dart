@@ -85,6 +85,8 @@ class TicketDiaryApp extends StatelessWidget {
       navigatorKey: _navigatorKey,
       routeBuilder: _tabRoute,
     );
+    // [백엔드 수정] 탭 넘김용 화면 사진을 화면이 멈춰 있을 때 미리 찍어 둠.
+    DiaryTabFlipTransition.startPrecapture();
 
     return OrientationPolicy(
       child: MaterialApp(
