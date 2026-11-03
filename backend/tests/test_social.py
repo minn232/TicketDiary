@@ -9,6 +9,7 @@ from sqlalchemy import update
 from app.main import app
 from app.core.database import AsyncSessionLocal
 from app.models.concert import Concert
+from app.models.ticket import Ticket
 from app.services.social import cleanup_ended_concert_follows
 from conftest import _get_token, kopis_mock
 
@@ -615,6 +616,40 @@ async def test_news_feed_excludes_dday_and_past_concerts():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.get("/api/v1/social/feed", headers=headers)
     assert res.json() == [], "지나간 공연은 소식에 안 보여야 함"
+
+
+# 티켓 등록한 공연은 소식에서 제외 (여러 날 공연은 하루만 등록해도 전체 제외) 테스트
+@pytest.mark.asyncio
+async def test_news_feed_excludes_ticketed_concert():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        me = await ac.get("/api/v1/auth/me", headers=headers)
+    user_id = uuid.UUID(me.json()["id"])
+    artist_name = f"티켓제외아티스트_{uuid.uuid4().hex}"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch(
+            "/api/v1/social/artists",
+            json={"artists": [{"artist_name": artist_name}]},
+            headers=headers,
+        )
+
+    # 2030.06.01~06.30 여러 날 공연 두 개 중 하나만 티켓 등록
+    ticketed_id = await _fetch_concert(f"PF_FEED_{uuid.uuid4().hex[:8]}", artist_name, token)
+    other_id = await _fetch_concert(f"PF_FEED_{uuid.uuid4().hex[:8]}", artist_name, token)
+    async with AsyncSessionLocal() as db:
+        db.add(Ticket(
+            user_id=user_id,
+            concert_id=uuid.UUID(ticketed_id),
+            attended_date=datetime(2030, 6, 15, tzinfo=timezone.utc),
+        ))
+        await db.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.get("/api/v1/social/feed", headers=headers)
+    concert_ids = {item["concert_id"] for item in res.json()}
+    assert concert_ids == {other_id}, "티켓 등록한 공연은 소식에 안 보여야 함"
 
 
 # 이미 팔로우 중인 아티스트를 재저장(중복 포함)해도 뉴스피드 중복 생성 안 됨 테스트
