@@ -9,9 +9,9 @@ import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../services/external_share_service.dart';
+import 'blog_memo_page.dart';
 import 'concert_after_share_card.dart';
 import 'paper_style.dart';
 import 'responsive_text.dart';
@@ -228,27 +228,15 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
       }
     }
     if (!mounted) return '';
+    // [백엔드 수정] 정리 전이면 감상 메모 버튼으로 안내.
     final message = hasDraft
         ? '글을 복사했어요. 네이버 블로그 본문에 붙여넣어 주세요.'
-        : '자동 작성 글은 준비 중이에요. 네이버 블로그 글쓰기를 엽니다.';
+        : '정리된 글이 아직 없어요. 페이지 아래 감상 메모에 적으면 다음 날 정리돼요.';
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
-    const writeUrl = 'https://blog.naver.com/GoBlogWrite.naver';
-    // 비 HTTP 스킴의 파라미터는 공백이 +로 변환되지 않도록 직접 인코딩합니다.
-    final appUri = Uri.parse(
-      'naversearchapp://inappbrowser?url=${Uri.encodeComponent(writeUrl)}&target=new&version=6',
-    );
-    // 설치 여부 조회 없이 실행 결과로 판단하여, 미설치/플랫폼 오류 모두 웹으로 대체.
-    for (final uri in [appUri, Uri.parse(writeUrl)]) {
-      try {
-        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-          return message;
-        }
-      } catch (_) {
-        // 네이버 앱 실행 실패 후에는 기본 브라우저로 재시도합니다.
-      }
-    }
+    // [백엔드 수정] 네이버 열기는 감상 메모 화면과 같이 씀.
+    if (await openNaverBlogWrite()) return message;
     return hasDraft
         ? '글은 복사했지만 네이버 블로그를 열지 못했어요. 브라우저에서 열어 주세요.'
         : '네이버 블로그를 열지 못했어요. 다시 시도해 주세요.';

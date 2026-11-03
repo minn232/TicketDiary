@@ -37,6 +37,8 @@ import 'concert_after_text_canvas.dart';
 import 'concert_before_page_contents.dart';
 import 'app_network_image.dart';
 import 'artist_identity_sheet.dart';
+import 'blog_memo_page.dart';
+import '../services/blog_draft_service.dart';
 import 'underlined_text.dart';
 import 'setlist_editor_sheet.dart';
 import 'setlist_empty_message.dart';
@@ -1702,6 +1704,25 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   double get _bottomToolReserve =>
       _bottomBarInset + context.rs(_toolButtonHeight) + context.rs(6);
 
+  // [백엔드 수정] 잠금 모드 앞면 왼쪽 아래 모서리에 감상 메모지.
+  Widget _blogMemoCorner() {
+    if (widget.exportMode ||
+        _edit ||
+        _activeMemoKey != null ||
+        widget.setlistTicketId == null) {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      left: context.rs(_isTablet(context) ? 16 : 10),
+      bottom: _bottomBarInset - context.rs(2),
+      child: BlogMemoButton(
+        draft: _blogDraft,
+        unseen: _blogUnseen,
+        onTap: _openBlogMemo,
+      ),
+    );
+  }
+
   /// 앞면 아래쪽 줄: 편집 모드면 모드 표시 양옆에 "사진 추가"/"자동 배치".
   /// 메모를 잡고 있는 동안엔 모드 표시만.
   Widget _frontEditBar() {
@@ -1921,6 +1942,40 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     _loadEnvelopeAccent();
     unawaited(_initLayout());
     _watchTimetableRows();
+    unawaited(_loadBlogDraft());
+  }
+
+  // [백엔드 수정] 아래 줄 감상 메모 버튼 상태(정리 대기/완료 등).
+  BlogDraft? _blogDraft;
+  bool _blogUnseen = false;
+
+  Future<void> _loadBlogDraft() async {
+    final ticketId = widget.setlistTicketId;
+    if (widget.exportMode || ticketId == null) return;
+    try {
+      final draft = await BlogDraftService().get(ticketId);
+      final unseen = await BlogMemoSeen.isUnseen(ticketId, draft);
+      if (!mounted) return;
+      setState(() {
+        _blogDraft = draft;
+        _blogUnseen = unseen;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _openBlogMemo() async {
+    final ticketId = widget.setlistTicketId;
+    if (ticketId == null) return;
+    final draft = await openBlogMemoPage(
+      context,
+      ticketId: ticketId,
+      concertTitle: widget.concertTitle,
+      initial: _blogDraft,
+      showResult: _blogUnseen,
+    );
+    if (!mounted) return;
+    if (draft != null) setState(() => _blogDraft = draft);
+    unawaited(_loadBlogDraft());
   }
 
   /// 뒷면 칸 수를 정하려고 타임테이블 줄 수만 따로 봄(내용은 [_RealTimetableNote]가 그림).
@@ -2110,6 +2165,10 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         if (info != null && info.venueName.isNotEmpty) info.venueName,
       ].join(' · '),
       fileStem: 'ticketdiary_${widget.setlistTicketId ?? 'page'}',
+      // [백엔드 수정] 정리된 블로그 글 연결.
+      loadBlogDraft: widget.setlistTicketId == null
+          ? null
+          : () => loadBlogDraftText(widget.setlistTicketId!),
       pageBuilder: ({required bool back, required bool hideMemos}) =>
           _ScrapbookCanvas(
             key: ValueKey('share_${back}_$hideMemos'),
@@ -3189,6 +3248,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                     builder: (context, value, child) => _activeMemoDimOverlay(),
                   ),
                   _frontEditBar(),
+                  _blogMemoCorner(),
                 ],
               ),
             ),
