@@ -4,12 +4,14 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../models/ticket_info.dart';
 import '../services/ticket_preview_player.dart';
 import '../widgets/now_playing_chip.dart';
 import '../widgets/concert_after_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
+import '../widgets/paper_texture_cache.dart';
 import '../widgets/responsive_text.dart';
 import 'concert_before_overlay.dart';
 
@@ -147,16 +149,38 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
       controller: _controller,
       pageOpacity: _expandedOpacity,
     );
-    _controller.forward().then((_) {
+    unawaited(_forwardAfterWarmUp(otherAudio));
+  }
+
+  // [백엔드 수정] 펼치기 전 페이지를 안 보이게 그려 질감을 미리 구움 - 새로 굽는 게 없는 프레임이 나오면 바로 펼침.
+  static const _warmUpMaxDuration = Duration(milliseconds: 200);
+  static const _warmUpMinFrames = 3;
+  static const _warmUpOpacity = AlwaysStoppedAnimation<double>(.004);
+  bool _warmingUp = true;
+
+  Future<void> _forwardAfterWarmUp(Future<bool> otherAudio) async {
+    final watch = Stopwatch()..start();
+    var frames = 0;
+    var bakes = PaperTextureCache.bakeCount;
+    while (watch.elapsed < _warmUpMaxDuration) {
+      await SchedulerBinding.instance.endOfFrame;
       if (!mounted || _isClosing) return;
-      unawaited(
-        TicketPreviewPlayer.instance.start(
-          widget.ticketInfo?.ticketId,
-          this,
-          otherAudio: otherAudio,
-        ),
-      );
-    });
+      frames++;
+      final baked = PaperTextureCache.bakeCount != bakes;
+      bakes = PaperTextureCache.bakeCount;
+      if (frames >= _warmUpMinFrames && !baked) break;
+    }
+    if (!mounted || _isClosing) return;
+    setState(() => _warmingUp = false);
+    await _controller.forward();
+    if (!mounted || _isClosing) return;
+    unawaited(
+      TicketPreviewPlayer.instance.start(
+        widget.ticketInfo?.ticketId,
+        this,
+        otherAudio: otherAudio,
+      ),
+    );
   }
 
   @override
@@ -261,7 +285,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
 
     final expandedLayer = Positioned.fill(
       child: FadeTransition(
-        opacity: _expandedOpacity,
+        opacity: _warmingUp ? _warmUpOpacity : _expandedOpacity,
         child: FittedBox(
           fit: BoxFit.contain,
           child: SizedBox(

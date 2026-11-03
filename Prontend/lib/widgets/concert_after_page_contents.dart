@@ -3868,10 +3868,8 @@ class _SubtleBoxNoisePainter extends CustomPainter {
     canvas.save();
     canvas.clipPath(paper);
     canvas.drawColor(color, BlendMode.srcOver);
-    HanjiTexturePainter(
-      seed: seed,
-      opacity: textureOpacity,
-    ).paint(canvas, size);
+    // [백엔드 수정] 상자마다 질감을 새로 굽지 않고 공용 반복 타일로 그림.
+    paintHanjiTiled(canvas, size, seed: seed, opacity: textureOpacity);
     canvas.restore();
   }
 
