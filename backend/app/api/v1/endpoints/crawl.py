@@ -177,15 +177,21 @@ async def receive_crawl_result(
         except ValueError:
             logger.warning(f"잘못된 delivery_date 형식: {body.delivery_date}")
 
+    # 검수된 공연은 artist_name을 안 건드리고, lineup도 검수된 아티스트의 출연일만 받음 - 정기
+    # 전송은 검수 공연을 빼고 보내서, 여기 걸리는 건 1회성 백필 스크립트뿐임
+    reviewed = concert.admin_reviewed_at is not None or concert.ai_reviewed_at is not None
+    artist_names = None if reviewed else body.artist_name
+    lineup = body.lineup
+
     # 솔로(1명 이하)는 KOPIS 원본을 새 이름으로 교체, 다인원/페스티벌은 크롤링 결과를 처음
     # 받는 거면 1회 교체 후 그 다음부터 합집합(merge_crawl_artist_names 참고)
     upgraded_to_festival = False
     known_artist_names: set[str] | None = None
-    if body.artist_name or body.lineup:
+    if artist_names or lineup:
         known_artist_names = await get_known_artist_names(db)
 
-    if body.artist_name:
-        merged, newly_seeded = merge_crawl_artist_names(concert, body.artist_name, known_artist_names)
+    if artist_names:
+        merged, newly_seeded = merge_crawl_artist_names(concert, artist_names, known_artist_names)
         if newly_seeded:
             concert.crawl_lineup_seeded_at = datetime.now(timezone.utc)
         if merged != (concert.artist_name or []):
@@ -197,19 +203,25 @@ async def receive_crawl_result(
     # 아티스트별 실제 출연일 upsert(union-only, 삭제 없음) - source="crawl"이 포스터 추출보다
     # 우선순위 높음(app/services/lineup.py). concert.artist_name(방금 병합된 값 포함)까지
     # known_names에 섞어서 표기를 최대한 맞춤
-    if body.lineup:
+    if lineup:
         lineup_known_names = set(known_artist_names or set()) | set(concert.artist_name or [])
-        entries = [e.model_dump() for e in body.lineup]
+        entries = [e.model_dump() for e in lineup]
         lineup_changed = await upsert_concert_lineup(
-            db, concert_id, entries, source="crawl", known_names=lineup_known_names, commit=False
+            db,
+            concert_id,
+            entries,
+            source="crawl",
+            known_names=lineup_known_names,
+            allowed_names=set(concert.artist_name or []) if reviewed else None,
+            commit=False,
         )
         if lineup_changed:
             updated.append("lineup")
 
     # MusicBrainz 정규화 큐잉 - pending row만 적립(외부 호출 없음, 응답 시간과 무관). 원래 이
     # 웹훅은 아티스트명 병합만 하고 큐잉을 안 해서, 크롤링/KOPIS로만 들어온 표기가 정규화 기회를
-    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견).
-    queue_names = await _names_to_queue(db, concert, include_lineup=bool(body.lineup))
+    # 영영 못 받는 구조적 갭이 있었음("HANRORO"가 "한로로"로 안 바뀌던 사례로 발견)
+    queue_names = await _names_to_queue(db, concert, include_lineup=bool(lineup))
     if queue_names:
         # updated가 비어있어도(이번 호출로 바뀐 건 없지만 concert.artist_name엔 이미 값이 있는
         # 경우) 큐잉이 유실되지 않도록 독립적으로 커밋(commit=True, 기본값) - 아래 "if updated"

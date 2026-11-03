@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -229,7 +230,7 @@ async def expand_follow_index_with_group_relations(db: AsyncSession, index: dict
 
 
 # 새로 병합된(또는 이미 저장돼 있는) 원본 표기들을 정규화 대기열에 pending으로 적립.
-# 외부 호출 없음, 이미 큐잉된 표기(unique constraint)는 조용히 스킵 - 웹훅에서 매번 호출해도 안전.
+# 외부 호출 없음, 이미 큐잉된 표기(unique constraint)는 조용히 스킵 - 웹훅에서 매번 호출해도 안전
 async def queue_for_normalization(
     db: AsyncSession, concert_id, names: list[str], *, commit: bool = True
 ) -> None:
@@ -329,7 +330,7 @@ def _display_value(canonical: CanonicalArtist) -> str:
 # concert.artist_name 배열 + 같은 표기를 쓰는 concert_lineups row들의 표기를 display_value로
 # 치환한다(매칭 키인 canonical_name이 아니라 실제 화면에 보일 문자열). concert_lineups는
 # (concert_id, artist, performance_date) unique 제약이 있어서, 치환 대상 자리에 display_value가
-# 이미 있으면 원본 row는 지우고(중복 방지), 없으면 이름만 바꾼다.
+# 이미 있으면 원본 row는 지우고(중복 방지), 없으면 이름만 바꾼다
 async def apply_canonical_replacement(
     db: AsyncSession, concert_id, raw_text: str, display_value: str, *, clear_admin_review: bool = False
 ) -> None:
@@ -467,11 +468,9 @@ async def resolve_artist_suggestion(db: AsyncSession, concert_id, artist_text: s
     return concert
 
 
-# reassign_artist_to_canonical/register_new_canonical_artist가 공유하는 마무리 로직 - target이
-# 기존 canonical이든 방금 새로 만든 canonical이든 이 표기를 target으로 확정 반영하는 절차는
-# 동일함(별칭 정리+concert.artist_name/라인업 교체+정규화 상태 확정). 이 표기가 다른(틀린)
-# canonical의 별칭으로 이미 등록돼 있으면 그것부터 지워야 다음에 같은 표기가 다른 공연에
-# 들어와도 정규화 배치가 또 그쪽으로 안 감
+# reassign_artist_to_canonical/register_new_canonical_artist 공통 마무리 - 별칭 정리 + concert.artist_name/
+# 라인업 교체 + 정규화 상태 확정. 이 표기가 다른(틀린) canonical 별칭으로 있으면 먼저 지워야 다음 공연에서
+# 정규화 배치가 또 그쪽으로 안 감
 async def _finalize_artist_reassignment(
     db: AsyncSession, concert_id, artist_text: str, target: CanonicalArtist
 ) -> Concert:
@@ -507,7 +506,7 @@ async def _finalize_artist_reassignment(
 
 # "텍스트는 정확히 같은데 실존 인물이 다른" 동명이인 오매칭(예: 일본 가수 LiSA 콘서트가
 # 블랙핑크 Lisa로 매칭된 실사례) 강제 수정용 - 이름 재입력으로는 fuzzy/alias 매칭이 또 같은
-# 틀린 canonical로 가버려서 못 고침. admin이 검색으로 직접 고른 canonical_id로 통째로 재지정한다.
+# 틀린 canonical로 가버려서 못 고침. admin이 검색으로 직접 고른 canonical_id로 통째로 재지정한다
 async def reassign_artist_to_canonical(db: AsyncSession, concert_id, artist_text: str, canonical_id) -> Concert:
     concert = await db.get(Concert, concert_id)
     if concert is None:
@@ -930,7 +929,7 @@ async def _artist_still_referenced(db: AsyncSession, names: set[str]) -> bool:
 # 관리자 페이지(아티스트 상세)에서 잘못 만들어진 canonical을 DB에서 완전히 삭제 - concert에서
 # 이름만 지우는 remove_artist_name과 달리 canonical_artists/artist_aliases(cascade)/
 # artist_group_memberships(양방향)까지 지운다. 어느 공연에든 아직 등장하면 거절(먼저 그
-# 공연들에서 이름을 지우고 오게 함) - 콘서트 표기와 canonical/별칭 링크가 안 어긋나게 함.
+# 공연들에서 이름을 지우고 오게 함) - 콘서트 표기와 canonical/별칭 링크가 안 어긋나게 함
 async def delete_canonical_artist(db: AsyncSession, canonical_id) -> None:
     canonical = await db.get(CanonicalArtist, canonical_id)
     if canonical is None:
@@ -1028,7 +1027,7 @@ async def _collapse_members_to_group_names(db: AsyncSession, concert_id) -> None
 # canonical의 mbid로 Wikidata 항목을 찾아 한글 label을 alias로 등록(예: Konomi Suzuki →
 # "스즈키 코노미"). KOPIS 원본이 같은 한글 표기로 큐잉돼 있으면 재검색 없이 이 alias로
 # 바로 matched됨 - "포스터엔 원어, KOPIS엔 한글 음차"로 나뉘어 영구 unconfirmed로 남던
-# 케이스 구제용. 이미 alias 있으면 재조회 안 함, 조회 실패는 조용히 건너뜀(보강 데이터라 무해).
+# 케이스 구제용. 이미 alias 있으면 재조회 안 함, 조회 실패는 조용히 건너뜀(보강 데이터라 무해)
 async def register_wikidata_korean_alias(db: AsyncSession, canonical: CanonicalArtist, client: httpx.AsyncClient) -> None:
     if not canonical.mbid:
         return
@@ -1180,7 +1179,7 @@ async def _process_one(
 # row 목록을 순서대로 정규화 처리하며 결과를 집계(공통 루프). 실패(네트워크 오류 등)는
 # status를 안 바꾸고 pending으로 남겨 다음 실행이 자동 재시도하게 함. commit_each_row=True
 # (기본)면 매 행마다 바로 커밋 - 큰 실행을 한 트랜잭션에 담으면 "idle in transaction" 좀비
-# 커넥션이 무관한 쿼리까지 막는 실장애가 있었음(dry_run은 False로 넘겨 전체 롤백 유지).
+# 커넥션이 무관한 쿼리까지 막는 실장애가 있었음(dry_run은 False로 넘겨 전체 롤백 유지)
 async def _process_rows(
     db: AsyncSession,
     client: httpx.AsyncClient,
@@ -1249,6 +1248,11 @@ async def normalize_pending_artists(limit: int = _DEFAULT_BATCH_LIMIT, *, dry_ru
     return stats
 
 
+# 동시에 2개까지만 - 웹훅이 몰리면(LLM 배치 콜백 수백 건) 작업마다 MusicBrainz 2초 간격 대기열에
+# 서며 세션이 연결을 쥐어 풀이 바닥났었음. 대기는 세션 열기 전이라 기다리는 동안엔 연결을 안 잡음
+_specific_normalization_slots = asyncio.Semaphore(2)
+
+
 # 웹훅 도착 직후 "이번에 새로 큐잉된 이름들"만 즉시 정규화 - fire-and-forget 백그라운드
 # 태스크로 호출(웹훅 응답 이후 실행, 응답을 기다리게 하지 않음). pending 전체를 훑는
 # normalize_pending_artists와 달리 이 콘서트의 이 이름들로만 좁혀서 무관한 콘서트는 안 건드림
@@ -1256,6 +1260,11 @@ async def normalize_specific_artists(concert_id, names: list[str]) -> dict[str, 
     if not names:
         return {"processed": 0, "matched": 0, "unconfirmed": 0, "ambiguous": 0, "error": 0}
 
+    async with _specific_normalization_slots:
+        return await _normalize_specific_artists(concert_id, names)
+
+
+async def _normalize_specific_artists(concert_id, names: list[str]) -> dict[str, int]:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(ArtistNormalizationStatus).where(

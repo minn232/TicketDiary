@@ -416,6 +416,142 @@ async def test_create_ticket_duplicate_409():
     assert res2.status_code == 409
 
 
+# 배송 전 티켓 테스트
+
+# 공연 날짜를 DB에서 직접 옮김(강제 전환/종료 시점을 오늘 기준으로 맞추기 위함)
+async def _move_concert_dates(concert_id: str, start, end) -> None:
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as db:
+        concert = (await db.execute(select(Concert).where(Concert.id == uuid.UUID(concert_id)))).scalar_one()
+        concert.start_date = start
+        concert.end_date = end
+        await db.commit()
+
+
+# 배송 대기로 등록하면 배송 전 티켓이 되고, 배송일을 모르면 공연 14일 전으로 추정되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_awaiting_delivery_estimates_date():
+    concert_id = await _create_concert("PF_T_AWAIT_001")
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "awaiting_delivery": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "before_delivery"
+    assert response.json()["delivery_date"][:10] == "2030-05-18"
+
+
+# 강제 전환 시점(공연 3일 전)이 지난 공연은 배송 대기로 등록해도 바로 공연 전이 되는지 테스트
+@pytest.mark.asyncio
+async def test_create_ticket_awaiting_delivery_too_close_to_concert():
+    from datetime import datetime, timedelta, timezone as tz
+
+    concert_id = await _create_concert("PF_T_AWAIT_002")
+    soon = datetime.now(tz.utc).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=2)
+    await _move_concert_dates(concert_id, soon, soon)
+    token = await _get_token()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "awaiting_delivery": True},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "before_concert"
+    assert response.json()["delivery_date"] is None
+
+
+# 배송 전 티켓이 있을 때 실물을 등록하면 409 대신 같은 티켓이 승격되는지 테스트
+# (배송 대기로 한 번 더 등록하면 그대로 409)
+@pytest.mark.asyncio
+async def test_create_ticket_promotes_before_delivery_ticket():
+    concert_id = await _create_concert("PF_T_AWAIT_003")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        pending = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "awaiting_delivery": True}, headers=headers
+        )
+        again = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "awaiting_delivery": True}, headers=headers
+        )
+        arrived = await ac.post(
+            "/api/v1/tickets",
+            json={"concert_id": concert_id, "seat_type": "R석", "price": 110000, "start_time": "18:00"},
+            headers=headers,
+        )
+        duplicate = await ac.post("/api/v1/tickets", json={"concert_id": concert_id}, headers=headers)
+
+    assert again.status_code == 409
+    assert arrived.status_code == 201
+    data = arrived.json()
+    assert data["id"] == pending.json()["id"]
+    assert data["status"] == "before_concert"
+    assert data["seat_type"] == "R석"
+    assert data["price"] == 110000
+    assert data["start_time"] == "18:00"
+    assert duplicate.status_code == 409
+
+
+# 카드 터치/"받았어요"로 배송 전 티켓을 스캔 없이 넘길 수 있는지 테스트
+@pytest.mark.asyncio
+async def test_mark_ticket_delivered():
+    concert_id = await _create_concert("PF_T_AWAIT_004")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        pending = await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "awaiting_delivery": True}, headers=headers
+        )
+        response = await ac.post(f"/api/v1/tickets/{pending.json()['id']}/delivered", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "before_concert"
+
+
+# 상태 배치가 강제 전환 시점이 된 배송 전 티켓은 공연 전, 끝난 공연은 공연 후로 넘기는지 테스트
+@pytest.mark.asyncio
+async def test_sync_releases_overdue_before_delivery_tickets():
+    from datetime import datetime, timedelta, timezone as tz
+    from app.core.database import AsyncSessionLocal
+    from app.services.ticket import sync_ticket_statuses
+
+    near_id = await _create_concert("PF_T_AWAIT_005")
+    ended_id = await _create_concert("PF_T_AWAIT_006")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        near = await ac.post("/api/v1/tickets", json={"concert_id": near_id, "awaiting_delivery": True}, headers=headers)
+        ended = await ac.post("/api/v1/tickets", json={"concert_id": ended_id, "awaiting_delivery": True}, headers=headers)
+    assert near.json()["status"] == ended.json()["status"] == "before_delivery"
+
+    today = datetime.now(tz.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    await _move_concert_dates(near_id, today + timedelta(days=2), today + timedelta(days=2))
+    await _move_concert_dates(ended_id, today - timedelta(days=5), today - timedelta(days=5))
+
+    async with AsyncSessionLocal() as db:
+        await sync_ticket_statuses(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        near_after = await ac.get(f"/api/v1/tickets/{near.json()['id']}", headers=headers)
+        ended_after = await ac.get(f"/api/v1/tickets/{ended.json()['id']}", headers=headers)
+
+    assert near_after.json()["status"] == "before_concert"
+    assert ended_after.json()["status"] == "after_concert"
+
+
 # 여러 날 하는 공연은 관람일이 다르면 같은 공연에 티켓을 따로 등록할 수 있는지 테스트
 # (관람일이 같거나 한쪽이라도 관람일을 모르면 409)
 @pytest.mark.asyncio

@@ -28,7 +28,7 @@ def _get_s3_client():
     global _s3_client
     if _s3_client is None:
         # 액세스 키가 설정된 경우에만 명시적으로 전달하고, 없으면 boto3 기본 자격증명
-        # 체인(EC2 인스턴스에 연결된 IAM 역할 등)을 사용하도록 둔다.
+        # 체인(EC2 인스턴스에 연결된 IAM 역할 등)을 사용하도록 둔다
         kwargs = {"region_name": settings.AWS_REGION}
         if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
             kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
@@ -90,7 +90,7 @@ def _do_delete(key: str) -> None:
 
 # 유저가 사진을 지우거나(콘서트 사진 교체 포함) 티켓을 통째로 삭제할 때,
 # S3도 같이 삭제. 실패해도 예외를 던지지 않고 로그만
-# 남김(호출부의 주 작업인 DB 갱신을 막지 않기 위함).
+# 남김(호출부의 주 작업인 DB 갱신을 막지 않기 위함)
 async def delete_image(url: str) -> None:
     key = _key_from_url(url)
     if key is None:

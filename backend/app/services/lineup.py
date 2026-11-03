@@ -17,7 +17,8 @@ _SOURCE_PRIORITY = {"poster": 0, "crawl": 1}
 
 # lineup 웹훅 페이로드를 concert_lineups에 union-only(삭제 없음)로 병합 - 새 조합은 추가만
 # 하고, 이미 있는 조합은 더 신뢰도 높은 source가 오면 source만 승격(row 삭제는 안 함, 기존
-# artist_name 합집합 병합과 동일한 방식). entries는 날짜 없는 항목이 이미 걸러진 상태로 옴.
+# artist_name 합집합 병합과 동일한 방식). entries는 날짜 없는 항목이 이미 걸러진 상태로 옴
+# allowed_names가 있으면 정규화 후 그 안에 있는 이름만 반영(검수된 공연에 새 표기가 안 섞이게)
 async def upsert_concert_lineup(
     db: AsyncSession,
     concert_id: UUID,
@@ -25,6 +26,7 @@ async def upsert_concert_lineup(
     source: str,
     known_names: set[str] | None = None,
     *,
+    allowed_names: set[str] | None = None,
     commit: bool = True,
 ) -> bool:
     if not entries:
@@ -45,6 +47,8 @@ async def upsert_concert_lineup(
             d = date.fromisoformat(perf_date_raw)
         except (TypeError, ValueError):
             logger.warning(f"잘못된 lineup performance_date 형식, 건너뜀: {entry}")
+            continue
+        if allowed_names is not None and name not in allowed_names:
             continue
         parsed.append((name, d))
 

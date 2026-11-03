@@ -128,12 +128,14 @@ class SummaryResponse(BaseModel):
 
 
 class RegionalVisit(BaseModel):
+    # 지역별 결산의 공연장 좌표 1곳과 그곳 관람 횟수
     latitude: float
     longitude: float
     count: int
 
 
 class RegionalSummaryResponse(BaseModel):
+    # 지역별 결산(지도용) - unresolved_count는 좌표를 못 찾은 관람 수
     period: Literal["6m", "1y", "all"]
     concert_count: int
     unresolved_count: int

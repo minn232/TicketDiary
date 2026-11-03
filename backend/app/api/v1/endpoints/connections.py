@@ -10,7 +10,7 @@ from app.schemas.connection import (
     ConnectionCardResponse,
     ConnectionConfirmResponse,
     ConnectionRequestResponse,
-    ConnectionResponse,
+    # ConnectionResponse,
     NearbyCodeResponse,
     NearbySightingCreate,
     NearbySightingResponse,
@@ -80,26 +80,25 @@ async def reject_connection_request(
     await connection_service.reject_connection_request(db, current_user.id, connection_id)
 
 
-# 연결 목록
-@router.get("/connections", response_model=list[ConnectionResponse])
-async def list_connections(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await connection_service.list_connections(db, current_user.id)
+# 연결 목록·연결 끊기 - 일회용 만남으로 바뀌어 남는 친구 관계가 없어 꺼 둠
+# @router.get("/connections", response_model=list[ConnectionResponse])
+# async def list_connections(
+#     current_user: User = Depends(get_current_user),
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     return await connection_service.list_connections(db, current_user.id)
+#
+#
+# @router.delete("/connections/{peer_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+# async def delete_connection(
+#     peer_user_id: UUID,
+#     current_user: User = Depends(get_current_user),
+#     db: AsyncSession = Depends(get_db),
+# ):
+#     await connection_service.delete_connection(db, current_user.id, peer_user_id)
 
 
-# 연결 끊기
-@router.delete("/connections/{peer_user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_connection(
-    peer_user_id: UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    await connection_service.delete_connection(db, current_user.id, peer_user_id)
-
-
-# 연결 카드 (우리 사이 / 함께한 기록 / 다음에 같이)
+# 연결 카드 (우리 사이 / 함께한 기록 / 다음에 같이) - 연결 뒤 10분만
 @router.get("/connections/{peer_user_id}/card", response_model=ConnectionCardResponse)
 async def get_connection_card(
     peer_user_id: UUID,

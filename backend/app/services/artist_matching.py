@@ -74,11 +74,9 @@ def compact(text: str) -> str:
     return _NON_ALNUM_RE.sub("", text.lower())
 
 
-# 한글 이름의 로마자 변환 후보를 known_names와 비교해 원문 매칭에서 놓친 한글/로마자 표기
-# 쌍을 찾는다. 예: "김현정" ↔ "Kim Hyunjung". 실측 확인된 사고: "김중연"이 전혀 다른 사람인
-# "김정균"과 로마자로 바꾸면 우연히 비슷해져(다른 음절이 근사 로마자표에서 겹침) 원문
-# 유사도 미달인데도 잘못 병합됨 - 둘 다 한글이면 이 함수 자체를 안 태움(원문 fuzz.ratio가
-# 이미 담당, 로마자 변환은 정보손실이라 오히려 위험함)
+# 한글 이름의 로마자 변환 후보를 known_names와 비교해 원문 매칭에서 놓친 한글/로마자 쌍을 찾음
+# (예: "김현정" ↔ "Kim Hyunjung"). 둘 다 한글이면 안 태움 - "김중연"과 "김정균"이 로마자로는 비슷해져
+# 잘못 병합된 적이 있음(한글끼리는 원문 fuzz.ratio가 담당)
 def _romanization_match(name: str, known_names: set[str]) -> str | None:
     name_has_hangul = contains_hangul(name)
     name_variants = _romanized_variants(name) if name_has_hangul else [name]
@@ -112,7 +110,7 @@ async def get_known_artist_names(db: AsyncSession) -> set[str]:
 
 # 새 아티스트명들을 기존 DB의 유사 표기와 매칭해 정규화(공백/오탈자/대소문자만 흡수) - 한글/
 # 영문처럼 스크립트가 완전히 다른 별칭은 문자열 유사도로 못 잡는 알려진 한계라 자동화 대상
-# 아님. 확정된 브랜드/공연장명 오탐은 매칭 전에 먼저 버림. known_names는 넘기면 재사용(배치용).
+# 아님. 확정된 브랜드/공연장명 오탐은 매칭 전에 먼저 버림. known_names는 넘기면 재사용(배치용)
 def normalize_artist_names(names: list[str], known_names: set[str] | None = None) -> list[str]:
     if known_names is None:
         known_names = set()
@@ -144,7 +142,7 @@ def normalize_artist_names(names: list[str], known_names: set[str] | None = None
 # 기존 아티스트명에 새로 확인된 이름들을 합집합으로 병합(덮어쓰지 않음) - 크롤링/포스터 추출
 # 두 경로가 다른 시점에 채울 수 있고 페스티벌은 1~3차로 라인업이 늘어나므로 먼저 채워진
 # 이름을 안 지우고 새 이름만 더함. replace=True면 KOPIS 원본이 활동명 대신 본명을 주는
-# 경우(존박→박성규)에 대비해 통째로 교체 - "소규모+KOPIS 원본"일 때만(페스티벌엔 적용 금지).
+# 경우(존박→박성규)에 대비해 통째로 교체 - "소규모+KOPIS 원본"일 때만(페스티벌엔 적용 금지)
 def merge_artist_names(
     existing: list[str] | None,
     incoming: list[str],
@@ -158,11 +156,9 @@ def merge_artist_names(
     return sorted(set(existing or []) | set(normalized_incoming))
 
 
-# KOPIS/크롤링/포스터 추출 어느 경로로 들어왔든, 기존 인원이 1명 이하(=KOPIS 원본 하나만 있는
-# 솔로 공연으로 추정)면 union 대신 새로 들어온 이름으로 완전히 교체 - KOPIS raw 출연진에 섞이는
-# 노이즈(본명/예명 중복, MC 등)를 없애려는 목적. 크롤링/포스터 추출 두 웹훅이 도착 순서를
-# 보장 못 하므로 이 함수를 공유해서 순서와 무관하게 동일하게 동작하게 함. 다인원(2명+)/
-# 페스티벌은 그대로 union 유지 - 예전에 무조건 교체해서 라인업이 사라지던 사고가 있어 범위를 좁힘
+# 기존 인원이 1명 이하(KOPIS 원본만 있는 솔로 추정)면 union 대신 새 이름으로 교체 - KOPIS 출연진 노이즈
+# (본명/예명 중복, MC 등) 제거용. 크롤링/포스터 웹훅이 도착 순서를 보장 못 해 이 함수를 공유함. 다인원/
+# 페스티벌은 union 유지(무조건 교체해 라인업이 사라지던 사고가 있었음)
 def merge_or_replace_solo_seed(
     concert: Concert, incoming: list[str], known_names: set[str] | None = None
 ) -> list[str]:
@@ -173,11 +169,9 @@ def merge_or_replace_solo_seed(
     return sorted(set(concert.artist_name or []) | set(normalized_incoming))
 
 
-# /crawl-result 전용 - 솔로는 merge_or_replace_solo_seed와 동일하게 매번 교체. 다인원/페스티벌은
-# 이 공연 기준 첫 크롤링 결과면 KOPIS 원본을 통째로 교체(크롤링이 더 신뢰할 만하다는 판단) - 단
-# 인원이 기존보다 적으면(부분적으로만 읽힘) 안전하게 union으로 대체. crawl_lineup_seeded_at이
-# 이미 있으면(두 번째 크롤부터) 페스티벌 라인업이 여러 차례 나눠 공개되는 걸 고려해 항상 union.
-# 반환값의 두 번째 값은 crawl_lineup_seeded_at을 이번에 처음 채워야 하는지
+# /crawl-result 전용 - 솔로는 merge_or_replace_solo_seed처럼 교체. 다인원/페스티벌은 첫 크롤링이면 KOPIS
+# 원본을 통째로 교체하되 인원이 줄면(부분 인식) union, 두 번째부터는 나눠 공개되는 라인업을 고려해 항상
+# union. 두 번째 반환값은 crawl_lineup_seeded_at을 이번에 처음 채워야 하는지
 def merge_crawl_artist_names(
     concert: Concert, incoming: list[str], known_names: set[str] | None = None
 ) -> tuple[list[str], bool]:

@@ -48,7 +48,7 @@ async def _get(client: httpx.AsyncClient, url: str, params: dict | None = None) 
 # artist_matching.py와 같은 라이브러리/threshold 스타일(그쪽은 DB 내 아티스트명 중복 판단용,
 # 여기는 Setlist.fm 검색 결과 검증용이라 목적은 다름). 92처럼 빡빡하게 잡을 필요는 없음 -
 # 여기서 걸러야 할 건 "Nell" vs "Nell Mescal"(53점대) 같은 명백히 다른 아티스트라, 정답
-# (거의 100점)과 오답 사이 여유가 넉넉함.
+# (거의 100점)과 오답 사이 여유가 넉넉함
 _ARTIST_MATCH_THRESHOLD = 70
 
 

@@ -1,3 +1,5 @@
+import asyncio
+import uuid
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -679,3 +681,26 @@ async def test_generate_pre_setlist_keeps_user_edited_when_nothing_left():
     async with AsyncSessionLocal() as db:
         row = (await db.execute(select(PreSetlist).where(PreSetlist.concert_id == concert_id))).scalar_one()
     assert [s["name"] for s in row.songs] == ["유저곡"]
+
+
+# 같은 아티스트 대표곡을 동시에 여러 요청이 찾으면 외부 조회는 한 번만 하고 결과를 같이 받는지 테스트
+@pytest.mark.asyncio
+async def test_candidate_songs_shares_in_flight_lookup():
+    from app.services.representative_songs import _CandidateSongs, candidate_top_songs
+
+    release = asyncio.Event()
+
+    async def slow_fetch(*_args, **_kwargs):
+        await release.wait()
+        return _CandidateSongs(["곡1", "곡2"])
+
+    fetch = AsyncMock(side_effect=slow_fetch)
+    mbid = str(uuid.uuid4())
+    with patch("app.services.representative_songs._fetch_candidate_songs", new=fetch):
+        tasks = [asyncio.create_task(candidate_top_songs(mbid, None, limit=1)) for _ in range(3)]
+        await asyncio.sleep(0.05)
+        release.set()
+        results = await asyncio.gather(*tasks)
+
+    assert fetch.await_count == 1
+    assert results == [["곡1"]] * 3

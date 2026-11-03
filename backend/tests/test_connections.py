@@ -109,7 +109,7 @@ async def test_sightings_outside_window_not_paired():
     assert res.json()["status"] == "waiting"
 
 
-# 양쪽 모두 확인해야 연결 완료 / 연결 목록에 서로 보임
+# 양쪽 모두 확인해야 연결 완료 / 서로 카드를 볼 수 있음
 async def test_both_confirm_connects():
     token_a, token_b = await _get_token(), await _get_token()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -121,39 +121,41 @@ async def test_both_confirm_connects():
         first = await ac.post(f"/api/v1/social/connections/requests/{connection_id}/confirm", headers=_auth(token_a))
         requests_a = await ac.get("/api/v1/social/connections/requests", headers=_auth(token_a))
         second = await ac.post(f"/api/v1/social/connections/requests/{connection_id}/confirm", headers=_auth(token_b))
-        list_a = await ac.get("/api/v1/social/connections", headers=_auth(token_a))
-        list_b = await ac.get("/api/v1/social/connections", headers=_auth(token_b))
+        card_a = await ac.get(f"/api/v1/social/connections/{user_b}/card", headers=_auth(token_a))
+        card_b = await ac.get(f"/api/v1/social/connections/{user_a}/card", headers=_auth(token_b))
         requests_after = await ac.get("/api/v1/social/connections/requests", headers=_auth(token_a))
 
     assert first.json()["status"] == "pending"
     assert requests_a.json()[0]["confirmed_by_me"] is True
     assert second.json()["status"] == "connected"
-    assert [c["peer"]["user_id"] for c in list_a.json()] == [str(user_b)]
-    assert [c["peer"]["user_id"] for c in list_b.json()] == [str(user_a)]
+    assert card_a.status_code == 200 and card_a.json()["peer"]["user_id"] == str(user_b)
+    assert card_b.status_code == 200 and card_b.json()["peer"]["user_id"] == str(user_a)
     assert requests_after.json() == []
 
 
-# 이미 연결된 사이가 다시 맞대면 connected + 다시 만난 시각 갱신
-async def test_sighting_after_connected_updates_last_met():
+# 일회용 만남 - 예전에 연결된 사이도 다시 맞대면 확인부터 다시(같은 행 재사용), 그동안 카드는 못 봄
+async def test_new_attempt_after_meeting_resets_to_pending():
     token_a, token_b = await _get_token(), await _get_token()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        user_b = await _user_id(ac, token_b)
         connection_id = await _connect(ac, token_a, token_b)
-        async with AsyncSessionLocal() as db:
-            old = datetime.now(timezone.utc) - timedelta(days=3)
-            await db.execute(
-                update(UserConnection).where(UserConnection.id == uuid.UUID(connection_id)).values(last_met_at=old)
-            )
-            await db.commit()
 
         code_a, code_b = await _code(ac, token_a), await _code(ac, token_b)
         await _sight(ac, token_a, code_b)
         res = await _sight(ac, token_b, code_a)
-        listed = await ac.get("/api/v1/social/connections", headers=_auth(token_a))
+        card = await ac.get(f"/api/v1/social/connections/{user_b}/card", headers=_auth(token_a))
+        # 같은 시도 안에서 다시 올린 판정은 확인 상태를 건드리지 않음
+        await ac.post(f"/api/v1/social/connections/requests/{connection_id}/confirm", headers=_auth(token_a))
+        again = await _sight(ac, token_b, code_a)
 
-    assert res.json()["status"] == "connected"
+    assert res.json()["status"] == "pending"
     assert res.json()["connection_id"] == connection_id
-    last_met = datetime.fromisoformat(listed.json()[0]["last_met_at"])
-    assert last_met > datetime.now(timezone.utc) - timedelta(minutes=1)
+    assert res.json()["confirmed_by_me"] is False
+    assert card.status_code == 404
+    assert again.json()["status"] == "pending"
+    async with AsyncSessionLocal() as db:
+        row = await db.get(UserConnection, uuid.UUID(connection_id))
+    assert row.a_confirmed_at is not None or row.b_confirmed_at is not None
 
 
 # 10분 넘게 방치된 요청은 목록에서 빠지고 확인 불가(410), 다시 맞대면 새로 시작
@@ -217,20 +219,20 @@ async def test_third_user_cannot_touch_request():
     assert reject.status_code == 404
 
 
-# 연결 끊기 후 목록에서 사라지고, 다시 끊으면 404
-async def test_delete_connection():
-    token_a, token_b = await _get_token(), await _get_token()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        await _connect(ac, token_a, token_b)
-        user_b = await _user_id(ac, token_b)
-
-        deleted = await ac.delete(f"/api/v1/social/connections/{user_b}", headers=_auth(token_a))
-        listed = await ac.get("/api/v1/social/connections", headers=_auth(token_b))
-        again = await ac.delete(f"/api/v1/social/connections/{user_b}", headers=_auth(token_a))
-
-    assert deleted.status_code == 204
-    assert listed.json() == []
-    assert again.status_code == 404
+# 연결 끊기 - 연결 목록·끊기 API를 꺼 둬서 같이 꺼 둠
+# async def test_delete_connection():
+#     token_a, token_b = await _get_token(), await _get_token()
+#     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+#         await _connect(ac, token_a, token_b)
+#         user_b = await _user_id(ac, token_b)
+#
+#         deleted = await ac.delete(f"/api/v1/social/connections/{user_b}", headers=_auth(token_a))
+#         listed = await ac.get("/api/v1/social/connections", headers=_auth(token_b))
+#         again = await ac.delete(f"/api/v1/social/connections/{user_b}", headers=_auth(token_a))
+#
+#     assert deleted.status_code == 204
+#     assert listed.json() == []
+#     assert again.status_code == 404
 
 
 # 잘못된 판정: 모르는 코드 404, 내 코드 400, 허용 범위 밖 시각 400, 코드 형식 오류 422
@@ -290,15 +292,15 @@ async def test_concurrent_sightings_pair_once():
     assert len(rows) == 1
 
 
-# 회원 탈퇴하면 상대 연결 목록에서도 사라짐 (DB cascade)
+# 회원 탈퇴하면 만남 기록도 사라짐 (DB cascade)
 async def test_account_deletion_removes_connection():
     token_a, token_b = await _get_token(), await _get_token()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        await _connect(ac, token_a, token_b)
+        connection_id = await _connect(ac, token_a, token_b)
         deleted = await ac.delete("/api/v1/auth/me", headers=_auth(token_a))
-        listed = await ac.get("/api/v1/social/connections", headers=_auth(token_b))
     assert deleted.status_code == 204
-    assert listed.json() == []
+    async with AsyncSessionLocal() as db:
+        assert await db.get(UserConnection, uuid.UUID(connection_id)) is None
 
 
 # 기기마다 송신 세기가 달라 한쪽 -55 이상 + 다른 쪽 -62 이상이면 짝지음, 둘 다 약하면 대기
@@ -365,7 +367,7 @@ async def test_simultaneous_confirm_connects():
     assert row.connected_at is not None
 
 
-# 이미 연결된 사이가 연달아 맞대도 직전 시도 판정과는 짝짓지 않음 - 이번 시도에서 둘 다 봐야 다시 만남
+# 예전에 연결된 사이가 연달아 맞대도 직전 시도 판정과는 짝짓지 않음 - 이번 시도에서 둘 다 봐야 새 만남
 async def test_previous_attempt_sighting_not_paired():
     token_a, token_b = await _get_token(), await _get_token()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -379,9 +381,9 @@ async def test_previous_attempt_sighting_not_paired():
         only_a = await _sight(ac, token_a, code_b)
         both = await _sight(ac, token_b, code_a)
 
-    assert first.json()["status"] == "connected"
+    assert first.json()["status"] == "pending"
     assert only_a.json()["status"] == "waiting"  # 상대의 1회차 판정과 짝지어지면 안 됨
-    assert both.json()["status"] == "connected"
+    assert both.json()["status"] == "pending"
 
 
 # 오프라인 때 모아 늦게 올린 판정은 상대가 화면을 다시 열었어도 짝지어짐
@@ -406,15 +408,17 @@ async def test_late_offline_upload_still_pairs():
     assert late_a.json()["status"] == "pending"
 
 
-# 정리 배치: 72시간 넘은 판정·만료된 지 72시간 넘은 코드·하루 넘게 방치된 요청만 지우고 나머지는 둠
+# 정리 배치: 72시간 넘은 판정·만료된 지 72시간 넘은 코드·하루 넘게 방치된 요청·카드 볼 시간이 하루 넘게
+# 지난 만남만 지우고 나머지는 둠
 async def test_cleanup_nearby_records():
     from app.models.connection import NearbySighting
     from app.services.connection import cleanup_nearby_records
 
-    token_a, token_b = await _get_token(), await _get_token()
+    token_a, token_b, token_c = await _get_token(), await _get_token(), await _get_token()
     now = datetime.now(timezone.utc)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         user_a, user_b = await _user_id(ac, token_a), await _user_id(ac, token_b)
+        user_c = await _user_id(ac, token_c)
         code_b = await _code(ac, token_b)
         fresh = await _sight(ac, token_a, code_b)
     assert fresh.status_code == 200
@@ -428,15 +432,25 @@ async def test_cleanup_nearby_records():
             observer_user_id=user_b, observed_user_id=user_a, rssi=-50, seen_at=now - timedelta(days=4)
         )
         stale_request = UserConnection(user_a_id=a, user_b_id=b, requested_at=now - timedelta(days=2))
-        db.add_all([old_code, old_sighting, stale_request])
+        a2, c2 = sorted([user_a, user_c], key=str)
+        old_meeting = UserConnection(
+            user_a_id=a2, user_b_id=c2, requested_at=now - timedelta(days=2), connected_at=now - timedelta(days=2)
+        )
+        b3, c3 = sorted([user_b, user_c], key=str)
+        recent_meeting = UserConnection(
+            user_a_id=b3, user_b_id=c3, requested_at=now - timedelta(hours=1), connected_at=now - timedelta(hours=1)
+        )
+        db.add_all([old_code, old_sighting, stale_request, old_meeting, recent_meeting])
         await db.commit()
-        ids = (old_code.id, old_sighting.id, stale_request.id)
+        ids = (old_code.id, old_sighting.id, stale_request.id, old_meeting.id, recent_meeting.id)
 
         await cleanup_nearby_records(db)
 
         assert await db.get(NearbyCode, ids[0]) is None
         assert await db.get(NearbySighting, ids[1]) is None
         assert await db.get(UserConnection, ids[2]) is None
+        assert await db.get(UserConnection, ids[3]) is None
+        assert await db.get(UserConnection, ids[4]) is not None
         # 방금 올린 판정과 지금 쓰는 코드는 남음
         remaining = (await db.execute(
             select(NearbySighting).where(NearbySighting.observer_user_id == user_a)
@@ -498,7 +512,7 @@ async def test_reveal_at_kept_within_attempt():
         await _sight(ac, token_a, code_b)
         retry = await _sight(ac, token_b, code_a)
 
-    assert first.json()["status"] == "connected"
+    assert first.json()["status"] == "pending"
     assert again.json()["reveal_at"] == first.json()["reveal_at"]
     assert stale.json()["status"] == "waiting"  # 이전 시도 짝은 이번 만남이 아님
     assert retry.json()["reveal_at"] > first.json()["reveal_at"]

@@ -84,6 +84,20 @@ async def test_card_requires_connection():
     assert res.status_code == 404
 
 
+# 일회용 만남 - 연결 뒤 10분이 지나면 410
+async def test_card_expires_after_meeting_ttl():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        token_a, user_a = await _user(ac)
+        _, user_b = await _user(ac)
+        a, b = sorted([user_a, user_b], key=str)
+        old = datetime.now(timezone.utc) - timedelta(minutes=11)
+        async with AsyncSessionLocal() as db:
+            db.add(UserConnection(user_a_id=a, user_b_id=b, requested_at=old, connected_at=old, last_met_at=old))
+            await db.commit()
+        res = await _card(ac, token_a, user_b)
+    assert res.status_code == 410
+
+
 # 같은 날 같은 공연 → 같이 간 공연 + 둘 다 들은 곡 + 공통 아티스트 + 궁합
 async def test_card_together_concert_and_shared_songs():
     singer = _artist("가수")

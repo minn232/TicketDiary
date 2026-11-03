@@ -1,7 +1,5 @@
-"""연결 카드 - 연결된 두 사람의 티켓/찜/셋리를 겹쳐 우리 사이 / 함께한 기록 / 다음에 같이를 계산
-
-상대 단독 기록은 내리지 않고 겹치는 것과 집계만 내림 (예외: 상대가 공개를 켠 다음 공연 1개)
-"""
+# 연결 카드 - 연결된 두 사람의 티켓/찜/셋리를 겹쳐 우리 사이 / 함께한 기록 / 다음에 같이를 계산
+# 상대 단독 기록은 내리지 않고 겹치는 것과 집계만 내림 (예외: 상대가 공개를 켠 다음 공연 1개)
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -34,6 +32,7 @@ from app.schemas.connection import (
     Taste,
 )
 from app.services.artist_genre import get_artist_genres
+from app.services.connection import MEETING_TTL
 from app.services.setlist import resolve_performance_date
 from app.services.summary_extras import artist_countries, norm_name, kst_now
 
@@ -412,6 +411,9 @@ async def get_connection_card(db: AsyncSession, user_id: UUID, peer_user_id: UUI
     ).scalar_one_or_none()
     if connection is None:
         raise HTTPException(status_code=404, detail="연결된 상대가 아닙니다.")
+    # 일회용 만남 - 연결 직후 잠깐만 볼 수 있음
+    if connection.connected_at < datetime.now(timezone.utc) - MEETING_TTL:
+        raise HTTPException(status_code=410, detail="카드를 볼 수 있는 시간이 지났어요. 다시 맞대주세요.")
     peer_user = await db.get(User, peer_user_id)
 
     me, peer = await _load_side(db, user_id), await _load_side(db, peer_user_id)

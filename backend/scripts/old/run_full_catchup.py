@@ -50,7 +50,7 @@ async def _run_normalize() -> None:
         print(f"[{_now()}] 1/2 정규화 완료: {stats}")
     except Exception as e:
         # 여기서 죽어도 사진 백필(2단계)은 그대로 진행 - 이미 matched된
-        # 아티스트 사진 채우는 건 정규화 성공 여부와 무관함.
+        # 아티스트 사진 채우는 건 정규화 성공 여부와 무관함
         logger.error(f"정규화 중 예상 밖 오류(사진 백필은 계속 진행): {e}")
         print(f"[{_now()}] 1/2 정규화 오류(계속 진행): {e}")
 

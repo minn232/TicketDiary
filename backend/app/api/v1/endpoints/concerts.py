@@ -129,7 +129,7 @@ async def scan_ticket(
     # 목록 검색(kopis_search_multi)은 가격표(pcseguidance)를 안 주므로, 상세
     # 조회를 아직 한 번도 안 한 후보는 여기서 채워둠 - 프론트가 티켓 사진에
     # 없는 가격/좌석을 이 가격표로 보강해 사용자에게 고르게 함(get_concert 의
-    # kopis_detail_synced_at 캐시 패턴과 동일).
+    # kopis_detail_synced_at 캐시 패턴과 동일)
     for i, candidate in enumerate(candidates):
         if candidate.kopis_id and candidate.kopis_detail_synced_at is None:
             try:
@@ -141,7 +141,7 @@ async def scan_ticket(
 
 
 # 찜 공연 검색 - DB 기준(KOPIS 실시간 아님). 매칭 기준은 concert_search.py 참고.
-# /scan(티켓 사진 스캔) 후보 검색은 이 엔드포인트를 안 쓰고 kopis.py의 KOPIS 실시간 검색을 그대로 씀.
+# /scan(티켓 사진 스캔) 후보 검색은 이 엔드포인트를 안 쓰고 kopis.py의 KOPIS 실시간 검색을 그대로 씀
 @router.get("/search", response_model=list[ConcertResponse])
 async def search_concerts(
     keyword: str = Query(...),
@@ -167,5 +167,6 @@ async def get_concert(
     if concert is not None and concert.kopis_detail_synced_at is not None:
         return concert
 
-    # KOPIS API
+    # KOPIS API - 기다리는 동안 연결을 안 쥐게 위 조회의 읽기 트랜잭션을 먼저 닫음
+    await db.commit()
     return await get_concert_detail(db, kopis_id)

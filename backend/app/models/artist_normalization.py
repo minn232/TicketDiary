@@ -9,7 +9,7 @@ from app.core.database import Base
 
 
 # MusicBrainz로 확인된(또는 유저가 직접 확정한) 아티스트 1명 = canonical row 1개.
-# mbid가 NULL이면 유저 입력으로만 생성된 canonical(MusicBrainz에 없는 아티스트)이라는 뜻.
+# mbid가 NULL이면 유저 입력으로만 생성된 canonical(MusicBrainz에 없는 아티스트)이라는 뜻
 class CanonicalArtist(Base):
     __tablename__ = "canonical_artists"
 
@@ -40,7 +40,7 @@ class CanonicalArtist(Base):
 
 # canonical 아티스트 1명에 대해 실제로 관측된 표기 변형들(원문 그대로 보존, alias_text는
 # 조회용으로 별도 정규화해서 비교함 - artist_normalization.py의 _normalize_alias_text 참고).
-# 이후 같은 표기가 다시 추출되면 API 호출 없이 이 테이블만 조회해서 canonical을 즉시 재사용.
+# 이후 같은 표기가 다시 추출되면 API 호출 없이 이 테이블만 조회해서 canonical을 즉시 재사용
 class ArtistAlias(Base):
     __tablename__ = "artist_aliases"
 
@@ -69,7 +69,7 @@ class ArtistNormalizationStatus(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     concert_id = Column(UUID(as_uuid=True), ForeignKey("concerts.id"), nullable=False)
     # 웹훅이 큐잉할 당시 Concert.artist_name에 실제로 저장돼 있던 원문 표기. 배치가 이 문자열을
-    # 키로 삼아 Concert.artist_name/ConcertLineup.artist에서 찾아 canonical로 치환한다.
+    # 키로 삼아 Concert.artist_name/ConcertLineup.artist에서 찾아 canonical로 치환한다
     artist_text = Column(String, nullable=False)
     # "pending"(조회 전/재시도 대기) | "matched"(canonical 확정) | "unconfirmed"(MusicBrainz에
     # 없음, 원본 유지) | "ambiguous"(후보 다수, 확정 못 함) | "suggested"(admin이 수동으로 만든

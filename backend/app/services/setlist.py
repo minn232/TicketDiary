@@ -51,7 +51,7 @@ async def _artist_names_for_date(db: AsyncSession, concert: Concert, performance
 
 # DB에서 real setlist 조회. row가 없어도(Setlist.fm 매칭 실패 등) 404 대신
 # concert.artist_name을 채운 빈 응답을 반환 - 프론트가 아티스트별 placeholder를
-# 보여줄 수 있게 함. RealSetlist | dict 둘 다 response_model이 그대로 직렬화함.
+# 보여줄 수 있게 함. RealSetlist | dict 둘 다 response_model이 그대로 직렬화함
 async def get_real_setlist(
     db: AsyncSession, concert_id: UUID, explicit_date: date | None = None
 ) -> RealSetlist | dict:
@@ -78,7 +78,7 @@ async def get_real_setlist(
             "artist_names": artist_names,
         }
 
-    # RealSetlist 테이블엔 없는 필드라, 응답 직렬화 때만 쓰도록 인스턴스에 임시로 붙임.
+    # RealSetlist 테이블엔 없는 필드라, 응답 직렬화 때만 쓰도록 인스턴스에 임시로 붙임
     real_setlist.artist_names = artist_names
     return real_setlist
 
@@ -115,6 +115,9 @@ async def attach_artist_setlist_statuses(db: AsyncSession, concert_id: UUID, res
                 "mbid": canonical.mbid,
                 "itunes": canonical.itunes_artist_id,
             })
+    # DB 조회는 여기서 끝 - 아래 외부 조회(아티스트마다 Last.fm/MusicBrainz/iTunes) 동안 요청 세션이
+    # 연결을 쥐지 않게 읽기 트랜잭션을 닫음(이 요청은 쓰는 게 없음, expire_on_commit=False라 객체 그대로)
+    await db.commit()
     top_songs = await asyncio.gather(*(
         candidate_top_songs(s["mbid"], s["itunes"], limit=1) for s in statuses if "mbid" in s
     ))
@@ -269,7 +272,7 @@ async def fetch_and_save_real_setlist(
 # 아티스트별로 자동 검색+병합해서 실제 셋리스트 저장(유저 선택 없음) - concert.artist_name을
 # 순회해서 페스티벌/단독 공연 다 동작. retry_real_setlist_generation()의 매일 백필 잡용,
 # 기존 수동 검색/선택 흐름과는 별도 경로. 가장 근접한 후보를 자동으로 고르는 방식이라
-# 동명이인/같은 날 다른 도시 공연이 섞이면 틀릴 수 있어(정확도 낮음) 수동 흐름도 남겨둠.
+# 동명이인/같은 날 다른 도시 공연이 섞이면 틀릴 수 있어(정확도 낮음) 수동 흐름도 남겨둠
 async def generate_real_setlist_auto(
     db: AsyncSession,
     concert_id: UUID,
@@ -303,7 +306,7 @@ async def generate_real_setlist_auto(
 
     # DB upsert (concert_id + performance_date 조합 기준). setlistfm_id는 단독 필드라
     # 아티스트 여럿의 출처를 한 번에 표현 못 하므로, 1명만 매칭됐을 때만 채우고
-    # 그 외(2명 이상 매칭)는 null로 둠(어차피 songs의 artist 태그로 출처를 알 수 있음).
+    # 그 외(2명 이상 매칭)는 null로 둠(어차피 songs의 artist 태그로 출처를 알 수 있음)
     result = await db.execute(
         select(RealSetlist).where(
             RealSetlist.concert_id == concert_id,
@@ -335,11 +338,9 @@ async def generate_real_setlist_auto(
     return real_setlist
 
 
-# 유저가 "공연 후" 화면에서 실제 셋리스트를 조회했는데 비어있으면, 화면은 그대로(빈 상태)
-# 보여주고 백그라운드로 한 번 채워보기를 시도 - 아래 배치의 14일 창을 놓친 공연도 사용자가
-# 계속 들여다보는 한 자연스럽게 재시도됨. (concert_id, performance_date) 단위 하루 쿨다운을
-# real_setlists.attempted_at으로 추적(성공/실패 둘 다 이 값을 남김 - 실패는 songs=[]인
-# 빈 행으로). 화면을 다시 열거나 새로고침해야 결과가 보임(응답을 기다리게 하지 않음).
+# "공연 후" 화면에서 실제 셋리가 비어 있으면 빈 채로 보여주고 백그라운드로 채워봄 - 아래 배치의 14일 창을 놓친
+# 공연도 계속 보는 한 재시도됨. (concert_id, performance_date) 하루 쿨다운은 real_setlists.attempted_at으로 추적
+# (실패도 songs=[] 빈 행으로 남김). 응답을 안 기다려 다시 열어야 결과가 보임
 _REAL_SETLIST_VIEW_CHECK_COOLDOWN = timedelta(days=1)
 # 같은 (공연, 날짜) 검색이 도는 중이면 건너뜀 - 쿨다운은 검색이 끝나야 기록돼서, 아티스트 많은 공연은
 # 몇 분 걸리는 검색 사이에 들어온 조회마다 새로 돌아 DB 연결을 전부 잡았었음(단일 프로세스라 메모리로 충분)
@@ -383,11 +384,9 @@ async def _check_real_setlist_on_view(concert_id: UUID, performance_date: date) 
             await generate_real_setlist_auto(db, concert_id, performance_date)
         except HTTPException as e:
             if e.status_code == 502:
-                # Setlist.fm API 자체가 일시 실패한 경우(레이트리밋/네트워크 등) - 진짜
-                # "검색해봤는데 없음"이 아니므로 쿨다운을 기록하지 않고 다음 조회 때 바로
-                # 재시도되게 둠. music_link 캐싱에서 API 에러를 "못 찾음"으로 캐싱해버렸던
-                # 것과 같은 종류의 버그(실사례: alias 폴백 추가 후 요청이 늘어 ZUTOMAYO
-                # 콘서트에서 순간적으로 429 발생, 하루 쿨다운에 걸려 재시도가 막혔었음).
+                # Setlist.fm API 자체의 일시 실패(레이트리밋/네트워크)는 "없음"이 아니라 쿨다운을 안 남기고 다음 조회 때
+                # 바로 재시도함 - 예전 music_link 캐싱이 API 에러를 "못 찾음"으로 캐싱한 것과 같은 버그(ZUTOMAYO 429가
+                # 하루 쿨다운에 걸렸었음)
                 logger.info(
                     f"조회 시점 실제 셋리스트 확인 - Setlist.fm API 일시 실패, 쿨다운 없이 다음 조회 때 재시도 (concert_id={concert_id}, date={performance_date}): {e.detail}"
                 )
@@ -440,14 +439,14 @@ async def _mark_real_setlist_attempt(db: AsyncSession, concert_id: UUID, perform
 # 콘서트 종료 후 이 기간 동안, Setlist.fm에 아직 안 올라온 실제 셋리스트를 매일 자동
 # 재시도해 채워봄. 기간이 지나면 포기하고 유저 수동 편집을 기다림 - 시도 횟수/시작 시각을
 # 따로 안 저장하고 매번 "오늘-그날짜"로 창 안인지만 판단. 이미 채워진 날짜는 쿼리에서
-# 자연히 빠져서 별도 "포기" 플래그도 불필요.
+# 자연히 빠져서 별도 "포기" 플래그도 불필요
 _REAL_SETLIST_BACKFILL_WINDOW = timedelta(days=14)
 _REAL_SETLIST_BACKFILL_CONCURRENCY = 4
 
 
 # 백필 대상 (concert_id, performance_date) 하나를 처리. 실패해도 나머지에 영향 없도록 여기서
 # 예외를 삼킴(generate_pre_setlist_background와 동일한 패턴) - 아티스트 데이터가 아직
-# Setlist.fm에 안 올라온 건 흔한 정상 케이스라 404는 info로만 남김.
+# Setlist.fm에 안 올라온 건 흔한 정상 케이스라 404는 info로만 남김
 async def _backfill_real_setlist_limited(
     semaphore: asyncio.Semaphore, concert_id: UUID, performance_date: date
 ) -> None:
@@ -467,7 +466,7 @@ async def _backfill_real_setlist_limited(
 
 # 매일 스케줄러가 호출. 유저가 티켓을 등록한 콘서트만 대상으로 함(아무도 안 본 공연까지
 # Setlist.fm을 매일 두드릴 필요 없음) - 콘서트가 여러 날짜에 걸치면(페스티벌) 날짜마다 독립적으로
-# 판단(day 1이 끝난 지 14일 지났어도 day 3가 아직 창 안이면 day 3만 계속 시도).
+# 판단(day 1이 끝난 지 14일 지났어도 day 3가 아직 창 안이면 day 3만 계속 시도)
 async def retry_real_setlist_generation() -> None:
     now = datetime.now(timezone.utc)
     today = now.date()

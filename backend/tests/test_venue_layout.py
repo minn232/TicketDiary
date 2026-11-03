@@ -184,10 +184,8 @@ async def test_crawl_result_timetable_only():
 
 
 # prices만 포함된 결과 수신 → Concert.price 업데이트
-# kopis_id를 매번 새로 생성함 - 이 테스트 스위트는 트랜잭션 롤백 없이 실제 로컬 DB를 그대로
-# 쓰고, crawl-result의 prices는 KOPIS 값과 겹치지 않는 seat_type만 추가하는 병합 방식이라
-# 고정 kopis_id를 재사용하면 이전 실행에서 이미 추가된 S석이 남아있어 재실행 시
-# "새로 추가할 게 없다"고 판단해 실패함
+# 테스트가 롤백 없이 로컬 DB를 쓰고 prices는 새 seat_type만 추가하는 병합이라, kopis_id를 고정하면
+# 이전 실행의 S석이 남아 재실행 때 실패함 - 그래서 매번 새로 생성
 @pytest.mark.asyncio
 async def test_crawl_result_prices_only():
     concert_id = await _create_concert(f"PF_CR_PRICE_{uuid.uuid4().hex[:8]}")
@@ -682,10 +680,11 @@ async def test_crawl_result_delivery_date_backfills_existing_ticket():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         ticket_res = await ac.post(
             "/api/v1/tickets",
-            json={"concert_id": concert_id},  # delivery_date 없이 등록(OCR로 못 뽑은 경우)
+            # delivery_date 없이 배송 대기로 등록(OCR로 못 뽑은 경우) - 추정 배송일은 크롤링 값으로 덮어써져야 함
+            json={"concert_id": concert_id, "awaiting_delivery": True},
             headers=headers,
         )
-    assert ticket_res.json()["delivery_date"] is None
+    assert ticket_res.json()["status"] == "before_delivery"
 
     body = {"delivery_date": "2030-05-10"}
     with patch("app.core.deps.settings") as mock_settings:
@@ -783,10 +782,10 @@ async def test_crawl_result_delivery_date_backfills_multiple_tickets():
         for token in tokens:
             res = await ac.post(
                 "/api/v1/tickets",
-                json={"concert_id": concert_id},
+                json={"concert_id": concert_id, "awaiting_delivery": True},
                 headers={"Authorization": f"Bearer {token}"},
             )
-            assert res.json()["delivery_date"] is None
+            assert res.json()["status"] == "before_delivery"
             ticket_ids.append(res.json()["id"])
 
     with patch("app.core.deps.settings") as mock_settings:
