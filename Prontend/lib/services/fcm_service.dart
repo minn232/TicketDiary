@@ -1,65 +1,170 @@
+import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
 import 'api_client.dart';
+import '../screen/notifications_screen.dart';
+import '../widgets/tab_nav_coordinator.dart';
+import '../widgets/responsive_text.dart';
 
-// [백엔드 수정]
-/// FCM(푸시 알림) 토큰 등록 + 수신 처리.
-/// 모바일(안드로이드)에서만 동작.
-/// ios는 추후 설정 필요.
-class FcmService {
+/// Android 푸시 등록·포그라운드 표시·알림함 연결.
+/// 서버가 제목/본문만 보내므로 임의로 티켓을 추측하지 않고 알림함을 엽니다.
+class FcmService with WidgetsBindingObserver {
   FcmService._();
-  static final FcmService instance = FcmService._();
+  static final instance = FcmService._();
+  static const _native = MethodChannel('ticketdiary/notifications');
+  static bool get supported =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  final status = ValueNotifier<String>('알림 연결 확인 중');
+  final changes = ValueNotifier<int>(0);
+  bool _observing = false;
+  bool _subscribed = false;
+  bool _initialMessageChecked = false;
+  bool _permissionRequested = false;
+  bool _ready = false;
+  bool _pendingOpen = false;
+  bool _opening = false;
+  Future<void>? _pending;
+  Timer? _retry;
+  int _attempts = 0;
 
-  bool _initialized = false;
-
-  /// 앱 시작 시 한 번 호출(splash_screen.dart의 데이터 로딩 참고).
-  /// 권한 요청 → 토큰 발급 → 서버 등록(`PATCH /settings/fcm-token`) → 토큰
-  /// 갱신 구독까지 한 번에 처리하며, 실패해도(권한 거부/기기 미지원/설정
-  /// 파일 누락 등) 앱 시작을 막지 않도록 전부 조용히 무시.
-  Future<void> init() async {
-    if (_initialized || kIsWeb) return;
-    _initialized = true;
-    try {
-      final messaging = FirebaseMessaging.instance;
-      await messaging.requestPermission();
-
-      final token = await messaging.getToken();
-      if (token != null) await _registerToken(token);
-
-      messaging.onTokenRefresh.listen(_registerToken);
-
-      // 포그라운드(앱 사용 중) 수신 시 시스템 알림처럼 배너를 띄우려면
-      // flutter_local_notifications 같은 별도 패키지가 필요한데, 이번
-      // 범위 밖이라 일단 로그만 남깁니다.
-      FirebaseMessaging.onMessage.listen((message) {
-        debugPrint('[FCM] foreground message: ${message.notification?.title}');
+  Future<void> init() {
+    if (!supported) return Future.value();
+    if (!_observing) {
+      _observing = true;
+      WidgetsBinding.instance.addObserver(this);
+      _native.setMethodCallHandler((call) async {
+        if (call.method == 'tap') {
+          await _native.invokeMethod<bool>('consumeTap');
+          _queueOpen();
+        }
       });
-    } catch (e) {
-      debugPrint('[FCM] init 실패(무시): $e');
     }
+    return _pending ??= _connect().whenComplete(() => _pending = null);
   }
 
-  // [백엔드 수정]
-  // 로그인/로그아웃으로 계정이 바뀌었을 때 현재 계정에 토큰 재등록.
-  Future<void> registerForCurrentUser() async {
-    if (!_initialized || kIsWeb) return;
+  Future<void> _connect() async {
     try {
-      final token = await FirebaseMessaging.instance.getToken();
-      if (token != null) await _registerToken(token);
-    } catch (e) {
-      debugPrint('[FCM] 토큰 재등록 실패(무시): $e');
-    }
-  }
-
-  Future<void> _registerToken(String token) async {
-    try {
+      if (await _native.invokeMethod<bool>('consumeTap') == true) _queueOpen();
+      if (Firebase.apps.isEmpty) await Firebase.initializeApp();
+      final messaging = FirebaseMessaging.instance;
+      if (!_subscribed) {
+        _subscribed = true;
+        messaging.onTokenRefresh.listen(
+          (_) => unawaited(registerForCurrentUser()),
+          onError: (Object error) => _failed(error),
+        );
+        FirebaseMessaging.onMessage.listen((message) async {
+          changes.value++;
+          final notification = message.notification;
+          if (notification == null) return;
+          try {
+            await _native.invokeMethod<void>('show', {
+              'id':
+                  message.messageId ??
+                  DateTime.now().microsecondsSinceEpoch.toString(),
+              'title': notification.title ?? 'Ticket Diary',
+              'body': notification.body ?? '',
+            });
+          } catch (e) {
+            debugPrint('[FCM] 알림 표시 실패: $e');
+          }
+        });
+        FirebaseMessaging.onMessageOpenedApp.listen((_) => _queueOpen());
+      }
+      if (!_initialMessageChecked) {
+        final initial = await messaging.getInitialMessage();
+        _initialMessageChecked = true;
+        if (initial != null) _queueOpen();
+      }
+      if (!_permissionRequested) {
+        _permissionRequested = true;
+        await messaging.requestPermission();
+      }
+      final enabled = await _native.invokeMethod<bool>('enabled') ?? false;
+      if (!enabled) {
+        status.value = '휴대폰 알림이 꺼져 있어요';
+        _retry?.cancel();
+        return;
+      }
+      final token = await messaging.getToken();
+      if (token == null) throw StateError('FCM 토큰 발급 대기');
       await ApiClient.instance.patch(
         '/settings/fcm-token',
         body: {'fcm_token': token},
       );
+      status.value = '휴대폰 알림이 켜져 있어요';
+      _attempts = 0;
+      _retry?.cancel();
     } catch (e) {
-      debugPrint('[FCM] 토큰 등록 실패(무시): $e');
+      _failed(e);
     }
+  }
+
+  void _failed(Object error) {
+    debugPrint('[FCM] 연결 실패: $error');
+    status.value = '알림 연결을 확인하지 못했어요';
+    _retry?.cancel();
+    if (_attempts < 5) {
+      _attempts++;
+      _retry = Timer(
+        Duration(seconds: 15 * _attempts),
+        () => unawaited(init()),
+      );
+    }
+  }
+
+  Future<void> registerForCurrentUser() async {
+    if (!supported || !_observing) return;
+    // 계정 변경 전 등록 요청이 끝난 뒤 새 계정으로 반드시 재등록합니다.
+    await _pending;
+    await init();
+  }
+
+  Future<void> openSystemSettings() async {
+    if (supported) await _native.invokeMethod<void>('settings');
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _attempts = 0;
+      changes.value++;
+      unawaited(init());
+    }
+  }
+
+  /// 첫 실행 계정 선택 및 스플래시 전환이 끝난 뒤에만 알림함 진입 허용.
+  void markNavigationReady() {
+    if (!supported) return;
+    _ready = true;
+    _openIfReady();
+  }
+
+  void _queueOpen() {
+    _pendingOpen = true;
+    changes.value++;
+    _openIfReady();
+  }
+
+  void _openIfReady() {
+    if (!_ready || !_pendingOpen || _opening) return;
+    final context =
+        TabNavCoordinator.maybeInstance?.navigatorKey.currentContext;
+    if (context == null) return;
+    _pendingOpen = false;
+    _opening = true;
+    unawaited(
+      NotificationsScreen.show(
+        context,
+        frameScale: diaryScaleFromMediaQuery(context),
+      ).whenComplete(() {
+        _opening = false;
+        _pendingOpen = false;
+      }),
+    );
   }
 }

@@ -4,7 +4,7 @@ import 'package:ticketdiary/screen/summary_screen.dart';
 import 'package:ticketdiary/widgets/summary_calendar.dart';
 
 void main() {
-  testWidgets('calendar is first and survives a four page round trip', (
+  testWidgets('calendar selection survives switching through report periods', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -18,8 +18,8 @@ void main() {
         .widget<SummaryCalendar>(find.byType(SummaryCalendar))
         .selection
         .value;
-    for (var i = 0; i < 4; i++) {
-      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1500);
+    for (final label in ['캘린더', '6개월', '1년', '보고서']) {
+      await tester.tap(find.text(label));
       await tester.pumpAndSettle();
     }
     expect(find.byType(SummaryCalendar), findsOneWidget);
@@ -31,6 +31,8 @@ void main() {
       selected,
     );
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
   });
   testWidgets('six week month, selected day records and year transition', (
     tester,
@@ -80,6 +82,9 @@ void main() {
     await tester.tap(find.byTooltip('다음 달'));
     await tester.pump();
     expect(selection.value, DateTime(2027, 2, 28));
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
   });
 }

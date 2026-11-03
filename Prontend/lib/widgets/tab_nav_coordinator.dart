@@ -27,6 +27,7 @@ class TabNavCoordinator {
        isTransitioning = ValueNotifier(false);
 
   static TabNavCoordinator? _instance;
+  static TabNavCoordinator? get maybeInstance => _instance;
 
   /// 앱 시작 시([TicketDiaryApp]) 한 번만 호출해 초기화합니다. 이미
   /// 초기화돼 있으면(예: build()가 여러 번 호출돼도) 기존 인스턴스를

@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- debug/profile 매니페스트에는 자동으로 있지만 release엔 없어서,
          API 통신(dio)이 release 빌드에서만 전부 실패하지 않도록 명시합니다. -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -14,6 +15,10 @@
         android:label="ticketdiary"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ticket_diary_updates" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
         <!-- adjustResize(기본값)는 키보드가 뜰 때 창 자체를 줄여
              resizeToAvoidBottomInset: false를 무력화시킴 - 창 크기를 절대
              안 건드리는 MainActivity.kt의 setDecorFitsSystemWindows(false)와

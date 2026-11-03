@@ -4,6 +4,8 @@ import 'dart:developer' as developer;
 import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
+import 'audio_volume_store.dart';
+
 enum SoundEffect {
   bookSip,
   pageFlip,
@@ -25,11 +27,29 @@ abstract interface class EffectAudioPlayer {
 
 class _DeviceEffectPlayer implements EffectAudioPlayer {
   final _player = AudioPlayer();
+  bool _disposed = false;
+
+  _DeviceEffectPlayer() {
+    AudioVolumeStore.instance.addListener(_updateVolume);
+  }
+
+  void _updateVolume() {
+    if (!_disposed) {
+      unawaited(
+        _player
+            .setVolume(AudioVolumeStore.instance.effects)
+            .catchError((Object _) {}),
+      );
+    }
+  }
+
   @override
   Future<Duration?> load(String asset) async {
+    await AudioVolumeStore.instance.load();
+    if (_disposed) return null;
     final duration = await _player.setAsset(asset);
     await _player.setSpeed(1);
-    await _player.setVolume(1);
+    await _player.setVolume(AudioVolumeStore.instance.effects);
     return duration;
   }
 
@@ -41,7 +61,11 @@ class _DeviceEffectPlayer implements EffectAudioPlayer {
   @override
   Future<void> stop() => _player.stop();
   @override
-  Future<void> dispose() => _player.dispose();
+  Future<void> dispose() async {
+    _disposed = true;
+    AudioVolumeStore.instance.removeListener(_updateVolume);
+    await _player.dispose();
+  }
 }
 
 class SoundEffectService {

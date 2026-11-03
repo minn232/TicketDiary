@@ -1,3 +1,4 @@
+import 'app_back_handler.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -186,8 +187,9 @@ class _SectionEditorState extends State<_SectionEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !_saving,
+  Widget build(BuildContext context) => DiscardChangesGuard(
+    isSaving: () => _saving,
+    isDirty: () => _controller.text != widget.initialText,
     child: AlertDialog(
       backgroundColor: const Color(0xFFF4F1E1),
       title: Text('${widget.title} 편집'),
@@ -214,7 +216,7 @@ class _SectionEditorState extends State<_SectionEditor> {
           child: const Text('내용 지우기'),
         ),
         TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          onPressed: _saving ? null : () => Navigator.of(context).maybePop(),
           child: const Text('취소'),
         ),
         TextButton(

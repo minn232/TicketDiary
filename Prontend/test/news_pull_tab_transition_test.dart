@@ -38,13 +38,20 @@ void main() {
                   heartWipe: const AlwaysStoppedAnimation<double>(0.0),
                 ),
               ),
+              Positioned.fill(
+                child: NewsPullTabHitAreaOverlay(
+                  slide: controller,
+                  onTap: () => tapCount++,
+                  pageTop: 40,
+                ),
+              ),
             ],
           ),
         ),
       ),
     );
 
-    final heart = find.byIcon(Icons.favorite);
+    final heart = find.byIcon(Icons.search);
     expect(heart, findsOneWidget);
 
     controller.value = 0.0;
@@ -63,8 +70,7 @@ void main() {
     expect(tapCount, 1);
   });
 
-  testWidgets('풀탭 조각의 화살표는 왼쪽(0)에선 오른쪽, 오른쪽(1)에선 왼쪽을 가리킨다',
-      (tester) async {
+  testWidgets('풀탭 조각의 화살표는 왼쪽(0)에선 오른쪽, 오른쪽(1)에선 왼쪽을 가리킨다', (tester) async {
     pinDeviceSize(tester);
     final controller = AnimationController(
       vsync: const TestVSync(),
@@ -141,48 +147,50 @@ void main() {
     expect(r1.dx, lessThan(r0.dx));
   });
 
-  testWidgets('로딩 중 하트 쐐기 애니메이션은 값 전체 구간에서 예외 없이 그려지고, 0/1에서 하트가 트리에 남아있다',
-      (tester) async {
-    pinDeviceSize(tester);
-    final controller = AnimationController(
-      vsync: const TestVSync(),
-      duration: const Duration(milliseconds: 300),
-    );
-    final heartWipe = AnimationController(
-      vsync: const TestVSync(),
-      duration: const Duration(milliseconds: 300),
-    );
-    addTearDown(controller.dispose);
-    addTearDown(heartWipe.dispose);
+  testWidgets(
+    '로딩 중 검색 아이콘 쐐기 애니메이션은 값 전체 구간에서 예외 없이 그려지고, 0/1에서 검색 아이콘가 트리에 남아있다',
+    (tester) async {
+      pinDeviceSize(tester);
+      final controller = AnimationController(
+        vsync: const TestVSync(),
+        duration: const Duration(milliseconds: 300),
+      );
+      final heartWipe = AnimationController(
+        vsync: const TestVSync(),
+        duration: const Duration(milliseconds: 300),
+      );
+      addTearDown(controller.dispose);
+      addTearDown(heartWipe.dispose);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Stack(
-            children: [
-              Positioned.fill(
-                child: NewsPullTabOverlay(
-                  slide: controller,
-                  onTap: () {},
-                  pageTop: 40,
-                  heartWipe: heartWipe,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Stack(
+              children: [
+                Positioned.fill(
+                  child: NewsPullTabOverlay(
+                    slide: controller,
+                    onTap: () {},
+                    pageTop: 40,
+                    heartWipe: heartWipe,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    // 사라짐(0~0.5)과 나타남(0.5~1) 양쪽 구간, 그리고 "완전히 채워진"
-    // 양 끝(0, 1)을 모두 훑어도 렌더 예외가 없어야 합니다.
-    for (final p in [0.0, 0.25, 0.5, 0.75, 1.0]) {
-      heartWipe.value = p;
-      await tester.pump();
-      expect(tester.takeException(), isNull);
-      // ClipPath로 시각적으로만 잘릴 뿐, 하트 아이콘 위젯 자체는 항상
-      // 트리에 남아 있습니다(0/1일 땐 클립 없이 온전히 보임).
-      expect(find.byIcon(Icons.favorite), findsOneWidget);
-    }
-  });
+      // 사라짐(0~0.5)과 나타남(0.5~1) 양쪽 구간, 그리고 "완전히 채워진"
+      // 양 끝(0, 1)을 모두 훑어도 렌더 예외가 없어야 합니다.
+      for (final p in [0.0, 0.25, 0.5, 0.75, 1.0]) {
+        heartWipe.value = p;
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        // ClipPath로 시각적으로만 잘릴 뿐, 검색 아이콘 아이콘 위젯 자체는 항상
+        // 트리에 남아 있습니다(0/1일 땐 클립 없이 온전히 보임).
+        expect(find.byIcon(Icons.search), findsOneWidget);
+      }
+    },
+  );
 }

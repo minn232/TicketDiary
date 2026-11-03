@@ -107,19 +107,25 @@ class TicketDiaryApp extends StatelessWidget {
         // ([TabHitCatcherOverlay] 문서 참고) — 인덱스 탭을 빠르게 연속으로
         // 눌러도 전환 애니메이션 도중 눌림이 사라지지 않도록 하기 위함입니다.
         builder: (context, child) {
-          return Stack(
-            children: [
-              // 탭 넘김이 떠나는 화면을 속지에 실으려고 찍는 경계
-              if (child != null)
-                RepaintBoundary(
-                  key: DiaryTabFlipTransition.screenBoundaryKey,
-                  child: child,
+          // 시스템 글자 크기와 무관하게 앱의 디자인 크기를 유지합니다.
+          // Navigator 전체를 감싸 팝업·바텀시트에도 동일하게 적용합니다.
+          return MediaQuery.withNoTextScaling(
+            child: Stack(
+              children: [
+                // 탭 넘김이 떠나는 화면을 속지에 실으려고 찍는 경계
+                if (child != null)
+                  RepaintBoundary(
+                    key: DiaryTabFlipTransition.screenBoundaryKey,
+                    child: child,
+                  ),
+                const Positioned.fill(
+                  child: IgnorePointer(child: HanjiTexture(opacity: .16)),
                 ),
-              const Positioned.fill(
-                child: IgnorePointer(child: HanjiTexture(opacity: .16)),
-              ),
-              Positioned.fill(child: TabHitCatcherOverlay(coordinator: tabNav)),
-            ],
+                Positioned.fill(
+                  child: TabHitCatcherOverlay(coordinator: tabNav),
+                ),
+              ],
+            ),
           );
         },
         // 웹에서는 브라우저의 실제 URL(예: 루트 "/")도 Navigator가 별도

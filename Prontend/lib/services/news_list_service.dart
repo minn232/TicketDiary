@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../models/news_model.dart';
 import 'favorites_store.dart';
 import 'social_service.dart';
+import 'concert_search_service.dart';
 
 /// 소식탭과 결산 캘린더가 사용하는 동일한 카드 목록.
 class NewsListService {
@@ -39,6 +40,32 @@ class NewsListService {
 
     final feed = await _socialService.getNewsFeed();
 
+    // 피드에는 대표 아티스트 한 명만 있어, 기존 검색 API에서 같은 UUID의
+    // 공연 출연진을 보완합니다. 한 번에 4건만 조회합니다.
+    for (var offset = 0; offset < feed.length; offset += 4) {
+      await Future.wait(
+        feed.skip(offset).take(4).map((item) async {
+          if (item.concertId == null || item.lineup.isNotEmpty) return;
+          try {
+            final concerts = await BackendConcertSearchService().search(
+              item.concert,
+            );
+            for (final concert in concerts) {
+              if (concert.id == item.concertId) {
+                item.lineup = concert.artistName;
+                break;
+              }
+            }
+          } catch (_) {
+            // 실패 시 서버가 확인한 대표 아티스트 정보는 유지합니다.
+          }
+        }),
+      );
+    }
+    for (final item in feed) {
+      item.matchFavorites(FavoritesStore.instance.favoriteArtists);
+    }
+
     // 백엔드는 한 번 생성된 소식을 아티스트 언팔로우 후에도 지우지 않고
     // 그대로 돌려주므로(GET /social/feed가 팔로우 상태와 무관하게 전체
     // 반환), 지금 실제로 팔로우 중인 아티스트의 소식만 화면에 남깁니다.
@@ -51,7 +78,11 @@ class NewsListService {
             e['artist_name'] as String,
       };
       filteredFeed = feed
-          .where((item) => currentFollows.contains(item.artist))
+          .where(
+            (item) =>
+                currentFollows.contains(item.artist) ||
+                item.matchedArtists.isNotEmpty,
+          )
           .toList();
     } catch (_) {
       // 팔로우 목록 조회에 실패하면 필터링 없이 원본 그대로 보여줍니다.
@@ -74,6 +105,14 @@ class NewsListService {
         })
         .map(NewsModel.fromFavoritedConcert)
         .toList();
+
+    for (final item in favoritedConcertCards) {
+      final related = feed.where((f) => f.concertId == item.concertId);
+      item.matchFavorites(
+        FavoritesStore.instance.favoriteArtists,
+        related: related.expand((f) => [f.artist, ...f.lineup]),
+      );
+    }
 
     // 이미 찜한 공연 카드로 나온 concertId는 아티스트 소식 카드에서 제외합니다
     // (공연 찜 + 그 공연 아티스트 팔로우가 겹치면 같은 공연이 카드 2장으로

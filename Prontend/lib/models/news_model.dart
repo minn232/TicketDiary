@@ -1,4 +1,5 @@
 import 'concert_model.dart';
+import 'artist_model.dart';
 import 'ticket_scan.dart' show TicketingPhaseEntry;
 
 /// 소식(뉴스 피드) 데이터 모델.
@@ -21,6 +22,25 @@ class NewsModel {
   bool isRead;
 
   final String artist;
+  List<String> lineup;
+  List<ArtistModel> matchedArtists;
+
+  void matchFavorites(
+    List<ArtistModel> favorites, {
+    Iterable<String> related = const [],
+  }) {
+    final names = {
+      ...lineup,
+      artist,
+      ...related,
+    }.map((name) => name.trim().toLowerCase()).toSet();
+    final seen = <String>{};
+    matchedArtists = favorites.where((a) {
+      final key = a.name.trim().toLowerCase();
+      return names.contains(key) && seen.add(key);
+    }).toList();
+  }
+
   final String concert;
   final String imageUrl;
 
@@ -78,6 +98,8 @@ class NewsModel {
 
   NewsModel({
     required this.artist,
+    this.lineup = const [],
+    this.matchedArtists = const [],
     required this.concert,
     required this.imageUrl,
     required this.description,
@@ -163,6 +185,11 @@ class NewsModel {
       concertId: json['concert_id'] as String?,
       isRead: json['is_read'] as bool? ?? true,
       artist: artistName,
+      lineup:
+          (concertJson?['artist_name'] as List?)
+              ?.whereType<String>()
+              .toList() ??
+          const [],
       concert: concertName,
       imageUrl: posterUrl,
       description: descriptionParts.join(' '),
@@ -211,6 +238,7 @@ class NewsModel {
       concertId: concert.id.isNotEmpty ? concert.id : null,
       isRead: true,
       artist: '찜한 공연',
+      lineup: concert.artistName,
       concert: concert.name,
       imageUrl: concert.posterImageUrl,
       description: dDay,
@@ -237,6 +265,10 @@ class NewsModel {
     'concertId': concertId,
     'isRead': isRead,
     'artist': artist,
+    'lineup': lineup,
+    'matchedArtists': matchedArtists
+        .map((a) => {'name': a.name, 'image': a.profileImageUrl})
+        .toList(),
     'concert': concert,
     'imageUrl': imageUrl,
     'description': description,
@@ -260,6 +292,16 @@ class NewsModel {
       concertId: json['concertId'] as String?,
       isRead: json['isRead'] as bool? ?? true,
       artist: json['artist'] as String? ?? '',
+      lineup:
+          (json['lineup'] as List?)?.whereType<String>().toList() ?? const [],
+      matchedArtists: (json['matchedArtists'] as List? ?? [])
+          .map(
+            (a) => ArtistModel(
+              name: a['name'] as String,
+              profileImageUrl: a['image'] as String? ?? '',
+            ),
+          )
+          .toList(),
       concert: json['concert'] as String? ?? '',
       imageUrl: json['imageUrl'] as String? ?? '',
       description: json['description'] as String? ?? '',

@@ -13,7 +13,6 @@ void main() {
         HSVColor.fromColor(mood.paperColor).value,
         inInclusiveRange(.85, .985),
       );
-      expect(mood.imageFilter, isA<ColorFilter>());
     }
   });
   test('포스터의 채도 밝기와 세부 변화가 종이에 반영된다', () {

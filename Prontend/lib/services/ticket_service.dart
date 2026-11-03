@@ -54,16 +54,16 @@ class TicketService {
       final json = await _client.post(
         '/tickets',
         body: {
-          if (concertId != null) 'concert_id': concertId,
-          if (kopisId != null) 'kopis_id': kopisId,
+          'concert_id': ?concertId,
+          'kopis_id': ?kopisId,
           if (deliveryDate != null)
             'delivery_date': deliveryDate.toIso8601String(),
-          if (startTime != null) 'start_time': startTime,
+          'start_time': ?startTime,
           if (attendedDate != null)
             'attended_date': attendedDate.toIso8601String(),
-          if (ticketingSite != null) 'ticketing_site': ticketingSite,
-          if (price != null) 'price': price,
-          if (seatType != null) 'seat_type': seatType,
+          'ticketing_site': ?ticketingSite,
+          'price': ?price,
+          'seat_type': ?seatType,
         },
       );
       final ticket = TicketWithConcert.fromJson(json);
@@ -134,17 +134,17 @@ class TicketService {
         body: {
           if (deliveryDate != null)
             'delivery_date': deliveryDate.toIso8601String(),
-          if (startTime != null) 'start_time': startTime,
+          'start_time': ?startTime,
           if (attendedDate != null)
             'attended_date': attendedDate.toIso8601String(),
-          if (ticketingSite != null) 'ticketing_site': ticketingSite,
-          if (price != null) 'price': price,
-          if (seatType != null) 'seat_type': seatType,
-          if (ticketImageUrl != null) 'ticket_image_url': ticketImageUrl,
-          if (review != null) 'review': review,
-          if (concertPhotoUrls != null) 'concert_photo_urls': concertPhotoUrls,
-          if (isFirstDay != null) 'is_first_day': isFirstDay,
-          if (isLastDay != null) 'is_last_day': isLastDay,
+          'ticketing_site': ?ticketingSite,
+          'price': ?price,
+          'seat_type': ?seatType,
+          'ticket_image_url': ?ticketImageUrl,
+          'review': ?review,
+          'concert_photo_urls': ?concertPhotoUrls,
+          'is_first_day': ?isFirstDay,
+          'is_last_day': ?isLastDay,
           if (tornAt != null) 'torn_at': tornAt.toIso8601String(),
           if (clearTornAt) 'torn_at': null,
           if (pageLayout != null) 'page_layout': pageLayout.toJson(),

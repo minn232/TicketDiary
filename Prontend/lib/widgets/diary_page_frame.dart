@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import 'pressable_scale.dart';
 import 'scrapbook_page_background.dart';
 import 'responsive_text.dart';
+import 'app_back_handler.dart';
+import 'tab_nav_coordinator.dart';
+import 'diary_route.dart';
 
 /// 다이어리 UI의 공통 프레임(가죽 배경 + 겹친 페이지 레이어 + 바인더 링 + 우측 탭)을
 /// 여러 화면에서 재사용하기 위한 래퍼 위젯.
@@ -791,8 +794,17 @@ class DiaryPageFrame extends StatelessWidget {
 
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
+      onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
+        if (await AppBackHandler.handle(context) || !context.mounted) return;
+        final tabs = TabNavCoordinator.maybeInstance;
+        if (tabs != null) {
+          if (tabs.isTransitioning.value) return;
+          if (tabs.currentTab.value != DiaryTab.diary) {
+            tabs.requestTab(DiaryTab.diary);
+            return;
+          }
+        }
         final platform = Theme.of(context).platform;
         if (platform == TargetPlatform.android) {
           SystemNavigator.pop();

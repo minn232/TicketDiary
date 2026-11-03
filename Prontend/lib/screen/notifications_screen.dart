@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/notification_display.dart';
 import '../models/notification_model.dart';
 import '../services/api_client.dart';
+import '../services/fcm_service.dart';
 import '../services/notifications_service.dart';
 import '../widgets/app_network_image.dart';
 import '../widgets/diary_route.dart';
@@ -30,13 +31,15 @@ class NotificationsScreen extends StatefulWidget {
     this.service,
   });
 
+  static Future<void>? _visible;
+
   /// 지금 화면 위에 알림함 패널을 슬라이드업으로 띄우는 헬퍼.
   static Future<void> show(
     BuildContext context, {
     required double frameScale,
     NotificationsService? service,
   }) {
-    return showGeneralDialog<void>(
+    return _visible ??= showGeneralDialog<void>(
       context: context,
       barrierDismissible: false,
       barrierLabel: 'notifications_overlay',
@@ -45,7 +48,7 @@ class NotificationsScreen extends StatefulWidget {
       pageBuilder: (context, animation, secondaryAnimation) {
         return NotificationsScreen(frameScale: frameScale, service: service);
       },
-    );
+    ).whenComplete(() => _visible = null);
   }
 
   @override
@@ -89,6 +92,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   void initState() {
     super.initState();
     _load();
+    FcmService.instance.changes.addListener(_load);
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 320),
@@ -100,6 +104,8 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   @override
   void dispose() {
+    NotificationsScreen._visible = null;
+    FcmService.instance.changes.removeListener(_load);
     _controller.dispose();
     _listIn.dispose();
     super.dispose();
@@ -110,15 +116,18 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     if (_listIn.isDismissed) _listIn.forward();
   }
 
+  int _loadGeneration = 0;
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     setState(() => _errorMessage = null);
     try {
       final items = await _service.list();
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() => _items = items);
       _maybeStartListIn();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       final message = e is ApiException ? '오류 (${e.statusCode})' : '오류 (연결 실패)';
       setState(() => _errorMessage = message);
     }

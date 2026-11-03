@@ -361,6 +361,8 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
     });
   }
 
+  void finishEditing() => _deselect();
+
   void _deselect() {
     if (_selected == null && _editing == null) return;
     FocusManager.instance.primaryFocus?.unfocus();
