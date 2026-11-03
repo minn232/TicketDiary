@@ -1,7 +1,28 @@
-from pydantic import BaseModel
+import re
+from pydantic import AfterValidator, BaseModel
 from uuid import UUID
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
+
+
+_TRAILING_PAREN_RE = re.compile(r"^(.*\S)\s*\(([^()]*)\)$")
+
+
+# KOPIS 공연장명은 "시설명 (공연장명)" 형식이라 홀이 하나뿐인 시설은 "예스24 라이브홀 (예스24라이브홀)"처럼
+# 같은 이름이 반복됨 - 괄호 안이 앞부분과 같으면(공백/대소문자 무시) 괄호를 뺌. DB 원문은 KOPIS 매칭에 써서 그대로 두고
+# 앱 응답에서만 정리
+def display_venue(venue: str | None) -> str | None:
+    if not venue:
+        return venue
+    m = _TRAILING_PAREN_RE.match(venue.strip())
+    if not m:
+        return venue
+    def norm(x: str) -> str:
+        return re.sub(r"\s+", "", x).casefold()
+    return m.group(1) if norm(m.group(1)) == norm(m.group(2)) else venue
+
+
+DisplayVenue = Annotated[str | None, AfterValidator(display_venue)]
 
 
 class PriceEntry(BaseModel):
@@ -25,7 +46,7 @@ class ConcertResponse(BaseModel):
     kopis_id: str | None
     name: str
     artist_name: list[str]
-    venue: str | None
+    venue: DisplayVenue
     start_date: datetime
     start_time: str | None
     end_date: datetime
@@ -55,7 +76,7 @@ class ConcertSummary(BaseModel):
     kopis_id: str | None
     name: str
     artist_name: list[str]
-    venue: str | None
+    venue: DisplayVenue
     start_date: datetime
     start_time: str | None
     end_date: datetime
