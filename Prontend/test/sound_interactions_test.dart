@@ -86,7 +86,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       await tester.pumpWidget(const MaterialApp(home: SettingsScreen()));
       await tester.pumpAndSettle();
-      for (final title in ['소리 설정', '공연 감상 설정']) {
+      for (final title in ['소리', '공연 감상']) {
         final row = find.ancestor(
           of: find.text(title),
           matching: find.byType(ExpansionTile),
@@ -96,10 +96,10 @@ void main() {
           Icons.keyboard_arrow_right,
         );
       }
-      await tester.tap(find.text('공연 감상 설정'));
+      await tester.tap(find.text('공연 감상'));
       await tester.pumpAndSettle();
       final row = find.ancestor(
-        of: find.text('공연 감상 설정'),
+        of: find.text('공연 감상'),
         matching: find.byType(ExpansionTile),
       );
       expect(

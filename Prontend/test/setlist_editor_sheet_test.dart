@@ -38,7 +38,10 @@ void main() {
     List<SongEntry>? saved;
     await _openSheet(
       tester,
-      initialSongs: const [SongEntry(name: '곡1'), SongEntry(name: '곡2')],
+      initialSongs: const [
+        SongEntry(name: '곡1'),
+        SongEntry(name: '곡2'),
+      ],
       onSave: (songs) async {
         saved = songs;
       },
@@ -84,9 +87,7 @@ void main() {
   });
 
   // [백엔드 수정] 페스티벌(아티스트 2명 이상) 곡별 아티스트 배정 회귀 테스트.
-  testWidgets('페스티벌이면 곡마다 아티스트를 지정할 수 있고 저장에 반영된다', (
-    tester,
-  ) async {
+  testWidgets('페스티벌이면 곡마다 아티스트를 지정할 수 있고 저장에 반영된다', (tester) async {
     List<SongEntry>? saved;
     await _openSheet(
       tester,
@@ -116,5 +117,37 @@ void main() {
 
     expect(saved, isNotNull);
     expect(saved!.single.artist, '아티스트B');
+  });
+
+  testWidgets('제목 줄을 아래로 끌면 닫히고, 조금만 끌면 제자리로 돌아온다', (tester) async {
+    await _openSheet(
+      tester,
+      initialSongs: const [SongEntry(name: '곡1')],
+      onSave: (_) async {},
+    );
+    // 조금만 끌면 그대로
+    await tester.drag(find.text('셋리스트 수정'), const Offset(0, 40));
+    await tester.pumpAndSettle();
+    expect(find.text('셋리스트 수정'), findsOneWidget);
+
+    // 충분히 끌면 닫힘(바뀐 게 없어 확인창 없음)
+    await tester.drag(find.text('셋리스트 수정'), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(find.text('셋리스트 수정'), findsNothing);
+  });
+
+  testWidgets('고친 게 있으면 끌어내려도 버릴지 먼저 묻는다', (tester) async {
+    await _openSheet(
+      tester,
+      initialSongs: const [SongEntry(name: '곡1')],
+      onSave: (_) async {},
+    );
+    await tester.enterText(find.byType(TextField).last, '새 곡');
+    await tester.drag(find.text('셋리스트 수정'), const Offset(0, 300));
+    await tester.pumpAndSettle();
+    expect(find.text('수정을 취소할까요?'), findsOneWidget);
+    await tester.tap(find.text('계속 편집'));
+    await tester.pumpAndSettle();
+    expect(find.text('셋리스트 수정'), findsOneWidget);
   });
 }

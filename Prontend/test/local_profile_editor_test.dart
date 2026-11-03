@@ -22,7 +22,7 @@ void main() {
     }
 
     await show('user-a');
-    await tester.tap(find.byTooltip('닉네임 수정'));
+    await tester.tap(find.byTooltip('닉네임 바꾸기'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '새 닉네임');
     await tester.pump();

@@ -43,10 +43,8 @@ class SetlistEditorSheet extends StatefulWidget {
       isScrollControlled: true,
       isDismissible: false,
       enableDrag: false,
-      backgroundColor: _paperColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
+      // [백엔드 수정] 종이 배경은 내용 쪽에서 그림 - 제목을 끌어내릴 때 종이째 따라 내려가게
+      backgroundColor: Colors.transparent,
       builder: (context) => SetlistEditorSheet(
         initialSongs: initialSongs,
         artistNames: artistNames,
@@ -59,7 +57,33 @@ class SetlistEditorSheet extends StatefulWidget {
   State<SetlistEditorSheet> createState() => _SetlistEditorSheetState();
 }
 
-class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
+class _SetlistEditorSheetState extends State<SetlistEditorSheet>
+    with SingleTickerProviderStateMixin {
+  /// [백엔드 수정] 제목 부분을 아래로 끌어 닫기 - 끈 만큼 시트가 내려오고, 충분히 끌면
+  /// 취소 버튼과 같은 경로(바뀐 게 있으면 버릴지 확인)로 닫음
+  late final AnimationController _drag = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+  );
+  double _sheetHeight = 1;
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_saving) return;
+    _drag.value += d.primaryDelta! / _sheetHeight;
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    if (_saving) return;
+    final fling = (d.primaryVelocity ?? 0) > 700;
+    if (fling || _drag.value > .25) {
+      // 확인창이 뜨거나 닫히지 않으면 제자리로
+      _drag.animateTo(0, curve: Curves.easeOut);
+      Navigator.of(context).maybePop();
+    } else {
+      _drag.animateTo(0, curve: Curves.easeOut);
+    }
+  }
+
   late List<SongEntry> _songs;
   late List<TextEditingController> _controllers;
 
@@ -91,6 +115,7 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
       c.dispose();
     }
     _newSongController.dispose();
+    _drag.dispose();
     super.dispose();
   }
 
@@ -257,215 +282,245 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet> {
 
   Widget _buildEditor(BuildContext context) {
     final viewInsets = MediaQuery.viewInsetsOf(context);
-    return Padding(
-      padding: EdgeInsets.only(bottom: viewInsets.bottom),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.75,
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 8),
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: _ink.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 10, 10, 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.music_note, size: 18, color: _accent),
-                    const SizedBox(width: 6),
-                    const Expanded(
-                      child: Text(
-                        '셋리스트 수정',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                          color: _ink,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _saving
-                          ? null
-                          : () => Navigator.of(context).maybePop(),
-                      child: const Text('취소'),
-                    ),
-                    TextButton(
-                      onPressed: _saving ? null : _handleSave,
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        backgroundColor: _accent,
-                        disabledBackgroundColor: _accent.withValues(alpha: 0.5),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                      ),
-                      child: _saving
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text('저장'),
-                    ),
-                  ],
-                ),
-              ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Text(
-                    _error!,
-                    style: const TextStyle(color: Colors.red, fontSize: 12),
-                  ),
-                ),
-              const Divider(height: 16, color: Color(0x22463C2E)),
-              Expanded(
-                child: _songs.isEmpty
-                    ? Center(
-                        child: Text(
-                          '곡이 없어요. 아래에서 추가해보세요.',
-                          style: TextStyle(color: _ink.withValues(alpha: 0.5)),
-                        ),
-                      )
-                    : ReorderableListView.builder(
-                        buildDefaultDragHandles: false,
-                        itemCount: _songs.length,
-                        onReorder: _reorder,
-                        itemBuilder: (context, index) {
-                          return Padding(
-                            key: ValueKey(_ids[index]),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 3,
-                            ),
-                            child: Row(
-                              children: [
-                                ReorderableDragStartListener(
-                                  index: index,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(right: 8),
-                                    child: Icon(
-                                      Icons.drag_handle,
-                                      color: _ink.withValues(alpha: 0.3),
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(
-                                  width: 20,
-                                  child: Text(
-                                    '${index + 1}',
-                                    style: TextStyle(
-                                      color: _ink.withValues(alpha: 0.35),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: TextField(
-                                    controller: _controllers[index],
-                                    style: const TextStyle(
-                                      color: _ink,
-                                      fontSize: 14,
-                                    ),
-                                    decoration: const InputDecoration(
-                                      isDense: true,
-                                      border: InputBorder.none,
-                                    ),
-                                  ),
-                                ),
-                                if (_isFestival) ...[
-                                  _artistChip(
-                                    artist: _songs[index].artist,
-                                    onPicked: (a) => _setSongArtist(index, a),
-                                  ),
-                                  const SizedBox(width: 4),
-                                ],
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.close,
-                                    size: 18,
-                                    color: _ink.withValues(alpha: 0.4),
-                                  ),
-                                  onPressed: () => _removeAt(index),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: _ink.withValues(alpha: 0.12)),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _newSongController,
-                        style: const TextStyle(color: _ink, fontSize: 14),
-                        decoration: InputDecoration(
-                          hintText: '곡 추가',
-                          hintStyle: TextStyle(
-                            color: _ink.withValues(alpha: 0.35),
-                          ),
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          filled: true,
-                          fillColor: Colors.white.withValues(alpha: 0.6),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: BorderSide(
-                              color: _ink.withValues(alpha: 0.2),
-                            ),
-                          ),
-                        ),
-                        onSubmitted: (_) => _addSong(),
-                      ),
-                    ),
-                    if (_isFestival) ...[
-                      const SizedBox(width: 6),
-                      _artistChip(
-                        artist: _newSongArtist,
-                        onPicked: (a) => setState(() => _newSongArtist = a),
-                      ),
-                    ],
-                    const SizedBox(width: 8),
-                    IconButton(
-                      onPressed: _addSong,
-                      style: IconButton.styleFrom(
-                        backgroundColor: _accent,
-                        foregroundColor: Colors.white,
-                      ),
-                      icon: const Icon(Icons.add),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+    _sheetHeight = MediaQuery.sizeOf(context).height * 0.75;
+    return AnimatedBuilder(
+      animation: _drag,
+      builder: (context, child) => Transform.translate(
+        offset: Offset(0, _drag.value * _sheetHeight),
+        child: child,
+      ),
+      child: Padding(
+        padding: EdgeInsets.only(bottom: viewInsets.bottom),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            color: _paperColor,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
           ),
+          child: _buildSheetBody(context),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSheetBody(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: SizedBox(
+        height: _sheetHeight,
+        child: Column(
+          children: [
+            // 손잡이 + 제목 줄을 끌어내리면 닫힘(목록 스크롤과 안 겹치게 여기만)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragUpdate: _onDragUpdate,
+              onVerticalDragEnd: _onDragEnd,
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: _ink.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 10, 10, 8),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '셋리스트 수정',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 16,
+                              color: _ink,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _saving
+                              ? null
+                              : () => Navigator.of(context).maybePop(),
+                          // [백엔드 수정] 기본 보라색 대신 잉크색
+                          style: TextButton.styleFrom(foregroundColor: _ink),
+                          child: const Text('취소'),
+                        ),
+                        TextButton(
+                          onPressed: _saving ? null : _handleSave,
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            backgroundColor: _accent,
+                            disabledBackgroundColor: _accent.withValues(
+                              alpha: 0.5,
+                            ),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                          child: _saving
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('저장'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                child: Text(
+                  _error!,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ),
+            const Divider(height: 16, color: Color(0x22463C2E)),
+            Expanded(
+              child: _songs.isEmpty
+                  ? Center(
+                      child: Text(
+                        '곡이 없어요. 아래에서 추가해보세요.',
+                        style: TextStyle(color: _ink.withValues(alpha: 0.5)),
+                      ),
+                    )
+                  : ReorderableListView.builder(
+                      buildDefaultDragHandles: false,
+                      itemCount: _songs.length,
+                      onReorder: _reorder,
+                      itemBuilder: (context, index) {
+                        return Padding(
+                          key: ValueKey(_ids[index]),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 3,
+                          ),
+                          child: Row(
+                            children: [
+                              ReorderableDragStartListener(
+                                index: index,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: Icon(
+                                    Icons.drag_handle,
+                                    color: _ink.withValues(alpha: 0.3),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 20,
+                                child: Text(
+                                  '${index + 1}',
+                                  style: TextStyle(
+                                    color: _ink.withValues(alpha: 0.35),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: TextField(
+                                  controller: _controllers[index],
+                                  style: const TextStyle(
+                                    color: _ink,
+                                    fontSize: 14,
+                                  ),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    border: InputBorder.none,
+                                  ),
+                                ),
+                              ),
+                              if (_isFestival) ...[
+                                _artistChip(
+                                  artist: _songs[index].artist,
+                                  onPicked: (a) => _setSongArtist(index, a),
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                              IconButton(
+                                icon: Icon(
+                                  Icons.close,
+                                  size: 18,
+                                  color: _ink.withValues(alpha: 0.4),
+                                ),
+                                onPressed: () => _removeAt(index),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: _ink.withValues(alpha: 0.12)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _newSongController,
+                      style: const TextStyle(color: _ink, fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: '곡 추가',
+                        hintStyle: TextStyle(
+                          color: _ink.withValues(alpha: 0.35),
+                        ),
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withValues(alpha: 0.6),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: _ink.withValues(alpha: 0.2),
+                          ),
+                        ),
+                      ),
+                      onSubmitted: (_) => _addSong(),
+                    ),
+                  ),
+                  if (_isFestival) ...[
+                    const SizedBox(width: 6),
+                    _artistChip(
+                      artist: _newSongArtist,
+                      onPicked: (a) => setState(() => _newSongArtist = a),
+                    ),
+                  ],
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _addSong,
+                    style: IconButton.styleFrom(
+                      backgroundColor: _accent,
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.add),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

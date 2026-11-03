@@ -114,7 +114,7 @@ class _MeetingCardScreenState extends State<MeetingCardScreen>
         // 연결 뒤 10분이 지났거나(410) 상대가 그새 다시 맞대 새 시도가 됨(404)
         _expired =
             e is ApiException && (e.statusCode == 410 || e.statusCode == 404);
-        _error = e is ApiException ? '오류 (${e.statusCode})' : '오류 (연결 실패)';
+        _error = e is ApiException ? '(${e.statusCode})' : '인터넷 연결을 확인해 주세요.';
       });
     }
   }
@@ -262,8 +262,8 @@ class _MeetingCardScreenState extends State<MeetingCardScreen>
           SizedBox(height: context.rs(10)),
           Text(
             _expired
-                ? '카드를 볼 수 있는 시간이 지났어요.\n다시 흔들어 맞대주세요.'
-                : '카드를 불러오지 못했어요.\n$_error',
+                ? '기록을 볼 수 있는 시간이 지났어요.\n다시 흔들어 맞대 주세요.'
+                : '기록을 불러오지 못했어요.\n$_error',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: context.sp(13),

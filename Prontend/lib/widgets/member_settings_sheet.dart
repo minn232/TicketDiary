@@ -62,11 +62,11 @@ class _MemberSettingsSheetState extends State<MemberSettingsSheet> {
     } on KakaoLoginUnsupportedOnWebException {
       await _showAlertDialog('아직 지원하지 않아요', '카카오 로그인은 현재 모바일 앱에서만 이용할 수 있어요.');
     } on ApiException catch (e) {
-      await _showAlertDialog('요청에 실패했어요', e.message);
+      await _showAlertDialog('처리하지 못했어요', e.message);
     } catch (_) {
       // 위 타입들로 잡히지 않는 예상 밖의 오류(네트워크 단절 등)도 조용히
       // 삼키지 않고 사용자에게 알립니다.
-      await _showAlertDialog('오류', '알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
+      await _showAlertDialog('문제가 생겼어요', '잠시 후 다시 해 주세요.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -188,16 +188,16 @@ class _MemberSettingsSheetState extends State<MemberSettingsSheet> {
     // 데이터를 잃을 수 있는 선택이라 무게를 나눔: 옮기기(주) / 삭제하기(빨간 글자) / 취소(흐림)
     return showPaperDialog<_MigrationChoice>(
       context,
-      title: '게스트로 등록된 데이터를 옮기시겠습니까?',
+      title: '게스트로 남긴 기록을 옮길까요?',
       message:
-          '게스트로 이용하며 추가한 티켓이 있어요.\n'
-          '카카오 계정으로 로그인하면서 이 데이터를 그대로 옮길까요?\n\n'
-          '삭제하기를 선택하면 이 티켓들은 카카오 계정에 반영되지 않아요(다시 게스트로 돌아가야 확인할 수 있어요).',
+          '게스트로 쓰면서 추가한 티켓이 있어요.\n'
+          '카카오 계정으로 그대로 옮길까요?\n\n'
+          '옮기지 않으면 이 티켓은 게스트로 돌아갔을 때만 볼 수 있어요.',
       tapeTint: PaperColors.tapeMustard,
       actions: const [
         PaperDialogAction(label: '취소', style: PaperButtonStyle.quiet),
         PaperDialogAction(
-          label: '삭제하기',
+          label: '옮기지 않기',
           value: _MigrationChoice.startFresh,
           style: PaperButtonStyle.danger,
         ),
@@ -219,7 +219,7 @@ class _MemberSettingsSheetState extends State<MemberSettingsSheet> {
     final confirmed = await showPaperDialog<bool>(
       context,
       title: '로그아웃',
-      message: '정말 로그아웃 하시겠습니까?',
+      message: '로그아웃할까요?',
       actions: const [
         PaperDialogAction(
           label: '로그아웃',
@@ -307,7 +307,7 @@ class _ProfileRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = isGuest
-        ? '게스트로 로그인 중'
+        ? '게스트로 쓰는 중'
         : (nickname != null && nickname!.isNotEmpty ? nickname! : '카카오 계정');
 
     return Column(
@@ -353,7 +353,7 @@ class _ProfileRow extends StatelessWidget {
         ),
         const SizedBox(height: 3),
         Text(
-          isGuest ? '아직 계정이 연결되지 않았어요' : '카카오 계정으로 로그인됨',
+          isGuest ? '아직 계정이 연결되지 않았어요' : '카카오 계정으로 로그인했어요',
           style: TextStyle(
             fontSize: context.sp(12),
             fontWeight: FontWeight.w600,

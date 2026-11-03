@@ -195,7 +195,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     final code = await _service.getNearbyCode();
     if (!mounted) return;
     if (code == null) {
-      _fail('인터넷에 연결된 상태로 한 번 열어주세요.');
+      _fail('인터넷에 연결된 상태로 한 번 열어 주세요.');
       return;
     }
     _myCode = code;
@@ -232,7 +232,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       );
       if (!mounted) return;
       if (result == null) {
-        _backToSearching('인터넷이 연결되면 연결 요청을 확인할 수 있어요.');
+        _backToSearching('인터넷이 연결되면 다시 확인할게요.');
       } else if (result.status == 'waiting') {
         _waitForPeerSighting(detection.code);
       } else {
@@ -242,8 +242,8 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       if (!mounted) return;
       _backToSearching(
         e.statusCode == 404
-            ? '친구 폰의 맞대기 정보가 오래됐어요. 친구도 화면을 다시 열어주세요.'
-            : '연결하지 못했어요 (${e.statusCode}).',
+            ? '상대 폰의 정보가 오래됐어요. 상대도 화면을 다시 열어 주세요.'
+            : '기록을 나누지 못했어요 (${e.statusCode}).',
       );
     } finally {
       _reporting = false;
@@ -290,7 +290,7 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       }
       if (DateTime.now().isAfter(until)) {
         timer.cancel();
-        if (mounted) _backToSearching('친구 폰에서도 맞대기 화면이 켜져 있는지 확인하고 다시 맞대주세요.');
+        if (mounted) _backToSearching('상대 폰에도 이 화면이 켜져 있는지 보고 다시 맞대 주세요.');
       }
     });
   }
@@ -362,8 +362,8 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
       if (!mounted) return;
       _backToSearching(
         e.statusCode == 410
-            ? '요청이 만료됐어요. 폰을 뗐다가 다시 맞대주세요.'
-            : '연결하지 못했어요 (${e.statusCode}).',
+            ? '시간이 지났어요. 폰을 뗐다가 다시 맞대 주세요.'
+            : '기록을 나누지 못했어요 (${e.statusCode}).',
       );
     }
   }
@@ -404,8 +404,8 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
           timer.cancel();
           _backToSearching(
             e.statusCode == 404
-                ? '${request.peer.displayName}님이 연결하지 않았어요.'
-                : '요청이 만료됐어요. 폰을 뗐다가 다시 맞대주세요.',
+                ? '${request.peer.displayName}님이 나누지 않기로 했어요.'
+                : '시간이 지났어요. 폰을 뗐다가 다시 맞대 주세요.',
           );
           return;
         }
@@ -654,12 +654,12 @@ class _NearbyTapScreenState extends State<NearbyTapScreen>
     final searching = _phase == _Phase.searching || _phase == _Phase.checking;
     final title = switch (_phase) {
       _Phase.preparing => '준비 중이에요',
-      _Phase.failed => '연결할 수 없어요',
-      _Phase.checking => '친구를 확인하고 있어요',
-      _ => '친구와 폰 윗부분을 맞대주세요',
+      _Phase.failed => '기록을 나눌 수 없어요',
+      _Phase.checking => '상대를 찾고 있어요',
+      _ => '기록을 나눌 사람과 폰 윗부분을 맞대 주세요',
     };
     // [백엔드 수정] 다이어리에서 흔들어 여는 방식으로 바뀌어 안내 문구 변경.
-    final sub = _phase == _Phase.failed ? _message : '친구도 폰을 흔들어 이 화면을 열어주세요';
+    final sub = _phase == _Phase.failed ? _message : '상대도 폰을 흔들어 이 화면을 열어 주세요';
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [

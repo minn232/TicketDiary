@@ -27,9 +27,9 @@ class ConnectionPeer {
     this.profileImageUrl,
   });
 
-  /// 닉네임 없는 게스트 계정은 "친구"로 표시.
+  /// 닉네임 없는 게스트 계정은 "관객"으로 표시.
   String get displayName =>
-      (nickname?.trim().isNotEmpty ?? false) ? nickname!.trim() : '친구';
+      (nickname?.trim().isNotEmpty ?? false) ? nickname!.trim() : '관객';
 
   factory ConnectionPeer.fromJson(Map<String, dynamic> json) => ConnectionPeer(
     userId: json['user_id'] as String,

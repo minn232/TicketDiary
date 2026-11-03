@@ -55,7 +55,7 @@ class _AudioVolumeSettingsState extends State<AudioVolumeSettings> {
             Divider(color: PaperColors.muted.withValues(alpha: .18)),
             _bar('노래 미리듣기', _store.music, isMusic: true),
             Text(
-              '공연 후 페이지의 미리듣기 음량을 조절해요',
+              '공연 후 페이지에서 듣는 노래 크기예요',
               style: TextStyle(
                 fontSize: context.sp(11),
                 height: 1.4,

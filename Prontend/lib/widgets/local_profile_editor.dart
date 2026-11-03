@@ -74,7 +74,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: PaperColors.card,
-        title: const Text('닉네임 설정'),
+        title: const Text('닉네임 바꾸기'),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -121,7 +121,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
             if (_photo != null)
               ListTile(
                 leading: const Icon(Icons.person_outline),
-                title: const Text('기본 프로필로 변경'),
+                title: const Text('기본 사진으로 되돌리기'),
                 onTap: () => Navigator.pop(context, 'remove'),
               ),
           ],
@@ -165,7 +165,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
     children: [
       Semantics(
         button: true,
-        label: '프로필 사진 변경',
+        label: '프로필 사진 바꾸기',
         child: InkWell(
           onTap: _ready && !_busy ? _editPhoto : null,
           customBorder: const CircleBorder(),
@@ -208,7 +208,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            tooltip: '닉네임 수정',
+            tooltip: '닉네임 바꾸기',
             onPressed: _ready && !_busy ? _editName : null,
             icon: const Icon(
               Icons.edit_outlined,
@@ -232,7 +232,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
         ],
       ),
       const Text(
-        '카카오 계정으로 로그인됨',
+        '카카오 계정으로 로그인했어요',
         style: TextStyle(color: PaperColors.muted, fontSize: 12),
       ),
       if (_busy) const LinearProgressIndicator(color: PaperColors.muted),

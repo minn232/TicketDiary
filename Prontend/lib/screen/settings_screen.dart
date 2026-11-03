@@ -69,7 +69,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await ConnectionService().setShareNextConcert(v);
     } catch (e) {
       if (mounted) setState(() => _shareNextConcert = prev);
-      _showSaveError(e, label: '내 다음 공연 보여주기');
+      _showSaveError(e, label: '내 다음 공연도 보여주기');
     }
   }
 
@@ -109,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await _appSettings.setShowExpectedSetlist(v);
     } catch (e) {
-      _showSaveError(e, label: '예상 셋리 노출 여부');
+      _showSaveError(e, label: '예상 셋리스트 보기');
     }
   }
 
@@ -119,7 +119,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await _appSettings.setPreferredMusicService(v);
     } catch (e) {
-      _showSaveError(e, label: '기본 음악 앱');
+      _showSaveError(e, label: '노래 들을 앱');
     }
   }
 
@@ -128,7 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await _appSettings.setPlayTicketPreview(v);
     } catch (e) {
-      _showSaveError(e, label: '티켓 열 때 노래 재생');
+      _showSaveError(e, label: '티켓 열면 노래 틀기');
     }
   }
 
@@ -215,10 +215,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  void _showSaveError(Object e, {String label = '알림 설정'}) {
+  void _showSaveError(Object e, {String label = '알림'}) {
     if (!mounted) return;
     final message = e is ApiException ? e.message : '잠시 후 다시 시도해주세요.';
-    showPaperSnackBar(context, '$label 저장에 실패했어요: $message');
+    showPaperSnackBar(context, "'$label' 설정을 저장하지 못했어요. $message");
   }
 
   void _openMemberSettingsSheet(BuildContext context) {
@@ -313,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               title: Builder(
                                 builder: (innerContext) => Text(
-                                  '소리 설정',
+                                  '소리',
                                   style: TextStyle(
                                     fontSize: innerContext.sp(15),
                                     fontWeight: FontWeight.w800,
@@ -356,7 +356,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               childrenPadding: EdgeInsets.zero,
                               title: Builder(
                                 builder: (innerContext) => Text(
-                                  '공연 감상 설정',
+                                  '공연 감상',
                                   style: TextStyle(
                                     fontSize: innerContext.sp(15),
                                     fontWeight: FontWeight.w800,
@@ -366,14 +366,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               children: [
                                 _SwitchRow(
-                                  title: '예상 셋리 노출 여부',
+                                  title: '예상 셋리스트 보기',
                                   value: _appSettings.showExpectedSetlist,
                                   onChanged: _setShowExpectedSetlist,
                                   indent: true,
                                 ),
                                 _divider,
                                 _SwitchRow(
-                                  title: '티켓 열 때 노래 재생',
+                                  title: '티켓 열면 노래 틀기',
                                   value: _appSettings.playTicketPreview,
                                   onChanged: _setPlayTicketPreview,
                                   indent: true,
@@ -435,7 +435,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               // [백엔드 수정] "설정" 타이틀과 같은 이유로 Builder 추가.
                               title: Builder(
                                 builder: (innerContext) => Text(
-                                  '푸시 알림',
+                                  '알림 받기',
                                   style: TextStyle(
                                     fontSize: innerContext.sp(15),
                                     fontWeight: FontWeight.w800,
@@ -475,7 +475,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 // [백엔드 수정]
                                 // new_concert로 서버 저장
                                 _SwitchRow(
-                                  title: '선호 아티스트 공연 알림',
+                                  title: '찜한 아티스트 새 공연 알림',
                                   value: pushFavArtistConcert,
                                   onChanged: _setFavArtistConcert,
                                   indent: true,
@@ -484,7 +484,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 // [백엔드 수정]
                                 // ticketing으로 서버 저장
                                 _SwitchRow(
-                                  title: '찜 공연 알림',
+                                  title: '찜한 공연 예매 알림',
                                   value: pushPinnedConcert,
                                   onChanged: _setPinnedConcert,
                                   indent: true,
@@ -511,7 +511,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               },
                             ),
                           ),
-                          const _SectionLabel('친구'),
+                          const _SectionLabel('나누기'),
                           // [백엔드 수정]
                           // 연결된 친구 목록은 일회용 만남(다이어리에서 흔들기)으로 바뀌어 꺼 둠.
                           // Builder(
@@ -549,7 +549,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               childrenPadding: EdgeInsets.zero,
                               title: Builder(
                                 builder: (innerContext) => Text(
-                                  '친구 만나기 설정',
+                                  '공연 기록 나누기',
                                   style: TextStyle(
                                     fontSize: innerContext.sp(15),
                                     fontWeight: FontWeight.w800,
@@ -559,7 +559,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               children: [
                                 _SwitchRow(
-                                  title: '흔들어서 친구 만나기',
+                                  title: '흔들어서 기록 나누기',
                                   value: _appSettings.shakeToMeet,
                                   onChanged: _appSettings.setShakeToMeet,
                                   indent: true,
@@ -567,7 +567,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 if (_shareNextConcert != null) ...[
                                   _divider,
                                   _SwitchRow(
-                                    title: '친구에게 내 다음 공연 보여주기',
+                                    title: '내 다음 공연도 보여주기',
                                     value: _shareNextConcert!,
                                     onChanged: _setShareNextConcert,
                                     indent: true,
@@ -730,7 +730,7 @@ class _MusicServiceRow extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                '기본 음악 앱',
+                '노래 들을 앱',
                 style: TextStyle(
                   fontSize: context.sp(14),
                   fontWeight: FontWeight.w700,
