@@ -197,10 +197,13 @@ class _ReportPage extends StatelessWidget {
     padding: const EdgeInsets.only(right: 8, bottom: 8),
     child: LayoutBuilder(
       builder: (context, box) {
-        // Both pages fill exactly the same canvas. Scale the entire layout only
-        // on small screens, keeping labels, chart hit areas and portraits aligned.
+        // Both pages fill exactly the same canvas. Scale the entire layout,
+        // keeping labels, chart hit areas and portraits aligned.
+        // [백엔드 수정] 큰 화면에서도 키움 - 폰 기준 글자 크기 그대로라 태블릿에선
+        // 카드만 커지고 숫자가 왼쪽 아래 구석에 작게 붙어 보였음
+        // 다만 폰 비율 그대로(태블릿 세로 약 1.5배) 키우면 부담스러워 1.3배까지만
         final scale = math.min(
-          1.0,
+          1.3,
           math.min(box.maxWidth / 300, box.maxHeight / 620),
         );
         return FittedBox(
@@ -306,7 +309,9 @@ class _Metrics extends StatelessWidget {
     // 가장 긴 값이 칸 폭에 들어가는 크기를 모두에 씀.
     return LayoutBuilder(
       builder: (context, c) {
-        final inner = (c.maxWidth - 10) / 2 - 28;
+        // [백엔드 수정] 넓은 화면(태블릿)은 숫자가 칸 폭을 꽉 채우면 부담스러워 75%까지만
+        final inner =
+            ((c.maxWidth - 10) / 2 - 28) * (c.maxWidth > 360 ? .75 : 1);
         final scaler = MediaQuery.textScalerOf(context);
         var widest = 0.0;
         for (final v in ['${_number(count)}회', time, '${_number(spent)}원']) {
@@ -396,51 +401,54 @@ class _Metric extends StatelessWidget {
             ),
           ],
         ),
-        // 숫자를 카드 아래쪽에 크게 - 작은 숫자 위로 빈 공간만 크던 것
-        if (multiline)
-          Expanded(
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: Tooltip(
-                message: value,
-                child: Text(
-                  value,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _ink,
-                    // 장르는 글자가 길어 숫자보다 작게(예전 22는 세 줄로 넘침)
-                    fontSize: (valueSize * .6).clamp(14.0, 18.0),
-                    fontWeight: FontWeight.w900,
-                    height: 1.15,
-                  ),
-                ),
-              ),
-            ),
-          )
-        else
-          Expanded(
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.bottomLeft,
-                child: countUpTo == null
-                    ? _valueText(value)
-                    : TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0, end: countUpTo!.toDouble()),
-                        duration: const Duration(milliseconds: 700),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, v, _) =>
-                            _valueText(format!(v.round())),
+        // [백엔드 수정] 숫자+보조 문구를 남은 칸 세로 가운데에 - 아래에 붙여 두니 큰 카드에서
+        // 왼쪽 아래 구석에 몰려 보였음. 보조 문구 줄은 늘 자리를 잡아 한 줄의 숫자 높이를 맞춤
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (multiline)
+                  Tooltip(
+                    message: value,
+                    child: Text(
+                      value,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _ink,
+                        // 장르는 글자가 길어 숫자보다 작게(예전 22는 세 줄로 넘침)
+                        fontSize: (valueSize * .6).clamp(14.0, 18.0),
+                        fontWeight: FontWeight.w900,
+                        height: 1.15,
                       ),
-              ),
+                    ),
+                  )
+                else
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: countUpTo == null
+                        ? _valueText(value)
+                        : TweenAnimationBuilder<double>(
+                            tween: Tween(begin: 0, end: countUpTo!.toDouble()),
+                            duration: const Duration(milliseconds: 700),
+                            curve: Curves.easeOutCubic,
+                            builder: (context, v, _) =>
+                                _valueText(format!(v.round())),
+                          ),
+                  ),
+                const SizedBox(height: 4),
+                Text(
+                  note ?? '',
+                  style: const TextStyle(color: _muted, fontSize: 10),
+                ),
+              ],
             ),
           ),
-        if (note != null) ...[
-          const SizedBox(height: 4),
-          Text(note!, style: const TextStyle(color: _muted, fontSize: 10)),
-        ],
+        ),
       ],
     ),
   );
@@ -1334,18 +1342,48 @@ class _ArtistState extends State<_Artist> with AutomaticKeepAliveClientMixin {
           const SizedBox(height: 4),
           SizedBox(
             height: 32,
+            // [백엔드 수정] 공동 순위면 이름 한 줄 + "외 N명" 한 줄 - 한 문장으로 두면
+            // "Novelbright 외 76 / 명"처럼 숫자와 "명"이 갈려 줄바꿈됐음
             child: Center(
-              child: Text(
-                group.labelAt(_index),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: _ink,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              child: canCycle
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: _ink,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.2,
+                          ),
+                        ),
+                        Text(
+                          '외 ${group.names.length - 1}명',
+                          maxLines: 1,
+                          style: const TextStyle(
+                            color: _muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            height: 1.2,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: _ink,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
             ),
           ),
           const SizedBox(height: 4),

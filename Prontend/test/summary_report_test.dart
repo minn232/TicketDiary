@@ -189,12 +189,13 @@ void main() {
           ),
         )
         .imageUrl;
-    expect(find.text('200 외 1명'), findsOneWidget);
+    // 공동 순위는 이름과 "외 N명"을 두 줄로 따로 표시
+    expect(find.text('200'), findsOneWidget);
     expect(imageUrl(), 'https://example.test/200.jpg');
     await tester.tap(profile);
     await tester.pumpAndSettle();
-    expect(find.text('NY team 외 1명'), findsOneWidget);
-    expect(find.text('200 외 1명'), findsNothing);
+    expect(find.text('NY team'), findsOneWidget);
+    expect(find.text('200'), findsNothing);
     expect(imageUrl(), 'https://example.test/ny.jpg');
     expect(tester.getRect(profile), bounds);
     expect(find.text('Solo'), findsOneWidget);
@@ -205,10 +206,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('다음 보고서'));
     await tester.pumpAndSettle();
-    expect(find.text('NY team 외 1명'), findsOneWidget);
+    expect(find.text('NY team'), findsOneWidget);
     await tester.tap(profile);
     await tester.pumpAndSettle();
-    expect(find.text('200 외 1명'), findsOneWidget);
+    expect(find.text('200'), findsOneWidget);
     expect(imageUrl(), 'https://example.test/200.jpg');
     expect(search.queries.where((name) => name == '200').length, 1);
     expect(tester.takeException(), isNull);
@@ -337,7 +338,8 @@ void main() {
         expect(first.right, lessThan(third.left));
         expect(first.width / second.width, closeTo(1.5, .001));
         expect(first.width / third.width, closeTo(3, .001));
-        expect(find.text('Artist A 외 1명'), findsOneWidget);
+        // 공동 순위는 이름과 "외 N명"을 두 줄로 따로 표시
+        expect(find.text('Artist A'), findsOneWidget);
         expect(search.queries.toSet(), {'Artist A', 'Artist B', 'Artist C'});
         await tester.tap(find.byTooltip('다음 보고서'));
         await tester.pumpAndSettle();

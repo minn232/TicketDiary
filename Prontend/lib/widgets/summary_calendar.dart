@@ -21,12 +21,16 @@ class SummaryCalendar extends StatefulWidget {
     this.news = const [],
     this.onNewsTap,
     this.onTicketTap,
+    this.todayRequest,
   });
   final List<Map<String, dynamic>> tickets;
   final ValueNotifier<DateTime> selection;
   final List<NewsModel> news;
   final ValueChanged<NewsModel>? onNewsTap;
   final ValueChanged<Map<String, dynamic>>? onTicketTap;
+
+  /// [백엔드 수정] 값이 바뀔 때마다 오늘로 돌아감(결산 화면의 오늘 날짜 버튼)
+  final Listenable? todayRequest;
 
   @override
   State<SummaryCalendar> createState() => _SummaryCalendarState();
@@ -58,10 +62,44 @@ class _SummaryCalendarState extends State<SummaryCalendar>
       vsync: this,
       duration: const Duration(milliseconds: 480),
     );
+    widget.todayRequest?.addListener(_goToday);
+  }
+
+  @override
+  void didUpdateWidget(covariant SummaryCalendar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.todayRequest != widget.todayRequest) {
+      oldWidget.todayRequest?.removeListener(_goToday);
+      widget.todayRequest?.addListener(_goToday);
+    }
+  }
+
+  /// 연 화면이면 올해 종이에서 이번 달 칸으로 줌인, 월 화면이면 달력 장을 넘겨 오늘로
+  /// (같은 달이면 고른 날만 오늘로 옮김)
+  void _goToday() {
+    if (_zoom.isAnimating) return;
+    final today = DateUtils.dateOnly(DateTime.now());
+    if (_zoom.value > 0) {
+      setState(() => _year = today.year);
+      _zoomIn(today);
+      return;
+    }
+    final current = selection.value;
+    if (DateUtils.isSameDay(current, today)) return;
+    selection.value = today;
+    if (current.year != today.year || current.month != today.month) {
+      SoundEffectService.instance.start(
+        today.isAfter(current)
+            ? SoundEffect.pageFlip
+            : SoundEffect.pageFlipBack,
+        maxDuration: const Duration(milliseconds: 280),
+      );
+    }
   }
 
   @override
   void dispose() {
+    widget.todayRequest?.removeListener(_goToday);
     _zoom.dispose();
     super.dispose();
   }
@@ -185,20 +223,29 @@ class _SummaryCalendarState extends State<SummaryCalendar>
         // [백엔드 수정] 첫/마지막 달에서 더 넘기면 달도 소리도 그대로.
         if (nextIndex == monthIndex) return;
         final next = months[nextIndex];
-        final attendedDays =
+        // [백엔드 수정] 앞뒤 모두 일정 있는 날로 - 뒤로 가면 그 달 마지막, 앞으로 가면 첫 일정.
+        // 공연(본 공연·내 티켓·소식 공연)이 있는 날을 먼저 보고, 없으면 예매일
+        final monthDays =
             grouped.keys
                 .where(
                   (date) => date.year == next.year && date.month == next.month,
                 )
-                .where(
-                  (date) => (grouped[date] ?? const []).any(
-                    (item) => item['kind'] == null,
-                  ),
-                )
                 .toList()
               ..sort();
-        final targetDay = delta < 0 && attendedDays.isNotEmpty
-            ? attendedDays.last.day
+        final showDays = monthDays
+            .where(
+              (date) => (grouped[date] ?? const []).any(
+                (item) => item['kind'] != 'ticketing',
+              ),
+            )
+            .toList();
+        final eventDays = showDays.isNotEmpty ? showDays : monthDays;
+        // 오늘이 든 달은 일정과 상관없이 오늘로
+        final isThisMonth = next.year == now.year && next.month == now.month;
+        final targetDay = isThisMonth
+            ? now.day
+            : eventDays.isNotEmpty
+            ? (delta < 0 ? eventDays.last : eventDays.first).day
             : selected.day.clamp(1, DateTime(next.year, next.month + 1, 0).day);
         selection.value = DateTime(next.year, next.month, targetDay);
         SoundEffectService.instance.start(
@@ -207,13 +254,9 @@ class _SummaryCalendarState extends State<SummaryCalendar>
         );
       }
 
-      // 연 모아보기: 관람 기록이 있는 해 + 올해
-      final years = <int>{
-        now.year,
-        for (final date in grouped.keys)
-          if ((grouped[date] ?? const []).any((item) => item['kind'] == null))
-            date.year,
-      }.toList()..sort();
+      // 연 모아보기: 월 달력으로 넘길 수 있는 달의 해 전부(기록 있는 해 + 올해~12개월 뒤).
+      // 전엔 기록 있는 해 + 올해만이라 내년 달에서 축소하면 목록에 없어 이동이 막혔음
+      final years = {for (final m in months) m.year}.toList()..sort();
       void moveYear(int delta) {
         final index = years.indexOf(_year);
         final next = index + delta;
@@ -570,7 +613,8 @@ class _SummaryCalendarState extends State<SummaryCalendar>
     final byMonth = <int, List<Map<String, dynamic>>>{};
     for (final ticket in tickets) {
       final date = DateTime.tryParse('${ticket['date']}');
-      if (date == null || date.year != year) continue;
+      // [백엔드 수정] 아직 안 간 내 티켓(myTicket)은 연 모아보기에 안 붙임(본 공연만)
+      if (date == null || date.year != year || ticket['kind'] != null) continue;
       (byMonth[date.month] ??= []).add(ticket);
     }
     for (final list in byMonth.values) {
@@ -1113,7 +1157,11 @@ class _DayCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final attended = items.where((item) => item['kind'] == null).toList();
+    // [백엔드 수정] 아직 안 간 내 티켓도 가는 게 확정이라 본 공연처럼 포스터 스티커로
+    // (흐린 포스터는 소식 공연과 겹쳐 보였음)
+    final attended = items
+        .where((item) => item['kind'] == null || item['kind'] == 'myTicket')
+        .toList();
     String? firstUrl(Iterable<String?> urls) => urls.firstWhere(
       (url) => url != null && url.isNotEmpty,
       orElse: () => null,

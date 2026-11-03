@@ -13,6 +13,7 @@ import '../services/news_card_identity.dart';
 import '../services/favorites_store.dart';
 import '../models/news_model.dart';
 import '../services/ticket_refresh_bus.dart';
+import '../services/ticket_service.dart';
 import 'diary_screen.dart' show buildUpcomingTicketLandscapePanel;
 import '../widgets/diary_landscape_cover_panel.dart';
 import '../widgets/diary_page_frame.dart';
@@ -65,9 +66,15 @@ class _SummaryScreenState extends State<SummaryScreen> {
     DateUtils.dateOnly(DateTime.now()),
   );
 
+  // [백엔드 수정] 오늘 날짜 버튼을 누를 때마다 올려 캘린더를 오늘로 돌림
+  final _calendarTodayRequest = ValueNotifier<int>(0);
+
   // 연도 칩 선택(차트별). 페이지가 화면에서 사라졌다 다시 만들어져도 유지하려고 화면 State에 보관
   final Map<String, String> _yearSelection = {};
   late Future<List<NewsModel>> _newsFuture;
+
+  // [백엔드 수정] 결산 API는 관람 끝난 티켓만 줘서, 아직 안 간 내 티켓은 티켓 목록에서 따로 채움.
+  List<Map<String, dynamic>> _upcomingTickets = const [];
   Timer? _newsRefreshTimer;
 
   void _onNewsListUpdated() {
@@ -89,6 +96,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
       }
     });
     TicketRefreshBus.tick.addListener(_load);
+    _loadUpcomingTickets();
+    TicketRefreshBus.tick.addListener(_loadUpcomingTickets);
     FavoritesStore.instance.addListener(_refreshCalendarNews);
   }
 
@@ -102,6 +111,31 @@ class _SummaryScreenState extends State<SummaryScreen> {
     setState(() {
       _newsFuture = _loadCalendarNews();
     });
+  }
+
+  // [백엔드 수정] 관람일(없으면 공연 첫날)에 'myTicket'으로 표시 - 연 모아보기·관람 횟수엔 안 셈.
+  Future<void> _loadUpcomingTickets() async {
+    try {
+      final tickets = await TicketService().listTickets();
+      if (!mounted) return;
+      setState(() {
+        _upcomingTickets = [
+          for (final t in tickets)
+            if (t.status != 'after_concert')
+              if ((t.attendedDate ?? t.concert?.startDate) case final date?)
+                {
+                  'kind': 'myTicket',
+                  'ticket_id': t.id,
+                  'concert_name': t.concert?.name ?? '',
+                  'poster_url': t.concert?.posterUrl,
+                  'date': DateUtils.dateOnly(date.toLocal()).toIso8601String(),
+                  'price': t.price,
+                },
+        ];
+      });
+    } catch (_) {
+      // 못 불러오면 관람 기록·소식 일정만 보여줌
+    }
   }
 
   // 마지막으로 보낸 요청의 결과만 반영(연달아 눌렀을 때 늦게 온 이전 응답이 덮어쓰지 않게)
@@ -151,8 +185,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
     _newsRefreshTimer?.cancel();
     NewsListService.updates.removeListener(_onNewsListUpdated);
     TicketRefreshBus.tick.removeListener(_load);
+    TicketRefreshBus.tick.removeListener(_loadUpcomingTickets);
     FavoritesStore.instance.removeListener(_refreshCalendarNews);
     _calendarSelection.dispose();
+    _calendarTodayRequest.dispose();
     _noticeTimer?.cancel();
     super.dispose();
   }
@@ -198,9 +234,13 @@ class _SummaryScreenState extends State<SummaryScreen> {
             future: _newsFuture,
             builder: (context, newsSnapshot) => _calendarMode
                 ? SummaryCalendar(
-                    tickets: _list(calendarData['ticket_details']),
+                    tickets: [
+                      ..._list(calendarData['ticket_details']),
+                      ..._upcomingTickets,
+                    ],
                     news: newsSnapshot.data ?? const [],
                     selection: _calendarSelection,
+                    todayRequest: _calendarTodayRequest,
                     onNewsTap: (item) {
                       TabNavCoordinator.instance.pendingNewsCardKey =
                           newsCardKey(item);
@@ -327,7 +367,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
                           label: _calendarMode ? _todayLabel : _periodLabel,
                           showArrow: false,
                           active: !_calendarMode,
-                          onTap: _calendarMode ? null : _advancePeriod,
+                          onTap: _calendarMode
+                              ? () => _calendarTodayRequest.value++
+                              : _advancePeriod,
                         ),
                       ),
                     ],
