@@ -223,7 +223,12 @@ async def get_news_feed(
         select(NewsFeed)
         .join(Concert, NewsFeed.concert_id == Concert.id)
         .options(contains_eager(NewsFeed.concert))
-        .where(NewsFeed.user_id == user_id, Concert.start_date > today_start)
+        .where(
+            NewsFeed.user_id == user_id,
+            Concert.start_date > today_start,
+            # 티켓 등록한 공연은 소식이 필요 없어 제외. 여러 날 공연은 한 concert라 하루만 가도 전체가 빠짐
+            ~exists().where(Ticket.user_id == user_id, Ticket.concert_id == NewsFeed.concert_id),
+        )
         .order_by(NewsFeed.is_read.asc(), NewsFeed.created_at.desc())
         .limit(limit)
         .offset(offset)
