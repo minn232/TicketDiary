@@ -262,11 +262,13 @@ class _MemberSettingsSheetState extends State<MemberSettingsSheet> {
               ),
             ),
             // 카카오 프로필 사진은 안 씀(추후 앱에서 직접 등록 예정)
-            if (!isGuest && currentUser != null)
+            // [백엔드 수정] 게스트도 카카오와 같은 편집기(닉네임·사진).
+            if (currentUser != null)
               LocalProfileEditor(
                 key: ValueKey(currentUser.id),
                 userId: currentUser.id,
                 nickname: currentUser.nickname,
+                isGuest: isGuest,
               )
             else
               _ProfileRow(isGuest: isGuest, nickname: currentUser?.nickname),

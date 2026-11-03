@@ -286,6 +286,14 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // [백엔드 수정] 닉네임을 서버(PATCH /auth/me)에 저장하고 응답으로 현재 계정 갱신.
+  /// 닉네임을 바꿉니다. 서버가 앞뒤 공백을 정리하고 빈 값은 422로 거부합니다.
+  Future<void> updateNickname(String nickname) async {
+    final json = await _client.patch('/auth/me', body: {'nickname': nickname});
+    _currentUser = AuthUser.fromJson(json);
+    notifyListeners();
+  }
+
   /// 회원 탈퇴. 성공하면 다시 게스트 세션으로 돌아갑니다.
   Future<void> deleteAccount() async {
     await _client.delete('/auth/me');

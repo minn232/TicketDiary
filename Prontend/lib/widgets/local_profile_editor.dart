@@ -3,28 +3,36 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import 'paper_style.dart';
+import 'responsive_text.dart';
 
-/// 서버 프로필과 분리된 기기 내 계정별 미리보기입니다.
+/// 계정 프로필(게스트·카카오 공통). 닉네임은 서버에 저장하고, 사진은 아직
+/// 기기 안에만 계정별로 저장합니다.
 class LocalProfileEditor extends StatefulWidget {
   const LocalProfileEditor({
     super.key,
     required this.userId,
     required this.nickname,
+    this.isGuest = false,
   });
   final String userId;
   final String nickname;
+
+  /// [백엔드 수정] 게스트도 같은 편집기를 쓰고 문구와 느낌표 도장만 다름.
+  final bool isGuest;
   @override
   State<LocalProfileEditor> createState() => _LocalProfileEditorState();
 }
 
 class _LocalProfileEditorState extends State<LocalProfileEditor> {
-  String? _nickname;
   Uint8List? _photo;
   bool _ready = false;
   bool _busy = false;
   String get _key => 'profile_preview_${widget.userId}';
-  String get _name => _nickname ?? widget.nickname;
+  // [백엔드 수정] 닉네임은 기기 저장값 대신 서버 값만 씀.
+  String get _name => widget.nickname;
 
   @override
   void initState() {
@@ -38,7 +46,6 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
       final raw = prefs.getString(_key);
       if (raw != null) {
         final data = jsonDecode(raw) as Map<String, dynamic>;
-        _nickname = data['name'] as String?;
         if (data['photo'] != null) {
           _photo = base64Decode(data['photo'] as String);
         }
@@ -49,61 +56,19 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
     if (mounted) setState(() => _ready = true);
   }
 
-  Future<void> _save(String? name, Uint8List? photo) async {
+  Future<void> _savePhoto(Uint8List? photo) async {
     final prefs = await SharedPreferences.getInstance();
     if (!await prefs.setString(
       _key,
-      jsonEncode({
-        'name': name,
-        'photo': photo == null ? null : base64Encode(photo),
-      }),
+      jsonEncode({'photo': photo == null ? null : base64Encode(photo)}),
     )) {
       throw StateError('저장 실패');
     }
-    if (mounted) {
-      setState(() {
-        _nickname = name;
-        _photo = photo;
-      });
-    }
+    if (mounted) setState(() => _photo = photo);
   }
 
-  Future<void> _editName() async {
-    final controller = TextEditingController(text: _name);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: PaperColors.card,
-        title: const Text('닉네임 바꾸기'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: 20,
-          decoration: const InputDecoration(hintText: '닉네임을 입력해주세요'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('취소'),
-          ),
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: controller,
-            builder: (context, value, _) => TextButton(
-              onPressed: value.text.trim().isEmpty
-                  ? null
-                  : () => Navigator.pop(context, value.text.trim()),
-              child: const Text('저장'),
-            ),
-          ),
-        ],
-      ),
-    );
-    // 다이얼로그 퇴장 애니메이션 동안 컨트롤러가 사용됩니다.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    controller.dispose();
-    if (name == null || !mounted) return;
-    await _run(() => _save(name, _photo));
-  }
+  // [백엔드 수정] 종이 톤 입력창으로 바꾸고 저장은 창 안에서 서버에 바로 함.
+  Future<void> _editName() => showNicknameDialog(context, initial: _name);
 
   Future<void> _editPhoto() async {
     final action = await showModalBottomSheet<String>(
@@ -131,7 +96,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
     if (action == null || !mounted) return;
     await _run(() async {
       if (action == 'remove') {
-        await _save(_nickname, null);
+        await _savePhoto(null);
       } else {
         final image = await ImagePicker().pickImage(
           source: ImageSource.gallery,
@@ -140,7 +105,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
           imageQuality: 80,
         );
         if (image != null && mounted) {
-          await _save(_nickname, await image.readAsBytes());
+          await _savePhoto(await image.readAsBytes());
         }
       }
     });
@@ -170,6 +135,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
           onTap: _ready && !_busy ? _editPhoto : null,
           customBorder: const CircleBorder(),
           child: Stack(
+            clipBehavior: Clip.none,
             children: [
               if (_photo == null)
                 ProfileAvatar(size: 88, name: _name)
@@ -182,6 +148,30 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) =>
                         ProfileAvatar(size: 88, name: _name),
+                  ),
+                ),
+              if (widget.isGuest)
+                Positioned(
+                  right: -2,
+                  top: -2,
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: PaperColors.stamp,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: PaperColors.card, width: 2),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      '!',
+                      style: TextStyle(
+                        color: PaperColors.card,
+                        fontSize: context.sp(14),
+                        fontWeight: FontWeight.w900,
+                        height: 1,
+                      ),
+                    ),
                   ),
                 ),
               Positioned(
@@ -218,7 +208,9 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
           ),
           Flexible(
             child: Text(
-              _name.isEmpty ? '카카오 계정' : _name,
+              _name.isNotEmpty
+                  ? _name
+                  : (widget.isGuest ? '게스트로 쓰는 중' : '카카오 계정'),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -231,11 +223,196 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
           const SizedBox(width: 48),
         ],
       ),
-      const Text(
-        '카카오 계정으로 로그인했어요',
-        style: TextStyle(color: PaperColors.muted, fontSize: 12),
+      Text(
+        widget.isGuest ? '아직 계정이 연결되지 않았어요' : '카카오 계정으로 로그인했어요',
+        style: const TextStyle(color: PaperColors.muted, fontSize: 12),
       ),
       if (_busy) const LinearProgressIndicator(color: PaperColors.muted),
     ],
   );
+}
+
+/// 닉네임 입력 메모지를 띄웁니다(게스트·카카오 공통). 저장되면 알림 쪽지를 띄웁니다.
+Future<void> showNicknameDialog(
+  BuildContext context, {
+  required String initial,
+}) async {
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (_) => _NicknameDialog(initial: initial),
+  );
+  if (saved == true && context.mounted) {
+    showPaperSnackBar(context, '닉네임을 바꿨어요.');
+  }
+}
+
+/// 닉네임 입력 메모지. 저장 중·실패 안내를 창 안에서 보여주고, 저장되면
+/// true로 닫힙니다.
+class _NicknameDialog extends StatefulWidget {
+  const _NicknameDialog({required this.initial});
+  final String initial;
+
+  @override
+  State<_NicknameDialog> createState() => _NicknameDialogState();
+}
+
+class _NicknameDialogState extends State<_NicknameDialog> {
+  static const _maxLength = 20;
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initial,
+  );
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  bool get _canSave {
+    final v = _controller.text.trim();
+    return !_saving && v.isNotEmpty && v != widget.initial.trim();
+  }
+
+  Future<void> _submit() async {
+    if (!_canSave) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await AuthService.instance.updateNickname(_controller.text.trim());
+      if (mounted) Navigator.pop(context, true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = e.statusCode == 422
+            ? '쓸 수 없는 닉네임이에요. 다른 이름으로 해 주세요.'
+            : '저장하지 못했어요. 잠시 후 다시 해 주세요.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = '저장하지 못했어요. 인터넷 연결을 확인해 주세요.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 여백 배율은 showPaperDialog와 같게
+    final k = 1 + (context.rs(1) - 1) * .5;
+    final line = PaperColors.ink.withValues(alpha: .25);
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      child: PaperNote(
+        maxWidth: context.rs(300),
+        angle: 0,
+        padding: EdgeInsets.fromLTRB(22 * k, 26 * k, 22 * k, 16 * k),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '닉네임 바꾸기',
+              style: TextStyle(
+                fontSize: context.sp(16),
+                fontWeight: FontWeight.w900,
+                color: PaperColors.ink,
+              ),
+            ),
+            SizedBox(height: 4 * k),
+            Text(
+              '셋리스트를 고치거나 공연 기록을 나눌 때\n다른 사람에게 보이는 이름이에요.',
+              style: TextStyle(
+                fontSize: context.sp(12),
+                fontWeight: FontWeight.w600,
+                color: PaperColors.muted,
+                height: 1.5,
+              ),
+            ),
+            SizedBox(height: 14 * k),
+            // 상자 대신 메모지 밑줄 한 줄에 적는 느낌, 커서 손잡이도 갈색 잉크
+            TextSelectionTheme(
+              data: TextSelectionThemeData(
+                cursorColor: PaperColors.ink,
+                selectionHandleColor: PaperColors.ink,
+                selectionColor: PaperColors.ink.withValues(alpha: .18),
+              ),
+              child: TextField(
+                controller: _controller,
+                autofocus: true,
+                enabled: !_saving,
+                maxLength: _maxLength,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => setState(() => _error = null),
+                onSubmitted: (_) => _submit(),
+                cursorColor: PaperColors.ink,
+                style: TextStyle(
+                  fontSize: context.sp(16),
+                  fontWeight: FontWeight.w800,
+                  color: PaperColors.ink,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: '닉네임을 적어 주세요',
+                  hintStyle: TextStyle(
+                    fontSize: context.sp(15),
+                    fontWeight: FontWeight.w600,
+                    color: PaperColors.muted.withValues(alpha: .7),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  counterStyle: TextStyle(
+                    fontSize: context.sp(11),
+                    color: PaperColors.muted,
+                  ),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: line),
+                  ),
+                  disabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: line),
+                  ),
+                  focusedBorder: const UnderlineInputBorder(
+                    borderSide: BorderSide(color: PaperColors.ink, width: 1.4),
+                  ),
+                ),
+              ),
+            ),
+            if (_error != null)
+              Text(
+                _error!,
+                style: TextStyle(
+                  fontSize: context.sp(12),
+                  fontWeight: FontWeight.w700,
+                  color: PaperColors.stamp,
+                ),
+              ),
+            SizedBox(height: 14 * k),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                spacing: 8 * k,
+                children: [
+                  PaperButton(
+                    label: '취소',
+                    style: PaperButtonStyle.quiet,
+                    onTap: _saving ? null : () => Navigator.pop(context, false),
+                  ),
+                  PaperButton(
+                    label: _saving ? '저장 중…' : '저장',
+                    onTap: _canSave ? _submit : null,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

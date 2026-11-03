@@ -285,6 +285,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _divider,
                     Expanded(
                       child: ListView(
+                        // [백엔드 수정] 내용이 화면보다 길 때만 스크롤.
+                        physics: const ScrollPhysics(),
                         padding: EdgeInsets.zero,
                         children: [
                           _LoginStatusBanner(
@@ -845,7 +847,8 @@ class _LoginStatusBanner extends StatelessWidget {
       builder: (context, _) {
         final auth = AuthService.instance;
         final nickname = auth.currentUser?.nickname;
-        final label = !auth.isGuest && nickname != null && nickname.isNotEmpty
+        // [백엔드 수정] 게스트도 닉네임을 정했으면 그 이름을 보여줌.
+        final label = nickname != null && nickname.trim().isNotEmpty
             ? nickname
             : '게스트로 이용 중';
 
@@ -866,10 +869,7 @@ class _LoginStatusBanner extends StatelessWidget {
             ),
             child: Row(
               children: [
-                ProfileAvatar(
-                  size: context.rs(46),
-                  name: isGuest ? null : nickname,
-                ),
+                ProfileAvatar(size: context.rs(46), name: nickname),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
