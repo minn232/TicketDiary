@@ -10,6 +10,7 @@ import 'package:ticketdiary/screen/summary_screen.dart';
 import 'package:ticketdiary/widgets/diary_route.dart';
 import 'package:ticketdiary/widgets/diary_tab_flip_route.dart';
 import 'package:ticketdiary/widgets/hanji_texture.dart';
+import 'package:ticketdiary/widgets/small_window_guard.dart';
 import 'package:ticketdiary/widgets/tab_hit_catcher_overlay.dart';
 import 'package:ticketdiary/widgets/tab_nav_coordinator.dart';
 
@@ -124,6 +125,8 @@ class TicketDiaryApp extends StatelessWidget {
                 Positioned.fill(
                   child: TabHitCatcherOverlay(coordinator: tabNav),
                 ),
+                // [백엔드 수정] 분할 화면에서 창이 너무 작으면 안내 메모로 덮음
+                const Positioned.fill(child: SmallWindowGuard()),
               ],
             ),
           );

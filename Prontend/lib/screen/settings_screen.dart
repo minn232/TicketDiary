@@ -722,32 +722,68 @@ class _MusicServiceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 56,
-      child: Padding(
-        padding: const EdgeInsets.only(left: 32, right: 16),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                '노래 들을 앱',
-                style: TextStyle(
-                  fontSize: context.sp(14),
-                  fontWeight: FontWeight.w700,
-                  color: PaperColors.ink,
-                ),
+    final label = Text(
+      '노래 들을 앱',
+      maxLines: 1,
+      style: TextStyle(
+        fontSize: context.sp(14),
+        fontWeight: FontWeight.w700,
+        color: PaperColors.ink,
+      ),
+    );
+    final icons = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final service in MusicService.values) ...[
+          _ServiceIconButton(
+            service: service,
+            selected: service == value,
+            onTap: () => onChanged(service),
+          ),
+          if (service != MusicService.values.last) const SizedBox(width: 6),
+        ],
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.only(left: 32, right: 16),
+      // [백엔드 수정] 제목+아이콘이 한 줄에 안 들어가면(분할 화면 등) 아이콘을 아래 줄로 -
+      // 한 줄에 억지로 두면 "노래 들을 / 앱"처럼 꺾였음(아이콘은 누르기 좋게 크기 유지)
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final labelWidth = (TextPainter(
+            text: TextSpan(text: '노래 들을 앱', style: label.style),
+            textDirection: TextDirection.ltr,
+            textScaler: MediaQuery.textScalerOf(context),
+          )..layout()).width;
+          // 아이콘 버튼 하나 = 18 + 안쪽 여백 14 + 테두리 약 3
+          final iconsWidth =
+              MusicService.values.length * 35.0 +
+              (MusicService.values.length - 1) * 6;
+          if (labelWidth + 12 + iconsWidth <= box.maxWidth) {
+            return SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  Expanded(child: label),
+                  icons,
+                ],
               ),
+            );
+          }
+          // 폭을 줄 전체로 - 내용 폭만큼이면 펼침 항목이 가운데로 놓아 들여쓰기가 어긋났음
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                label,
+                const SizedBox(height: 10),
+                FittedBox(fit: BoxFit.scaleDown, child: icons),
+              ],
             ),
-            for (final service in MusicService.values) ...[
-              _ServiceIconButton(
-                service: service,
-                selected: service == value,
-                onTap: () => onChanged(service),
-              ),
-              if (service != MusicService.values.last) const SizedBox(width: 6),
-            ],
-          ],
-        ),
+          );
+        },
       ),
     );
   }

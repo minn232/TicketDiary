@@ -104,6 +104,9 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   late final TicketTransitionSound _transitionSound;
   late final Animation<double> _t;
 
+  /// [백엔드 수정] 처음 펼친 페이지 폭 - 창 크기가 바뀌면 이 폭 대비로 배율을 맞춤
+  double? _openEndWidth;
+
   /// 포스트잇(콘텐츠) 페이드 인
   late final Animation<double> _postItOpacity;
 
@@ -189,6 +192,9 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     // 경계를 살짝 넘어가도 규격을 유지하는 걸 우선합니다).
     endWidth *= 1.1;
     endHeight *= 1.1;
+    // [백엔드 수정] 높이는 안전 영역을 넘지 않게 - 분할 화면처럼 창이 작으면 10% 확대분이
+    // 안쪽 여백보다 커져 위아래가 잘렸음. 폭은 그대로(끝까지 차는 모양 유지)
+    if (endHeight > safeHeight) endHeight = safeHeight;
     final safeCenter = Offset(
       safePadding.left + safeWidth / 2,
       safePadding.top + safeHeight / 2,
@@ -240,6 +246,9 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     final media = MediaQuery.of(context);
     final screenSize = media.size;
     final end = _endRect(screenSize, media.padding);
+    // [백엔드 수정] 연 뒤 창 크기가 바뀌면(분할 화면 비율 조절) 페이지 폭에 맞춰 배율도 따라감
+    _openEndWidth ??= end.width;
+    final frameScale = widget.frameScale * end.width / _openEndWidth!;
 
     // [백엔드 수정]
     // 두 레이어의 실제 콘텐츠를 여기서 한 번만 만들어서 넘김.
@@ -284,7 +293,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
     // [백엔드 수정]
     // 탭 시점에 넘겨받은 배율을 DiaryFrameScale로 다시 제공.
     return DiaryFrameScale(
-      scale: widget.frameScale,
+      scale: frameScale,
       marginEachSide: 0,
       child: PopScope(
         canPop: false,

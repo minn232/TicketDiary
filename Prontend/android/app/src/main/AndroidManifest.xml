@@ -46,6 +46,10 @@
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+            <!-- 팝업 창 최소 크기(분할 화면은 시스템이 지키지 않아 앱 안 SmallWindowGuard가 안내). -->
+            <layout
+                android:minWidth="320dp"
+                android:minHeight="300dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
