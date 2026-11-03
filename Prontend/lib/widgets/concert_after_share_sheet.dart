@@ -13,6 +13,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../services/external_share_service.dart';
 import 'concert_after_share_card.dart';
+import 'paper_style.dart';
 import 'responsive_text.dart';
 
 typedef ShareSheetPageBuilder =
@@ -206,9 +207,9 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
     } on GalException catch (e) {
       return e.type == GalExceptionType.accessDenied
           ? '사진 저장 권한이 필요해요.'
-          : '사진첩에 저장하지 못했어요.';
+          : '사진을 저장하지 못했어요.';
     }
-    return shots.length > 1 ? '사진첩에 2장 저장했어요.' : '사진첩에 저장했어요.';
+    return shots.length > 1 ? '사진 2장을 저장했어요.' : '사진을 저장했어요.';
   }
 
   Future<String> _blog() async {
@@ -506,19 +507,28 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
                 ],
               ),
             ),
-          IgnorePointer(
-            child: ColoredBox(
-              color: _sheetColor,
-              child: Row(
-                children: [
-                  for (final (name, key) in _targets)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        child: FittedBox(child: _card(name == 'back', key)),
-                      ),
-                    ),
-                ],
+          // [백엔드 수정] 미리보기를 세로 가운데로 - 앞+뒤처럼 낮은 카드는 위에 붙고 아래가 비었음
+          // (뒤에 그리는 카드가 비치지 않게 가림막은 영역 전체에 깖)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: ColoredBox(
+                color: _sheetColor,
+                child: Center(
+                  // [백엔드 수정] 칸을 반씩 나누지 않고 카드 크기만큼만 - 가로 모드처럼 높이에
+                  // 맞춰 카드가 작아지면 앞·뒷면 사이가 크게 벌어졌음
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final (name, key) in _targets)
+                        Flexible(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: FittedBox(child: _card(name == 'back', key)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -529,6 +539,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
     );
   }
 
+  /// [백엔드 수정] 기본 ChoiceChip 대신 종이 톤 묶음 버튼 - 고른 칸만 잉크색으로 채움
   Widget _options<T>(
     String title,
     List<T> values,
@@ -536,36 +547,41 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
     String Function(T) label,
     ValueChanged<T> onSelected,
   ) {
-    return Row(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          width: 44,
-          child: Text(
-            title,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              color: _ink,
-            ),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: _ink.withValues(alpha: .6),
           ),
         ),
-        Expanded(
-          child: Wrap(
-            spacing: 6,
+        const SizedBox(height: 6),
+        Container(
+          height: 38,
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: PaperColors.tile,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _ink.withValues(alpha: .12)),
+          ),
+          child: Row(
             children: [
               for (final v in values)
-                ChoiceChip(
-                  label: Text(label(v)),
-                  selected: v == selected,
-                  showCheckmark: false,
-                  visualDensity: VisualDensity.compact,
-                  onSelected: _busy
-                      ? null
-                      : (_) {
-                          // 이전 결과 문구 지움.
-                          _message = null;
-                          onSelected(v);
-                        },
+                Expanded(
+                  child: _Segment(
+                    label: label(v),
+                    selected: v == selected,
+                    onTap: _busy || v == selected
+                        ? null
+                        : () {
+                            // 이전 결과 문구 지움.
+                            _message = null;
+                            onSelected(v);
+                          },
+                  ),
                 ),
             ],
           ),
@@ -599,6 +615,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
           const SizedBox(height: 12),
           const Text(
             '공유하기',
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w800,
@@ -609,39 +626,91 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
           // 화면이 낮으면(폰 가로 등) 미리보기가 줄어듦.
           Flexible(child: _preview(height * .48)),
           const SizedBox(height: 14),
-          _options<ShareCardAspect>(
-            '비율',
-            ShareCardAspect.choices,
-            _aspect,
-            (v) => v.label,
-            (v) => setState(() => _aspect = v),
-          ),
-          _options<ShareCardSides>(
-            '면',
-            ShareCardSides.values,
-            _sides,
-            (v) => v.label,
-            (v) => setState(() => _sides = v),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text(
-              '자유메모 숨기기',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: _ink,
+          // [백엔드 수정] 왼쪽에 붙어 있던 옵션을 가운데로 - 넓으면 나란히, 좁으면 위아래
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: LayoutBuilder(
+                builder: (context, box) {
+                  final aspect = _options<ShareCardAspect>(
+                    '비율',
+                    ShareCardAspect.choices,
+                    _aspect,
+                    (v) => v.label,
+                    (v) => setState(() => _aspect = v),
+                  );
+                  final sides = _options<ShareCardSides>(
+                    '면',
+                    ShareCardSides.values,
+                    _sides,
+                    (v) => v.label,
+                    (v) => setState(() => _sides = v),
+                  );
+                  if (box.maxWidth < 360) {
+                    return Column(
+                      children: [aspect, const SizedBox(height: 10), sides],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: aspect),
+                      const SizedBox(width: 14),
+                      Expanded(child: sides),
+                    ],
+                  );
+                },
               ),
             ),
-            value: _hideMemos,
-            onChanged: _busy
-                ? null
-                : (v) => setState(() {
-                    _message = null;
-                    _hideMemos = v;
-                  }),
           ),
+          const SizedBox(height: 10),
+          Center(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: _busy
+                  ? null
+                  : () => setState(() {
+                      _message = null;
+                      _hideMemos = !_hideMemos;
+                    }),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 12, right: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      '메모 숨기기',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Transform.scale(
+                      scale: .8,
+                      child: Switch(
+                        value: _hideMemos,
+                        activeThumbColor: PaperColors.card,
+                        activeTrackColor: _ink,
+                        inactiveThumbColor: PaperColors.card,
+                        inactiveTrackColor: _ink.withValues(alpha: .18),
+                        trackOutlineColor: const WidgetStatePropertyAll(
+                          Colors.transparent,
+                        ),
+                        onChanged: _busy
+                            ? null
+                            : (v) => setState(() {
+                                _message = null;
+                                _hideMemos = v;
+                              }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
           if (_busy || (_message != null && _message!.isNotEmpty))
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -658,7 +727,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
           Row(
             children: [
               _ShareTarget(
-                label: '사진첩 저장',
+                label: '사진 저장',
                 icon: const _TargetIcon(
                   color: _ink,
                   child: Icon(Icons.download_rounded, color: Colors.white),
@@ -729,7 +798,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
                       : null,
                 ),
               _ShareTarget(
-                label: '블로그 공유',
+                label: '블로그',
                 icon: const _TargetIcon(
                   color: Color(0xFF03C75A),
                   child: Icon(Icons.edit_note_rounded, color: Colors.white),
@@ -749,6 +818,53 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 묶음 버튼의 한 칸 - 고르면 잉크색 바탕에 종이색 글자
+class _Segment extends StatelessWidget {
+  const _Segment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? _ink : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: _ink.withValues(alpha: .25),
+                    blurRadius: 3,
+                    offset: const Offset(0, 1),
+                  ),
+                ]
+              : null,
+        ),
+        child: Text(
+          label,
+          maxLines: 1,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+            color: selected ? PaperColors.card : _ink.withValues(alpha: .7),
+          ),
+        ),
       ),
     );
   }

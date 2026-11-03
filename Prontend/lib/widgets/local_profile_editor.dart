@@ -115,7 +115,7 @@ class _LocalProfileEditorState extends State<LocalProfileEditor> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('사진첩에서 선택'),
+              title: const Text('앨범에서 선택'),
               onTap: () => Navigator.pop(context, 'pick'),
             ),
             if (_photo != null)

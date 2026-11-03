@@ -116,7 +116,7 @@ void main() {
       await tester.pumpWidget(page(info()));
       await tester.pumpAndSettle();
       await openSheet(tester);
-      expect(inSheet(find.text('사진첩 저장')), findsOneWidget);
+      expect(inSheet(find.text('사진 저장')), findsOneWidget);
       expect(inSheet(find.text('더보기')), findsOneWidget);
       for (final app in ['인스타그램', 'X', '카카오톡']) {
         expect(inSheet(find.text(app)), findsNothing, reason: app);
@@ -146,7 +146,7 @@ void main() {
       await tester.pumpWidget(page(info()));
       await tester.pumpAndSettle();
       await openSheet(tester);
-      for (final label in ['사진첩 저장', '인스타그램', 'X', '카카오톡', '더보기']) {
+      for (final label in ['사진 저장', '인스타그램', 'X', '카카오톡', '더보기']) {
         expect(inSheet(find.text(label)), findsOneWidget, reason: label);
       }
 
@@ -219,7 +219,7 @@ void main() {
       expect(inSheet(find.byType(ConcertAfterShareCard)), findsNWidgets(2));
     });
 
-    testWidgets('자유메모 숨기기를 켜면 메모가 빠진다', (tester) async {
+    testWidgets('메모 숨기기를 켜면 메모가 빠진다', (tester) async {
       await tester.pumpWidget(page(info()));
       await tester.pumpAndSettle();
       await openSheet(tester);

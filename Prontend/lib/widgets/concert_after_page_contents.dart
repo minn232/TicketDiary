@@ -2379,8 +2379,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('자유메모가 지워져요'),
-        content: const Text('사진을 다시 배치하면 적어둔 자유메모가 모두 지워져요.\n계속할까요?'),
+        title: const Text('메모가 지워져요'),
+        content: const Text('사진을 다시 배치하면 적어둔 메모가 모두 지워져요.\n계속할까요?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),

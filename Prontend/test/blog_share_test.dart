@@ -64,14 +64,14 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(
-            tester.getCenter(find.text('블로그 공유')).dx,
-            greaterThan(tester.getCenter(find.text('사진첩 저장')).dx),
+            tester.getCenter(find.text('블로그')).dx,
+            greaterThan(tester.getCenter(find.text('사진 저장')).dx),
           );
           expect(
-            tester.getCenter(find.text('블로그 공유')).dx,
+            tester.getCenter(find.text('블로그')).dx,
             lessThan(tester.getCenter(find.text('더보기')).dx),
           );
-          await tester.tap(find.text('블로그 공유'));
+          await tester.tap(find.text('블로그'));
           await tester.pumpAndSettle();
           expect(events, [
             ?draft,

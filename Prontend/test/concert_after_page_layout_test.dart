@@ -201,11 +201,11 @@ void main() {
     await enterEditMode(tester);
     await tester.tap(find.text('자동 배치'));
     await tester.pumpAndSettle();
-    expect(find.text('자유메모가 지워져요'), findsOneWidget);
+    expect(find.text('메모가 지워져요'), findsOneWidget);
 
     await tester.tap(find.text('취소'));
     await tester.pumpAndSettle();
-    expect(find.text('자유메모가 지워져요'), findsNothing);
+    expect(find.text('메모가 지워져요'), findsNothing);
     expect(find.text('정말 좋았다'), findsOneWidget);
 
     await tester.tap(find.text('자동 배치'));
