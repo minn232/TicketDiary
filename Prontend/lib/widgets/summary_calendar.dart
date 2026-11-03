@@ -1403,8 +1403,9 @@ class _GridLinesPainter extends CustomPainter {
 
 /// 월이 바뀌면 달력 장을 넘기는 연출. 다음 달: 지금 장이 테이프 바로 아래에서
 /// 찢겨 한쪽 모서리부터 기울며 아래로 떨어짐(테이프 밑엔 찢긴 띠가 잠깐 남음).
-/// 이전 달: 이전 장이 위에서 내려와 테이프 밑에 붙음. (윗변 축 3D 회전은 내용이
-/// 찌그러져 카드 뒤집기처럼 보여 바꿈)
+/// 이전 달: 찢김을 거꾸로 감음 - 떨어졌던 이전 장이 아래에서 기운 채 올라와
+/// 찢긴 선에 맞춰 다시 붙음. (윗변 축 3D 회전은 내용이 찌그러져 카드 뒤집기처럼
+/// 보여 바꿈. 위에서 내려와 붙던 이전 방식은 떨어진 방향과 반대라 덜 직관적이었음)
 class _MonthFlip extends StatefulWidget {
   const _MonthFlip({super.key, required this.monthIndex, required this.child});
   final int monthIndex;
@@ -1420,6 +1421,10 @@ class _MonthFlipState extends State<_MonthFlip>
   late final AnimationController _controller;
   Widget? _old;
   bool _forward = true;
+
+  /// 찢김 선 모양 - 같은 두 달 사이는 앞뒤 어느 쪽으로 넘겨도 같은 선이 되도록
+  /// 둘 중 큰 달 번호로 정함
+  int _seed = 0;
 
   /// 테이프 바로 아래 찢는 선 위치(종이 윗변에서)
   static const _tearY = 14.0;
@@ -1440,6 +1445,7 @@ class _MonthFlipState extends State<_MonthFlip>
       // 빠르게 연달아 넘기면 진행 중이던 연출은 버리고 바로 다음 것으로
       _old = oldWidget.child;
       _forward = widget.monthIndex > oldWidget.monthIndex;
+      _seed = math.max(widget.monthIndex, oldWidget.monthIndex);
       _controller.forward(from: 0).whenComplete(() {
         if (mounted) setState(() => _old = null);
       });
@@ -1452,8 +1458,18 @@ class _MonthFlipState extends State<_MonthFlip>
     super.dispose();
   }
 
-  Widget _torn(Widget old, double v, Size size) {
-    final seed = widget.monthIndex;
+  /// [v]가 0→1이면 찢겨 떨어지고, 1→0으로 주면 거꾸로 올라와 다시 붙음(이전 달).
+  /// [settle]은 다시 붙는 순간 본장이 아래로 살짝 눌렸다 돌아오는 양(px).
+  /// [fadeFrom]: 떨어진 정도가 이 값을 넘으면 투명해지기 시작 - 거꾸로 감을 땐 크게
+  /// 줘서 올라오기 시작하자마자 불투명하게(일찍 비치면 밑장이 보여 유령처럼 보임)
+  Widget _torn(
+    Widget old,
+    double v,
+    Size size, {
+    double settle = 0,
+    double fadeFrom = .65,
+  }) {
+    final seed = _seed;
     // 찢어지는 순간 살짝 버티다가 떨어지도록 앞 15%는 거의 안 움직임
     final fall = Curves.easeIn.transform(((v - .12) / .88).clamp(0.0, 1.0));
     final stripFade = (1 - v * 1.6).clamp(0.0, 1.0);
@@ -1472,11 +1488,11 @@ class _MonthFlipState extends State<_MonthFlip>
           // 찢겨 떨어지는 본장 - 오른쪽 위 모서리가 먼저 내려가며 기울어짐
           Opacity(
             // 떨어지는 동안은 불투명한 종이로 - 일찍 투명해지면 다음 달이 비쳐 유령처럼 보였음
-            opacity: (1 - (fall - .65) / .35).clamp(0.0, 1.0),
+            opacity: (1 - (fall - fadeFrom) / (1 - fadeFrom)).clamp(0.0, 1.0),
             child: Transform(
               alignment: Alignment.topLeft,
               transform: Matrix4.identity()
-                ..translateByDouble(0, fall * size.height * .55, 0, 1)
+                ..translateByDouble(0, fall * size.height * .55 + settle, 0, 1)
                 ..rotateZ(fall * .22),
               child: ClipPath(
                 clipper: _TearClipper(seed: seed, tearY: _tearY, top: false),
@@ -1514,11 +1530,28 @@ class _MonthFlipState extends State<_MonthFlip>
           animation: _controller,
           builder: (context, _) {
             final v = _controller.value;
+            if (_forward) {
+              return Stack(
+                fit: StackFit.expand,
+                children: [widget.child, _torn(old, v, size)],
+              );
+            }
+            // 거꾸로 감으면 마지막 12%는 이미 제자리 - 그 구간에 붙는 순간 살짝 눌림
+            final land = ((v - .88) / .12).clamp(0.0, 1.0);
             return Stack(
               fit: StackFit.expand,
-              children: _forward
-                  ? [widget.child, _torn(old, v, size)]
-                  : [IgnorePointer(child: old), _drop(widget.child, v, size)],
+              children: [
+                IgnorePointer(child: old),
+                _torn(
+                  widget.child,
+                  1 - v,
+                  size,
+                  settle: math.sin(land * math.pi) * 1.5,
+                  fadeFrom: .9,
+                ),
+              ],
+              // 위에서 내려와 붙던 이전 방식
+              // children: [IgnorePointer(child: old), _drop(widget.child, v, size)],
             );
           },
         );
