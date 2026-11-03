@@ -435,6 +435,8 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   bool _isUserEdited = false;
   // 연결 수정 후 서버가 다시 채우는 동안.
   bool _refilling = false;
+  // [백엔드 수정] 첫 응답을 기다리는 동안 - 이때 "없어요"가 먼저 떴다 바뀌었음
+  bool _loading = false;
 
   @override
   void initState() {
@@ -447,6 +449,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       _settled = true;
       return;
     }
+    _loading = ticketId != null;
     _load();
   }
 
@@ -480,7 +483,10 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       }
     } on ApiException catch (_) {
       // 조회 자체가 실패하면(네트워크 오류 등) 조용히 안내 문구를 유지합니다.
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (mounted && _loading) setState(() => _loading = false);
+    }
   }
 
   // [백엔드 수정]
@@ -566,7 +572,11 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _RealSetlistEmptyText(
-          text: setlistEmptyText(_statusFor(artist), refilling: _refilling),
+          text: setlistEmptyText(
+            _statusFor(artist),
+            refilling: _refilling,
+            loading: _loading,
+          ),
           ink: widget.ink,
         ),
         if (onFixIdentity != null && !_refilling) ...[
@@ -915,6 +925,72 @@ class _RealSetlistArtistSection extends StatelessWidget {
 }
 
 // [백엔드 수정] 실제 셋리 빈 화면 문구 - 본문 + "♪ 곡 · 이름 기준" 보조 줄.
+/// [백엔드 수정] 찾는 중이면 문구 끝 점이 하나씩 늘어남(예상 셋리와 같은 표시). 점 자리는
+/// 고정 폭이라 글자가 흔들리지 않음. [animate]가 아니면 문구만 그대로
+class _SearchingDots extends StatefulWidget {
+  const _SearchingDots({
+    required this.text,
+    required this.style,
+    required this.animate,
+  });
+  final String text;
+  final TextStyle style;
+  final bool animate;
+
+  @override
+  State<_SearchingDots> createState() => _SearchingDotsState();
+}
+
+class _SearchingDotsState extends State<_SearchingDots> {
+  Timer? _timer;
+  int _dots = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SearchingDots oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.animate != widget.animate) _sync();
+  }
+
+  void _sync() {
+    _timer?.cancel();
+    _timer = widget.animate
+        ? Timer.periodic(const Duration(milliseconds: 450), (_) {
+            if (mounted) setState(() => _dots = _dots % 3 + 1);
+          })
+        : null;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.animate) return Text(widget.text, style: widget.style);
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: widget.text),
+          TextSpan(text: '.' * _dots),
+          TextSpan(
+            text: '.' * (3 - _dots),
+            style: const TextStyle(color: Colors.transparent),
+          ),
+        ],
+      ),
+      style: widget.style,
+    );
+  }
+}
+
 class _RealSetlistEmptyText extends StatelessWidget {
   final SetlistEmptyText text;
   final Color ink;
@@ -946,8 +1022,9 @@ class _RealSetlistEmptyText extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          _keepWords(text.main),
+        _SearchingDots(
+          text: _keepWords(text.main),
+          animate: text.searching,
           style: _articleText(
             context,
             size: size,

@@ -222,6 +222,10 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
   _FetchStatus _presetlistStatus = _FetchStatus.loading;
   int? _presetlistErrorCode;
 
+  /// [백엔드 수정] 비어 있어 서버가 만드는 동안 다시 확인하는 중 - 이때 "미정" 대신
+  /// "찾는 중"을 보여줘, 진짜 없는지 아직 찾는 중인지 구분되게 함
+  bool _presetlistSearching = false;
+
   // 이 화면을 보는 동안만 유지되는 선택값(설정탭 기본값에서 시작).
   // [SetlistServiceSelection] 문서 참고.
   final SetlistServiceSelection _musicServiceSelection =
@@ -339,11 +343,14 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
           setState(() {
             _fetchedSetlist = res.songs;
             _fetchedArtistNames = res.artistNames;
+            _presetlistSearching = false;
           });
           return;
         }
       } catch (_) {}
     }
+    // 끝까지 못 찾았으면 그때 "미정"
+    if (mounted) setState(() => _presetlistSearching = false);
   }
 
   /// `GET /tickets/{ticketId}/setlist/pre`. 미등록(404)은 "미정"으로,
@@ -358,6 +365,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         _fetchedSetlist = res.songs;
         _fetchedArtistNames = res.artistNames;
         _presetlistStatus = _FetchStatus.loaded;
+        _presetlistSearching = res.songs.isEmpty;
       });
       if (res.songs.isEmpty) unawaited(_pollPreSetlist(ticketId));
     } on ApiException catch (e) {
@@ -524,6 +532,11 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
               setlist: [for (final name in local) SongEntry(name: name)],
               selection: _musicServiceSelection,
             );
+    }
+    // [백엔드 수정] 첫 조회 중이거나, 비어서 서버가 만드는 동안은 "찾는 중"
+    if (_presetlistStatus == _FetchStatus.loading ||
+        (_presetlistSearching && _fetchedSetlist.isEmpty)) {
+      return const _SearchingText();
     }
     if (_presetlistStatus != _FetchStatus.loaded) {
       return _statusText(_presetlistStatus, _presetlistErrorCode);
@@ -1762,6 +1775,57 @@ class _UndecidedText extends StatelessWidget {
         weight: FontWeight.w700,
         color: _ink.withValues(alpha: 0.4),
       ),
+    );
+  }
+}
+
+/// [백엔드 수정] 예상 셋리를 찾는 동안 - "미정"과 같은 흐린 글씨에 점이 하나씩 늘어남
+class _SearchingText extends StatefulWidget {
+  const _SearchingText();
+
+  @override
+  State<_SearchingText> createState() => _SearchingTextState();
+}
+
+class _SearchingTextState extends State<_SearchingText> {
+  Timer? _timer;
+  int _dots = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 450), (_) {
+      if (mounted) setState(() => _dots = _dots % 3 + 1);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _serif(
+      context,
+      size: 14,
+      weight: FontWeight.w700,
+      color: _ink.withValues(alpha: 0.4),
+    );
+    // 점 자리를 고정 폭으로 둬서 점이 늘 때 글자가 흔들리지 않게
+    return Text.rich(
+      TextSpan(
+        children: [
+          const TextSpan(text: '예상 셋리스트를 찾는 중이에요'),
+          TextSpan(text: '.' * _dots),
+          TextSpan(
+            text: '.' * (3 - _dots),
+            style: const TextStyle(color: Colors.transparent),
+          ),
+        ],
+      ),
+      style: style,
     );
   }
 }

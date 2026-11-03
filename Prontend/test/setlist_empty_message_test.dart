@@ -51,4 +51,22 @@ void main() {
       '셋리를 찾는 중이에요',
     );
   });
+
+  test('첫 응답 전·찾는 중만 점이 움직이고, 없을 땐 그대로', () {
+    expect(setlistEmptyText(null, loading: true).main, '셋리를 찾는 중이에요');
+    expect(setlistEmptyText(null, loading: true).searching, isTrue);
+    expect(
+      setlistEmptyText(
+        const ArtistSetlistStatus(artist: 'a', state: 'searching'),
+      ).searching,
+      isTrue,
+    );
+    expect(
+      setlistEmptyText(
+        const ArtistSetlistStatus(artist: 'a', state: 'searched'),
+      ).searching,
+      isFalse,
+    );
+    expect(setlistEmptyText(null).searching, isFalse);
+  });
 }

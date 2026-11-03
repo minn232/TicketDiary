@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:ui' as ui;
+import 'package:ticketdiary/widgets/diary_tab_flip_route.dart';
+import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -249,7 +252,7 @@ class DiaryScreen extends StatefulWidget {
 }
 
 class _DiaryScreenState extends State<DiaryScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static const Color _paperColor = Color(0xFFF4F1E1);
 
   /// 포스터가 티켓에 녹아든 새 디자인([_PosterTicketFace] + [_TicketBarcodeStub])
@@ -328,6 +331,46 @@ class _DiaryScreenState extends State<DiaryScreen>
   /// 연속 페이지 넘김 방지
   DateTime _lastFlipTime = DateTime.now();
   static const _flipCooldown = Duration(milliseconds: 450);
+
+  // [백엔드 수정] 다이어리 탭을 다시 누르면 첫 페이지로 - 탭 전환과 같은 속지 여러 장
+  // 촤라락 넘김 연출(지금 화면을 바닥에 깔고 속지가 내려앉은 뒤 첫 페이지가 드러남)
+  late final AnimationController _riffle = AnimationController(
+    vsync: this,
+    duration: DiaryTabFlipTransition.transitionDuration,
+  );
+  bool _riffling = false;
+  ui.Image? _riffleSnapshot;
+  // 넘김 연출이 가려 두는 곳(왼쪽 링·페이지, 상태 표시줄)이 비어 검게 번쩍이지 않게 맨 아래에
+  // 까는 같은 화면 사진(연출이 쓰는 사진과 따로 - 이건 여기서 dispose)
+  ui.Image? _riffleFloor;
+  int _riffleEpoch = 0;
+
+  void _rewindToFirstPage() {
+    if (_riffling || _interactionLocked || _currentPageIndex == 0) return;
+    if (_flipAnimating.value != 0) return;
+    final snapshot = DiaryTabFlipTransition.captureScreen();
+    setState(() {
+      _riffling = true;
+      _riffleEpoch++;
+      _riffleSnapshot = snapshot;
+      _riffleFloor?.dispose();
+      _riffleFloor = snapshot?.clone();
+      _currentPageIndex = 0;
+      _isAddTicketExpanded = false;
+    });
+    unawaited(SoundEffectService.instance.play(SoundEffect.tabPages));
+    _riffle.forward(from: 0).whenComplete(() {
+      // 스냅샷은 넘김 위젯이 dispose
+      if (mounted) {
+        setState(() {
+          _riffling = false;
+          _riffleSnapshot = null;
+          _riffleFloor?.dispose();
+          _riffleFloor = null;
+        });
+      }
+    });
+  }
 
   /// 티켓 데이터 리스트.
   ///
@@ -467,6 +510,13 @@ class _DiaryScreenState extends State<DiaryScreen>
     // "공연 전" 페이지의 예상 셋 리스트 블러 여부에 쓰이는 설정값을 미리 불러옵니다.
     AppSettingsStore.instance.load();
     _registerAuthListenerOnce();
+    // 스플래시 미리보기용 인스턴스는 제외
+    if (widget.frameScaleOverride == null) {
+      TabNavCoordinator.maybeInstance?.registerReselect(
+        DiaryTab.diary,
+        _rewindToFirstPage,
+      );
+    }
     TicketRefreshBus.tick.addListener(_onTicketsChangedElsewhere);
     _reloadTickets();
     // 배송 상태는 날짜 단위이므로 초마다 확인할 필요가 없습니다. 화면이 멈추는
@@ -479,6 +529,11 @@ class _DiaryScreenState extends State<DiaryScreen>
 
   @override
   void dispose() {
+    if (widget.frameScaleOverride == null) {
+      TabNavCoordinator.maybeInstance?.registerReselect(DiaryTab.diary, null);
+    }
+    _riffle.dispose();
+    _riffleFloor?.dispose();
     _deliveryDateTimer?.cancel();
     _deliveryVibrationController.dispose();
     TicketRefreshBus.tick.removeListener(_onTicketsChangedElsewhere);
@@ -1561,49 +1616,73 @@ class _DiaryScreenState extends State<DiaryScreen>
           !_isAddTicketExpanded &&
           !_interactionLocked &&
           _arrivingTicketId == null,
-      child: Stack(
-        key: _diaryStackKey,
-        children: [
-          AbsorbPointer(
-            absorbing: _arrivingTicketId != null,
-            child: _buildDiaryPageFrameWithFlip(
-              _currentPageIndex,
-              nextPageIndex,
+      child: _wrapRiffle(
+        Stack(
+          key: _diaryStackKey,
+          children: [
+            AbsorbPointer(
+              absorbing: _arrivingTicketId != null,
+              child: _buildDiaryPageFrameWithFlip(
+                _currentPageIndex,
+                nextPageIndex,
+              ),
             ),
-          ),
-          _buildTransitionSpotlightOverlay(),
-          _buildDeliveryAttentionOverlay(),
-          OfflineBanner(forceVisible: _usingCachedTickets),
-          // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
-          // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
-          _buildDebugTestTicketTab(),
-          // ===== [TEST-ONLY] 끝 =====
-          if (_arrivingTicketId != null)
-            const Positioned.fill(
-              child: AbsorbPointer(child: SizedBox.expand()),
-            ),
-          if (_arrivalTarget != null && _arrivingTicketId != null)
-            Positioned.fill(
-              child: FeatherTicketArrival(
-                key: ValueKey(_arrivingTicketId),
-                target: _arrivalTarget!,
-                onComplete: _finishTicketArrival,
-                child: DiaryFrameScale(
-                  scale: _arrivalFrameScale,
-                  marginEachSide: 0,
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: _buildSpotlightTicketVisual(
-                      _arrivingTicketId!,
-                      vibrate: false,
-                      includePocket: false,
+            _buildTransitionSpotlightOverlay(),
+            _buildDeliveryAttentionOverlay(),
+            OfflineBanner(forceVisible: _usingCachedTickets),
+            // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
+            // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
+            _buildDebugTestTicketTab(),
+            // ===== [TEST-ONLY] 끝 =====
+            if (_arrivingTicketId != null)
+              const Positioned.fill(
+                child: AbsorbPointer(child: SizedBox.expand()),
+              ),
+            if (_arrivalTarget != null && _arrivingTicketId != null)
+              Positioned.fill(
+                child: FeatherTicketArrival(
+                  key: ValueKey(_arrivingTicketId),
+                  target: _arrivalTarget!,
+                  onComplete: _finishTicketArrival,
+                  child: DiaryFrameScale(
+                    scale: _arrivalFrameScale,
+                    marginEachSide: 0,
+                    child: Material(
+                      type: MaterialType.transparency,
+                      child: _buildSpotlightTicketVisual(
+                        _arrivingTicketId!,
+                        vibrate: false,
+                        includePocket: false,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
+    );
+  }
+
+  /// [백엔드 수정] 되감기 중에만 탭 전환과 같은 속지 넘김으로 감쌈. 평소엔 그대로 둬서
+  /// 화면 구조가 바뀌지 않음(티켓 GlobalKey는 감쌀 때도 그대로 옮겨짐)
+  Widget _wrapRiffle(Widget child) {
+    if (!_riffling) return child;
+    final floor = _riffleFloor;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 사진을 못 찍었을 때도 검은 바탕이 안 보이게 책상 색
+        const ColoredBox(color: Color(0xFF5C4033)),
+        if (floor != null) RawImage(image: floor, fit: BoxFit.fill),
+        DiaryTabFlipTransition(
+          key: ValueKey('riffle_$_riffleEpoch'),
+          animation: _riffle,
+          forward: false,
+          fromSnapshot: _riffleSnapshot,
+          child: child,
+        ),
+      ],
     );
   }
 
@@ -2745,10 +2824,11 @@ class _DiaryScreenState extends State<DiaryScreen>
     final nearest = _nearestUpcomingTicket();
     if (nearest == null) return const SizedBox.shrink();
     final dDay = _deliveryDDayLabel(nearest.info!.date);
-    return Align(
-      alignment: Alignment.topCenter,
+    // [백엔드 수정] 페이지 위 끝과 티켓 추가 칸 사이 가운데로 - 위에 붙여 두니 두 경계
+    // 사이에 애매하게 떠 보였음
+    return Center(
       child: Padding(
-        padding: EdgeInsets.only(top: context.rs(10)),
+        padding: EdgeInsets.symmetric(horizontal: context.rs(4)),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Text(

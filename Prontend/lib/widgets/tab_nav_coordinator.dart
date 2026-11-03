@@ -86,6 +86,23 @@ class TabNavCoordinator {
   Future<void> Function()? _exitTransitionRunner;
   SoundPlayback? _tabSound;
 
+  /// [백엔드 수정] 지금 탭을 다시 눌렀을 때 실행할 동작(예: 다이어리 첫 페이지로 되감기)
+  DiaryTab? _reselectTab;
+  VoidCallback? _reselectHandler;
+
+  /// 이 탭을 다시 눌렀을 때 [handler]를 부름. `handler: null`로 해제(dispose에서 필수)
+  void registerReselect(DiaryTab tab, VoidCallback? handler) {
+    if (handler == null) {
+      if (_reselectTab == tab) {
+        _reselectTab = null;
+        _reselectHandler = null;
+      }
+      return;
+    }
+    _reselectTab = tab;
+    _reselectHandler = handler;
+  }
+
   /// 탭을 떠나기 전에 먼저 재생할 자기 연출(예: 소식 탭 풀탭 접힘)을
   /// 등록합니다. 등록돼 있으면 이 탭을 떠날 때 [runner]가 끝난 뒤에야
   /// 라우트 전환이 시작됩니다. `runner: null`로 해제(dispose에서 필수).
@@ -107,6 +124,9 @@ class TabNavCoordinator {
       // 요청한 것 — 이전에 큐에 쌓여 있던 다른 목적지가 있었다면, 사용자의
       // 가장 최근 의도(여기 머무름)로 덮어써서 취소합니다.
       _queuedTab = null;
+      if (!isTransitioning.value && _reselectTab == tab) {
+        _reselectHandler?.call();
+      }
       return;
     }
     if (isTransitioning.value) {

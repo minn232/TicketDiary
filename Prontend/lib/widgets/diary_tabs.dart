@@ -45,9 +45,9 @@ List<DiarySideTabSpec> buildDiarySideTabs(
       right: layout.right,
       top: layout.top,
       isActive: isActive,
-      onTap: isActive
-          ? null
-          : () => TabNavCoordinator.instance.requestTab(layout.tab),
+      // [백엔드 수정] 지금 탭도 누름을 받음 - 다시 누르면 코디네이터가 그 탭에 등록된
+      // 동작(다이어리: 첫 페이지로 되감기)을 부르고, 등록이 없으면 아무 일도 안 함
+      onTap: () => TabNavCoordinator.instance.requestTab(layout.tab),
       child: DiaryIndexTab(
         color: _diaryTabColors[layout.tab]!,
         pageColor:

@@ -13,323 +13,363 @@ void main() {
     NewsLoadingSignal.isLoading.value = false;
   });
 
-  testWidgets(
-    '전환 중에 다른 탭을 요청하면, 현재 전환이 끝난 뒤 마지막 요청으로 이어서 전환한다',
-    (tester) async {
-      final navigatorKey = GlobalKey<NavigatorState>();
+  testWidgets('전환 중에 다른 탭을 요청하면, 현재 전환이 끝난 뒤 마지막 요청으로 이어서 전환한다', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.diary,
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) =>
+            Scaffold(body: Center(child: Text(to.toString()))),
       );
+    }
 
-      await tester.pumpWidget(MaterialApp(
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.diary,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
         navigatorKey: navigatorKey,
         home: const Scaffold(body: Center(child: Text('initial'))),
-      ));
+      ),
+    );
 
-      coordinator.requestTab(DiaryTab.news);
-      expect(coordinator.isTransitioning.value, isTrue);
-      expect(coordinator.currentTab.value, DiaryTab.news);
+    coordinator.requestTab(DiaryTab.news);
+    expect(coordinator.isTransitioning.value, isTrue);
+    expect(coordinator.currentTab.value, DiaryTab.news);
 
-      // 전환(진입 애니메이션)이 끝나기 전, 다른 탭을 연속으로 요청합니다.
-      await tester.pump(const Duration(milliseconds: 50));
-      coordinator.requestTab(DiaryTab.settings);
-      // 아직 news로 가는 중이라 currentTab은 그대로고, settings는 큐에만
-      // 저장됩니다 — 눌림 자체는 이 시점에 이미 "받아둔" 상태입니다.
-      expect(coordinator.currentTab.value, DiaryTab.news);
-      expect(coordinator.isTransitioning.value, isTrue);
+    // 전환(진입 애니메이션)이 끝나기 전, 다른 탭을 연속으로 요청합니다.
+    await tester.pump(const Duration(milliseconds: 50));
+    coordinator.requestTab(DiaryTab.settings);
+    // 아직 news로 가는 중이라 currentTab은 그대로고, settings는 큐에만
+    // 저장됩니다 — 눌림 자체는 이 시점에 이미 "받아둔" 상태입니다.
+    expect(coordinator.currentTab.value, DiaryTab.news);
+    expect(coordinator.isTransitioning.value, isTrue);
 
-      // 첫 전환 애니메이션이 완전히 끝날 때까지 진행시킵니다.
-      await tester.pumpAndSettle();
+    // 첫 전환 애니메이션이 완전히 끝날 때까지 진행시킵니다.
+    await tester.pumpAndSettle();
 
-      // 큐에 있던 마지막 요청(settings)이 자동으로 이어서 실행되고, 그
-      // 전환도 끝까지 진행돼 안정된 상태가 됩니다.
-      expect(coordinator.currentTab.value, DiaryTab.settings);
-      expect(coordinator.isTransitioning.value, isFalse);
-      expect(find.text(DiaryTab.settings.toString()), findsOneWidget);
-    },
-  );
+    // 큐에 있던 마지막 요청(settings)이 자동으로 이어서 실행되고, 그
+    // 전환도 끝까지 진행돼 안정된 상태가 됩니다.
+    expect(coordinator.currentTab.value, DiaryTab.settings);
+    expect(coordinator.isTransitioning.value, isFalse);
+    expect(find.text(DiaryTab.settings.toString()), findsOneWidget);
+  });
 
-  testWidgets(
-    '전환 중인 탭을 다시 요청하면 이전에 큐에 쌓인 다른 목적지 요청은 취소된다',
-    (tester) async {
-      final navigatorKey = GlobalKey<NavigatorState>();
+  testWidgets('전환 중인 탭을 다시 요청하면 이전에 큐에 쌓인 다른 목적지 요청은 취소된다', (tester) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.diary,
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) =>
+            Scaffold(body: Center(child: Text(to.toString()))),
       );
+    }
 
-      await tester.pumpWidget(MaterialApp(
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.diary,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
         navigatorKey: navigatorKey,
         home: const Scaffold(body: Center(child: Text('initial'))),
-      ));
+      ),
+    );
 
-      coordinator.requestTab(DiaryTab.news);
-      await tester.pump(const Duration(milliseconds: 50));
+    coordinator.requestTab(DiaryTab.news);
+    await tester.pump(const Duration(milliseconds: 50));
 
-      // 다른 탭(settings)을 큐에 넣었다가,
-      coordinator.requestTab(DiaryTab.settings);
-      // 곧바로 마음을 바꿔 원래 향하던 탭(news)을 다시 요청합니다.
-      coordinator.requestTab(DiaryTab.news);
+    // 다른 탭(settings)을 큐에 넣었다가,
+    coordinator.requestTab(DiaryTab.settings);
+    // 곧바로 마음을 바꿔 원래 향하던 탭(news)을 다시 요청합니다.
+    coordinator.requestTab(DiaryTab.news);
 
-      await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
 
-      // settings로는 가지 않고 news에 그대로 안정됩니다.
-      expect(coordinator.currentTab.value, DiaryTab.news);
-      expect(coordinator.isTransitioning.value, isFalse);
-      expect(find.text(DiaryTab.news.toString()), findsOneWidget);
-    },
-  );
+    // settings로는 가지 않고 news에 그대로 안정됩니다.
+    expect(coordinator.currentTab.value, DiaryTab.news);
+    expect(coordinator.isTransitioning.value, isFalse);
+    expect(find.text(DiaryTab.news.toString()), findsOneWidget);
+  });
 
-  testWidgets(
-    '소식 탭도 로딩(NewsLoadingSignal)과 무관하게 전환 애니메이션이 끝나면 바로 잠금이 풀린다',
-    (tester) async {
-      // 진입 시 페이지 넘김이 소식 로딩을 기다리지 않도록 바꿨으므로,
-      // NewsLoadingSignal.isLoading이 여전히 true여도 route.animation이
-      // 끝나면 곧바로 잠금이 풀리고, 목적지(소식 화면의 자체 로딩 스피너)가
-      // 드러나야 합니다. 이어서 다른 탭도 즉시 전환됩니다.
-      NewsLoadingSignal.isLoading.value = true;
-      final navigatorKey = GlobalKey<NavigatorState>();
+  testWidgets('소식 탭도 로딩(NewsLoadingSignal)과 무관하게 전환 애니메이션이 끝나면 바로 잠금이 풀린다', (
+    tester,
+  ) async {
+    // 진입 시 페이지 넘김이 소식 로딩을 기다리지 않도록 바꿨으므로,
+    // NewsLoadingSignal.isLoading이 여전히 true여도 route.animation이
+    // 끝나면 곧바로 잠금이 풀리고, 목적지(소식 화면의 자체 로딩 스피너)가
+    // 드러나야 합니다. 이어서 다른 탭도 즉시 전환됩니다.
+    NewsLoadingSignal.isLoading.value = true;
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.diary,
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) =>
+            Scaffold(body: Center(child: Text(to.toString()))),
       );
+    }
 
-      await tester.pumpWidget(MaterialApp(
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.diary,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
         navigatorKey: navigatorKey,
         home: const Scaffold(body: Center(child: Text('initial'))),
-      ));
+      ),
+    );
 
-      coordinator.requestTab(DiaryTab.news);
-      await tester.pumpAndSettle();
+    coordinator.requestTab(DiaryTab.news);
+    await tester.pumpAndSettle();
 
-      // 로딩이 아직 true여도 전환은 이미 끝나 잠금이 풀려 있어야 합니다.
-      expect(coordinator.isTransitioning.value, isFalse);
-      expect(coordinator.currentTab.value, DiaryTab.news);
-      expect(find.text(DiaryTab.news.toString()), findsOneWidget);
+    // 로딩이 아직 true여도 전환은 이미 끝나 잠금이 풀려 있어야 합니다.
+    expect(coordinator.isTransitioning.value, isFalse);
+    expect(coordinator.currentTab.value, DiaryTab.news);
+    expect(find.text(DiaryTab.news.toString()), findsOneWidget);
 
-      // 잠금이 풀린 상태이므로 다른 탭 요청도 곧장 전환됩니다.
-      coordinator.requestTab(DiaryTab.settings);
-      await tester.pumpAndSettle();
-      expect(coordinator.currentTab.value, DiaryTab.settings);
-      expect(coordinator.isTransitioning.value, isFalse);
-      expect(find.text(DiaryTab.settings.toString()), findsOneWidget);
-    },
-  );
+    // 잠금이 풀린 상태이므로 다른 탭 요청도 곧장 전환됩니다.
+    coordinator.requestTab(DiaryTab.settings);
+    await tester.pumpAndSettle();
+    expect(coordinator.currentTab.value, DiaryTab.settings);
+    expect(coordinator.isTransitioning.value, isFalse);
+    expect(find.text(DiaryTab.settings.toString()), findsOneWidget);
+  });
 
-  testWidgets(
-    '소식 탭이 아니면 NewsLoadingSignal과 무관하게 기존처럼 바로 잠금이 풀린다',
-    (tester) async {
-      NewsLoadingSignal.isLoading.value = true; // 소식 탭과 무관해야 함
-      final navigatorKey = GlobalKey<NavigatorState>();
+  testWidgets('소식 탭이 아니면 NewsLoadingSignal과 무관하게 기존처럼 바로 잠금이 풀린다', (
+    tester,
+  ) async {
+    NewsLoadingSignal.isLoading.value = true; // 소식 탭과 무관해야 함
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.diary,
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) =>
+            Scaffold(body: Center(child: Text(to.toString()))),
       );
+    }
 
-      await tester.pumpWidget(MaterialApp(
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.diary,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
         navigatorKey: navigatorKey,
         home: const Scaffold(body: Center(child: Text('initial'))),
-      ));
+      ),
+    );
 
-      coordinator.requestTab(DiaryTab.settings);
-      await tester.pumpAndSettle();
+    coordinator.requestTab(DiaryTab.settings);
+    await tester.pumpAndSettle();
 
-      expect(coordinator.currentTab.value, DiaryTab.settings);
-      expect(coordinator.isTransitioning.value, isFalse);
-    },
-  );
+    expect(coordinator.currentTab.value, DiaryTab.settings);
+    expect(coordinator.isTransitioning.value, isFalse);
+  });
 
-  testWidgets(
-    '탭을 떠났다가 다시 돌아와도 예전 화면 인스턴스가 스택에 남아 GlobalKey가 충돌하지 않는다',
-    (tester) async {
-      // 실제 버그 재현: DiaryScreen처럼 여러 화면 인스턴스가 재사용하는
-      // 고정 GlobalKey(예: TicketData.overlayKey, static이라 화면을
-      // 나갔다 돌아와도 같은 인스턴스)가 있다고 할 때, pushAndRemoveUntil이
-      // 예전엔 (r) => r.isFirst를 써서 스택 맨 밑 라우트(예: 스플래시
-      // 직후 처음 만들어진 다이어리 화면)를 절대 제거하지 않았습니다.
-      // 그 상태로 다이어리 탭에 다시 들어가면 같은 GlobalKey를 쓰는 새
-      // 인스턴스가 그 위에 또 쌓여 "Duplicate GlobalKey" 예외가 났습니다.
-      final sharedDiaryKey = GlobalKey();
-      final navigatorKey = GlobalKey<NavigatorState>();
+  testWidgets('탭을 떠났다가 다시 돌아와도 예전 화면 인스턴스가 스택에 남아 GlobalKey가 충돌하지 않는다', (
+    tester,
+  ) async {
+    // 실제 버그 재현: DiaryScreen처럼 여러 화면 인스턴스가 재사용하는
+    // 고정 GlobalKey(예: TicketData.overlayKey, static이라 화면을
+    // 나갔다 돌아와도 같은 인스턴스)가 있다고 할 때, pushAndRemoveUntil이
+    // 예전엔 (r) => r.isFirst를 써서 스택 맨 밑 라우트(예: 스플래시
+    // 직후 처음 만들어진 다이어리 화면)를 절대 제거하지 않았습니다.
+    // 그 상태로 다이어리 탭에 다시 들어가면 같은 GlobalKey를 쓰는 새
+    // 인스턴스가 그 위에 또 쌓여 "Duplicate GlobalKey" 예외가 났습니다.
+    final sharedDiaryKey = GlobalKey();
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(
-            body: Center(
-              child: to == DiaryTab.diary
-                  ? KeyedSubtree(key: sharedDiaryKey, child: const Text('diary'))
-                  : Text(to.toString()),
-            ),
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) => Scaffold(
+          body: Center(
+            child: to == DiaryTab.diary
+                ? KeyedSubtree(key: sharedDiaryKey, child: const Text('diary'))
+                : Text(to.toString()),
           ),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.diary,
+        ),
       );
+    }
 
-      // 스플래시가 pushReplacement로 최초 다이어리 화면을 심어두는 것과
-      // 동일하게, sharedDiaryKey를 쓰는 화면을 스택의 맨 처음(바닥)에
-      // 둡니다.
-      await tester.pumpWidget(MaterialApp(
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.diary,
+    );
+
+    // 스플래시가 pushReplacement로 최초 다이어리 화면을 심어두는 것과
+    // 동일하게, sharedDiaryKey를 쓰는 화면을 스택의 맨 처음(바닥)에
+    // 둡니다.
+    await tester.pumpWidget(
+      MaterialApp(
         navigatorKey: navigatorKey,
         home: Scaffold(
           body: Center(
-            child: KeyedSubtree(key: sharedDiaryKey, child: const Text('diary')),
+            child: KeyedSubtree(
+              key: sharedDiaryKey,
+              child: const Text('diary'),
+            ),
           ),
         ),
-      ));
+      ),
+    );
 
-      coordinator.requestTab(DiaryTab.news);
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
+    coordinator.requestTab(DiaryTab.news);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
 
-      // 다시 다이어리 탭으로 돌아옵니다 — 같은 sharedDiaryKey를 쓰는 새
-      // 인스턴스가 만들어지는데, 맨 처음 인스턴스가 스택에 계속 남아있으면
-      // 여기서 GlobalKey 충돌 예외가 납니다.
-      coordinator.requestTab(DiaryTab.diary);
-      await tester.pumpAndSettle();
+    // 다시 다이어리 탭으로 돌아옵니다 — 같은 sharedDiaryKey를 쓰는 새
+    // 인스턴스가 만들어지는데, 맨 처음 인스턴스가 스택에 계속 남아있으면
+    // 여기서 GlobalKey 충돌 예외가 납니다.
+    coordinator.requestTab(DiaryTab.diary);
+    await tester.pumpAndSettle();
 
-      expect(tester.takeException(), isNull);
-      expect(find.byKey(sharedDiaryKey), findsOneWidget);
-    },
-  );
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(sharedDiaryKey), findsOneWidget);
+  });
 
-  testWidgets(
-    '퇴장 연출이 등록돼 있으면 그게 끝날 때까지 실제 탭 전환(라우트 푸시)을 미룬다',
-    (tester) async {
-      // 소식 탭의 풀탭이 접히는 연출처럼, 화면이 자신의 퇴장 애니메이션을
-      // 등록해두면 그게 끝나기 전까지는 currentTab도, 실제 라우트 전환도
-      // 시작되면 안 됩니다 - 사용자가 접히는 모습을 먼저 보게 하기 위함.
-      final navigatorKey = GlobalKey<NavigatorState>();
+  testWidgets('퇴장 연출이 등록돼 있으면 그게 끝날 때까지 실제 탭 전환(라우트 푸시)을 미룬다', (tester) async {
+    // 소식 탭의 풀탭이 접히는 연출처럼, 화면이 자신의 퇴장 애니메이션을
+    // 등록해두면 그게 끝나기 전까지는 currentTab도, 실제 라우트 전환도
+    // 시작되면 안 됩니다 - 사용자가 접히는 모습을 먼저 보게 하기 위함.
+    final navigatorKey = GlobalKey<NavigatorState>();
 
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.news,
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) =>
+            Scaffold(body: Center(child: Text(to.toString()))),
       );
+    }
 
-      await tester.pumpWidget(MaterialApp(
-        navigatorKey: navigatorKey,
-        home: const Scaffold(body: Center(child: Text('news'))),
-      ));
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.news,
+    );
 
-      final exitCompleter = Completer<void>();
-      coordinator.registerExitTransition(
-        DiaryTab.news,
-        () => exitCompleter.future,
-      );
-
-      coordinator.requestTab(DiaryTab.summary);
-      await tester.pump();
-
-      // 퇴장 연출이 아직 안 끝났으므로, 입력은 잠겼지만(isTransitioning)
-      // currentTab도 그대로고 목적지 라우트도 아직 안 만들어집니다.
-      expect(coordinator.isTransitioning.value, isTrue);
-      expect(coordinator.currentTab.value, DiaryTab.news);
-      expect(find.text(DiaryTab.summary.toString()), findsNothing);
-
-      // 조금 더 지나도(퇴장 연출이 안 끝났다면) 여전히 그대로.
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(coordinator.currentTab.value, DiaryTab.news);
-      expect(find.text(DiaryTab.summary.toString()), findsNothing);
-
-      // 퇴장 연출이 끝나야 비로소 실제 전환이 시작됩니다.
-      exitCompleter.complete();
-      await tester.pumpAndSettle();
-
-      expect(coordinator.currentTab.value, DiaryTab.summary);
-      expect(coordinator.isTransitioning.value, isFalse);
-      expect(find.text(DiaryTab.summary.toString()), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    '퇴장 연출이 안전 타임아웃(500ms)보다 오래 걸리면 기다리지 않고 전환을 진행한다',
-    (tester) async {
-      final navigatorKey = GlobalKey<NavigatorState>();
-
-      PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
-        return MaterialPageRoute<void>(
-          settings: RouteSettings(name: to.toString()),
-          builder: (context) => Scaffold(body: Center(child: Text(to.toString()))),
-        );
-      }
-
-      final coordinator = TabNavCoordinator.init(
-        navigatorKey: navigatorKey,
-        routeBuilder: routeFor,
-        initialTab: DiaryTab.news,
-      );
-
-      await tester.pumpWidget(MaterialApp(
+    await tester.pumpWidget(
+      MaterialApp(
         navigatorKey: navigatorKey,
         home: const Scaffold(body: Center(child: Text('news'))),
-      ));
+      ),
+    );
 
-      // 절대 안 끝나는(응답 없는) 퇴장 연출.
-      coordinator.registerExitTransition(
-        DiaryTab.news,
-        () => Completer<void>().future,
+    final exitCompleter = Completer<void>();
+    coordinator.registerExitTransition(
+      DiaryTab.news,
+      () => exitCompleter.future,
+    );
+
+    coordinator.requestTab(DiaryTab.summary);
+    await tester.pump();
+
+    // 퇴장 연출이 아직 안 끝났으므로, 입력은 잠겼지만(isTransitioning)
+    // currentTab도 그대로고 목적지 라우트도 아직 안 만들어집니다.
+    expect(coordinator.isTransitioning.value, isTrue);
+    expect(coordinator.currentTab.value, DiaryTab.news);
+    expect(find.text(DiaryTab.summary.toString()), findsNothing);
+
+    // 조금 더 지나도(퇴장 연출이 안 끝났다면) 여전히 그대로.
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(coordinator.currentTab.value, DiaryTab.news);
+    expect(find.text(DiaryTab.summary.toString()), findsNothing);
+
+    // 퇴장 연출이 끝나야 비로소 실제 전환이 시작됩니다.
+    exitCompleter.complete();
+    await tester.pumpAndSettle();
+
+    expect(coordinator.currentTab.value, DiaryTab.summary);
+    expect(coordinator.isTransitioning.value, isFalse);
+    expect(find.text(DiaryTab.summary.toString()), findsOneWidget);
+  });
+
+  testWidgets('퇴장 연출이 안전 타임아웃(500ms)보다 오래 걸리면 기다리지 않고 전환을 진행한다', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    PageRoute<void> routeFor(DiaryTab from, DiaryTab to) {
+      return MaterialPageRoute<void>(
+        settings: RouteSettings(name: to.toString()),
+        builder: (context) =>
+            Scaffold(body: Center(child: Text(to.toString()))),
       );
+    }
 
-      coordinator.requestTab(DiaryTab.summary);
-      await tester.pump();
-      expect(coordinator.currentTab.value, DiaryTab.news);
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: routeFor,
+      initialTab: DiaryTab.news,
+    );
 
-      // 안전 타임아웃을 넘기면 기다림을 포기하고 진행해야 합니다.
-      await tester.pumpAndSettle(const Duration(milliseconds: 600));
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: Center(child: Text('news'))),
+      ),
+    );
 
-      expect(coordinator.currentTab.value, DiaryTab.summary);
-      expect(coordinator.isTransitioning.value, isFalse);
-      expect(find.text(DiaryTab.summary.toString()), findsOneWidget);
-    },
-  );
+    // 절대 안 끝나는(응답 없는) 퇴장 연출.
+    coordinator.registerExitTransition(
+      DiaryTab.news,
+      () => Completer<void>().future,
+    );
+
+    coordinator.requestTab(DiaryTab.summary);
+    await tester.pump();
+    expect(coordinator.currentTab.value, DiaryTab.news);
+
+    // 안전 타임아웃을 넘기면 기다림을 포기하고 진행해야 합니다.
+    await tester.pumpAndSettle(const Duration(milliseconds: 600));
+
+    expect(coordinator.currentTab.value, DiaryTab.summary);
+    expect(coordinator.isTransitioning.value, isFalse);
+    expect(find.text(DiaryTab.summary.toString()), findsOneWidget);
+  });
+
+  testWidgets('지금 탭을 다시 누르면 등록된 동작을 부르고, 다른 탭 전환은 그대로 한다', (tester) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+    final coordinator = TabNavCoordinator.init(
+      navigatorKey: navigatorKey,
+      routeBuilder: (from, to) => MaterialPageRoute<void>(
+        builder: (context) => Scaffold(body: Text(to.toString())),
+      ),
+      initialTab: DiaryTab.diary,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        home: const Scaffold(body: Text('initial')),
+      ),
+    );
+
+    var reselected = 0;
+    coordinator.registerReselect(DiaryTab.diary, () => reselected++);
+    coordinator.requestTab(DiaryTab.diary);
+    expect(reselected, 1);
+    expect(coordinator.isTransitioning.value, isFalse);
+
+    // 해제하면 더 부르지 않음
+    coordinator.registerReselect(DiaryTab.diary, null);
+    coordinator.requestTab(DiaryTab.diary);
+    expect(reselected, 1);
+  });
 }
