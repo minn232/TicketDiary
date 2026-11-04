@@ -518,6 +518,12 @@ class _DiaryScreenState extends State<DiaryScreen>
       );
     }
     TicketRefreshBus.tick.addListener(_onTicketsChangedElsewhere);
+    // [백엔드 수정] 푸시로 지정된 티켓 다시 읽기 - 스플래시 미리보기 인스턴스가 먼저 가져가지 않게 제외.
+    if (widget.frameScaleOverride == null) {
+      TabNavCoordinator.maybeInstance?.targetRequested.addListener(
+        _reloadTickets,
+      );
+    }
     _reloadTickets();
     // 배송 상태는 날짜 단위이므로 초마다 확인할 필요가 없습니다. 화면이 멈추는
     // 원인이 될 수 있는 불필요한 반복 작업을 줄이고, 등록/목록 갱신 때는
@@ -537,6 +543,11 @@ class _DiaryScreenState extends State<DiaryScreen>
     _deliveryDateTimer?.cancel();
     _deliveryVibrationController.dispose();
     TicketRefreshBus.tick.removeListener(_onTicketsChangedElsewhere);
+    if (widget.frameScaleOverride == null) {
+      TabNavCoordinator.maybeInstance?.targetRequested.removeListener(
+        _reloadTickets,
+      );
+    }
     _flipAnimating.dispose();
     super.dispose();
   }

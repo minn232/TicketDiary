@@ -136,6 +136,11 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 소식 페이지 (지금 장, 전체 장 수) - 아래 넘김 힌트가 씀. 전체 1장 이하면 힌트 숨김.
   final ValueNotifier<(int, int)> _newsPageInfo = ValueNotifier((0, 0));
 
+  // [백엔드 수정] 소식 탭에 있을 때 푸시로 공연이 지정되면 다시 그려서 그 카드를 찾게 함.
+  void _onTargetRequested() {
+    if (mounted) setState(() {});
+  }
+
   void _onNewsListUpdated() {
     final items = NewsListService.updates.value;
     if (mounted && items != null) {
@@ -222,6 +227,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // 진입 시 캐시 대신 최신 목록을 조회합니다.
     _newsFuture = _loadNews();
     NewsListService.updates.addListener(_onNewsListUpdated);
+    TabNavCoordinator.instance.targetRequested.addListener(_onTargetRequested);
     _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (_phase == _FlipPhase.news &&
           WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
@@ -240,6 +246,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     _newsRefreshTimer?.cancel();
     _newsPageInfo.dispose();
     NewsListService.updates.removeListener(_onNewsListUpdated);
+    TabNavCoordinator.instance.targetRequested.removeListener(
+      _onTargetRequested,
+    );
     _pageShiftSound?.stop();
     _returnTimeout?.cancel();
     TabNavCoordinator.instance.currentTab.removeListener(_onCurrentTabChanged);

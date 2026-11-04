@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -6,12 +7,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import 'api_client.dart';
+import 'notifications_service.dart';
 import '../screen/notifications_screen.dart';
 import '../widgets/tab_nav_coordinator.dart';
 import '../widgets/responsive_text.dart';
 
-/// Android 푸시 등록·포그라운드 표시·알림함 연결.
-/// 서버가 제목/본문만 보내므로 임의로 티켓을 추측하지 않고 알림함을 엽니다.
+/// Android 푸시 등록·포그라운드 표시·누르면 이동.
+/// [백엔드 수정] 서버가 data(notification_id/type/ticket_id/concert_id)를 같이 보내서 누르면 알림함과
+/// 같은 화면으로 바로 감. data가 없는 옛 푸시는 알림함을 엶.
 class FcmService with WidgetsBindingObserver {
   FcmService._();
   static final instance = FcmService._();
@@ -26,6 +29,9 @@ class FcmService with WidgetsBindingObserver {
   bool _permissionRequested = false;
   bool _ready = false;
   bool _pendingOpen = false;
+
+  /// 누른 푸시의 data(없으면 알림함으로).
+  Map<String, dynamic> _pendingData = const {};
   bool _opening = false;
   Future<void>? _pending;
   Timer? _retry;
@@ -38,8 +44,8 @@ class FcmService with WidgetsBindingObserver {
       WidgetsBinding.instance.addObserver(this);
       _native.setMethodCallHandler((call) async {
         if (call.method == 'tap') {
-          await _native.invokeMethod<bool>('consumeTap');
-          _queueOpen();
+          final data = await _native.invokeMethod<String>('consumeTap');
+          if (data != null) _queueOpen(_decode(data));
         }
       });
     }
@@ -48,7 +54,8 @@ class FcmService with WidgetsBindingObserver {
 
   Future<void> _connect() async {
     try {
-      if (await _native.invokeMethod<bool>('consumeTap') == true) _queueOpen();
+      final tapped = await _native.invokeMethod<String>('consumeTap');
+      if (tapped != null) _queueOpen(_decode(tapped));
       if (Firebase.apps.isEmpty) await Firebase.initializeApp();
       final messaging = FirebaseMessaging.instance;
       if (!_subscribed) {
@@ -68,17 +75,20 @@ class FcmService with WidgetsBindingObserver {
                   DateTime.now().microsecondsSinceEpoch.toString(),
               'title': notification.title ?? 'Ticket Diary',
               'body': notification.body ?? '',
+              'data': jsonEncode(message.data),
             });
           } catch (e) {
             debugPrint('[FCM] 알림 표시 실패: $e');
           }
         });
-        FirebaseMessaging.onMessageOpenedApp.listen((_) => _queueOpen());
+        FirebaseMessaging.onMessageOpenedApp.listen(
+          (message) => _queueOpen(message.data),
+        );
       }
       if (!_initialMessageChecked) {
         final initial = await messaging.getInitialMessage();
         _initialMessageChecked = true;
-        if (initial != null) _queueOpen();
+        if (initial != null) _queueOpen(initial.data);
       }
       if (!_permissionRequested) {
         _permissionRequested = true;
@@ -144,8 +154,19 @@ class FcmService with WidgetsBindingObserver {
     _openIfReady();
   }
 
-  void _queueOpen() {
+  static Map<String, dynamic> _decode(String raw) {
+    if (raw.isEmpty) return const {};
+    try {
+      final value = jsonDecode(raw);
+      return value is Map<String, dynamic> ? value : const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  void _queueOpen([Map<String, dynamic> data = const {}]) {
     _pendingOpen = true;
+    _pendingData = data;
     changes.value++;
     _openIfReady();
   }
@@ -156,6 +177,13 @@ class FcmService with WidgetsBindingObserver {
         TabNavCoordinator.maybeInstance?.navigatorKey.currentContext;
     if (context == null) return;
     _pendingOpen = false;
+    final data = _pendingData;
+    _pendingData = const {};
+    final type = data['type'] as String?;
+    if (type != null) {
+      _openFromPush(data, type);
+      return;
+    }
     _opening = true;
     unawaited(
       NotificationsScreen.show(
@@ -166,5 +194,31 @@ class FcmService with WidgetsBindingObserver {
         _pendingOpen = false;
       }),
     );
+  }
+
+  /// 실패해도 무시 - 알림함에서 안 읽음으로 남을 뿐.
+  Future<void> _markRead(String id) async {
+    try {
+      await NotificationsService().markRead(id);
+      changes.value++;
+    } catch (_) {}
+  }
+
+  /// 읽음 처리 후 알림함과 같은 화면으로. 갈 곳이 없는 알림(묶음 감상 메모 등)은 앱만 켜짐.
+  void _openFromPush(Map<String, dynamic> data, String type) {
+    String? field(String key) {
+      final value = data[key];
+      return value is String && value.isNotEmpty ? value : null;
+    }
+
+    final id = field('notification_id');
+    if (id != null) unawaited(_markRead(id));
+    final target = prepareNotificationTarget(
+      type: type,
+      ticketId: field('ticket_id'),
+      concertId: field('concert_id'),
+      title: field('title'),
+    );
+    if (target != null) TabNavCoordinator.instance.openTarget(target);
   }
 }

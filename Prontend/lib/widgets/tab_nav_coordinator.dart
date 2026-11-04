@@ -81,6 +81,9 @@ class TabNavCoordinator {
   /// [백엔드 수정] 감상 메모 정리 알림으로 티켓을 열 때, 공연후 페이지가 뜨면 이어서 열 감상 메모(정리된 글 탭).
   String? pendingBlogMemoTicketId;
 
+  /// [백엔드 수정] 이미 그 탭에 있을 때 위 pending 값들을 다시 읽으라는 신호(푸시 탭 이동).
+  final targetRequested = ValueNotifier<int>(0);
+
   /// 전환 중에 새로 요청된, 아직 처리 못 한 다음 목적지. 여러 번 요청되면
   /// 마지막 것만 남습니다(중간 탭들은 건너뜀).
   DiaryTab? _queuedTab;
@@ -138,6 +141,33 @@ class TabNavCoordinator {
       return;
     }
     _start(tab);
+  }
+
+  /// [백엔드 수정] pending 값을 채운 뒤 그 탭으로 이동. 이미 그 탭이면 위에 뜬 화면(공연 페이지·시트 등)을
+  /// 닫고 신호만 보냄 - requestTab은 같은 탭이면 아무것도 안 해서 pending이 안 읽혔음.
+  void openTarget(DiaryTab tab) {
+    if (tab != currentTab.value) {
+      requestTab(tab);
+      return;
+    }
+    void signal() {
+      navigatorKey.currentState?.popUntil((route) => route.isFirst);
+      targetRequested.value++;
+    }
+
+    // 앱을 처음 켤 때처럼 그 탭으로 넘어가는 중이면 넘김이 끝난 뒤에 신호를 보냄 - 화면이 이미
+    // 티켓을 다 불러온 뒤에 pending이 채워지면 아무도 안 읽었음.
+    if (!isTransitioning.value) {
+      signal();
+      return;
+    }
+    void onTransition() {
+      if (isTransitioning.value) return;
+      isTransitioning.removeListener(onTransition);
+      if (currentTab.value == tab) signal();
+    }
+
+    isTransitioning.addListener(onTransition);
   }
 
   void _start(DiaryTab tab) async {

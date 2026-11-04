@@ -15,7 +15,8 @@ import io.flutter.embedding.engine.FlutterEngine
 /** FCM foreground messages use the same channel as OS-delivered background messages. */
 class NotificationBridge(private val activity: MainActivity, engine: FlutterEngine) {
     private val channel = MethodChannel(engine.dartExecutor.binaryMessenger, "ticketdiary/notifications")
-    private var pendingTap = false
+    /** 누른 알림의 data(JSON). null이면 누른 적 없음, ""면 data 없는 알림 */
+    private var pendingTap: String? = null
     init {
         createChannel()
         channel.setMethodCallHandler { call, result ->
@@ -24,11 +25,12 @@ class NotificationBridge(private val activity: MainActivity, engine: FlutterEngi
                     "show" -> {
                         show(call.argument<String>("id") ?: System.nanoTime().toString(),
                             call.argument<String>("title") ?: "Ticket Diary",
-                            call.argument<String>("body") ?: "")
+                            call.argument<String>("body") ?: "",
+                            call.argument<String>("data") ?: "")
                         result.success(null)
                     }
                     "enabled" -> result.success(enabled())
-                    "consumeTap" -> { result.success(pendingTap); pendingTap = false }
+                    "consumeTap" -> { result.success(pendingTap); pendingTap = null }
                     "settings" -> {
                         val intent = if (Build.VERSION.SDK_INT >= 26)
                             Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
@@ -59,11 +61,12 @@ class NotificationBridge(private val activity: MainActivity, engine: FlutterEngi
         }
         return true
     }
-    private fun show(id: String, title: String, body: String) {
+    private fun show(id: String, title: String, body: String, data: String) {
         if (!enabled()) return
         val intent = Intent(activity, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(TAP, true)
+            .putExtra(DATA, data)
         val pending = PendingIntent.getActivity(activity, id.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(activity, CHANNEL_ID)
@@ -77,11 +80,13 @@ class NotificationBridge(private val activity: MainActivity, engine: FlutterEngi
     fun handleIntent(intent: Intent, notifyFlutter: Boolean) {
         if (!intent.getBooleanExtra(TAP, false)) return
         intent.removeExtra(TAP)
-        pendingTap = true
+        pendingTap = intent.getStringExtra(DATA) ?: ""
+        intent.removeExtra(DATA)
         if (notifyFlutter) channel.invokeMethod("tap", null)
     }
     companion object {
         const val CHANNEL_ID = "ticket_diary_updates"
         private const val TAP = "ticket_diary_notification_tap"
+        private const val DATA = "ticket_diary_notification_data"
     }
 }

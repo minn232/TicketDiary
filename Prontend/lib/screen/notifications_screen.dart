@@ -202,24 +202,13 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   // 그 티켓, 티켓팅/새 공연은 소식 탭의 그 공연 카드(결산 캘린더와 같은 이동+자동 열기 경로).
   Future<void> _openItem(NotificationModel item) async {
     _markRead(item);
-    final kind = NotificationKind.of(item.type);
-    final ticketId = item.ticketId;
-    final concertId = item.concertId;
-    final DiaryTab target;
-    if (kind.opensTicket && ticketId != null) {
-      TabNavCoordinator.instance
-        ..pendingDiaryTicketId = ticketId
-        // [백엔드 수정] 감상 메모 알림은 공연후 페이지 위에 정리된 글까지 엶.
-        ..pendingBlogMemoTicketId = item.type == 'blog_draft' ? ticketId : null;
-      target = DiaryTab.diary;
-    } else if (!kind.opensTicket && concertId != null) {
-      TabNavCoordinator.instance
-        ..pendingNewsConcertId = concertId
-        ..pendingNewsConcertName = item.title;
-      target = DiaryTab.news;
-    } else {
-      return;
-    }
+    final target = prepareNotificationTarget(
+      type: item.type,
+      ticketId: item.ticketId,
+      concertId: item.concertId,
+      title: item.title,
+    );
+    if (target == null) return;
     await _close();
     TabNavCoordinator.instance.requestTab(target);
   }
@@ -308,6 +297,33 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
 /// 알림함 패널 내용(손잡이+헤더+목록). 애니메이션 중엔 [AnimatedBuilder.child]
 /// 로 재사용되도록 별도 위젯으로 뺐음.
+/// [백엔드 수정] 알림이 가리키는 화면의 pending 값을 채우고 갈 탭을 돌려줌(알림함·푸시 탭 공통).
+/// 공연 전날/당일/배송/감상 메모는 다이어리의 그 티켓, 티켓팅/새 공연은 소식 탭의 그 공연.
+/// 갈 곳이 없으면(묶음 감상 메모 알림 등) null.
+DiaryTab? prepareNotificationTarget({
+  required String type,
+  String? ticketId,
+  String? concertId,
+  String? title,
+}) {
+  final kind = NotificationKind.of(type);
+  final nav = TabNavCoordinator.instance;
+  if (kind.opensTicket && ticketId != null) {
+    nav
+      ..pendingDiaryTicketId = ticketId
+      // 감상 메모 알림은 공연후 페이지 위에 정리된 글까지 엶.
+      ..pendingBlogMemoTicketId = type == 'blog_draft' ? ticketId : null;
+    return DiaryTab.diary;
+  }
+  if (!kind.opensTicket && concertId != null) {
+    nav
+      ..pendingNewsConcertId = concertId
+      ..pendingNewsConcertName = title;
+    return DiaryTab.news;
+  }
+  return null;
+}
+
 class _NotificationsPanel extends StatelessWidget {
   final void Function(DragStartDetails) onHandleDragStart;
   final void Function(DragUpdateDetails, double panelHeight) onHandleDragUpdate;
