@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +10,9 @@ from app.core.database import AsyncSessionLocal
 from app.main import app
 from app.models.blog_draft import BlogDraft
 from app.models.concert import Concert, EventType
+from app.models.notification import Notification, NotificationType
 from app.models.setlist import PreSetlist, RealSetlist
+from app.models.ticket import Ticket
 from app.services.blog_draft import send_blog_drafts_to_llm
 from test_diary import _create_concert, _create_ticket
 from conftest import _get_token
@@ -62,6 +64,28 @@ def _blog_url():
     return patch("app.services.blog_draft.settings.LLM_BLOG_URL", _BLOG_URL)
 
 
+async def _put_text(ticket_id: str, token: str, text: str):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        return await ac.put(
+            f"/api/v1/tickets/{ticket_id}/blog-draft/text",
+            json={"text": text},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+async def _load(ticket_id: str) -> BlogDraft:
+    async with AsyncSessionLocal() as db:
+        return (await db.execute(select(BlogDraft).where(BlogDraft.ticket_id == uuid.UUID(ticket_id)))).scalar_one()
+
+
+# 배치는 마지막 수정 뒤 자정이 지난 메모만 정리해서, 메모를 어제 고친 것으로 돌려둠
+async def _backdate(ticket_id: str) -> None:
+    async with AsyncSessionLocal() as db:
+        draft = (await db.execute(select(BlogDraft).where(BlogDraft.ticket_id == uuid.UUID(ticket_id)))).scalar_one()
+        draft.requested_at -= timedelta(days=1)
+        await db.commit()
+
+
 # 요청/조회
 
 @pytest.mark.asyncio
@@ -97,6 +121,7 @@ async def test_festival_draft_sends_without_setlist():
         await db.commit()
 
     assert (await _post_draft(ticket_id, token)).status_code == 202
+    await _backdate(ticket_id)
 
     calls: list[dict] = []
     with _blog_url(), _llm_client(calls):
@@ -128,6 +153,7 @@ async def test_send_generates_draft_with_real_setlist_only():
         db.add(PreSetlist(concert_id=uuid.UUID(concert_id), songs=[{"name": "예상곡"}]))
         await db.commit()
     await _post_draft(ticket_id, token, emotion="음향이 좋았다.")
+    await _backdate(ticket_id)
 
     calls: list[dict] = []
     with _blog_url(), _llm_client(calls):
@@ -153,6 +179,7 @@ async def test_send_generates_draft_with_real_setlist_only():
 async def test_send_without_real_setlist_sends_empty_setlist():
     token, _, ticket_id = await _ticket("PF_BLOG_NOSET")
     await _post_draft(ticket_id, token)
+    await _backdate(ticket_id)
 
     calls: list[dict] = []
     with _blog_url(), _llm_client(calls):
@@ -166,6 +193,7 @@ async def test_send_without_real_setlist_sends_empty_setlist():
 async def test_send_failure_retries_until_limit_then_failed():
     token, _, ticket_id = await _ticket("PF_BLOG_FAIL")
     await _post_draft(ticket_id, token)
+    await _backdate(ticket_id)
 
     for _ in range(3):
         with _blog_url(), _llm_client([], fail=True):
@@ -178,14 +206,20 @@ async def test_send_failure_retries_until_limit_then_failed():
         await send_blog_drafts_to_llm()
     assert not any(c["concert_name"].startswith("PF_BLOG_FAIL") for c in calls)
 
-    # 다시 요청하면 처음부터
+    # 같은 메모로 다시 보내면 "다시 정리" - 시도 횟수만 초기화하고 그날 밤 다시 보냄
     assert (await _post_draft(ticket_id, token)).json()["status"] == "pending"
+    calls = []
+    with _blog_url(), _llm_client(calls):
+        await send_blog_drafts_to_llm()
+    assert any(c["concert_name"].startswith("PF_BLOG_FAIL") for c in calls)
+    assert (await _get_draft(ticket_id, token)).json()["status"] == "done"
 
 
 @pytest.mark.asyncio
 async def test_rerequest_during_generation_discards_old_result():
     token, _, ticket_id = await _ticket("PF_BLOG_RACE")
     await _post_draft(ticket_id, token, emotion="옛 글.")
+    await _backdate(ticket_id)
 
     async def _post(url, json=None, headers=None):
         # 생성하는 사이 유저가 새 글로 다시 요청
@@ -205,12 +239,131 @@ async def test_rerequest_during_generation_discards_old_result():
     body = (await _get_draft(ticket_id, token)).json()
     assert body["status"] == "pending"
     assert body["emotion"] == "새 글."
-    async with AsyncSessionLocal() as db:
-        draft = (await db.execute(select(BlogDraft).where(BlogDraft.ticket_id == uuid.UUID(ticket_id)))).scalar_one()
-    assert draft.body is None
+    assert (await _load(ticket_id)).body is None
 
 
 @pytest.mark.asyncio
 async def test_send_skipped_without_blog_url():
     with patch("app.services.blog_draft.settings.LLM_BLOG_URL", ""):
         assert await send_blog_drafts_to_llm() == 0
+
+
+# 자정 마감·정리본 유지
+
+@pytest.mark.asyncio
+async def test_memo_edited_today_waits_until_after_midnight():
+    token, _, ticket_id = await _ticket("PF_BLOG_TODAY")
+    await _post_draft(ticket_id, token)
+
+    calls: list[dict] = []
+    with _blog_url(), _llm_client(calls):
+        await send_blog_drafts_to_llm()
+    assert not any(c["concert_name"].startswith("PF_BLOG_TODAY") for c in calls)
+    assert (await _get_draft(ticket_id, token)).json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_editing_memo_keeps_previous_draft_until_regenerated():
+    token, _, ticket_id = await _ticket("PF_BLOG_STALE")
+    await _post_draft(ticket_id, token, emotion="첫 메모.")
+    await _backdate(ticket_id)
+    with _blog_url(), _llm_client([]):
+        await send_blog_drafts_to_llm()
+
+    # 메모를 고쳐도 이전 정리본은 그대로 내려감
+    body = (await _post_draft(ticket_id, token, emotion="고친 메모.")).json()
+    assert body["status"] == "stale"
+    assert body["body"] == "첫 메모."
+    assert body["text"].endswith("첫 메모.")
+
+    # 원래 메모로 되돌리면 다시 done
+    assert (await _post_draft(ticket_id, token, emotion="첫 메모.")).json()["status"] == "done"
+    assert (await _post_draft(ticket_id, token, emotion="고친 메모.")).json()["status"] == "stale"
+
+    # 같은 내용을 다시 보내면 수정 시각이 안 바뀜(자정 마감이 미뤄지지 않음)
+    requested_at = (await _load(ticket_id)).requested_at
+    await _post_draft(ticket_id, token, emotion="고친 메모.")
+    assert (await _load(ticket_id)).requested_at == requested_at
+
+    await _put_text(ticket_id, token, "앱에서 고친 글")
+    await _backdate(ticket_id)
+    with _blog_url(), _llm_client([]):
+        await send_blog_drafts_to_llm()
+
+    # 새 정리본이 이전 정리본과 앱에서 고친 글을 덮어씀
+    body = (await _get_draft(ticket_id, token)).json()
+    assert body["status"] == "done"
+    assert body["body"] == "고친 메모."
+    assert body["edited"] is False
+    assert body["text"].endswith("고친 메모.")
+
+
+# 앱에서 고친 정리본
+
+@pytest.mark.asyncio
+async def test_save_edited_text():
+    token, _, ticket_id = await _ticket("PF_BLOG_EDIT")
+    await _post_draft(ticket_id, token)
+
+    # 정리본이 없으면 고칠 게 없음
+    assert (await _put_text(ticket_id, token, "고친 글")).status_code == 409
+
+    await _backdate(ticket_id)
+    with _blog_url(), _llm_client([]):
+        await send_blog_drafts_to_llm()
+    original = (await _get_draft(ticket_id, token)).json()["text"]
+
+    res = await _put_text(ticket_id, token, "고친 글")
+    assert res.status_code == 200
+    assert res.json()["text"] == "고친 글"
+    assert res.json()["edited"] is True
+    assert res.json()["body"] != "고친 글"
+    assert (await _get_draft(ticket_id, token)).json()["text"] == "고친 글"
+
+    # 원래 글과 같아지면 고친 기록을 지움
+    assert (await _put_text(ticket_id, token, original)).json()["edited"] is False
+
+    other_token = await _get_token()
+    assert (await _put_text(ticket_id, other_token, "남의 글")).status_code == 404
+
+
+# 완료 알림
+
+async def _blog_notifications(ticket_id: str) -> list[Notification]:
+    async with AsyncSessionLocal() as db:
+        user_id = (await db.get(Ticket, uuid.UUID(ticket_id))).user_id
+        result = await db.execute(
+            select(Notification).where(Notification.user_id == user_id, Notification.type == NotificationType.BLOG_DRAFT)
+        )
+        return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_done_drafts_bundled_into_one_9am_notification_per_user():
+    token = await _get_token()
+    ticket_ids = []
+    for name in ("PF_BLOG_NOTI_A", "PF_BLOG_NOTI_B"):
+        concert_id = await _create_concert(f"{name}_{uuid.uuid4().hex[:6]}", token)
+        ticket_ids.append(await _create_ticket(concert_id, token))
+    single_token, _, single_ticket_id = await _ticket("PF_BLOG_NOTI_ONE")
+    for tok, ticket_id in ((token, ticket_ids[0]), (token, ticket_ids[1]), (single_token, single_ticket_id)):
+        await _post_draft(ticket_id, tok)
+        await _backdate(ticket_id)
+
+    with _blog_url(), _llm_client([]):
+        await send_blog_drafts_to_llm()
+
+    bundled = await _blog_notifications(ticket_ids[0])
+    assert len(bundled) == 1
+    assert bundled[0].title == "감상 메모 2개가 글로 정리됐어요"
+    assert bundled[0].ticket_id is None
+    scheduled = bundled[0].scheduled_at.astimezone(timezone(timedelta(hours=9)))
+    assert (scheduled.hour, scheduled.minute) == (9, 0)
+
+    single = await _blog_notifications(single_ticket_id)
+    assert len(single) == 1
+    assert single[0].title.startswith("PF_BLOG_NOTI_ONE")
+    assert single[0].body == "감상 메모가 글로 정리됐어요."
+    assert str(single[0].ticket_id) == single_ticket_id
+    # 유저에게 보이는 알림 문구엔 "블로그"를 안 씀
+    assert all("블로그" not in n.title + n.body for n in bundled + single)

@@ -365,6 +365,33 @@ async def schedule_new_concert_notifications(
     logger.info(f"신규 공연 알림 생성: {concert.name} ({len(users)}명)")
 
 
+# 감상 메모 정리 완료 알림 - 밤 배치가 끝난 뒤 그날 오전 9시로 예약, 유저당 한 건으로 묶음.
+# 한 건이면 그 티켓을 가리키고, 여러 건이면 알림함에서 어느 티켓인지 고를 수 없어 티켓 없이 보냄
+async def schedule_blog_draft_notifications(db: AsyncSession, done: list[tuple[UUID, UUID, str]]) -> None:
+    by_user: dict[UUID, list[tuple[UUID, str]]] = {}
+    for user_id, ticket_id, concert_name in done:
+        by_user.setdefault(user_id, []).append((ticket_id, concert_name))
+
+    scheduled = _at_9am_kst(datetime.now(timezone.utc))
+    for user_id, items in by_user.items():
+        ticket_id, first_name = items[0]
+        if len(items) == 1:
+            title, body = first_name, "감상 메모가 글로 정리됐어요."
+        else:
+            title = f"감상 메모 {len(items)}개가 글로 정리됐어요"
+            body = f"{first_name} 외 {len(items) - 1}개"
+        db.add(Notification(
+            user_id=user_id,
+            ticket_id=ticket_id if len(items) == 1 else None,
+            type=NotificationType.BLOG_DRAFT,
+            title=title,
+            body=body,
+            scheduled_at=scheduled,
+        ))
+    await db.commit()
+    logger.info(f"감상 메모 정리 알림 생성: {len(by_user)}명")
+
+
 # 동시에 발송할 FCM 요청 수 상한 (스레드풀 기본 워커 수를 넘지 않도록 제한)
 _FCM_SEND_CONCURRENCY = 10
 
