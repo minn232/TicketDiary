@@ -10,6 +10,7 @@ class NotificationSettings(BaseModel):
     concert_day: bool = True
     ticketing: bool = True
     new_concert: bool = True
+    blog_draft: bool = True
 
 
 class NotificationSettingsUpdate(BaseModel):
@@ -19,6 +20,7 @@ class NotificationSettingsUpdate(BaseModel):
     concert_day: bool | None = None
     ticketing: bool | None = None
     new_concert: bool | None = None
+    blog_draft: bool | None = None
 
 
 class UserSettingsResponse(BaseModel):

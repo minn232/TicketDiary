@@ -26,6 +26,7 @@ async def test_get_settings_default():
     assert data["notification_settings"]["concert_day"] is True
     assert data["notification_settings"]["ticketing"] is True
     assert data["notification_settings"]["new_concert"] is True
+    assert data["notification_settings"]["blog_draft"] is True
 
 
 # 미인증 요청 401 테스트

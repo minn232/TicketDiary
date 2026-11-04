@@ -1,4 +1,4 @@
-"""add generated_from/edited_text to blog_drafts, blog_draft notification type
+"""add generated_from/edited_text to blog_drafts, blog_draft notification type and setting
 
 Revision ID: l2c3d4e5f6g7
 Revises: k1b2c3d4e5f6
@@ -26,9 +26,20 @@ def upgrade() -> None:
         "WHERE body IS NOT NULL AND generated_at IS NOT NULL AND generated_at >= requested_at"
     )
     op.execute("ALTER TYPE notificationtype ADD VALUE IF NOT EXISTS 'blog_draft'")
+    # 기존 유저 설정엔 키가 없어도 켜짐으로 읽힘(.get 기본값 True)이라 기본값만 바꿈
+    op.execute(
+        "ALTER TABLE users ALTER COLUMN notification_settings "
+        "SET DEFAULT '{\"delivery\": true, \"day_before\": true, \"concert_day\": true, "
+        "\"ticketing\": true, \"new_concert\": true, \"blog_draft\": true}'::jsonb"
+    )
 
 
 def downgrade() -> None:
     # enum 값은 Postgres에서 따로 뺄 수 없어 남겨둠
+    op.execute(
+        "ALTER TABLE users ALTER COLUMN notification_settings "
+        "SET DEFAULT '{\"delivery\": true, \"day_before\": true, \"concert_day\": true, "
+        "\"ticketing\": true, \"new_concert\": true}'::jsonb"
+    )
     op.drop_column('blog_drafts', 'edited_text')
     op.drop_column('blog_drafts', 'generated_from')

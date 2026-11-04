@@ -16,6 +16,7 @@ _NOTIF_TYPES_BY_SETTING: dict[str, list[NotificationType]] = {
     "concert_day": [NotificationType.CONCERT_DAY],
     "ticketing": [NotificationType.TICKETING_DAY],
     "new_concert": [NotificationType.NEW_CONCERT],
+    "blog_draft": [NotificationType.BLOG_DRAFT],
 }
 
 

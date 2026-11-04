@@ -367,3 +367,37 @@ async def test_done_drafts_bundled_into_one_9am_notification_per_user():
     assert str(single[0].ticket_id) == single_ticket_id
     # 유저에게 보이는 알림 문구엔 "블로그"를 안 씀
     assert all("블로그" not in n.title + n.body for n in bundled + single)
+
+
+async def _patch_settings(token: str, notification_settings: dict):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        return await ac.patch(
+            "/api/v1/settings",
+            json={"notification_settings": notification_settings},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_blog_draft_notification_setting():
+    # 꺼두면 정리는 되지만 알림은 안 생김
+    off_token, _, off_ticket_id = await _ticket("PF_BLOG_NOTI_OFF")
+    res = await _patch_settings(off_token, {"blog_draft": False})
+    assert res.json()["notification_settings"]["blog_draft"] is False
+    await _post_draft(off_ticket_id, off_token)
+    await _backdate(off_ticket_id)
+
+    # 켜둔 상태로 예약된 알림은 끄는 순간 취소됨
+    on_token, _, on_ticket_id = await _ticket("PF_BLOG_NOTI_CANCEL")
+    await _post_draft(on_ticket_id, on_token)
+    await _backdate(on_ticket_id)
+
+    with _blog_url(), _llm_client([]):
+        await send_blog_drafts_to_llm()
+
+    assert (await _get_draft(off_ticket_id, off_token)).json()["status"] == "done"
+    assert await _blog_notifications(off_ticket_id) == []
+    assert len(await _blog_notifications(on_ticket_id)) == 1
+
+    await _patch_settings(on_token, {"blog_draft": False})
+    assert await _blog_notifications(on_ticket_id) == []
