@@ -78,6 +78,9 @@ class TabNavCoordinator {
   String? pendingDiaryTicketId;
   Map<String, dynamic>? pendingDiaryTicket;
 
+  /// [백엔드 수정] 감상 메모 정리 알림으로 티켓을 열 때, 공연후 페이지가 뜨면 이어서 열 감상 메모(정리된 글 탭).
+  String? pendingBlogMemoTicketId;
+
   /// 전환 중에 새로 요청된, 아직 처리 못 한 다음 목적지. 여러 번 요청되면
   /// 마지막 것만 남습니다(중간 탭들은 건너뜀).
   DiaryTab? _queuedTab;

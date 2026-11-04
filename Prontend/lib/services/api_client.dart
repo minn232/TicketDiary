@@ -99,6 +99,18 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowAuthRetry = true,
+  }) async {
+    return _send(
+      () => _dio.put(path, data: body, options: _authOptions),
+      _asMap,
+      allowAuthRetry: allowAuthRetry,
+    );
+  }
+
   Future<Map<String, dynamic>> delete(String path, {bool allowAuthRetry = true}) async {
     return _send(
       () => _dio.delete(path, options: _authOptions),

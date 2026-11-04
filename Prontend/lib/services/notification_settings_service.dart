@@ -11,6 +11,9 @@ class NotificationSettingsModel {
   final bool concertDay;
   final bool ticketing;
   final bool newConcert;
+
+  /// 감상 메모 정리 완료 알림.
+  final bool blogDraft;
   final bool showPredictedSetlist;
 
   const NotificationSettingsModel({
@@ -19,6 +22,7 @@ class NotificationSettingsModel {
     required this.concertDay,
     required this.ticketing,
     required this.newConcert,
+    required this.blogDraft,
     required this.showPredictedSetlist,
   });
 
@@ -31,6 +35,7 @@ class NotificationSettingsModel {
       concertDay: ns['concert_day'] as bool? ?? true,
       ticketing: ns['ticketing'] as bool? ?? true,
       newConcert: ns['new_concert'] as bool? ?? true,
+      blogDraft: ns['blog_draft'] as bool? ?? true,
       showPredictedSetlist: json['show_predicted_setlist'] as bool? ?? true,
     );
   }
@@ -57,6 +62,7 @@ class NotificationSettingsService {
     bool? concertDay,
     bool? ticketing,
     bool? newConcert,
+    bool? blogDraft,
     bool? showPredictedSetlist,
   }) async {
     final json = await _client.patch(
@@ -67,13 +73,15 @@ class NotificationSettingsService {
             dayBefore != null ||
             concertDay != null ||
             ticketing != null ||
-            newConcert != null)
+            newConcert != null ||
+            blogDraft != null)
           'notification_settings': {
             'delivery': ?delivery,
             'day_before': ?dayBefore,
             'concert_day': ?concertDay,
             'ticketing': ?ticketing,
             'new_concert': ?newConcert,
+            'blog_draft': ?blogDraft,
           },
       },
     );

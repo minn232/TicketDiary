@@ -48,6 +48,13 @@ class NotificationKind {
       Icons.campaign_outlined,
       Color(0xFF7A5CE0),
     ),
+    // 여러 건 묶음은 티켓이 없어 눌러도 이동 안 함.
+    'blog_draft': NotificationKind(
+      '감상 메모',
+      Icons.edit_note_rounded,
+      Color(0xFFB0843A),
+      opensTicket: true,
+    ),
   };
 
   static const _fallback = NotificationKind(

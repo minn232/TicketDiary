@@ -39,6 +39,7 @@ import 'app_network_image.dart';
 import 'artist_identity_sheet.dart';
 import 'blog_memo_page.dart';
 import '../services/blog_draft_service.dart';
+import 'tab_nav_coordinator.dart';
 import 'underlined_text.dart';
 import 'setlist_editor_sheet.dart';
 import 'setlist_empty_message.dart';
@@ -1960,10 +1961,16 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         _blogDraft = draft;
         _blogUnseen = unseen;
       });
+      // [백엔드 수정] 감상 메모 알림으로 열린 페이지면 정리된 글까지 이어서 엶.
+      final coordinator = TabNavCoordinator.maybeInstance;
+      if (coordinator?.pendingBlogMemoTicketId == ticketId) {
+        coordinator!.pendingBlogMemoTicketId = null;
+        unawaited(_openBlogMemo(showResult: draft.hasResult));
+      }
     } catch (_) {}
   }
 
-  Future<void> _openBlogMemo() async {
+  Future<void> _openBlogMemo({bool? showResult}) async {
     final ticketId = widget.setlistTicketId;
     if (ticketId == null) return;
     final draft = await openBlogMemoPage(
@@ -1971,7 +1978,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       ticketId: ticketId,
       concertTitle: widget.concertTitle,
       initial: _blogDraft,
-      showResult: _blogUnseen,
+      showResult: showResult ?? _blogUnseen,
     );
     if (!mounted) return;
     if (draft != null) setState(() => _blogDraft = draft);

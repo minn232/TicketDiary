@@ -207,7 +207,10 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final concertId = item.concertId;
     final DiaryTab target;
     if (kind.opensTicket && ticketId != null) {
-      TabNavCoordinator.instance.pendingDiaryTicketId = ticketId;
+      TabNavCoordinator.instance
+        ..pendingDiaryTicketId = ticketId
+        // [백엔드 수정] 감상 메모 알림은 공연후 페이지 위에 정리된 글까지 엶.
+        ..pendingBlogMemoTicketId = item.type == 'blog_draft' ? ticketId : null;
       target = DiaryTab.diary;
     } else if (!kind.opensTicket && concertId != null) {
       TabNavCoordinator.instance

@@ -569,6 +569,7 @@ class _DiaryScreenState extends State<DiaryScreen>
           if (loadError != null) {
             coordinator.pendingDiaryTicket = null;
             coordinator.pendingDiaryTicketId = null;
+            coordinator.pendingBlogMemoTicketId = null;
             final message =
                 loadError is ApiException && loadError.statusCode > 0
                 ? '서버 오류입니다.'
@@ -611,6 +612,7 @@ class _DiaryScreenState extends State<DiaryScreen>
             _autoOpenTicketId = _tickets[ticketIndex].id;
             unawaited(_openPendingTicket());
           } else {
+            coordinator.pendingBlogMemoTicketId = null;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) _showSnack('해당 티켓을 찾을 수 없어요. 티켓 목록을 확인해주세요.');
             });

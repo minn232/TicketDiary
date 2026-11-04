@@ -42,6 +42,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool pushTicketDelivery = false;
   bool pushFavArtistConcert = false;
   bool pushPinnedConcert = false;
+  bool pushBlogDraft = false;
 
   static const _divider = Divider(
     height: 1,
@@ -142,6 +143,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         pushTicketDelivery = s.delivery;
         pushFavArtistConcert = s.newConcert;
         pushPinnedConcert = s.ticketing;
+        pushBlogDraft = s.blogDraft;
       });
     } catch (_) {
       // 조회에 실패하면 기본값(꺼짐)으로 남겨둡니다. 스위치를 직접 켜면
@@ -197,6 +199,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => pushFavArtistConcert = prev);
+      _showSaveError(e);
+    }
+  }
+
+  /// [백엔드 수정] 감상 메모 정리 알림 서버 저장
+  Future<void> _setBlogDraft(bool v) async {
+    final prev = pushBlogDraft;
+    setState(() => pushBlogDraft = v);
+    try {
+      await _notifSettingsService.update(blogDraft: v);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => pushBlogDraft = prev);
       _showSaveError(e);
     }
   }
@@ -489,6 +504,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   title: '찜한 공연 예매 알림',
                                   value: pushPinnedConcert,
                                   onChanged: _setPinnedConcert,
+                                  indent: true,
+                                ),
+                                _divider,
+                                // [백엔드 수정] blog_draft로 서버 저장
+                                _SwitchRow(
+                                  title: '감상 메모 정리 알림',
+                                  value: pushBlogDraft,
+                                  onChanged: _setBlogDraft,
                                   indent: true,
                                 ),
                               ],

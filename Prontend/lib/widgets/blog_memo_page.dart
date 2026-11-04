@@ -17,31 +17,12 @@ const int _maxMemoLength = 2000;
 const Color _desk = Color(0xFF37261F);
 const Color _typedPaper = Color(0xFFF3EEE3);
 
-/// [시안 확인용] 화면 제목을 길게 누르면 상태를 돌려가며 미리 봄. 결정 후 삭제.
-final ValueNotifier<BlogDraftStatus?> blogMemoPreview = ValueNotifier(null);
-
-const String _previewMemo =
-    '퇴근하자마자 택시 타고 올림픽공원까지 달려갔다. 예뻤어는 원래 제일 좋아하는 곡인데 '
-    '라이브로 들으니 완전히 다른 노래 같았음. 다음 투어도 무조건 갈 거다.';
-const String _previewTitle = 'DAY6 3RD WORLD TOUR <FOREVER YOUNG> in SEOUL';
-const String _previewBody =
-    '9월 20일에 DAY6 3RD WORLD TOUR <FOREVER YOUNG> in SEOUL에 다녀왔어요\n\n'
-    '장소는 KSPO DOME!!\n퇴근하자마자 택시 타고 올림픽공원까지 달려갔어요.\n\n'
-    '예뻤어는 원래 제일 좋아하는 곡인데 라이브로 들으니 완전히 다른 노래 같더라구요.\n\n'
-    '다음 투어도 무조건 가려고요.';
-
-BlogDraft _previewDraft(BlogDraftStatus status) => switch (status) {
-  BlogDraftStatus.none => BlogDraft.empty,
-  BlogDraftStatus.done => BlogDraft(
-    status: status,
-    emotion: _previewMemo,
-    title: _previewTitle,
-    body: _previewBody,
-    text: '$_previewTitle\n\n$_previewBody',
-    generatedAt: DateTime(2026, 11, 5, 3),
-  ),
-  _ => BlogDraft(status: status, emotion: _previewMemo),
-};
+/// 한글이 "시/도해요"처럼 글자 중간에서 줄바꿈되지 않게 단어 안 글자 사이에 WORD JOINER(U+2060)를 끼움
+/// (news_detail_overlay.dart의 _keepWords와 같음).
+String _keepWords(String text) {
+  const wj = '\u{2060}';
+  return text.split(' ').map((token) => token.split('').join(wj)).join(' ');
+}
 
 /// 정리된 글을 아직 안 열어봤는지(버튼 색 구분용).
 abstract final class BlogMemoSeen {
@@ -49,7 +30,7 @@ abstract final class BlogMemoSeen {
 
   static Future<bool> isUnseen(String ticketId, BlogDraft draft) async {
     final at = draft.generatedAt;
-    if (draft.status != BlogDraftStatus.done || at == null) return false;
+    if (!draft.hasResult || at == null) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
       return prefs.getString(_key(ticketId)) != at.toIso8601String();
@@ -68,45 +49,9 @@ abstract final class BlogMemoSeen {
   }
 }
 
-/// [임시] 앱에서 고친 정리본을 기기에 저장. 서버 저장 API가 생기면 교체.
-abstract final class _ResultEdits {
-  static String _key(String ticketId, DateTime at) =>
-      'blog_draft_edit_${ticketId}_${at.millisecondsSinceEpoch}';
-
-  static Future<String?> load(String ticketId, BlogDraft draft) async {
-    final at = draft.generatedAt;
-    if (at == null) return null;
-    try {
-      return (await SharedPreferences.getInstance()).getString(
-        _key(ticketId, at),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static Future<void> save(
-    String ticketId,
-    BlogDraft draft,
-    String text,
-  ) async {
-    final at = draft.generatedAt;
-    if (at == null) return;
-    try {
-      await (await SharedPreferences.getInstance()).setString(
-        _key(ticketId, at),
-        text,
-      );
-    } catch (_) {}
-  }
-}
-
-/// 정리된 글(앱에서 고친 게 있으면 그것). 공유 시트 블로그 버튼용.
-Future<String?> loadBlogDraftText(String ticketId) async {
-  final draft = await BlogDraftService().get(ticketId);
-  if (draft.status != BlogDraftStatus.done) return null;
-  return await _ResultEdits.load(ticketId, draft) ?? draft.text;
-}
+/// 정리된 글(앱에서 고친 게 있으면 그것, 다시 정리 대기 중이면 이전 글). 공유 시트 블로그 버튼용.
+Future<String?> loadBlogDraftText(String ticketId) async =>
+    (await BlogDraftService().get(ticketId)).text;
 
 /// 네이버 블로그 글쓰기 열기. 네이버 앱 인앱브라우저 → 기본 브라우저 순.
 Future<bool> openNaverBlogWrite() async {
@@ -182,13 +127,11 @@ class _BlogMemoButtonState extends State<BlogMemoButton> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<BlogDraftStatus?>(
-      valueListenable: blogMemoPreview,
-      builder: (context, preview, _) {
-        final status = preview ?? widget.draft?.status ?? BlogDraftStatus.none;
-        final highlight = preview != null
-            ? preview == BlogDraftStatus.done
-            : widget.unseen;
+    return Builder(
+      builder: (context) {
+        final status = widget.draft?.status ?? BlogDraftStatus.none;
+        final hasResult = widget.draft?.hasResult ?? false;
+        final highlight = widget.unseen;
         final label = switch (status) {
           BlogDraftStatus.none => '감상 적기',
           BlogDraftStatus.done => '정리된 글',
@@ -225,7 +168,7 @@ class _BlogMemoButtonState extends State<BlogMemoButton> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              if (status == BlogDraftStatus.done)
+              if (hasResult)
                 Positioned(
                   left: context.rs(7),
                   top: context.rs(1),
@@ -424,22 +367,17 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
   /// 정리본을 불러온 직후 값 - 바뀌었을 때만 저장.
   String _loadedResult = '';
 
-  BlogDraftStatus? get _preview => blogMemoPreview.value;
-  BlogDraft get _shown => _preview == null ? _draft : _previewDraft(_preview!);
-
   @override
   void initState() {
     super.initState();
     _memo.text = _draft.emotion ?? '';
-    unawaited(_fillResult());
-    blogMemoPreview.addListener(_onPreviewChanged);
+    _fillResult();
     _memo.addListener(_onMemoChanged);
     unawaited(_refresh());
   }
 
   @override
   void dispose() {
-    blogMemoPreview.removeListener(_onPreviewChanged);
     _memo.dispose();
     _result.dispose();
     _memoScroll.dispose();
@@ -454,52 +392,30 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
       final draft = await _service.get(widget.ticketId);
       if (!mounted) return;
       final memoUntouched = _memo.text == (_draft.emotion ?? '');
+      final resultUntouched = _result.text == _loadedResult;
       setState(() => _draft = draft);
-      if (memoUntouched && _preview == null) _memo.text = draft.emotion ?? '';
-      await _fillResult();
+      if (memoUntouched) _memo.text = draft.emotion ?? '';
+      if (resultUntouched) _fillResult();
     } catch (_) {
       // 조회 실패면 들고 온 상태로 둠.
     }
   }
 
-  Future<void> _fillResult() async {
-    final shown = _shown;
-    var text = shown.text ?? '';
-    if (_preview == null && shown.status == BlogDraftStatus.done) {
-      text = await _ResultEdits.load(widget.ticketId, shown) ?? text;
-    }
-    if (!mounted) return;
+  void _fillResult() {
+    final text = _draft.text ?? '';
     _result.text = text;
     _loadedResult = text;
     if (_tab == 1) _markSeen();
   }
 
   void _markSeen() {
-    if (_preview == null && _draft.status == BlogDraftStatus.done) {
+    if (_draft.hasResult) {
       unawaited(BlogMemoSeen.markSeen(widget.ticketId, _draft));
     }
   }
 
-  void _onPreviewChanged() {
-    _memo.text = _shown.emotion ?? '';
-    unawaited(_fillResult());
-    setState(() {});
-  }
-
-  void _cyclePreview() {
-    final order = <BlogDraftStatus?>[
-      null,
-      BlogDraftStatus.none,
-      BlogDraftStatus.pending,
-      BlogDraftStatus.done,
-      BlogDraftStatus.failed,
-    ];
-    blogMemoPreview.value = order[(order.indexOf(_preview) + 1) % order.length];
-  }
-
   /// 메모가 바뀌었으면 저장. false면 화면에 남음.
   Future<bool> _saveMemoIfChanged() async {
-    if (_preview != null) return true;
     final text = _memo.text.trim();
     if (text == (_draft.emotion ?? '').trim()) return true;
     if (text.isEmpty) {
@@ -560,11 +476,21 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
     }
   }
 
+  /// 고친 정리본 서버 저장. 실패하면 안내만 하고 화면의 글은 그대로 둠.
   Future<void> _saveResultEdit() async {
-    if (_preview != null || _draft.status != BlogDraftStatus.done) return;
-    if (_result.text == _loadedResult) return;
-    await _ResultEdits.save(widget.ticketId, _draft, _result.text);
-    _loadedResult = _result.text;
+    if (!_draft.hasResult) return;
+    final text = _result.text;
+    if (text == _loadedResult || text.trim().isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      final draft = await _service.saveText(widget.ticketId, text);
+      _loadedResult = text;
+      if (mounted) setState(() => _draft = draft);
+    } catch (_) {
+      if (mounted) showPaperSnackBar(context, '고친 글을 저장하지 못했어요.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _close() async {
@@ -575,9 +501,10 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
     if (mounted) Navigator.of(context).pop(_draft);
   }
 
+  /// 같은 메모를 다시 보내면 서버가 실패 횟수만 초기화함.
   Future<void> _retry() async {
     final text = (_draft.emotion ?? _memo.text).trim();
-    if (_preview != null || text.isEmpty) return;
+    if (text.isEmpty) return;
     await _save(text);
   }
 
@@ -609,8 +536,7 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
         context,
         Builder(
           builder: (context) {
-            final typedPaper =
-                _tab == 1 && _shown.status == BlogDraftStatus.done;
+            final typedPaper = _tab == 1 && _draft.hasResult;
             return Scaffold(
               backgroundColor: _desk,
               body: SafeArea(
@@ -690,75 +616,103 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
 
   /// 책상 위 뒤로가기 / 저장 중 표시.
   Widget _topBar() {
+    // 높이 고정 - 탭마다 오른쪽 글자가 생겼다 없어져도 종이가 위아래로 안 움직이게.
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: _saving ? null : _close,
-            icon: Icon(
-              Icons.arrow_back,
-              color: PaperColors.card.withValues(alpha: .85),
-            ),
-          ),
-          const Spacer(),
-          if (_saving)
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: PaperColors.card.withValues(alpha: .7),
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: _saving ? null : _close,
+              icon: Icon(
+                Icons.arrow_back,
+                color: PaperColors.card.withValues(alpha: .85),
               ),
             ),
-        ],
+            const Spacer(),
+            if (_saving)
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: PaperColors.card.withValues(alpha: .7),
+                ),
+              )
+            else if (_tab == 1 && _draft.hasResult)
+              // 종이 안엔 글만 두고, 블로그에 옮기기는 책상 위에 놓인 작은 종이 쪽지로.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _sendToBlog,
+                child: Center(
+                  child: Transform.rotate(
+                    angle: -.03,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: PaperColors.card,
+                        borderRadius: BorderRadius.circular(2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: .35),
+                            blurRadius: 5,
+                            offset: const Offset(1, 2),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        '블로그에 옮기기',
+                        style: TextStyle(
+                          fontSize: context.sp(11.5),
+                          fontWeight: FontWeight.w800,
+                          color: _ink,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
   /// 종이 머리말: 제목·공연명, 글자 탭, 구분선.
   Widget _paperHead(BuildContext context) {
-    final preview = _preview;
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 26, 22, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            onLongPress: _cyclePreview,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '감상 메모',
-                  style: TextStyle(
-                    fontSize: context.sp(18),
-                    fontWeight: FontWeight.w900,
-                    color: _ink,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  preview == null
-                      ? widget.concertTitle
-                      : '시안 보기: ${_statusName(preview)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: context.sp(12),
-                    fontWeight: FontWeight.w600,
-                    color: preview == null
-                        ? PaperColors.muted
-                        : PaperColors.stamp,
-                  ),
-                ),
-              ],
+          Text(
+            '감상 메모',
+            style: TextStyle(
+              fontSize: context.sp(18),
+              fontWeight: FontWeight.w900,
+              color: _ink,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            widget.concertTitle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: context.sp(12),
+              fontWeight: FontWeight.w600,
+              color: PaperColors.muted,
             ),
           ),
           const SizedBox(height: 14),
           _Tabs(
             labels: const ['내 메모', '정리된 글'],
             selected: _tab,
+            dotIndex: _draft.hasResult && _tab != 1 ? 1 : null,
             onSelected: (i) {
               FocusManager.instance.primaryFocus?.unfocus();
               setState(() => _tab = i);
@@ -772,20 +726,14 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
     );
   }
 
-  static String _statusName(BlogDraftStatus s) => switch (s) {
-    BlogDraftStatus.none => '비어 있음',
-    BlogDraftStatus.pending => '정리 대기',
-    BlogDraftStatus.done => '정리 완료',
-    BlogDraftStatus.failed => '정리 실패',
-  };
-
   Widget _memoTab(BuildContext context) {
-    final status = _shown.status;
+    final status = _draft.status;
     final note = switch (status) {
-      BlogDraftStatus.none => '자정이 지나면 글로 정리되고, 다음 날 아침 9시에 알려드려요.',
+      BlogDraftStatus.none => '자정이 지나면 글로 정리돼요. 다 되면 알려드릴게요.',
       BlogDraftStatus.pending => '자정이 지나면 정리돼요. 그 전까지는 계속 고칠 수 있어요.',
       BlogDraftStatus.done => '정리된 글이 있어요. 메모를 고치면 다음 날 다시 정리돼요.',
-      BlogDraftStatus.failed => '정리하지 못했어요. 다시 정리하면 오늘 밤에 다시 시도해요.',
+      BlogDraftStatus.stale => '고친 메모는 다음 날 다시 정리돼요. 그 전까지는 이전 글을 쓸 수 있어요.',
+      BlogDraftStatus.failed => '정리하지 못했어요.',
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -803,37 +751,22 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
           context,
           note: note,
           counter: '${_memo.text.characters.length}/$_maxMemoLength',
-          action: switch (status) {
-            BlogDraftStatus.failed => PaperButton(
-              label: '다시 정리',
-              style: PaperButtonStyle.outline,
-              onTap: _saving ? null : _retry,
-            ),
-            BlogDraftStatus.done => PaperButton(
-              label: '정리된 글 보기',
-              style: PaperButtonStyle.outline,
-              onTap: () {
-                FocusManager.instance.primaryFocus?.unfocus();
-                setState(() => _tab = 1);
-                _markSeen();
-              },
-            ),
-            _ => null,
-          },
+          link: status == BlogDraftStatus.failed ? '오늘 밤 다시 정리하기' : null,
+          onLink: _saving ? null : _retry,
         ),
       ],
     );
   }
 
   Widget _resultTab(BuildContext context) {
-    if (_shown.status != BlogDraftStatus.done) {
+    if (!_draft.hasResult) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Text(
-            _shown.status == BlogDraftStatus.none
-                ? '내 메모를 적으면\n다음 날 아침 여기에 정리된 글이 채워져요.'
-                : '아직 정리 전이에요.\n자정이 지나면 정리돼서 다음 날 아침에 채워져요.',
+            _draft.status == BlogDraftStatus.none
+                ? '내 메모를 적으면\n다음 날 여기에 정리된 글이 채워져요.'
+                : '아직 정리 전이에요.\n자정이 지나면 정리돼서 여기에 채워져요.',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: context.sp(13.5),
@@ -857,8 +790,9 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
         ),
         _footer(
           context,
-          note: '고친 내용은 그대로 저장돼요.',
-          action: PaperButton(label: '블로그로 보내기', onTap: _sendToBlog),
+          note: _draft.status == BlogDraftStatus.done
+              ? '고친 내용은 그대로 저장돼요.'
+              : '고치기 전 메모로 정리한 글이에요.',
         ),
       ],
     );
@@ -868,7 +802,8 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
     BuildContext context, {
     required String note,
     String? counter,
-    Widget? action,
+    String? link,
+    VoidCallback? onLink,
   }) {
     final style = TextStyle(
       fontSize: context.sp(11.5),
@@ -881,12 +816,32 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(child: Text(note, style: style)),
+          Expanded(
+            child: Wrap(
+              spacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(_keepWords(note), style: style),
+                // 밑줄은 띄어쓰기에서 끊겨서 굵기·색으로만 구분.
+                if (link != null)
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onLink,
+                    child: Text(
+                      _keepWords(link),
+                      style: style.copyWith(
+                        fontWeight: FontWeight.w900,
+                        color: _ink,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           if (counter != null) ...[
             const SizedBox(width: 10),
             Text(counter, style: style),
           ],
-          if (action != null) ...[const SizedBox(width: 12), action],
         ],
       ),
     );
@@ -1000,11 +955,15 @@ class _Tabs extends StatelessWidget {
     required this.labels,
     required this.selected,
     required this.onSelected,
+    this.dotIndex,
   });
 
   final List<String> labels;
   final int selected;
   final ValueChanged<int> onSelected;
+
+  /// 이 탭 글자 옆에 연필로 찍은 듯한 작은 점(정리된 글이 있음).
+  final int? dotIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -1029,18 +988,36 @@ class _Tabs extends StatelessWidget {
                     ),
                   ),
                 ),
-                child: Text(
-                  labels[i],
-                  maxLines: 1,
-                  style: TextStyle(
-                    fontSize: context.sp(14),
-                    fontWeight: i == selected
-                        ? FontWeight.w900
-                        : FontWeight.w700,
-                    color: i == selected
-                        ? _ink
-                        : PaperColors.muted.withValues(alpha: .8),
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      labels[i],
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: context.sp(14),
+                        fontWeight: i == selected
+                            ? FontWeight.w900
+                            : FontWeight.w700,
+                        color: i == selected
+                            ? _ink
+                            : PaperColors.muted.withValues(alpha: .8),
+                      ),
+                    ),
+                    if (i == dotIndex)
+                      Padding(
+                        padding: EdgeInsets.only(left: context.rs(3)),
+                        child: Container(
+                          width: context.rs(5),
+                          height: context.rs(5),
+                          decoration: BoxDecoration(
+                            color: _ink.withValues(alpha: .6),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
