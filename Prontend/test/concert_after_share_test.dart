@@ -100,7 +100,7 @@ void main() {
 
       expect(find.byType(ConcertAfterShareSheet), findsOneWidget);
       expect(inSheet(find.byType(ConcertAfterShareCard)), findsOneWidget);
-      expect(inSheet(find.text('최고의 밤')), findsOneWidget);
+      expect(inSheet(find.text('최고의 밤')), findsNothing);
       expect(inSheet(find.text('2026.09.20 · 올림픽홀')), findsOneWidget);
       expect(inSheet(find.text('TicketDiary')), findsOneWidget);
       expect(inSheet(find.byIcon(Icons.lock_outline)), findsNothing);
@@ -219,41 +219,20 @@ void main() {
       expect(inSheet(find.byType(ConcertAfterShareCard)), findsNWidgets(2));
     });
 
-    testWidgets('메모 숨기기를 켜면 메모가 빠진다', (tester) async {
+    testWidgets('공유 시 기존 메모는 표시하지 않고 메모 숨기기 옵션도 없다', (tester) async {
       await tester.pumpWidget(page(info()));
       await tester.pumpAndSettle();
       await openSheet(tester);
-      expect(inSheet(find.text('최고의 밤')), findsOneWidget);
-
-      await tester.tap(inSheet(find.byType(Switch)));
-      await tester.pumpAndSettle();
       expect(inSheet(find.text('최고의 밤')), findsNothing);
-      expect(find.text('최고의 밤'), findsOneWidget, reason: '원래 페이지는 그대로');
+      expect(inSheet(find.text('메모 숨기기')), findsNothing);
+      expect(inSheet(find.byType(Switch)), findsNothing);
     });
 
-    testWidgets('자유메모가 페이지 안 같은 비율 위치에 그려진다', (tester) async {
+    testWidgets('기존 자유메모는 공유 미리보기에 그려지지 않는다', (tester) async {
       await tester.pumpWidget(page(info()));
       await tester.pumpAndSettle();
-      final pageRect = tester.getRect(find.byType(ConcertAfterPageContents));
-      final live = tester.getCenter(find.text('최고의 밤'));
-      final liveNorm = (live - pageRect.topLeft) / pageRect.width;
-
       await openSheet(tester);
-      final card = tester.widget<ConcertAfterShareCard>(
-        inSheet(find.byType(ConcertAfterShareCard)),
-      );
-      expect(card.pageSize, const Size(400, 500));
-      final g = ShareCardGeometry.compute(card.pageSize, card.aspect);
-      final cardRect = tester.getRect(
-        inSheet(find.byType(ConcertAfterShareCard)),
-      );
-      final scale = cardRect.width / g.card.width;
-      final pageOrigin = cardRect.topLeft + g.page.topLeft * scale;
-      final shown = tester.getCenter(inSheet(find.text('최고의 밤')));
-      final shownNorm = (shown - pageOrigin) / (g.page.width * scale);
-
-      expect(shownNorm.dx, closeTo(liveNorm.dx, 0.005));
-      expect(shownNorm.dy, closeTo(liveNorm.dy, 0.005));
+      expect(inSheet(find.text('최고의 밤')), findsNothing);
     });
 
     testWidgets('화면이 기준보다 납작하면(태블릿 가로) 기준 비율 높이로 그린다', (tester) async {

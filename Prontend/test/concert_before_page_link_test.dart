@@ -5,76 +5,35 @@ import 'package:ticketdiary/models/ticket_info.dart';
 import 'package:ticketdiary/widgets/concert_after_page_contents.dart';
 import 'package:ticketdiary/widgets/concert_before_page_contents.dart';
 
-// 공연 후 페이지 뒷면 공연 정보의 "공연 전 신문" 썸네일 - 누르면 공연 전 페이지를 읽기 전용으로 다시 엶.
 void main() {
-  // 기본 테스트 화면(800x600)보다 페이지가 길어서 썸네일이 화면 밖에 그려지지 않게 키움.
-  void enlargeView(WidgetTester tester) {
+  testWidgets('공연 후 뒷면에는 공연 전 신문과 펼쳐보기 링크가 없다', (tester) async {
     tester.view.physicalSize = const Size(800, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-  }
-
-  Future<void> pumpAfterPage(
-    WidgetTester tester, {
-    Future<void> Function(Rect, Widget)? onOpenBeforePage,
-  }) async {
-    enlargeView(tester);
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
-      MaterialApp(
+      const MaterialApp(
         home: Scaffold(
           body: SizedBox(
             width: 560,
             height: 700,
             child: ConcertAfterPageContents(
-              concertTitle: '공연 전 신문 테스트',
+              concertTitle: '공연 기록',
               issueNumber: 7,
-              onOpenBeforePage: onOpenBeforePage,
             ),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    // 뒷면으로 넘김.
     await tester.dragFrom(const Offset(450, 350), const Offset(-220, 0));
     await tester.pumpAndSettle();
-  }
-
-  testWidgets('뒷면 공연 정보에 공연 전 신문 썸네일이 있고 누르면 열기를 요청한다', (tester) async {
-    Rect? openedFrom;
-    await pumpAfterPage(
-      tester,
-      onOpenBeforePage: (startRect, collapsed) async => openedFrom = startRect,
-    );
-
-    expect(find.text('공연 전 신문'), findsOneWidget);
-    expect(find.text('제 7 호'), findsOneWidget);
-    expect(find.text('펼쳐보기 ›'), findsOneWidget);
-    // 공연 정보 칸은 칸 안에서 스크롤됨 - 썸네일이 보이게 내린 뒤 누름.
-    await tester.ensureVisible(find.byType(ConcertBeforeThumbnail));
-    await tester.pumpAndSettle();
-    // 2칸 뒷면에선 썸네일 아랫부분이 잘려(끼운 모양) 가운데가 안 보일 수 있어 윗부분을 누름.
-    await tester.tapAt(
-      tester.getTopLeft(find.byType(ConcertBeforeThumbnail)) +
-          const Offset(20, 20),
-    );
-    await tester.pumpAndSettle();
-
-    expect(openedFrom, isNotNull);
-    expect(openedFrom!.width, greaterThan(0));
-
-    await tester.pumpWidget(const SizedBox());
-    await tester.pumpAndSettle();
-  });
-
-  testWidgets('여는 콜백이 없으면 썸네일은 보이기만 하고 펼쳐보기가 없다', (tester) async {
-    await pumpAfterPage(tester);
-
-    expect(find.byType(ConcertBeforeThumbnail), findsOneWidget);
+    expect(find.text('공연 정보'), findsWidgets);
+    expect(find.text('공연 전 신문'), findsNothing);
     expect(find.text('펼쳐보기 ›'), findsNothing);
-
-    await tester.pumpWidget(const SizedBox());
+    expect(find.byType(ConcertBeforeThumbnail), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
 

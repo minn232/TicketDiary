@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import 'connectivity_status.dart';
 
@@ -46,6 +47,14 @@ class ApiClient {
 
   final Dio _dio;
 
+  /// 테스트에서 HTTP 전송만 대체합니다. 반환한 어댑터는 종료 시 복원합니다.
+  @visibleForTesting
+  HttpClientAdapter replaceHttpAdapter(HttpClientAdapter adapter) {
+    final previous = _dio.httpClientAdapter;
+    _dio.httpClientAdapter = adapter;
+    return previous;
+  }
+
   /// 현재 로그인된 사용자의 access token. null이면 인증 헤더 없이 요청합니다.
   String? authToken;
 
@@ -58,7 +67,10 @@ class ApiClient {
     headers: authToken == null ? null : {'Authorization': 'Bearer $authToken'},
   );
 
-  Future<Map<String, dynamic>> get(String path, {bool allowAuthRetry = true}) async {
+  Future<Map<String, dynamic>> get(
+    String path, {
+    bool allowAuthRetry = true,
+  }) async {
     return _send(
       () => _dio.get(path, options: _authOptions),
       _asMap,
@@ -67,7 +79,10 @@ class ApiClient {
   }
 
   /// 응답이 JSON 객체 배열인 목록 조회용(예: `GET /tickets`).
-  Future<List<dynamic>> getList(String path, {bool allowAuthRetry = true}) async {
+  Future<List<dynamic>> getList(
+    String path, {
+    bool allowAuthRetry = true,
+  }) async {
     return _send(
       () => _dio.get(path, options: _authOptions),
       _asList,
@@ -99,7 +114,10 @@ class ApiClient {
     );
   }
 
-  Future<Map<String, dynamic>> delete(String path, {bool allowAuthRetry = true}) async {
+  Future<Map<String, dynamic>> delete(
+    String path, {
+    bool allowAuthRetry = true,
+  }) async {
     return _send(
       () => _dio.delete(path, options: _authOptions),
       _asMap,
@@ -206,13 +224,18 @@ class ApiClient {
 
   ApiException _toApiException(DioException e) {
     final statusCode = e.response?.statusCode ?? -1;
-    final message = _extractMessage(e.response?.data) ?? e.message ?? '알 수 없는 오류';
+    final message =
+        _extractMessage(e.response?.data) ?? e.message ?? '알 수 없는 오류';
     return ApiException(statusCode, message);
   }
 
   String? _extractMessage(dynamic data) {
-    if (data is Map && data['message'] is String) return data['message'] as String;
-    if (data is Map && data['detail'] is String) return data['detail'] as String;
+    if (data is Map && data['message'] is String) {
+      return data['message'] as String;
+    }
+    if (data is Map && data['detail'] is String) {
+      return data['detail'] as String;
+    }
     return null;
   }
 }

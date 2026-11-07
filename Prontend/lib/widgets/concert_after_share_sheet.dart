@@ -16,8 +16,7 @@ import 'concert_after_share_card.dart';
 import 'paper_style.dart';
 import 'responsive_text.dart';
 
-typedef ShareSheetPageBuilder =
-    Widget Function({required bool back, required bool hideMemos});
+typedef ShareSheetPageBuilder = Widget Function({required bool back});
 
 enum ShareCardSides {
   front('앞면'),
@@ -102,7 +101,6 @@ class ConcertAfterShareSheet extends StatefulWidget {
 class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
   ShareCardAspect _aspect = ShareCardAspect.original;
   ShareCardSides _sides = ShareCardSides.front;
-  bool _hideMemos = false;
   bool _ready = false;
   bool _busy = false;
   String? _message;
@@ -470,7 +468,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
         pageSize: widget.pageSize,
         aspect: aspect ?? _aspect,
         infoText: widget.infoText,
-        page: widget.pageBuilder(back: back, hideMemos: _hideMemos),
+        page: widget.pageBuilder(back: back),
       ),
     );
     final scale = widget.frameScale;
@@ -663,54 +661,6 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
             ),
           ),
           const SizedBox(height: 10),
-          Center(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: _busy
-                  ? null
-                  : () => setState(() {
-                      _message = null;
-                      _hideMemos = !_hideMemos;
-                    }),
-              child: Padding(
-                padding: const EdgeInsets.only(left: 12, right: 4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      '메모 숨기기',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: _ink,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Transform.scale(
-                      scale: .8,
-                      child: Switch(
-                        value: _hideMemos,
-                        activeThumbColor: PaperColors.card,
-                        activeTrackColor: _ink,
-                        inactiveThumbColor: PaperColors.card,
-                        inactiveTrackColor: _ink.withValues(alpha: .18),
-                        trackOutlineColor: const WidgetStatePropertyAll(
-                          Colors.transparent,
-                        ),
-                        onChanged: _busy
-                            ? null
-                            : (v) => setState(() {
-                                _message = null;
-                                _hideMemos = v;
-                              }),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
           if (_busy || (_message != null && _message!.isNotEmpty))
             Padding(
               padding: const EdgeInsets.only(bottom: 8),

@@ -8,7 +8,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show kLongPressTimeout, kTouchSlop;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -34,7 +33,6 @@ import 'concert_after_share_sheet.dart';
 import 'scrapbook_page_background.dart';
 import 'hanji_texture.dart';
 import 'concert_after_text_canvas.dart';
-import 'concert_before_page_contents.dart';
 import 'app_network_image.dart';
 import 'artist_identity_sheet.dart';
 import 'underlined_text.dart';
@@ -115,7 +113,7 @@ void hideConcertAfterFloatingControls() {
 }
 
 /// 한 장의 공연 후 기록 페이지. 앞면에 포스터·사진과 자유 텍스트, 뒷면에 공연 상세를 배치합니다.
-/// 텍스트는 빈 공간을 더블탭해 추가하고, 메모지와 겹치지 않게 자동 배치됩니다.
+/// 기존 자유 텍스트는 읽기 전용으로 표시합니다.
 class ConcertAfterPageContents extends StatefulWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
@@ -123,17 +121,13 @@ class ConcertAfterPageContents extends StatefulWidget {
   final bool showCloseHint;
   final GlobalKey? pageBoundaryKey;
 
-  /// 사진 추가/소감 저장이 성공해 [ticketInfo]가 최신화될 때마다 호출됩니다.
+  /// 사진 저장이 성공해 [ticketInfo]가 최신화될 때마다 호출됩니다.
   /// 호출자(다이어리 화면)가 원본 티켓 데이터를 같이 갱신해야, 이 오버레이를
   /// 닫은 뒤에도 앱 재시작 없이 바로 최신 내용이 보입니다.
   final ValueChanged<TicketInfo>? onTicketInfoChanged;
 
-  // [백엔드 수정] 뒷면 "공연 전 신문" 썸네일용 호수/열기 콜백 신규.
+  /// 공연 기록에 표시할 발행 호수.
   final int issueNumber;
-
-  /// null이면 썸네일만 보이고 눌리지 않음.
-  final Future<void> Function(Rect startRect, Widget collapsed)?
-  onOpenBeforePage;
 
   const ConcertAfterPageContents({
     super.key,
@@ -144,7 +138,6 @@ class ConcertAfterPageContents extends StatefulWidget {
     this.onTicketInfoChanged,
     this.pageBoundaryKey,
     this.issueNumber = 1,
-    this.onOpenBeforePage,
   });
 
   @override
@@ -235,30 +228,6 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
     if (_ticketId != null) return true;
     _showSnack('실제 등록된 티켓만 편집할 수 있어요.');
     return false;
-  }
-
-  /// 인라인 텍스트 상자에서 편집이 끝나면(포커스 해제/닫힘) 호출됩니다.
-  /// 별도 다이얼로그 없이 바로 저장합니다(변경이 없으면 아무 것도 안 함).
-  Future<void> _saveReviewInline(String text) async {
-    final trimmed = text.trim();
-    if (trimmed == (_ticketInfo?.review ?? '')) return; // 변경 없음
-    if (_ticketId == null) {
-      // 서버 미등록(로컬 예시) 티켓 — 저장은 못 하지만 화면 상태는 유지.
-      return;
-    }
-    try {
-      final updated = await _ticketService.updateTicket(
-        _ticketId!,
-        review: trimmed,
-      );
-      if (!mounted) return;
-      setState(() {
-        _ticketInfo = _ticketInfo?.copyWith(review: updated.review ?? trimmed);
-      });
-      if (_ticketInfo != null) widget.onTicketInfoChanged?.call(_ticketInfo!);
-    } catch (_) {
-      // 인라인 저장 실패는 조용히 무시(다음 편집/재시도 때 다시 저장 시도).
-    }
   }
 
   /// 갤러리에서 여러 장을 골라 원본 비율 그대로(크롭 없음) 업로드.
@@ -356,8 +325,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       layoutKey: _ticketId ?? 'local_after_${widget.concertTitle}',
       concertTitle: widget.concertTitle,
       ticketInfo: _ticketInfo,
-      reviewText: _ticketInfo?.review,
-      onReviewChanged: _saveReviewInline,
+      reviewText: null,
       pageLayout: _ticketInfo?.pageLayout,
       legacyPhotoUrls: _ticketInfo?.concertPhotoUrls ?? const <String>[],
       uploadingPhotos: _uploadingPhotos,
@@ -369,7 +337,6 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       initialSetlistLoad: _preloadedSetlist,
       pageBoundaryKey: widget.pageBoundaryKey,
       issueNumber: widget.issueNumber,
-      onOpenBeforePage: widget.onOpenBeforePage,
       onArtistIdentityChanged: _refreshArtistField,
     );
 
@@ -1177,8 +1144,8 @@ TextStyle _articleText(
 // 크래프트 종이 위에 메모지(포스터/공연정보/폴라로이드 사진/실제 셋리스트/
 // 공연 후기/타임테이블)를 겹쳐 붙입니다. 페이지 안쪽 어디를 꾹 누르면
 // 잠금모드에서 페이지를 꾹 누르면 편집모드로 들어가고, 편집모드에서 각 메모지를
-// 드래그(이동)·두 손가락(확대축소+회전)할 수 있습니다. 공연 후기는 더블탭하면
-// 타이핑할 수 있습니다. 배치/크기/회전은 티켓 page_layout(캔버스 폭 = 1 정규화
+// 드래그(이동)·두 손가락(확대축소+회전)할 수 있습니다. 기존 후기는 읽기 전용입니다.
+// 배치/크기/회전은 티켓 page_layout(캔버스 폭 = 1 정규화
 // 좌표)으로 서버에 저장하고, 기기에는 오프라인용 캐시만 둡니다.
 // =============================================================================
 
@@ -1344,9 +1311,6 @@ double _clampMemoScaleToCanvas(
 
 const List<String> _defaultScrapZOrder = ['poster'];
 
-/// 사진 추가 / 자동 배치로 다시 배치할 때 자유메모를 초기화할지 (false면 확인창 없이 그대로 둠).
-const bool _resetMemosOnRelayout = true;
-
 /// 공연후 페이지 사진 하나 (page_layout의 photo 아이템과 대응).
 class _AfterPhoto {
   final String id;
@@ -1471,7 +1435,6 @@ class _ScrapbookCanvas extends StatefulWidget {
   final String concertTitle;
   final TicketInfo? ticketInfo;
   final String? reviewText;
-  final Future<void> Function(String) onReviewChanged;
 
   /// 서버 배치. null이면 아직 배치가 없는 페이지(기기 캐시 → 기존 사진 순으로 대체).
   final PageLayout? pageLayout;
@@ -1487,8 +1450,6 @@ class _ScrapbookCanvas extends StatefulWidget {
   final Future<RealSetlistResponse>? initialSetlistLoad;
   final GlobalKey? pageBoundaryKey;
   final int issueNumber;
-  final Future<void> Function(Rect startRect, Widget collapsed)?
-  onOpenBeforePage;
   // [백엔드 수정] 실제 셋리에서 아티스트 연결을 바꿨을 때.
   final VoidCallback? onArtistIdentityChanged;
 
@@ -1504,7 +1465,6 @@ class _ScrapbookCanvas extends StatefulWidget {
     required this.concertTitle,
     required this.ticketInfo,
     required this.reviewText,
-    required this.onReviewChanged,
     required this.pageLayout,
     required this.legacyPhotoUrls,
     required this.uploadingPhotos,
@@ -1516,7 +1476,6 @@ class _ScrapbookCanvas extends StatefulWidget {
     required this.initialSetlistLoad,
     this.pageBoundaryKey,
     this.issueNumber = 1,
-    this.onOpenBeforePage,
     this.onArtistIdentityChanged,
     this.exportMode = false,
     this.exportBack = false,
@@ -1788,9 +1747,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   /// [sections] = 공연 정보 / 타임테이블 / 셋리스트. 타임테이블이 짧으면 2칸으로
-  /// 묶어 셋리스트 칸을 넓힘(곡명 줄바꿈이 줄어듦), 길면(페스티벌 등) 3칸 그대로.
+  /// 왼쪽 열에 위아래로 배치하되 각각 스크롤합니다. 길면 3칸으로 배치합니다.
   List<Widget> _backColumns(List<Widget> sections) {
-    Widget scroll(int i, Widget child) => SingleChildScrollView(
+    Widget scroll(int i, Widget child) => SectionScrollView(
       key: PageStorageKey('after_back_section_$i'),
       child: child,
     );
@@ -1798,95 +1757,15 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       return [for (final (i, s) in sections.indexed) scroll(i, s)];
     }
     return [
-      // 타임테이블이 생겨도 칸 스크롤 없이 - 신문은 남는 높이만큼만 보임.
-      _PocketColumn(
-        scrollKey: const PageStorageKey('after_back_section_0'),
-        top: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [sections[0], sections[1]],
-        ),
-        // _LetterColumn과 같은 좌우 여백
-        pocket: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: _beforePageThumbBlock(pocket: true),
-        ),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(flex: 3, child: scroll(0, sections[0])),
+          Expanded(flex: 2, child: scroll(1, sections[1])),
+        ],
       ),
       scroll(2, sections[2]),
     ];
-  }
-
-  // [백엔드 수정] "공연 전 신문" 썸네일 신규.
-  /// 3칸이면 공연 정보 칸 맨 아래, 2칸이면 타임테이블 아래(타임테이블이 먼저 보이게).
-  /// [pocket]이면 주어진 높이에 맞춰 아랫부분을 잘라 테이프로 눌러 붙인 모양.
-  Widget _beforePageThumbBlock({bool pocket = false}) {
-    Widget thumb = GestureDetector(
-      key: _beforePageThumbKey,
-      behavior: HitTestBehavior.opaque,
-      onTap: _canOpenBeforePage ? _openBeforePage : null,
-      child: _beforePageThumbnail(),
-    );
-    if (pocket) {
-      thumb = Flexible(
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            ClipRect(
-              child: OverflowBox(
-                fit: OverflowBoxFit.deferToChild,
-                alignment: Alignment.topCenter,
-                minHeight: 0,
-                maxHeight: double.infinity,
-                child: thumb,
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: -6,
-              child: IgnorePointer(
-                child: Center(
-                  child: FractionallySizedBox(
-                    widthFactor: 0.55,
-                    child: TapeStrip(angle: 0.03, child: SizedBox(height: 9)),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text(
-            '공연 전 신문',
-            style: TextStyle(fontSize: 11, color: _kraftInk),
-          ),
-          const SizedBox(height: 5),
-          thumb,
-          if (_canOpenBeforePage)
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: _openBeforePage,
-              child: Padding(
-                // 끼운 모양이면 아래로 삐져나온 테이프만큼 띄움
-                padding: EdgeInsets.only(top: pocket ? 10 : 5),
-                child: const Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    '펼쳐보기 ›',
-                    style: TextStyle(fontSize: 11, color: _kraftInk),
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
   }
 
   Color? _posterAccent;
@@ -1982,7 +1861,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         ..addAll(_defaultScrapZOrder);
       _photos = [];
       _textItems = const [];
-      _hasAppliedLayout = false;
       _refAspect = null;
       _textCanvasKey = GlobalKey();
       _layoutReady = false;
@@ -2021,7 +1899,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   GlobalKey<ConcertAfterTextCanvasState> _textCanvasKey = GlobalKey();
 
   /// 서버/캐시 배치를 한 번이라도 적용했는지 (텍스트 캔버스에 메모 목록을 넘길지).
-  bool _hasAppliedLayout = false;
   bool _edit = false;
   String? _activeMemoKey;
   Timer? _pageLongPressTimer;
@@ -2110,35 +1987,25 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         if (info != null && info.venueName.isNotEmpty) info.venueName,
       ].join(' · '),
       fileStem: 'ticketdiary_${widget.setlistTicketId ?? 'page'}',
-      pageBuilder: ({required bool back, required bool hideMemos}) =>
-          _ScrapbookCanvas(
-            key: ValueKey('share_${back}_$hideMemos'),
-            layoutKey: widget.layoutKey,
-            concertTitle: widget.concertTitle,
-            ticketInfo: widget.ticketInfo,
-            reviewText: hideMemos ? '' : widget.reviewText,
-            onReviewChanged: (_) async {},
-            pageLayout: hideMemos
-                ? PageLayout(
-                    canvasAspect: layout.canvasAspect,
-                    items: [
-                      for (final item in layout.items)
-                        if (item.type != PageLayoutItemType.text) item,
-                    ],
-                  )
-                : layout,
-            legacyPhotoUrls: const [],
-            uploadingPhotos: false,
-            onPickPhotos: null,
-            onLayoutChanged: null,
-            setlistTicketId: widget.setlistTicketId,
-            concertId: widget.concertId,
-            initialTimetableLoad: widget.initialTimetableLoad,
-            initialSetlistLoad: widget.initialSetlistLoad,
-            issueNumber: widget.issueNumber,
-            exportMode: true,
-            exportBack: back,
-          ),
+      pageBuilder: ({required bool back}) => _ScrapbookCanvas(
+        key: ValueKey('share_$back'),
+        layoutKey: widget.layoutKey,
+        concertTitle: widget.concertTitle,
+        ticketInfo: widget.ticketInfo,
+        reviewText: widget.reviewText,
+        pageLayout: layout,
+        legacyPhotoUrls: const [],
+        uploadingPhotos: false,
+        onPickPhotos: null,
+        onLayoutChanged: null,
+        setlistTicketId: widget.setlistTicketId,
+        concertId: widget.concertId,
+        initialTimetableLoad: widget.initialTimetableLoad,
+        initialSetlistLoad: widget.initialSetlistLoad,
+        issueNumber: widget.issueNumber,
+        exportMode: true,
+        exportBack: back,
+      ),
     );
   }
 
@@ -2251,12 +2118,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       for (final item in items)
         if (item.type == PageLayoutItemType.photo) ?_AfterPhoto.fromItem(item),
     ];
-    _textItems = [
-      for (final item in items)
-        if (item.type == PageLayoutItemType.text) item,
-    ];
+    // 기존 page_layout에 남아 있는 자유 메모도 새 정책에서는 복원하지 않습니다.
+    _textItems = const [];
     _textCanvasKey = GlobalKey();
-    _hasAppliedLayout = true;
     _t.clear();
     _z.clear();
     var hasPoster = false;
@@ -2337,12 +2201,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         for (var i = 0; i < items.length; i++) _toRef(items[i]).copyWith(z: i),
       ],
     );
-  }
-
-  void _onTextsChanged(List<PageLayoutItem> items) {
-    if (!mounted) return;
-    _textItems = items;
-    _persistLayout();
   }
 
   void _persistLayout() {
@@ -2449,38 +2307,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     }
   }
 
-  /// 다시 배치하기 전 자유메모 초기화 확인. 지울 메모가 없으면 묻지 않음.
-  Future<bool> _confirmMemoReset() async {
-    if (!_resetMemosOnRelayout) return true;
-    if (!(_textCanvasKey.currentState?.hasTexts ?? false)) return true;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('메모가 지워져요'),
-        content: const Text('사진을 다시 배치하면 적어둔 메모가 모두 지워져요.\n계속할까요?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('지우고 배치'),
-          ),
-        ],
-      ),
-    );
-    return ok ?? false;
-  }
-
-  void _resetMemosIfNeeded() {
-    if (_resetMemosOnRelayout) _textCanvasKey.currentState?.clearAll();
-  }
-
   /// 고정 안 된 사진/포스터만 다시 배치.
   Future<void> _relayout() async {
-    if (_autoLayoutRunning || !await _confirmMemoReset() || !mounted) return;
-    _resetMemosIfNeeded();
+    if (_autoLayoutRunning || !mounted) return;
     _layoutReady = true;
     await _runAutoLayout();
   }
@@ -2760,7 +2589,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     return '${names.take(shown).join(', ')} 외 ${names.length - shown}팀';
   }
 
-  /// 2칸이면 짧은 값끼리(날짜·가격, 좌석·공연 유형) 한 줄에 둘씩 - 아래 신문 자리 확보.
+  /// 2칸이면 짧은 값끼리(날짜·가격, 좌석·공연 유형) 한 줄에 둘씩 - 정보를 간결하게 표시.
   List<List<MapEntry<String, String>>> _backInfoRows() {
     final fields = _backInfoFields();
     if (!_twoColumnBack) {
@@ -2834,32 +2663,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
         .join('\n');
   }
 
-  final GlobalKey _beforePageThumbKey = GlobalKey();
-
-  bool get _canOpenBeforePage =>
-      !widget.exportMode && widget.onOpenBeforePage != null;
-
-  // 뒷면 잉크(갈색)와, 크림 종이보다 한 톤 진한 바탕.
-  Widget _beforePageThumbnail() => ConcertBeforeThumbnail(
-    concertTitle: widget.concertTitle,
-    issueNumber: widget.issueNumber,
-    date: widget.ticketInfo?.date,
-    posterUrl: widget.ticketInfo?.posterImageUrl,
-    ink: _kraftInk,
-    paper: _kraftInk.withValues(alpha: 0.06),
-  );
-
-  Future<void> _openBeforePage() async {
-    final open = widget.onOpenBeforePage;
-    final box =
-        _beforePageThumbKey.currentContext?.findRenderObject() as RenderBox?;
-    if (open == null || box == null || !box.hasSize) return;
-    await open(
-      box.localToGlobal(Offset.zero) & box.size,
-      _beforePageThumbnail(),
-    );
-  }
-
   List<Widget> _backContents() {
     final timetableFuture = widget.initialTimetableLoad;
     final setlistFuture = widget.initialSetlistLoad;
@@ -2912,7 +2715,6 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                               ],
                             ),
                     ),
-                if (!_twoColumnBack) _beforePageThumbBlock(),
               ],
             ),
           ),
@@ -2999,14 +2801,12 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   }
 
   /// 여러 장을 골라 올린 뒤, 고정된 메모는 그대로 두고 자동 배치.
-  /// 자유메모 초기화는 사진을 고르기 전에 묻고, 실제로 추가됐을 때만 지움.
   Future<void> _addPhotos() async {
     final pick = widget.onPickPhotos;
     if (pick == null || _autoLayoutRunning) return;
-    if (!await _confirmMemoReset() || !mounted) return;
+    if (!mounted) return;
     final added = await pick();
     if (added.isEmpty || !mounted) return;
-    _resetMemosIfNeeded();
     setState(() {
       _photos = [..._photos, ...added];
       for (final p in added) {
@@ -3168,18 +2968,17 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                           ConcertAfterTextCanvas(
                             key: _textCanvasKey,
                             storageKey: widget.layoutKey,
-                            initialReview: widget.reviewText ?? '',
+                            initialReview: '',
                             width: w,
                             minHeight: h,
                             minContentTop: titleSafeBottom,
                             editMode: _edit && _activeMemoKey == null,
                             obstacles: const <Rect>[],
                             backgroundOverlays: backgroundOverlays,
-                            onReviewChanged: widget.onReviewChanged,
+                            readOnly: true,
+                            onReviewChanged: (_) async {},
                             onBlankLongPress: _lockModeFromBlankSpace,
-                            initialItems: _hasAppliedLayout ? _textItems : null,
-                            onTextsChanged: _onTextsChanged,
-                            onTextsLoaded: (items) => _textItems = items,
+                            initialItems: const [],
                             memos: memoWidgets,
                           ),
                     ),
@@ -4536,87 +4335,6 @@ class _BackEditChip extends StatelessWidget {
       ),
     ),
   );
-}
-
-/// 뒷면 2칸일 때 왼쪽 칸. [top](공연 정보+타임테이블) 높이를 재서 남는 높이를
-/// 통째로 [pocket](공연 전 신문)에 줌. 남는 게 [minPocketHeight]보다 적으면
-/// 그 높이로 두고 칸을 스크롤.
-class _PocketColumn extends StatefulWidget {
-  final Widget top;
-  final Widget pocket;
-  final Key? scrollKey;
-  static const double minPocketHeight = 140;
-  const _PocketColumn({
-    required this.top,
-    required this.pocket,
-    this.scrollKey,
-  });
-
-  @override
-  State<_PocketColumn> createState() => _PocketColumnState();
-}
-
-class _PocketColumnState extends State<_PocketColumn> {
-  double? _topHeight;
-
-  void _onTopSize(Size size) {
-    if (size.height == _topHeight) return;
-    // 레이아웃 중이라 다음 프레임에 반영.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && size.height != _topHeight) {
-        setState(() => _topHeight = size.height);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, c) {
-      final top = _topHeight;
-      final pocketHeight = top == null || !c.maxHeight.isFinite
-          ? _PocketColumn.minPocketHeight
-          : math.max(_PocketColumn.minPocketHeight, c.maxHeight - top);
-      return SingleChildScrollView(
-        key: widget.scrollKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _SizeReporter(onSize: _onTopSize, child: widget.top),
-            SizedBox(height: pocketHeight, child: widget.pocket),
-          ],
-        ),
-      );
-    },
-  );
-}
-
-/// 레이아웃 때마다 자식 크기를 알려줌.
-class _SizeReporter extends SingleChildRenderObjectWidget {
-  final ValueChanged<Size> onSize;
-  const _SizeReporter({required this.onSize, super.child});
-
-  @override
-  RenderObject createRenderObject(BuildContext context) =>
-      _RenderSizeReporter(onSize);
-
-  @override
-  void updateRenderObject(
-    BuildContext context,
-    _RenderSizeReporter renderObject,
-  ) {
-    renderObject.onSize = onSize;
-  }
-}
-
-class _RenderSizeReporter extends RenderProxyBox {
-  ValueChanged<Size> onSize;
-  _RenderSizeReporter(this.onSize);
-
-  @override
-  void performLayout() {
-    super.performLayout();
-    onSize(size);
-  }
 }
 
 class _LetterColumn extends StatelessWidget {

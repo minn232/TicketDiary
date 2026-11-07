@@ -2,6 +2,7 @@ import '../widgets/app_back_handler.dart';
 import '../services/sound_effect_service.dart';
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../widgets/summary_calendar.dart';
@@ -22,7 +23,7 @@ import '../widgets/tab_nav_coordinator.dart';
 import '../widgets/summary_region_map.dart' show summaryInk, summaryPaper;
 
 // 결산 탭: 관람 기록과 기간별 통계를 표시합니다.
-// 값은 `GET /summary` 원본 JSON을 그대로 읽음(SummaryModel 미사용).
+// 값은 `GET /summary` 원본 JSON을 그대로 읽습니다.
 typedef SummaryJsonLoader =
     Future<Map<String, dynamic>> Function(String period);
 
@@ -99,6 +100,54 @@ class _SummaryScreenState extends State<SummaryScreen> {
     _loadUpcomingTickets();
     TicketRefreshBus.tick.addListener(_loadUpcomingTickets);
     FavoritesStore.instance.addListener(_refreshCalendarNews);
+    _calendarSelection.addListener(_onCalendarSelectionChanged);
+  }
+
+  void _onCalendarSelectionChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pickCalendarDate() async {
+    var picked = _calendarSelection.value;
+    await showCupertinoModalPopup<void>(
+      context: context,
+      builder: (context) => Container(
+        height: 310,
+        color: _pageColor,
+        child: Column(
+          children: [
+            SizedBox(
+              height: 52,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  CupertinoButton(
+                    child: const Text('취소'),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  CupertinoButton(
+                    child: const Text('이동'),
+                    onPressed: () {
+                      _calendarSelection.value = DateUtils.dateOnly(picked);
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: CupertinoDatePicker(
+                mode: CupertinoDatePickerMode.date,
+                initialDateTime: picked,
+                minimumDate: DateTime(2000),
+                maximumDate: DateTime(2100),
+                onDateTimeChanged: (date) => picked = date,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 소식탭과 동일하게 현재 팔로우 중인 아티스트의 소식만 캘린더에
@@ -187,6 +236,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
     TicketRefreshBus.tick.removeListener(_load);
     TicketRefreshBus.tick.removeListener(_loadUpcomingTickets);
     FavoritesStore.instance.removeListener(_refreshCalendarNews);
+    _calendarSelection.removeListener(_onCalendarSelectionChanged);
     _calendarSelection.dispose();
     _calendarTodayRequest.dispose();
     _noticeTimer?.cancel();
@@ -364,11 +414,13 @@ class _SummaryScreenState extends State<SummaryScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: _ModeButton(
-                          label: _calendarMode ? _todayLabel : _periodLabel,
+                          label: _calendarMode
+                              ? _calendarDateLabel
+                              : _periodLabel,
                           showArrow: false,
-                          active: !_calendarMode,
+                          active: true,
                           onTap: _calendarMode
-                              ? () => _calendarTodayRequest.value++
+                              ? _pickCalendarDate
                               : _advancePeriod,
                         ),
                       ),
@@ -385,9 +437,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
     );
   }
 
-  String get _todayLabel {
-    final today = DateTime.now();
-    return '${today.year}.${today.month.toString().padLeft(2, '0')}.${today.day.toString().padLeft(2, '0')}';
+  String get _calendarDateLabel {
+    final date = _calendarSelection.value;
+    return '${date.year}.${date.month.toString().padLeft(2, '0')}.${date.day.toString().padLeft(2, '0')}';
   }
 
   void _playSwitchSound() {

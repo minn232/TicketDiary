@@ -1186,8 +1186,9 @@ class _FavoritedStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isArtist = category == _FavCategory.artist;
-    final artists = favorites.favoriteArtists;
-    final concerts = favorites.favoriteConcerts;
+    // Map은 추가 순서를 보존하므로, 마지막으로 찜한 항목을 왼쪽에 먼저 둡니다.
+    final artists = favorites.favoriteArtists.reversed.toList();
+    final concerts = favorites.favoriteConcerts.reversed.toList();
     final isEmpty = isArtist ? artists.isEmpty : concerts.isEmpty;
 
     return Padding(

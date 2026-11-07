@@ -51,8 +51,7 @@ void main() {
               home: Scaffold(
                 body: ConcertAfterShareSheet(
                   pageSize: const Size(300, 400),
-                  pageBuilder: ({required back, required hideMemos}) =>
-                      const SizedBox(),
+                  pageBuilder: ({required back}) => const SizedBox(),
                   images: const [],
                   pending: const [],
                   infoText: '',

@@ -35,7 +35,7 @@ void main() {
       ),
     );
     await show();
-    expect(find.text('찜한 공연'), findsOneWidget);
+    expect(find.text('♥'), findsOneWidget);
     item.matchFavorites(const [
       ArtistModel(name: 'A', profileImageUrl: ''),
       ArtistModel(name: 'B', profileImageUrl: ''),
@@ -64,14 +64,9 @@ void main() {
         ),
       ),
     );
-    final scrollable = tester.state<ScrollableState>(find.byType(Scrollable));
-    expect(scrollable.position.maxScrollExtent, greaterThan(0));
-    await tester.drag(
-      find.byType(SingleChildScrollView),
-      const Offset(-200, 0),
-    );
-    await tester.pumpAndSettle();
-    expect(scrollable.position.pixels, greaterThan(0));
+    // 프로필이 영역을 넘으면 수동 스크롤 없이 자동 마키 애니메이션을 사용한다.
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(SingleChildScrollView), findsNothing);
     expect(find.byKey(const ValueKey('news-artist-artist11')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
