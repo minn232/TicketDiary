@@ -42,4 +42,48 @@ void main() {
       expect(rect.height, lessThanOrEqualTo(size.height + 0.01));
     }
   });
+
+  // [백엔드 수정] 배송받은 티켓 찍기(받기 모드).
+  for (final receive in [true, false]) {
+    testWidgets('받기 모드 ${receive ? '켜면 안내와 사진 없이 넘기기' : '아니면 기존 화면'}', (
+      tester,
+    ) async {
+      Object? popped;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                popped = await Navigator.of(context).push<Object>(
+                  MaterialPageRoute(
+                    builder: (_) => TicketScanCameraScreen(
+                      receiveTitle: receive ? 'EXO PLANET #6' : null,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('열기'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('열기'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(
+        find.text('받은 티켓을 찍어 주세요'),
+        receive ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.text('EXO PLANET #6'),
+        receive ? findsOneWidget : findsNothing,
+      );
+      expect(find.text('임시 스캔'), receive ? findsNothing : findsOneWidget);
+      if (!receive) return;
+      await tester.tap(find.text('사진 없이 받았어요'));
+      await tester.pumpAndSettle();
+      expect(popped, isA<ReceiveWithoutPhotoRequested>());
+    });
+  }
 }

@@ -1806,6 +1806,67 @@ class _DiaryScreenState extends State<DiaryScreen>
     showPaperSnackBar(context, message);
   }
 
+  // [백엔드 수정] 배송받은 티켓을 카메라로 찍어 공연 전으로 넘김. 사진은 저장하지 않고 빈 좌석만 채움,
+  // 다른 공연으로 읽히면 한 번 확인. "사진 없이 받았어요"는 그대로 넘김.
+  Future<void> _receiveTicketWithCamera(TicketData ticket) async {
+    if (_isAddTicketExpanded) return;
+    while (true) {
+      if (!mounted) return;
+      final Object? result = await Navigator.of(context).push<Object>(
+        MaterialPageRoute(
+          builder: (_) => TicketScanCameraScreen(
+            scanService: _scanService,
+            receiveTitle: ticket.title,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+      if (result == null || !mounted) return;
+      if (result is ReceiveWithoutPhotoRequested) {
+        await _markTicketDelivered(ticket);
+        return;
+      }
+      if (result is! TicketScanResponse) return;
+      final concertId = ticket.info?.concertId;
+      final otherConcert =
+          concertId != null &&
+          result.candidates.isNotEmpty &&
+          result.candidates.every((c) => c.id != concertId);
+      if (otherConcert) {
+        final again = await showPaperDialog<bool>(
+          context,
+          title: '다른 공연 티켓 같아요',
+          emphasis: ticket.title,
+          message: '이 공연 티켓이 맞으면 그대로 받을게요.',
+          actions: const [
+            PaperDialogAction(
+              label: '다시 찍기',
+              value: true,
+              style: PaperButtonStyle.outline,
+            ),
+            PaperDialogAction(label: '맞아요', value: false),
+          ],
+        );
+        if (again == null || !mounted) return;
+        if (again) continue;
+      }
+      final seat = result.extracted.seat?.trim() ?? '';
+      if (!otherConcert &&
+          seat.isNotEmpty &&
+          (ticket.info?.seat.isEmpty ?? false) &&
+          ticket.info?.ticketId != null) {
+        try {
+          await _ticketService.updateTicket(ticket.id, seatType: seat);
+        } catch (_) {
+          // 좌석 채우기는 부가 기능이라 실패해도 받기는 계속.
+        }
+        if (!mounted) return;
+      }
+      await _markTicketDelivered(ticket);
+      return;
+    }
+  }
+
   // [백엔드 수정] 배송일 전 "받았어요" - 카드 뒤집기 탭과 헷갈리지 않게 한 번 확인.
   Future<void> _confirmTicketReceived(TicketData ticket) async {
     final confirmed = await showPaperDialog<bool>(
@@ -3317,10 +3378,11 @@ class _DiaryScreenState extends State<DiaryScreen>
     final dDayLabel = _deliveryDDayLabel(info?.deliveryDate);
     final isRegisterReady = _isDeliveryDue(info?.deliveryDate);
 
-    final readyMessage = isRegisterReady ? '터치해서 도착한 티켓을 꺼내보세요' : null;
+    // [백엔드 수정] 터치하면 받은 티켓 찍기.
+    final readyMessage = isRegisterReady ? '터치해서 도착한 티켓을 찍어 보세요' : null;
     final onReadyTap =
         isRegisterReady && !_isAddTicketExpanded && ticket != null
-        ? () => unawaited(_markTicketDelivered(ticket))
+        ? () => unawaited(_receiveTicketWithCamera(ticket))
         : null;
 
     return GestureDetector(
@@ -3343,7 +3405,9 @@ class _DiaryScreenState extends State<DiaryScreen>
       // [백엔드 수정] 날짜는 공연 날짜, 배송일은 따로 표시.
       date: info?.formattedDate ?? '-',
       delivery: '${_formatDeliveryDate(info?.deliveryDate)} 예정',
-      onReceived: () => unawaited(_confirmTicketReceived(ticket)),
+      // [백엔드 수정] 확인창 대신 받은 티켓 찍기.
+      // onReceived: () => unawaited(_confirmTicketReceived(ticket)),
+      onReceived: () => unawaited(_receiveTicketWithCamera(ticket)),
       venue: info?.venueName ?? '알 수 없는 공연장',
       // [백엔드 수정] 서버 값이 비면 '' 로 오므로 미정 처리, 가격은 원 단위 표기.
       seat: info == null || info.seat.isEmpty ? '미정' : info.seat,

@@ -20,6 +20,11 @@ class DebugFakeScanRequested {
   const DebugFakeScanRequested();
 }
 
+/// [백엔드 수정] 받기 모드에서 "사진 없이 받았어요"를 눌렀을 때 반환하는 값.
+class ReceiveWithoutPhotoRequested {
+  const ReceiveWithoutPhotoRequested();
+}
+
 /// 신분증 스캔 UI처럼, 가이드 박스에 티켓을 맞추면
 /// 자동으로 정렬을 인식(초록 테두리)하고 촬영까지 이어지는 카메라 화면.
 ///
@@ -33,10 +38,14 @@ class TicketScanCameraScreen extends StatefulWidget {
     TicketScanService? scanService,
     TicketAlignmentDetector Function(CameraController controller)?
     detectorFactory,
+    this.receiveTitle,
   }) : scanService = scanService ?? BackendTicketScanService(),
        detectorFactory = detectorFactory ?? LiveTicketAlignmentDetector.new;
 
   final TicketScanService scanService;
+
+  /// [백엔드 수정] 배송받은 티켓을 찍는 받기 모드면 그 공연명. 위에 안내, 아래에 사진 없이 넘기기.
+  final String? receiveTitle;
   final TicketAlignmentDetector Function(CameraController controller)
   detectorFactory;
 
@@ -233,7 +242,10 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
 
           if (_errorMessage != null)
             Positioned(
-              bottom: 48,
+              // [백엔드 수정] 받기 모드는 아래 "사진 없이 받았어요" 위로.
+              bottom: widget.receiveTitle == null
+                  ? 48
+                  : MediaQuery.of(context).padding.bottom + 64,
               left: 24,
               right: 24,
               child: Text(
@@ -263,18 +275,77 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               ),
             ),
 
-          // 개발용 임시 버튼: 카메라/백엔드 없이 테스트용 더미 티켓만 추가
-          Positioned(
-            // 왼쪽 위 닫기 버튼(top+8) 바로 아래에 겹치지 않게 배치.
-            top: MediaQuery.of(context).padding.top + 56,
-            left: 16,
-            child: FloatingActionButton.extended(
-              heroTag: 'debug_force_scan',
-              onPressed: _debugAddFakeTicket,
-              backgroundColor: Colors.grey,
-              label: const Text('임시 스캔'),
+          // [백엔드 수정] 받기 모드 안내와 사진 없이 넘기기.
+          if (widget.receiveTitle case final title?) ...[
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 14,
+              left: 64,
+              right: 64,
+              child: IgnorePointer(
+                child: Column(
+                  children: [
+                    const Text(
+                      '받은 티켓을 찍어 주세요',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: .75),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
+            Positioned(
+              bottom: MediaQuery.of(context).padding.bottom + 8,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: TextButton(
+                  onPressed: _stage == _ScanStage.capturing
+                      ? null
+                      : () => Navigator.of(
+                          context,
+                        ).pop(const ReceiveWithoutPhotoRequested()),
+                  child: Text(
+                    '사진 없이 받았어요',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: .8),
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+
+          // 개발용 임시 버튼: 카메라/백엔드 없이 테스트용 더미 티켓만 추가
+          if (widget.receiveTitle == null)
+            Positioned(
+              // 왼쪽 위 닫기 버튼(top+8) 바로 아래에 겹치지 않게 배치.
+              top: MediaQuery.of(context).padding.top + 56,
+              left: 16,
+              child: FloatingActionButton.extended(
+                heroTag: 'debug_force_scan',
+                onPressed: _debugAddFakeTicket,
+                backgroundColor: Colors.grey,
+                label: const Text('임시 스캔'),
+              ),
+            ),
         ],
       ),
     );
