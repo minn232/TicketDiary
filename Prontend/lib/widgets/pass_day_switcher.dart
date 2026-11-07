@@ -87,3 +87,43 @@ class PassDaySwitcher extends StatelessWidget {
     );
   }
 }
+
+/// [백엔드 수정] 날짜 탭으로 넘어갈 때 떠나는 페이지를 새 날 페이지가 덮을 때까지 남겨 둠.
+/// 닫고 다음 프레임에 여는 사이 한 프레임 동안 다이어리가 비쳐 깜빡이던 걸 막음.
+class PassDayRouteHandoff {
+  PassDayRouteHandoff._();
+
+  static Route<dynamic>? _leaving;
+  static VoidCallback? _hideDim;
+
+  /// 떠나는 페이지가 호출 - 라우트는 남기고, 새 페이지가 뜰 때 자기 dim을 끌 콜백을 맡김.
+  static void hold(Route<dynamic> route, VoidCallback hideDim) {
+    releaseNow();
+    _leaving = route;
+    _hideDim = hideDim;
+  }
+
+  /// 새 날 페이지를 push한 직후 호출 - 같은 프레임에 옛 페이지 dim을 꺼 두 겹으로 어두워지지 않게 하고,
+  /// 새 페이지가 그려진 뒤 옛 페이지를 뺌.
+  static void releaseAfterFrame() {
+    final route = _leaving;
+    final hideDim = _hideDim;
+    _leaving = null;
+    _hideDim = null;
+    if (route == null) return;
+    hideDim?.call();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _remove(route));
+  }
+
+  /// 새 날 페이지를 못 띄웠을 때 - 남겨 둔 페이지를 바로 닫음.
+  static void releaseNow() {
+    final route = _leaving;
+    _leaving = null;
+    _hideDim = null;
+    if (route != null) _remove(route);
+  }
+
+  static void _remove(Route<dynamic> route) {
+    if (route.isActive) route.navigator?.removeRoute(route);
+  }
+}

@@ -1127,6 +1127,7 @@ class _DiaryScreenState extends State<DiaryScreen>
         index < 0 ||
         dayIndex < 0 ||
         dayIndex >= group.days.length) {
+      PassDayRouteHandoff.releaseNow();
       setState(() => _overlayHiddenRegionKey = null);
       return;
     }
@@ -1142,6 +1143,7 @@ class _DiaryScreenState extends State<DiaryScreen>
     if (!mounted) return;
     final open = _ticketOpeners[next.id] ?? _passDueOpeners[next.id];
     if (open == null) {
+      PassDayRouteHandoff.releaseNow();
       setState(() => _overlayHiddenRegionKey = null);
       return;
     }
@@ -2920,7 +2922,10 @@ class _DiaryScreenState extends State<DiaryScreen>
         Future<void> openBefore([bool instant = false]) async {
           final startRect = _globalRectOf(ticket.overlayKey);
           if (startRect == null) {
-            if (instant) setState(() => _overlayHiddenRegionKey = null);
+            if (instant) {
+              PassDayRouteHandoff.releaseNow();
+              setState(() => _overlayHiddenRegionKey = null);
+            }
             return;
           }
 
@@ -3409,12 +3414,18 @@ class _DiaryScreenState extends State<DiaryScreen>
     Future<void> openAfter([bool instant = false]) async {
       if (ensureAttendedDate != null) {
         final picked = await ensureAttendedDate();
-        if (picked == null || !context.mounted) return;
+        if (picked == null || !context.mounted) {
+          if (instant) PassDayRouteHandoff.releaseNow();
+          return;
+        }
         info = picked;
       }
       final startRect = _globalRectOf(posterOverlayKey);
       if (startRect == null) {
-        if (instant) setState(() => _overlayHiddenRegionKey = null);
+        if (instant) {
+          PassDayRouteHandoff.releaseNow();
+          setState(() => _overlayHiddenRegionKey = null);
+        }
         return;
       }
       final frameScale =

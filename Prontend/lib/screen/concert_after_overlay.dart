@@ -58,6 +58,9 @@ class ConcertAfterOverlay extends StatefulWidget {
   // [백엔드 수정] 다른 관람일에서 넘어올 때 펼치는 연출 없이 바로 펼친 상태로 시작.
   final bool instant;
 
+  /// [백엔드 수정] 다른 관람일 탭을 눌렀을 때(페이지는 새 날 페이지가 덮을 때까지 남음).
+  final ValueChanged<int>? onSwitchDay;
+
   const ConcertAfterOverlay({
     super.key,
     required this.startRect,
@@ -69,6 +72,7 @@ class ConcertAfterOverlay extends StatefulWidget {
     this.issueNumber = 1,
     this.passDays,
     this.instant = false,
+    this.onSwitchDay,
   });
 
   /// 다이어리 위에 오버레이를 띄우는 헬퍼. 관람일 이동으로 닫히면 고른 날 번호를 돌려줍니다.
@@ -84,7 +88,9 @@ class ConcertAfterOverlay extends StatefulWidget {
     PassDayTabs? passDays,
     bool instant = false,
   }) {
-    return showGeneralDialog<int>(
+    // [백엔드 수정] 날짜 탭 이동은 페이지를 닫지 않고 고른 날만 먼저 돌려줌(PassDayRouteHandoff 참고).
+    final switched = Completer<int?>();
+    final closed = showGeneralDialog<int>(
       context: context,
       // [백엔드 수정] 다른 관람일에서 넘어올 땐 바로 덮어서 닫히는 페이지 사이로 다이어리가 안 비치게 함.
       transitionDuration: instant
@@ -105,9 +111,14 @@ class ConcertAfterOverlay extends StatefulWidget {
           issueNumber: issueNumber,
           passDays: passDays,
           instant: instant,
+          onSwitchDay: (index) {
+            if (!switched.isCompleted) switched.complete(index);
+          },
         );
       },
     );
+    if (instant) PassDayRouteHandoff.releaseAfterFrame();
+    return Future.any([closed, switched.future]);
   }
 
   @override
@@ -182,15 +193,27 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
       .instance
       .start(widget.ticketInfo?.ticketId, this, otherAudio: otherAudio);
 
-  // [백엔드 수정] 다른 관람일로 이동 - 접는 연출 없이 닫고 다이어리가 그 날 페이지를 바로 띄움.
+  // [백엔드 수정] 다른 관람일로 이동 - 접는 연출 없이, 다이어리가 그 날 페이지를 위에 띄운 뒤 이 페이지를 뺌.
   void _switchDay(int index) {
     if (_isClosing || _controller.value < 0.85) return;
     _isClosing = true;
     // 곡은 끊지 않고 다음 날 페이지가 이어받음
     TicketPreviewPlayer.instance.handOff(this);
     hideConcertAfterFloatingControls();
-    Navigator.of(context).pop(index);
+    final route = ModalRoute.of(context);
+    final onSwitchDay = widget.onSwitchDay;
+    if (route == null || onSwitchDay == null) {
+      Navigator.of(context).pop(index);
+      return;
+    }
+    PassDayRouteHandoff.hold(route, () {
+      if (mounted) setState(() => _dimHidden = true);
+    });
+    onSwitchDay(index);
   }
+
+  /// [백엔드 수정] 새 날 페이지가 위에 뜨면 이 페이지 dim을 꺼 두 겹으로 어두워지지 않게 함.
+  bool _dimHidden = false;
 
   // [백엔드 수정] 펼치기 전 페이지를 안 보이게 그려 질감을 미리 구움 - 새로 굽는 게 없는 프레임이 나오면 바로 펼침.
   static const _warmUpMaxDuration = Duration(milliseconds: 200);
@@ -362,7 +385,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
               final rect = _getRectForT(end, t);
               final radius = _getRadiusForT(t);
 
-              final dimOpacity = lerpDouble(0.0, 0.4, t)!;
+              final dimOpacity = _dimHidden ? 0.0 : lerpDouble(0.0, 0.4, t)!;
 
               return Stack(
                 children: [
