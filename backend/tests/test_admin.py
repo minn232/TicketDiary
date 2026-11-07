@@ -1728,3 +1728,123 @@ async def test_admin_upload_manual_crawl_screenshot_404_for_unknown_concert():
                 headers=_admin_headers(),
             )
     assert res.status_code == 404
+
+
+# 날짜별 출연진(concert_lineups) 관리자 편집
+
+async def _make_three_day_festival(artists: list[str]) -> str:
+    concert_id = await _create_concert(f"PF_LINEUP_{uuid.uuid4().hex[:6]}", artists[0])
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert)
+            .where(Concert.id == uuid.UUID(concert_id))
+            .values(
+                artist_name=artists,
+                event_type=EventType.FESTIVAL.value,
+                # KST 2030-11-20~22 (UTC로 저장)
+                start_date=datetime(2030, 11, 19, 15, 0, tzinfo=timezone.utc),
+                end_date=datetime(2030, 11, 21, 15, 0, tzinfo=timezone.utc),
+            )
+        )
+        await db.commit()
+    return concert_id
+
+
+@pytest.mark.asyncio
+async def test_admin_lineup_replace_and_blocks_auto_upsert():
+    from app.models.lineup import ConcertLineup
+    from app.services.lineup import get_lineup_artists_for_date, upsert_concert_lineup
+
+    concert_id = await _make_three_day_festival(["밴드A", "밴드B", "밴드C"])
+    async with AsyncSessionLocal() as db:
+        await upsert_concert_lineup(
+            db, uuid.UUID(concert_id),
+            [{"artist": "밴드A", "performance_date": "2030-11-20"}, {"artist": "밴드B", "performance_date": "2030-11-20"}],
+            source="poster",
+        )
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            detail = (await ac.get(f"/api/v1/admin/concerts/{concert_id}", headers=_admin_headers())).json()
+            res = await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/lineup",
+                headers=_admin_headers(),
+                json={"entries": [
+                    {"artist": "밴드A", "performance_date": "2030-11-20"},
+                    {"artist": "밴드C", "performance_date": "2030-11-21"},
+                ]},
+            )
+
+    assert detail["days"] == ["2030-11-20", "2030-11-21", "2030-11-22"]
+    assert {(e["artist"], e["source"]) for e in detail["lineup"]} == {("밴드A", "poster"), ("밴드B", "poster")}
+    assert res.status_code == 200
+    assert [(e["artist"], e["performance_date"], e["source"]) for e in res.json()["lineup"]] == [
+        ("밴드A", "2030-11-20", "admin"), ("밴드C", "2030-11-21", "admin"),
+    ]
+
+    # 관리자가 뺀 밴드B를 LLM 결과가 되살리지 않음
+    async with AsyncSessionLocal() as db:
+        changed = await upsert_concert_lineup(
+            db, uuid.UUID(concert_id), [{"artist": "밴드B", "performance_date": "2030-11-20"}], source="crawl",
+        )
+        assert changed is False
+        assert await get_lineup_artists_for_date(db, uuid.UUID(concert_id), date(2030, 11, 20)) == ["밴드A"]
+        # 배정 없는 날은 None(전체 아티스트 폴백)
+        assert await get_lineup_artists_for_date(db, uuid.UUID(concert_id), date(2030, 11, 22)) is None
+        rows = (await db.execute(select(ConcertLineup).where(ConcertLineup.concert_id == uuid.UUID(concert_id)))).scalars().all()
+        assert len(rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_lineup_clear_reopens_auto_upsert():
+    from app.services.lineup import upsert_concert_lineup
+
+    concert_id = await _make_three_day_festival(["밴드A", "밴드B"])
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/lineup", headers=_admin_headers(),
+                json={"entries": [{"artist": "밴드A", "performance_date": "2030-11-20"}]},
+            )
+            res = await ac.put(f"/api/v1/admin/concerts/{concert_id}/lineup", headers=_admin_headers(), json={"entries": []})
+    assert res.json()["lineup"] == []
+
+    async with AsyncSessionLocal() as db:
+        assert await upsert_concert_lineup(
+            db, uuid.UUID(concert_id), [{"artist": "밴드B", "performance_date": "2030-11-21"}], source="poster",
+        ) is True
+
+
+@pytest.mark.asyncio
+async def test_admin_lineup_rejects_unknown_artist_and_outside_date():
+    concert_id = await _make_three_day_festival(["밴드A"])
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            unknown = await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/lineup", headers=_admin_headers(),
+                json={"entries": [{"artist": "없는밴드", "performance_date": "2030-11-20"}]},
+            )
+            outside = await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/lineup", headers=_admin_headers(),
+                json={"entries": [{"artist": "밴드A", "performance_date": "2030-11-23"}]},
+            )
+    assert unknown.status_code == 400
+    assert outside.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_admin_lineup_hidden_for_single_day_concert():
+    concert_id = await _create_concert(f"PF_LINEUP1_{uuid.uuid4().hex[:6]}", "솔로가수")
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(concert_id))
+            .values(start_date=datetime(2030, 11, 19, 15, 0, tzinfo=timezone.utc),
+                    end_date=datetime(2030, 11, 19, 15, 0, tzinfo=timezone.utc))
+        )
+        await db.commit()
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            detail = (await ac.get(f"/api/v1/admin/concerts/{concert_id}", headers=_admin_headers())).json()
+            res = await ac.put(f"/api/v1/admin/concerts/{concert_id}/lineup", headers=_admin_headers(), json={"entries": []})
+    assert detail["days"] == []
+    assert res.status_code == 400

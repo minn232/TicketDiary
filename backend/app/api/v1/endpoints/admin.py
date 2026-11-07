@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from app.models.artist_normalization import (
     CanonicalArtist,
 )
 from app.models.concert import Concert, EventType
+from app.models.lineup import ConcertLineup
 from app.schemas.artist_identity import (
     IdentityCandidatesResponse, IdentityChangeRecord, IdentityChangeRequest, IdentityChangeResponse,
 )
@@ -39,6 +40,7 @@ from app.schemas.admin import (
     AdminDisplayNameRequest,
     AdminGroupMembershipRequest,
     AdminGroupRelationAddRequest,
+    AdminLineupUpdate,
     AdminReassignArtistRequest,
     AdminRegisterNewArtistRequest,
 )
@@ -51,6 +53,7 @@ from app.services.artist_identity import (
     list_identity_changes,
     revert_identity_change,
 )
+from app.services.lineup import replace_concert_lineup_by_admin
 from app.services.pre_setlist import refresh_setlists_after_identity_change
 from app.services.setlist import clear_failed_real_setlist_attempts
 from app.services.artist_normalization import (
@@ -273,7 +276,58 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         group_memberships=await _group_memberships_for(db, concert.artist_name),
         admin_reviewed_at=concert.admin_reviewed_at,
         ai_reviewed_at=concert.ai_reviewed_at,
+        end_date=concert.end_date,
+        days=_concert_days(concert),
+        lineup=await _lineup_entries(db, concert_id),
     )
+
+
+_KST = timezone(timedelta(hours=9))
+# 공연 기간이 이보다 길면(장기 공연·전시 등) 날짜 칸을 안 만듦 - 페스티벌은 길어야 며칠
+_MAX_LINEUP_DAYS = 14
+
+
+# 공연 기간(KST)의 날짜 목록. 하루짜리거나 너무 길면 빈 목록(날짜별 출연진 편집 안 보임)
+def _concert_days(concert: Concert) -> list[date]:
+    first = concert.start_date.astimezone(_KST).date()
+    last = concert.end_date.astimezone(_KST).date()
+    count = (last - first).days + 1
+    if count < 2 or count > _MAX_LINEUP_DAYS:
+        return []
+    return [first + timedelta(days=i) for i in range(count)]
+
+
+async def _lineup_entries(db: AsyncSession, concert_id: UUID) -> list[dict]:
+    rows = (
+        await db.execute(
+            select(ConcertLineup)
+            .where(ConcertLineup.concert_id == concert_id)
+            .order_by(ConcertLineup.performance_date, ConcertLineup.artist)
+        )
+    ).scalars().all()
+    return [{"artist": r.artist, "performance_date": r.performance_date, "source": r.source} for r in rows]
+
+
+# 날짜별 출연진 통째로 저장 - 아티스트는 이 공연 artist_name 표기만(서빙 쪽이 문자열로 매칭),
+# 날짜는 공연 기간 안만. 검수 표시는 안 바꿈(아티스트 목록 자체는 그대로라)
+@router.put("/concerts/{concert_id}/lineup", response_model=AdminConcertDetail)
+async def update_concert_lineup(concert_id: UUID, body: AdminLineupUpdate, db: AsyncSession = Depends(get_db)):
+    concert = await db.get(Concert, concert_id)
+    if concert is None:
+        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+    days = set(_concert_days(concert))
+    if not days:
+        raise HTTPException(status_code=400, detail="여러 날 공연이 아닙니다.")
+    names = set(concert.artist_name or [])
+    unknown = sorted({e.artist for e in body.entries} - names)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"아티스트 목록에 없는 이름: {', '.join(unknown)}")
+    outside = sorted({e.performance_date for e in body.entries} - days)
+    if outside:
+        raise HTTPException(status_code=400, detail=f"공연 기간 밖 날짜: {', '.join(map(str, outside))}")
+
+    await replace_concert_lineup_by_admin(db, concert_id, [(e.artist, e.performance_date) for e in body.entries])
+    return await get_concert_detail(concert_id, db)
 
 
 # admin이 이 공연을 수정하거나 "검수 완료"를 직접 눌렀을 때 호출 - 자동 파이프라인이 나중에

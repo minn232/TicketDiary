@@ -19,6 +19,7 @@ from app.models.concert import Concert
 from app.models.lineup import ConcertLineup
 from app.services.artist_blocklist import is_blocklisted_artist_name
 from app.services.artist_matching import compact, contains_hangul, normalize_artist_names
+from app.services.lineup import _SOURCE_PRIORITY
 from app.services.musicbrainz import (
     ArtistCandidate,
     fetch_member_of_band_relations,
@@ -374,8 +375,8 @@ async def apply_canonical_replacement(
         else:
             # 이미 display_value 표기의 row가 그 날짜에 있음 - 더 신뢰도 높은 source만 승격시키고
             # 원본(raw_text) row는 중복이라 삭제 (lineup.py의 _SOURCE_PRIORITY와 동일한 취지)
-            if row.source == "crawl" and target.source != "crawl":
-                target.source = "crawl"
+            if _SOURCE_PRIORITY.get(row.source, 0) > _SOURCE_PRIORITY.get(target.source, 0):
+                target.source = row.source
             await db.delete(row)
 
 

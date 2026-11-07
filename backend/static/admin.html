@@ -100,6 +100,17 @@
   .ticket-links { margin: 10px 0 14px; display: flex; gap: 6px; flex-wrap: wrap; }
   .ticket-links a { display: inline-block; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 12px; text-decoration: none; }
   .ticket-links a:hover { background: var(--accent); color: #fff; }
+  /* 날짜별 출연진 */
+  .lineup-box { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .lineup-box h3 { font-size: 14px; margin: 0 0 4px; }
+  .lineup-box .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .lineup-wrap { overflow-x: auto; }
+  .lineup-table { width: auto; min-width: 100%; border-radius: 6px; }
+  .lineup-table th, .lineup-table td { padding: 5px 8px; font-size: 12px; text-align: center; white-space: nowrap; }
+  .lineup-table td.artist { text-align: left; white-space: normal; min-width: 140px; }
+  .lineup-table th.empty-day { color: var(--danger); }
+  .lineup-table td.stale { color: var(--danger); }
+  .lineup-actions { margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
   #msg { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 20; }
 </style>
 </head>
@@ -358,12 +369,85 @@ function renderDetail(c) {
         <div id="group-cleanup-area"></div>
       </div>
     </div>
+    ${renderLineup(c)}
     <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
   `;
   const addInput = document.querySelector('.add-input');
   addInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitAdd(addInput);
   });
+}
+
+// 여러 날 공연의 날짜별 출연진 - 행=아티스트, 열=날짜 체크표. 체크가 하나도 없는 날은 앱에서 그날도
+// 전체 아티스트로 보임(배정 모름). 저장하면 통째로 관리자 배정이 되고 이후 LLM 자동 결과는 안 섞임
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+function dayLabel(d) {
+  const [y, m, dd] = d.split('-').map(Number);
+  return `${String(m).padStart(2, '0')}.${String(dd).padStart(2, '0')} (${WEEKDAYS[new Date(y, m - 1, dd).getDay()]})`;
+}
+
+function renderLineup(c) {
+  const days = c.days || [];
+  if (!days.length) return '';
+  const lineup = c.lineup || [];
+  const assigned = new Set(lineup.map(e => `${e.artist}|${e.performance_date}`));
+  const names = c.artist_name || [];
+  // 아티스트 목록에서 빠졌는데 배정에 남은 표기(이름 수정·삭제 전 것) - 저장하면 지워짐
+  const stale = [...new Set(lineup.map(e => e.artist))].filter(n => !names.includes(n));
+  const sources = new Set(lineup.map(e => e.source));
+  const state = !lineup.length
+    ? '배정 없음 - 앱에서 모든 날 전체 아티스트로 보여요'
+    : sources.has('admin')
+      ? '관리자 배정 - LLM 자동 결과는 더 안 섞여요'
+      : `자동 배정(${[...sources].map(s => s === 'crawl' ? '예매처 크롤링' : s === 'poster' ? '포스터' : s).join('·')}) - 저장하면 관리자 배정으로 바뀌어요`;
+
+  const head = days.map(d => {
+    const empty = !lineup.some(e => e.performance_date === d);
+    return `<th class="${empty ? 'empty-day' : ''}" title="${empty ? '배정 없음 - 이 날은 전체 아티스트로 보임' : ''}">${dayLabel(d)}<br><button onclick="toggleLineupDay('${d}')" style="padding:1px 6px;font-size:11px;margin-top:2px;">전체</button></th>`;
+  }).join('');
+  const body = names.map(n => `
+    <tr data-artist="${esc(n)}"><td class="artist">${esc(n)}</td>${days.map(d =>
+      `<td><input type="checkbox" data-day="${d}" ${assigned.has(`${n}|${d}`) ? 'checked' : ''} /></td>`).join('')}</tr>`).join('');
+  const staleRows = stale.map(n => `
+    <tr><td class="artist stale" title="아티스트 목록에 없는 표기 - 저장하면 배정에서 빠짐">${esc(n)} (목록에 없음)</td>${days.map(d =>
+      `<td>${assigned.has(`${n}|${d}`) ? '●' : ''}</td>`).join('')}</tr>`).join('');
+
+  return `
+    <div class="lineup-box" id="lineup-box">
+      <h3>날짜별 출연진</h3>
+      <div class="hint">${esc(state)}. 체크가 없는 날(빨간 날짜)은 앱에서 그날도 전체 아티스트로 보여요.</div>
+      ${names.length ? `
+        <div class="lineup-wrap"><table class="lineup-table">
+          <thead><tr><th></th>${head}</tr></thead>
+          <tbody>${body}${staleRows}</tbody>
+        </table></div>
+        <div class="lineup-actions">
+          <button class="primary" onclick="submitLineup()">날짜별 출연진 저장</button>
+          ${lineup.length ? `<button onclick="submitLineup(true)" title="배정을 전부 지워 모든 날 전체 아티스트로 보이게 하고, LLM 자동 채움도 다시 받음">배정 비우기</button>` : ''}
+        </div>` : '<div style="color:var(--muted)">아티스트를 먼저 채워 주세요</div>'}
+    </div>`;
+}
+
+// 그 날짜 칸을 전부 켜거나(하나라도 꺼져 있으면) 전부 끔
+function toggleLineupDay(day) {
+  const boxes = [...document.querySelectorAll(`#lineup-box input[data-day="${day}"]`)];
+  const turnOn = boxes.some(b => !b.checked);
+  boxes.forEach(b => b.checked = turnOn);
+}
+
+async function submitLineup(clear = false) {
+  const concertId = currentDetail.id;
+  const entries = clear ? [] : [...document.querySelectorAll('#lineup-box tr[data-artist]')].flatMap(tr =>
+    [...tr.querySelectorAll('input:checked')].map(b => ({ artist: tr.dataset.artist, performance_date: b.dataset.day })));
+  if (clear && !confirm('날짜별 배정을 전부 지울까요? 모든 날이 전체 아티스트로 보여요.')) return;
+  try {
+    const c = await api(`/concerts/${concertId}/lineup`, { method: 'PUT', body: JSON.stringify({ entries }) });
+    currentDetail = c;
+    renderDetail(c);
+    toast(clear ? '배정 비움' : '날짜별 출연진 저장됨');
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
 }
 
 async function submitAdd(el) {

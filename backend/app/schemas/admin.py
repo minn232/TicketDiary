@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, model_validator
@@ -70,6 +70,13 @@ class AdminRegisterNewArtistRequest(BaseModel):
     force_new: bool = False
 
 
+class AdminLineupEntry(BaseModel):
+    # concert_lineups 한 줄 - source: crawl/poster(자동) | admin(관리자 페이지)
+    artist: str
+    performance_date: date
+    source: str | None = None
+
+
 class AdminConcertDetail(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -88,6 +95,15 @@ class AdminConcertDetail(BaseModel):
     group_memberships: dict[str, list[str]]
     admin_reviewed_at: datetime | None
     ai_reviewed_at: datetime | None
+    # 여러 날 공연의 날짜별 출연진 편집용 - days는 공연 기간(KST) 날짜 전부, lineup은 지금 배정
+    end_date: datetime | None = None
+    days: list[date] = []
+    lineup: list[AdminLineupEntry] = []
+
+
+class AdminLineupUpdate(BaseModel):
+    # 이 공연의 날짜별 출연진 전체(통째로 교체). 빈 목록이면 배정을 지워 전체 아티스트 폴백으로
+    entries: list[AdminLineupEntry]
 
 
 class AdminArtistRenameRequest(BaseModel):
