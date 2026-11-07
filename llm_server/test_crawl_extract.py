@@ -21,11 +21,11 @@ extract_poster_info 반환값 그대로), <concert_id>.callback.json(normalize_c
 직접 대조해볼 것.
 
 사용법 (pod에서):
-    /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json                              # 전체, 동시 5건
+    /opt/llm-venv/bin/python /workspace/server/test_crawl_extract.py /workspace/server/llm_crawl_samples.json                              # 전체, 동시 5건
     /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --limit 20                   # 앞 20건만
     /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --concert-id <uuid>          # 정확히 하나만
     /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --event-type SOLO            # 단독 공연만
-    /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --filter "펜타포트"           # 공연명에 포함된 것만
+    /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --filter "페스"           # 공연명에 포함된 것만
     /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --no-ranges                  # 구간 무시하고 돌려서 비교
     /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --run-name before            # 결과 폴더 이름 지정
     /opt/llm-venv/bin/python server/test_crawl_extract.py server/llm_crawl_samples.json --resume                     # 이미 끝난 건 건너뛰고 나머지만
@@ -190,7 +190,13 @@ def _process_row(
     for attempt in range(retries + 1):
         try:
             raw = extract_poster_info(
-                screenshot_url, base_url, api_key, timeout=timeout, timetable_ranges=timetable_ranges
+                screenshot_url,
+                base_url,
+                api_key,
+                timeout=timeout,
+                timetable_ranges=timetable_ranges,
+                performance_end_date=sample.get("end_date"),
+                performance_start_date=sample.get("start_date"),
             )
             break
         except Exception as e:  # noqa: BLE001
@@ -434,7 +440,7 @@ def main():
     parser.add_argument("--no-ranges", action="store_true", help="timetable_ranges를 무시하고 돌려서 구간 효과 비교")
     # config.py는 import 안 함(LLM_EXTRACT_API_KEY 등 필수 환경변수가 없으면 .env 없이 실행이
     # 막힘 - test_batch_extract.py와 같은 이유). 기본값은 config.py의 값과 동일하게 맞춤
-    parser.add_argument("--concurrency", type=int, default=5, help="동시 요청 수 (기본 5, config.py의 CRAWL_BATCH_CONCURRENCY와 동일)")
+    parser.add_argument("--concurrency", type=int, default=1, help="동시 요청 수 (기본 1, config.py의 CRAWL_BATCH_CONCURRENCY와 동일)")
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
     parser.add_argument("--api-key", default="EMPTY")
     parser.add_argument("--timeout", type=float, default=600.0, help="건별 모델 요청 타임아웃(초)")
