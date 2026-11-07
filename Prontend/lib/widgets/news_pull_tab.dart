@@ -31,6 +31,9 @@ class NewsPullTabOverlay extends StatelessWidget {
   /// 동안(로딩 중)에만 부모가 이 값을 실제로 진행시킵니다.
   final Animation<double> heartWipe;
 
+  /// [백엔드 수정] 조각 위치를 화면 좌표로 읽을 때 쓰는 키(탭 전환 때 조각만 잘라 내려보냄).
+  final Key? pieceKey;
+
   const NewsPullTabOverlay({
     super.key,
     required this.slide,
@@ -38,6 +41,7 @@ class NewsPullTabOverlay extends StatelessWidget {
     required this.onTap,
     required this.pageTop,
     required this.heartWipe,
+    this.pieceKey,
   });
 
   @override
@@ -81,6 +85,7 @@ class NewsPullTabOverlay extends StatelessWidget {
                   width: tabWidth,
                   height: tabHeight,
                   child: _PullTabPiece(
+                    key: pieceKey,
                     pointLeft: t > 0.5,
                     visibleFraction: visibleFraction,
                     heartWipe: heartWipe,
@@ -176,6 +181,7 @@ class _PullTabPiece extends StatelessWidget {
   final Animation<double> heartWipe;
 
   const _PullTabPiece({
+    super.key,
     required this.pointLeft,
     required this.visibleFraction,
     required this.heartWipe,

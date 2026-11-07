@@ -29,11 +29,13 @@ class DiaryTabFlipRoute extends PageRouteBuilder<void> {
     required DiaryTab to,
     required WidgetBuilder builder,
   }) {
+    final fromSnapshot = DiaryTabFlipTransition.captureScreen();
     return DiaryTabFlipRoute._(
       from: from,
       to: to,
       builder: builder,
-      fromSnapshot: DiaryTabFlipTransition.captureScreen(),
+      fromSnapshot: fromSnapshot,
+      fromSlideAwayRect: DiaryTabFlipTransition._slideAwayRects[from]?.call(),
     );
   }
 
@@ -42,6 +44,7 @@ class DiaryTabFlipRoute extends PageRouteBuilder<void> {
     required DiaryTab to,
     required WidgetBuilder builder,
     ui.Image? fromSnapshot,
+    Rect? fromSlideAwayRect,
   }) : super(
          settings: RouteSettings(name: routeNameForDiaryTab(to)),
          transitionDuration: DiaryTabFlipTransition.transitionDuration,
@@ -57,6 +60,7 @@ class DiaryTabFlipRoute extends PageRouteBuilder<void> {
              // 남겨두되 여기서는 쓰지 않습니다.
              holdSignal: null,
              fromSnapshot: fromSnapshot,
+             fromSlideAwayRect: fromSlideAwayRect,
              child: child,
            );
          },
@@ -96,6 +100,11 @@ class DiaryTabFlipTransition extends StatefulWidget {
   /// null이면(캡처 실패·테스트) 예전처럼 빈 속지만. 이 위젯이 dispose함.
   final ui.Image? fromSnapshot;
 
+  /// [백엔드 수정] 떠나는 화면에서 페이지 위로 삐져나온 조각(소식 탭 돋보기 풀탭)의 화면 좌표.
+  /// 넘김 동안은 속지 아래 제자리에 두고(속지가 지나가면 가려짐), 넘김이 끝나면 페이지 위 경계
+  /// 뒤로 내려보냄 - 예전엔 조각이 다 접힐 때까지 넘김을 기다려 0.25초 늦었음([registerSlideAway]).
+  final Rect? fromSlideAwayRect;
+
   const DiaryTabFlipTransition({
     super.key,
     required this.animation,
@@ -103,7 +112,35 @@ class DiaryTabFlipTransition extends StatefulWidget {
     required this.child,
     this.holdSignal,
     this.fromSnapshot,
+    this.fromSlideAwayRect,
   });
+
+  static final Map<DiaryTab, Rect? Function()> _slideAwayRects = {};
+
+  /// [백엔드 수정] 탭이 떠날 때 페이지 뒤로 내려보낼 조각의 화면 좌표(아래 끝 = 페이지 위 경계)를
+  /// 알려 주는 함수 등록. null이면 해제. 조각이 안 보이는 상태면 함수가 null을 돌려주면 됨.
+  static void registerSlideAway(DiaryTab tab, Rect? Function()? rectOf) {
+    if (rectOf == null) {
+      _slideAwayRects.remove(tab);
+    } else {
+      _slideAwayRects[tab] = rectOf;
+    }
+  }
+
+  /// 넘김이 다 끝난 뒤 조각이 페이지 뒤로 내려가는 시간(예전 소식 탭 퇴장 연출과 같은 200ms).
+  static const Duration _slideAwayDuration = Duration(milliseconds: 200);
+
+  static _DiaryTabFlipTransitionState? _slideAwayOwner;
+
+  /// [백엔드 수정] 새 탭 전환 시작 때 부름 - 아직 내려가는 조각이 있으면 바로 숨기고 true.
+  /// 조각은 스냅샷 경계 안에 그려지므로, true면 호출부가 한 프레임 기다린 뒤 찍어야 다음 넘김
+  /// 사진에 안 남음.
+  static bool hideSlideAway() {
+    final owner = _slideAwayOwner;
+    _slideAwayOwner = null;
+    if (owner == null || !owner.mounted) return false;
+    return owner._hideSlideAway();
+  }
 
   /// [captureScreen]이 찍는 경계. MaterialApp.builder가 Navigator를 감쌈
   /// (한지 질감 오버레이는 밖이라 안 찍혀 두 번 겹치지 않음).
@@ -217,7 +254,8 @@ class DiaryTabFlipTransition extends StatefulWidget {
   State<DiaryTabFlipTransition> createState() => _DiaryTabFlipTransitionState();
 }
 
-class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
+class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition>
+    with SingleTickerProviderStateMixin {
   /// 뒤로 넘김에서 목적지 화면이 페이드인을 시작/완료하는 시각.
   /// 마지막 속지가 내려앉는 구간의 끝자락과 겹치게 잡아, 내려앉은 빈
   /// 종이에 내용이 스며들 듯 나타납니다.
@@ -293,15 +331,61 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   Offset _leavesOriginInChild = Offset.zero;
   Offset _leavesOriginOnScreen = Offset.zero;
 
+  /// [백엔드 수정] 떠나는 화면 조각이 넘김 뒤 페이지 뒤로 내려가는 진행도(0 제자리 ~ 1 다 내려감).
+  late final AnimationController _slideAway = AnimationController(
+    vsync: this,
+    duration: DiaryTabFlipTransition._slideAwayDuration,
+  );
+  bool _slideAwayHidden = false;
+
+  /// 넘김 장면을 한 번이라도 그렸는지 - 라우트 첫 빌드엔 진행값이 1.0으로 한 번 들어와서
+  /// 그걸 "넘김 끝"으로 읽으면 바로 내려가 버림.
+  bool _flipShown = false;
+
+  bool get _hasSlideAwayPiece =>
+      !_slideAwayHidden &&
+      widget.fromSnapshot != null &&
+      widget.fromSlideAwayRect != null &&
+      !widget.fromSlideAwayRect!.isEmpty;
+
   @override
   void initState() {
     super.initState();
     widget.holdSignal?.addListener(_onHoldSignalChanged);
+    if (_hasSlideAwayPiece) {
+      DiaryTabFlipTransition._slideAwayOwner = this;
+      widget.animation.addStatusListener(_onRouteAnimationStatus);
+      _slideAway.addStatusListener((status) {
+        if (status != AnimationStatus.completed) return;
+        if (identical(DiaryTabFlipTransition._slideAwayOwner, this)) {
+          DiaryTabFlipTransition._slideAwayOwner = null;
+        }
+      });
+    }
+  }
+
+  void _onRouteAnimationStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    widget.animation.removeStatusListener(_onRouteAnimationStatus);
+    if (mounted && !_slideAway.isAnimating && _slideAway.value == 0) {
+      _slideAway.forward();
+    }
+  }
+
+  bool _hideSlideAway() {
+    if (!_hasSlideAwayPiece || _slideAway.isCompleted) return false;
+    setState(() => _slideAwayHidden = true);
+    return true;
   }
 
   @override
   void dispose() {
     widget.holdSignal?.removeListener(_onHoldSignalChanged);
+    widget.animation.removeStatusListener(_onRouteAnimationStatus);
+    if (identical(DiaryTabFlipTransition._slideAwayOwner, this)) {
+      DiaryTabFlipTransition._slideAwayOwner = null;
+    }
+    _slideAway.dispose();
     _blankLeaf?.dispose();
     _fromLeaf?.dispose();
     _toLeaf?.dispose();
@@ -530,7 +614,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: widget.animation,
+      animation: Listenable.merge([widget.animation, _slideAway]),
       child: widget.child,
       builder: (context, child) {
         final t = widget.animation.value;
@@ -551,6 +635,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
             : 1.0;
         // [백엔드 수정] 앞으로 넘김 내내 덮던 고정 배경(+코사인 페이드) 제거.
         if (t < doneThreshold) {
+          _flipShown = true;
           final scene = _buildScene(context, t, child!);
           // [백엔드 수정] 맨 위 속지의 상단 쐐기 틈을 t<_earlyCoverEnd 구간만 불투명 배경판으로 메움(페이드 없음).
           if (widget.forward && t < _earlyCoverEnd) {
@@ -566,6 +651,24 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
           return scene;
         }
         if (!_holding) {
+          // [백엔드 수정] 넘김이 끝난 뒤 남은 조각을 목적지 위에서 페이지 뒤로 내려보냄(화면 좌표 그대로).
+          // 앞으로 넘김은 속지가 라우트 끝(t=1)보다 먼저 다 사라져서, 그때부터 바로 내려보냄
+          if (_flipShown &&
+              _hasSlideAwayPiece &&
+              !_slideAway.isAnimating &&
+              _slideAway.value == 0) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && !_slideAway.isAnimating && _slideAway.value == 0) {
+                _slideAway.forward();
+              }
+            });
+          }
+          if (_hasSlideAwayPiece && !_slideAway.isCompleted) {
+            return Stack(
+              fit: StackFit.expand,
+              children: [child!, ..._slideAwayPiece(EdgeInsets.zero)],
+            );
+          }
           return child!;
         }
         // 목적지(소식 탭) 로딩이 아직 안 끝났습니다: 정상 전환은 끝났지만
@@ -739,6 +842,9 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
               clipBehavior: Clip.none,
               children: [
                 ClipRect(clipper: hideRingClip, child: child),
+                // 앞으로 넘김은 페이지 밖을 목적지가 바로 덮어 조각이 사라지므로 속지 아래에 따로 둠
+                if (widget.forward && !forceCovered)
+                  ..._slideAwayPiece(screenPadding),
                 leavesBox(),
                 if (widget.forward && !forceCovered)
                   ..._firstFrameCover(screenPadding, screenSize),
@@ -778,6 +884,8 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
                     ),
                   ),
                 ),
+                // 스냅샷이 걷힐 때 조각까지 흐려지지 않게 불투명하게 한 번 더(속지 아래)
+                ..._slideAwayPiece(screenPadding),
                 // 마지막 속지에 목적지를 못 실었으면 예전처럼 빈 속지째 걷어냄
                 leavesBox(opacity: _toLeaf == null ? 1 - reveal : 1),
               ],
@@ -797,6 +905,43 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition> {
         },
       ),
     );
+  }
+
+  /// [백엔드 수정] 떠나는 화면 조각(소식 풀탭)을 스냅샷에서 잘라 그림. [screenPadding]은 이 Stack이
+  /// SafeArea 안이면 그 패딩(화면 좌표 → Stack 좌표), 화면 전체면 zero. 내려가는 곡선은 예전 퇴장
+  /// 연출과 같음(천천히 시작해 빨라짐), 아래 끝(페이지 위 경계)에서 잘림.
+  List<Widget> _slideAwayPiece(EdgeInsets screenPadding) {
+    final from = widget.fromSnapshot;
+    final rect = widget.fromSlideAwayRect;
+    if (!_hasSlideAwayPiece || from == null || rect == null) return const [];
+    final p = _slideAway.value;
+    if (p >= 1) return const [];
+    final screenSize = MediaQuery.sizeOf(context);
+    final dy = rect.height * (1 - Curves.easeOutCubic.transform(1 - p));
+    return [
+      Positioned.fromRect(
+        rect: rect.translate(-screenPadding.left, -screenPadding.top),
+        child: IgnorePointer(
+          child: ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.topLeft,
+              minWidth: screenSize.width,
+              maxWidth: screenSize.width,
+              minHeight: screenSize.height,
+              maxHeight: screenSize.height,
+              child: Transform.translate(
+                offset: Offset(-rect.left, -rect.top + dy),
+                child: SizedBox(
+                  width: screenSize.width,
+                  height: screenSize.height,
+                  child: RawImage(image: from, fit: BoxFit.fill),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
   }
 
   List<Widget> _firstFrameCover(EdgeInsets screenPadding, Size screenSize) {

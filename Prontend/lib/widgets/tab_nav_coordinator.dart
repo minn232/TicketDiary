@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import '../services/sound_effect_service.dart';
 
 import 'diary_route.dart';
@@ -181,6 +182,12 @@ class TabNavCoordinator {
     // 탭 효과음이 서로 겹치지 않도록 현재 재생을 먼저 끊습니다.
     _tabSound?.stop();
     _tabSound = null;
+    // [백엔드 수정] 앞 전환의 풀탭 조각이 아직 내려가는 중이면 바로 숨기고, 다음 넘김 사진에 안 찍히게
+    // 한 프레임 그린 뒤 넘김 시작.
+    if (DiaryTabFlipTransition.hideSlideAway()) {
+      DiaryTabFlipTransition.invalidatePrecapture();
+      await SchedulerBinding.instance.endOfFrame;
+    }
 
     // [백엔드 수정] 퇴장 연출이 등록돼 있으면 페이지 넘김 전에 먼저 재생.
     // 응답 없이 멈추지 않도록 안전 타임아웃을 둠.

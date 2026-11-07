@@ -18,6 +18,7 @@ import 'package:ticketdiary/widgets/carousel_slide_transition.dart';
 import 'package:ticketdiary/widgets/dday_stamp.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
+import 'package:ticketdiary/widgets/diary_tab_flip_route.dart';
 import 'package:ticketdiary/widgets/news_pull_tab.dart';
 import 'package:ticketdiary/widgets/paper_style.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
@@ -114,6 +115,22 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   /// 소식 페이지 조각이 페이지 뒤에 숨어 있다가 로딩 완료 후 위로 올라오는
   /// 애니메이션. 0.0=조각 높이만큼 아래, 1.0=현재 위치.
   late final AnimationController _pullTabReveal;
+
+  /// [백엔드 수정] 풀탭 조각 위치(화면 좌표)를 읽는 키 - 탭 전환 때 조각만 잘라 내려보냄.
+  final GlobalKey _pullTabPieceKey = GlobalKey(debugLabel: 'newsPullTabPiece');
+
+  // 올라오는 중(소식 탭에 막 들어와 0.36초 안)이어도 다 올라온 자리를 돌려줌 - 그 자리를 잘라 내려보내면
+  // 반쯤 올라온 모습 그대로 내려감. 예전엔 null이라 그때 넘기면 연출 없이 한 번에 사라졌음
+  Rect? _pullTabScreenRect() {
+    final reveal = _pullTabReveal.value.clamp(0.0, 1.0);
+    if (reveal <= 0) return null;
+    final box = _pullTabPieceKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return null;
+    // NewsPullTabOverlay와 같은 계산: 조각은 높이 × (1 - lift)만큼 아래로 내려가 있음
+    final lift = Curves.easeOutCubic.transform(reveal);
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    return rect.translate(0, -box.size.height * (1 - lift));
+  }
 
   _FlipPhase _phase = _FlipPhase.news;
 
@@ -218,12 +235,14 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     TabNavCoordinator.instance.isTransitioning.addListener(
       _onTabTransitionChanged,
     );
-    // [백엔드 수정] 풀탭이 페이지 넘김 뒤로 갑자기 가려지지 않고 먼저 다
-    // 접힌 뒤 넘김이 시작되도록 등록 - 앞/뒤 넘김 모두 같은 리듬으로 통일.
-    TabNavCoordinator.instance.registerExitTransition(
-      DiaryTab.news,
-      () => _pullTabReveal.reverse(),
-    );
+    // [백엔드 수정] 풀탭이 다 접힌 뒤 넘기던 것(약 0.25초 지연) 끔 - 미리 찍은 화면에
+    // 풀탭이 같이 찍혀 종이와 함께 넘어감.
+    // TabNavCoordinator.instance.registerExitTransition(
+    //   DiaryTab.news,
+    //   () => _pullTabReveal.reverse(),
+    // );
+    // 대신 앞으로 넘김(결산·설정)에서 넘김과 동시에 풀탭이 페이지 뒤로 내려가게 위치만 알려 줌.
+    DiaryTabFlipTransition.registerSlideAway(DiaryTab.news, _pullTabScreenRect);
 
     // 화면 초기화 시 데이터 호출 시작. 진입 시 페이지 넘김은 이제 이
     // 로딩을 기다리지 않고 곧바로 이 화면을 드러내며, 로딩 중에는 아래
@@ -265,6 +284,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       _onTabTransitionChanged,
     );
     TabNavCoordinator.instance.registerExitTransition(DiaryTab.news, null);
+    DiaryTabFlipTransition.registerSlideAway(DiaryTab.news, null);
     _slide.dispose();
     _heartWipe.dispose();
     _glassReveal.dispose();
@@ -515,6 +535,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
         pageTop: _pageTop,
         heartWipe: _heartWipe,
         reveal: _pullTabReveal,
+        pieceKey: _pullTabPieceKey,
       ),
       frameAbovePage: NewsPullTabHitAreaOverlay(
         slide: _slide,
