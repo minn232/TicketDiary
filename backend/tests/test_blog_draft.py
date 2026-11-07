@@ -13,7 +13,7 @@ from app.models.concert import Concert, EventType
 from app.models.notification import Notification, NotificationType
 from app.models.setlist import PreSetlist, RealSetlist
 from app.models.ticket import Ticket
-from app.services.blog_draft import send_blog_drafts_to_llm
+from app.services.blog_draft import _MAX_ATTEMPTS, send_blog_drafts_to_llm
 from test_diary import _create_concert, _create_ticket
 from conftest import _get_token
 
@@ -195,7 +195,7 @@ async def test_send_failure_retries_until_limit_then_failed():
     await _post_draft(ticket_id, token)
     await _backdate(ticket_id)
 
-    for _ in range(3):
+    for _ in range(_MAX_ATTEMPTS):
         with _blog_url(), _llm_client([], fail=True):
             await send_blog_drafts_to_llm()
     assert (await _get_draft(ticket_id, token)).json()["status"] == "failed"
@@ -338,6 +338,7 @@ async def _blog_notifications(ticket_id: str) -> list[Notification]:
         return list(result.scalars().all())
 
 
+@pytest.mark.skip(reason="감상 메모 정리 완료 알림 끔")
 @pytest.mark.asyncio
 async def test_done_drafts_bundled_into_one_9am_notification_per_user():
     token = await _get_token()
@@ -378,6 +379,7 @@ async def _patch_settings(token: str, notification_settings: dict):
         )
 
 
+@pytest.mark.skip(reason="감상 메모 정리 완료 알림 끔")
 @pytest.mark.asyncio
 async def test_blog_draft_notification_setting():
     # 꺼두면 정리는 되지만 알림은 안 생김

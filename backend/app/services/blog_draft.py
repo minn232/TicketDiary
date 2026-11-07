@@ -17,13 +17,15 @@ from app.models.concert import EventType
 from app.models.setlist import RealSetlist
 from app.models.ticket import Ticket
 from app.schemas.blog_draft import BlogDraftResponse, LlmBlogDraftResult
-from app.services.notification import schedule_blog_draft_notifications
+# 감상 메모 정리 완료 알림은 끔 - 정리본은 앱의 블로그 공유에서만 씀
+# from app.services.notification import schedule_blog_draft_notifications
 from app.services.ticket import get_ticket
 
 logger = logging.getLogger(__name__)
 
-# 같은 요청이 이만큼 실패하면 더 안 보냄(failed) - 다시 요청하면 0부터
-_MAX_ATTEMPTS = 3
+# 같은 메모가 이만큼 실패하면 더 안 보냄(failed) - 앱에 "다시 정리" 버튼이 없어 밤마다 자동 재시도하고
+# 일주일쯤 실패하면 멈춤. 메모를 고치거나 같은 메모로 다시 요청하면 0부터
+_MAX_ATTEMPTS = 7
 # LLM 서버 BLOG_DRAFT_CONCURRENCY와 맞춤 - 넘게 보내도 그쪽에서 대기할 뿐이라 이득 없음
 _CONCURRENCY = 3
 # 한 건 생성에 수십 초(모델 호출 2번) - 동시 3건이 LLM 쪽에서 대기하는 시간까지 감안
@@ -231,10 +233,11 @@ async def send_blog_drafts_to_llm() -> int:
         results = await asyncio.gather(*(_generate_one(client, semaphore, i) for i in draft_ids))
     done = [r for r in results if r is not None]
     logger.info(f"[LLM] 블로그 초안 생성 완료: {len(done)}/{len(draft_ids)}건")
-    if done:
-        try:
-            async with AsyncSessionLocal() as db:
-                await schedule_blog_draft_notifications(db, done)
-        except Exception:
-            logger.exception("[LLM] 블로그 초안 완료 알림 예약 오류")
+    # 완료 알림은 끔(위 import 참고)
+    # if done:
+    #     try:
+    #         async with AsyncSessionLocal() as db:
+    #             await schedule_blog_draft_notifications(db, done)
+    #     except Exception:
+    #         logger.exception("[LLM] 블로그 초안 완료 알림 예약 오류")
     return len(done)
