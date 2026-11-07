@@ -240,4 +240,82 @@ void main() {
       expect(events, isEmpty);
     });
   });
+
+  // [백엔드 수정] 짧은 끊김 허용·진행도·최근 평균 선명도 기준.
+  group('짧은 끊김 허용', () {
+    const w = 200;
+    const h = 300;
+
+    bool isEdge(int row, int col) =>
+        row < h * 0.1 || row >= h * 0.9 || col < w * 0.1 || col >= w * 0.9;
+
+    final sharp = buildFakeFrame(
+      width: w,
+      height: h,
+      brightnessAt: (row, col) =>
+          isEdge(row, col) ? kBg : paperBrightness(row, col),
+    );
+    // 밝기는 비슷하고 글자만 번진 프레임(손떨림 한두 장)
+    final blurred = buildFakeFrame(
+      width: w,
+      height: h,
+      brightnessAt: (row, col) {
+        if (isEdge(row, col)) return kBg;
+        return 160 + ((row % 14) < 7 ? (row % 7) : 7 - (row % 7)) * 2;
+      },
+    );
+
+    /// 30fps 간격으로 [frames]를 넣고, 정렬 이벤트와 진행도 값을 돌려줍니다.
+    Future<({List<bool> events, List<double> progress})> run(
+      List<CameraImage> frames,
+    ) async {
+      var now = DateTime(2026, 1, 1);
+      final d = LiveTicketAlignmentDetector(
+        buildFakeController(),
+        clock: () => now,
+      );
+      final events = <bool>[];
+      final progress = <double>[];
+      final s1 = d.alignmentStream.listen(events.add);
+      final s2 = d.progressStream.listen(progress.add);
+      for (final f in frames) {
+        d.debugProcessFrame(f);
+        now = now.add(const Duration(milliseconds: 33));
+      }
+      await Future<void>.delayed(Duration.zero);
+      await s1.cancel();
+      await s2.cancel();
+      return (events: events, progress: progress);
+    }
+
+    test('흐린 프레임 2장이 끼어도 1초 뒤 정렬된다', () async {
+      final r = await run([
+        ...List.filled(15, sharp),
+        blurred,
+        blurred,
+        ...List.filled(18, sharp),
+      ]);
+      expect(r.events, contains(true));
+      expect(r.progress.last, 1);
+    });
+
+    test('0.25초 넘게 흐리면 처음부터 다시 잰다', () async {
+      final r = await run([
+        ...List.filled(15, sharp),
+        ...List.filled(12, blurred),
+        ...List.filled(18, sharp),
+      ]);
+      expect(r.events, isEmpty);
+      expect(r.progress, contains(0.0));
+    });
+
+    test('리셋 뒤에도 계속 들고 있으면 결국 정렬된다', () async {
+      final r = await run([
+        ...List.filled(15, sharp),
+        ...List.filled(12, blurred),
+        ...List.filled(35, sharp),
+      ]);
+      expect(r.events, contains(true));
+    });
+  });
 }

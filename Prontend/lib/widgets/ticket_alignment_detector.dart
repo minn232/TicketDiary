@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:math' show sqrt;
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kReleaseMode, visibleForTesting;
 
 /// 스캔 가이드 박스(6:14.9, 입장권 포함 티켓 전체 규격) 중 "입장티켓"이
 /// 차지하는 세로 비율(아래쪽 4.5). 공연을 이미 본 뒤 추가하는 티켓은
@@ -20,6 +21,11 @@ abstract class TicketAlignmentDetector {
   /// (예: Flutter 웹은 `camera` 패키지가 이미지 스트리밍을 구현하지 않음 —
   /// `startImageStream()`이 즉시 `UnimplementedError`를 던짐)
   Stream<void> get unsupportedStream;
+
+  /// 자동 촬영까지 남은 진행도(0~1). 조건을 만족한 채 유지한 시간을
+  /// 필요한 시간으로 나눈 값이고, 조건이 오래 깨지면 0으로 돌아갑니다.
+  /// 가이드 박스 테두리가 차오르는 표시에 씁니다.
+  Stream<double> get progressStream;
 
   /// 감지를 시작합니다.
   void start();
@@ -45,6 +51,9 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
 
   @override
   Stream<void> get unsupportedStream => _unsupported.stream;
+
+  @override
+  Stream<double> get progressStream => const Stream<double>.empty();
 
   @override
   void start() {
@@ -110,7 +119,8 @@ class SimulatedTicketAlignmentDetector implements TicketAlignmentDetector {
 class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
   LiveTicketAlignmentDetector(
     this._controller, {
-    this.requiredStableDuration = const Duration(seconds: 2),
+    this.requiredStableDuration = const Duration(seconds: 1),
+    this.dropoutTolerance = const Duration(milliseconds: 250),
     this.minBrightness = 75,
     this.maxBrightness = 235,
     this.minContrast = 26,
@@ -121,17 +131,23 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     this.smoothingFactor = 0.25,
     this.minSharpness = 12,
     this.minSharpnessRatio = 0.65,
-    this.peakSharpnessDecay = 0.99,
-  });
+    this.sharpnessWindow = const Duration(seconds: 1),
+    @visibleForTesting DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
 
   final CameraController _controller;
+  final DateTime Function() _clock;
 
-  /// 정렬 판정을 내리기까지 연속으로 조건을 만족한 채 유지돼야 하는
-  /// 시간. 프레임 수 대신 실제 경과 시간으로 재서, 기기별로 카메라
-  /// 프레임 속도(fps)가 달라도 항상 같은 길이만큼 가만히 있어야
-  /// 촬영됩니다. 티켓을 박스에 맞춘 채 이 시간만큼 들고 있어야만
-  /// 촬영되고, 지나가는 장면이나 잠깐의 흔들림에는 반응하지 않습니다.
+  /// 정렬 판정을 내리기까지 조건을 만족한 채 유지돼야 하는 시간. 프레임
+  /// 수 대신 실제 경과 시간으로 재서, 기기별로 카메라 프레임 속도(fps)가
+  /// 달라도 항상 같은 길이만큼 가만히 있어야 촬영됩니다.
+  /// [백엔드 수정] 2초 → 1초(짧은 끊김 허용과 함께 줄임).
   final Duration requiredStableDuration;
+
+  /// [백엔드 수정] 조건이 이 시간보다 짧게 깨졌다 돌아오면(노출 조정·손떨림
+  /// 프레임 몇 장) 쌓은 시간을 유지하고, 이보다 길게 깨져야 처음부터
+  /// 다시 잽니다. 촬영 자체는 조건을 만족한 프레임에서만 합니다.
+  final Duration dropoutTolerance;
 
   /// 티켓 종이가 정상 조명에서 갖는 밝기 하한. 어두운 책상/벽 등
   /// 티켓이 아닌 장면을 걸러냅니다.
@@ -158,17 +174,22 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
 
   /// [백엔드 수정] 선명도(강한 경계의 날카로움) 판정. 흔들리거나 초점이 안 맞아
   /// 글자가 번진 프레임은 촬영하지 않습니다. 절대 하한([minSharpness])은 심하게
-  /// 흐린 프레임을 거르고, 세션 최고 선명도 대비 비율([minSharpnessRatio])은
-  /// 기기/장면마다 다른 기준을 자동 보정합니다. 최고값은 프레임마다
-  /// [peakSharpnessDecay]배로 서서히 낮아집니다.
+  /// 흐린 프레임을 거르고, 최근 [sharpnessWindow] 동안의 평균 선명도 대비
+  /// 비율([minSharpnessRatio])은 기기/장면마다 다른 기준을 자동 보정합니다.
+  /// 예전엔 세션 최고값 기준이라 한 번 튄 값에 기준이 끌려 올라가 평소
+  /// 프레임까지 떨어지는 문제가 있었습니다.
   final double minSharpness;
   final double minSharpnessRatio;
-  final double peakSharpnessDecay;
-  double _peakSharpness = 0;
+  final Duration sharpnessWindow;
+  final List<({DateTime at, double value})> _recentSharpness = [];
 
   final StreamController<bool> _output = StreamController<bool>.broadcast();
   final StreamController<void> _unsupported =
       StreamController<void>.broadcast();
+  final StreamController<double> _progress =
+      StreamController<double>.broadcast();
+  double _lastProgress = 0;
+  DateTime? _firstFrameAt;
   bool _busy = false;
   bool _emitted = false;
 
@@ -220,11 +241,20 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     null,
   );
 
+  /// [백엔드 수정] 후보별로 마지막으로 조건을 만족한 시각([dropoutTolerance] 판정용).
+  final List<DateTime?> _lastPassAt = List<DateTime?>.filled(
+    _regionCandidates.length,
+    null,
+  );
+
   @override
   Stream<bool> get alignmentStream => _output.stream;
 
   @override
   Stream<void> get unsupportedStream => _unsupported.stream;
+
+  @override
+  Stream<double> get progressStream => _progress.stream;
 
   @override
   void start() {
@@ -252,46 +282,110 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     _busy = true;
     try {
       final analysis = _analyze(image);
-      _peakSharpness = _peakSharpness * peakSharpnessDecay;
-      if (analysis.sharpness > _peakSharpness) {
-        _peakSharpness = analysis.sharpness;
-      }
-      final sharpOk =
-          analysis.sharpness >= minSharpness &&
-          analysis.sharpness >= _peakSharpness * minSharpnessRatio;
+      final now = _clock();
+      _firstFrameAt ??= now;
+      final sharpFail = _checkSharpness(analysis.sharpness, now);
 
-      final now = DateTime.now();
       var anyReady = false;
+      var progress = 0.0;
+      final resets = <String>[];
       for (var i = 0; i < _regionCandidates.length; i++) {
-        final pass = _evaluateRegion(
-          analysis.regions[i],
-          outerBrightness: analysis.outerBrightness,
-          hasOuter: analysis.hasOuter,
-          baseline: _smoothBrightness[i],
-          onBaseline: (v) => _smoothBrightness[i] = v,
-        );
-        if (!pass || !sharpOk) {
+        final fail =
+            _evaluateRegion(
+              analysis.regions[i],
+              outerBrightness: analysis.outerBrightness,
+              hasOuter: analysis.hasOuter,
+              baseline: _smoothBrightness[i],
+              onBaseline: (v) => _smoothBrightness[i] = v,
+            ) ??
+            sharpFail;
+        if (fail == null) {
+          _lastPassAt[i] = now;
+          final since = _stableSince[i] ??= now;
+          if (now.difference(since) >= requiredStableDuration) anyReady = true;
+        } else if (_stableSince[i] != null &&
+            now.difference(_lastPassAt[i]!) > dropoutTolerance) {
+          resets.add(
+            '#$i $fail (held ${now.difference(_stableSince[i]!).inMilliseconds}ms)',
+          );
           _stableSince[i] = null;
-          continue;
         }
-        final since = _stableSince[i] ??= now;
-        if (now.difference(since) >= requiredStableDuration) anyReady = true;
+        final since = _stableSince[i];
+        if (since != null) {
+          final p = requiredStableDuration == Duration.zero
+              ? 1.0
+              : now.difference(since).inMicroseconds /
+                    requiredStableDuration.inMicroseconds;
+          if (p > progress) progress = p;
+        }
       }
+      if (progress > 1) progress = 1;
 
+      if (resets.isNotEmpty && progress == 0) {
+        _log('reset ${resets.join(', ')}');
+      }
       if (anyReady && !_emitted) {
         _emitted = true;
+        _log(
+          'aligned after ${now.difference(_firstFrameAt!).inMilliseconds}ms',
+        );
+        _emitProgress(1);
         _output.add(true);
+      } else {
+        _emitProgress(progress);
       }
     } finally {
       _busy = false;
     }
   }
 
+  /// [백엔드 수정] 최근 [sharpnessWindow] 평균과 비교한 선명도 판정. 통과면 null,
+  /// 아니면 로그용 실패 사유를 돌려줍니다. 현재 프레임은 비교가 끝난 뒤
+  /// 평균에 넣습니다.
+  String? _checkSharpness(double sharpness, DateTime now) {
+    _recentSharpness.removeWhere(
+      (s) => now.difference(s.at) > sharpnessWindow,
+    );
+    double? average;
+    if (_recentSharpness.isNotEmpty) {
+      var sum = 0.0;
+      for (final s in _recentSharpness) {
+        sum += s.value;
+      }
+      average = sum / _recentSharpness.length;
+    }
+    _recentSharpness.add((at: now, value: sharpness));
+    if (sharpness < minSharpness ||
+        (average != null && sharpness < average * minSharpnessRatio)) {
+      return 'sharp ${sharpness.toStringAsFixed(1)}'
+          '/avg ${average?.toStringAsFixed(1) ?? '-'}';
+    }
+    return null;
+  }
+
+  /// 진행도가 눈에 띄게 바뀔 때만 흘려보냅니다(프레임마다 다시 그리지 않게).
+  void _emitProgress(double value) {
+    if (_progress.isClosed) return;
+    if (value == _lastProgress) return;
+    if (value != 0 && value != 1 && (value - _lastProgress).abs() < 0.02) {
+      return;
+    }
+    _lastProgress = value;
+    _progress.add(value);
+  }
+
+  /// 실측용 판정 로그(리셋 사유·정렬까지 걸린 시간). 릴리즈 빌드에서는 끕니다.
+  void _log(String message) {
+    if (kReleaseMode) return;
+    debugPrint('[ScanAlign] $message');
+  }
+
   /// 중심 영역 통계 하나가 정렬 판정 4가지 조건(밝기/대비/안정성/안-밖
   /// 대비)을 모두 만족하는지 검사하고, 그 영역 전용 밝기 기준선(EMA)을
   /// 갱신합니다. 후보마다 독립된 기준선을 쓰므로, 그중 하나만 티켓으로
   /// 채워져도 그쪽 기준선은 정상 수렴해 정렬로 인정될 수 있습니다.
-  bool _evaluateRegion(
+  /// [백엔드 수정] 통과면 null, 아니면 로그용 실패 사유를 돌려줍니다.
+  String? _evaluateRegion(
     _RegionStats stats, {
     required double outerBrightness,
     required bool hasOuter,
@@ -301,17 +395,20 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     final brightnessOk =
         stats.mean >= minBrightness && stats.mean <= maxBrightness;
     final contrastOk = stats.contrast >= minContrast;
-    final fillsGuide =
-        hasOuter && (stats.mean - outerBrightness).abs() >= minCenterEdgeDelta;
-    final steady = baseline == null
-        ? false
-        : (stats.mean - baseline).abs() <= maxFrameDelta;
+    final edgeDelta = (stats.mean - outerBrightness).abs();
+    final fillsGuide = hasOuter && edgeDelta >= minCenterEdgeDelta;
+    final frameDelta = baseline == null ? null : (stats.mean - baseline).abs();
+    final steady = frameDelta != null && frameDelta <= maxFrameDelta;
     onBaseline(
       baseline == null
           ? stats.mean
           : baseline + (stats.mean - baseline) * smoothingFactor,
     );
-    return brightnessOk && contrastOk && steady && fillsGuide;
+    if (!brightnessOk) return 'bright ${stats.mean.toStringAsFixed(1)}';
+    if (!contrastOk) return 'contrast ${stats.contrast.toStringAsFixed(1)}';
+    if (!fillsGuide) return 'edge ${edgeDelta.toStringAsFixed(1)}';
+    if (!steady) return 'shake ${frameDelta?.toStringAsFixed(1) ?? '-'}';
+    return null;
   }
 
   /// 프레임 가운데 영역([centerMarginFraction]로 가장자리를 제외한 부분)
@@ -518,6 +615,7 @@ class LiveTicketAlignmentDetector implements TicketAlignmentDetector {
     }
     if (!_output.isClosed) _output.close();
     if (!_unsupported.isClosed) _unsupported.close();
+    if (!_progress.isClosed) _progress.close();
   }
 }
 

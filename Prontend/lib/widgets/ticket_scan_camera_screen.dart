@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
 import '../models/ticket_scan.dart';
@@ -48,6 +49,10 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   TicketAlignmentDetector? _detector;
   StreamSubscription<bool>? _alignSub;
   StreamSubscription<void>? _unsupportedSub;
+  StreamSubscription<double>? _progressSub;
+
+  /// [백엔드 수정] 자동 촬영까지의 진행도(0~1) - 가이드 박스 테두리가 차오르는 표시용.
+  final ValueNotifier<double> _scanProgress = ValueNotifier<double>(0);
   _ScanStage _stage = _ScanStage.positioning;
   String? _errorMessage;
 
@@ -107,6 +112,9 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
       if (!mounted) return;
       setState(() => _autoAlignUnsupported = true);
     });
+    _progressSub = detector.progressStream.listen((p) {
+      if (_stage == _ScanStage.positioning) _scanProgress.value = p;
+    });
     detector.start();
   }
 
@@ -127,6 +135,7 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     // takePicture()가 실패하거나 화질이 떨어질 수 있는 기기가 있어 먼저 멈춥니다.
     _alignSub?.cancel();
     _unsupportedSub?.cancel();
+    _progressSub?.cancel();
     _detector?.dispose();
     _detector = null;
 
@@ -162,6 +171,7 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   Future<void> _rearmAlignmentDetection() async {
     await Future.delayed(const Duration(milliseconds: 1200));
     if (!mounted) return;
+    _scanProgress.value = 0;
     _startAlignmentDetection();
   }
 
@@ -177,8 +187,10 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
   void dispose() {
     _alignSub?.cancel();
     _unsupportedSub?.cancel();
+    _progressSub?.cancel();
     _detector?.dispose();
     _controller?.dispose();
+    _scanProgress.dispose();
     super.dispose();
   }
 
@@ -207,6 +219,7 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               // CameraPreview와 똑같이 1/aspectRatio를 씀.
               previewAspectRatio: 1 / controller.value.aspectRatio,
               autoAlignUnsupported: _autoAlignUnsupported,
+              progress: _scanProgress,
             ),
 
           Positioned(
@@ -290,10 +303,14 @@ class _ScanGuideOverlay extends StatelessWidget {
   const _ScanGuideOverlay({
     required this.stage,
     required this.previewAspectRatio,
+    required this.progress,
     this.autoAlignUnsupported = false,
   });
 
   final _ScanStage stage;
+
+  /// 자동 촬영까지의 진행도(0~1). 정렬 전 단계에서 테두리를 이만큼 머스터드로 채웁니다.
+  final ValueListenable<double> progress;
 
   /// 실제 카메라 프리뷰가 그려지는 비율(세로 모드 기준, width/height).
   /// 가이드 박스를 화면 전체가 아니라 이 비율로 레터박스된 프리뷰 영역
@@ -395,6 +412,22 @@ class _ScanGuideOverlay extends StatelessWidget {
               ),
             ),
 
+            // [백엔드 수정] 티켓을 맞춘 채 들고 있으면 테두리가 시계방향으로 차오름 -
+            // 다 차면 촬영. 흔들리면 줄어들어 처음부터 다시 재는 걸 알 수 있음.
+            if (stage == _ScanStage.positioning)
+              Positioned.fromRect(
+                rect: displayRect.inflate(2),
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _BorderProgressPainter(
+                      progress: progress,
+                      color: _kAlignedColor,
+                      strokeWidth: 3,
+                    ),
+                  ),
+                ),
+              ),
+
             // 입장티켓 영역과의 경계를 점선으로 표시.
             Positioned(
               left: displayRect.left,
@@ -460,6 +493,47 @@ class _RotatedGuideLabel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// [백엔드 수정] 가이드 박스 테두리를 왼쪽 위 모서리부터 시계방향으로 [progress]만큼
+/// 덧칠합니다. [progress]가 바뀔 때만 다시 그립니다.
+class _BorderProgressPainter extends CustomPainter {
+  _BorderProgressPainter({
+    required this.progress,
+    required this.color,
+    required this.strokeWidth,
+  }) : super(repaint: progress);
+
+  final ValueListenable<double> progress;
+  final Color color;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = progress.value.clamp(0.0, 1.0);
+    if (p <= 0) return;
+    // Border.all은 선을 안쪽으로 그리므로 선 굵기 절반만큼 들어간 경로를 따라감
+    final rect = (Offset.zero & size).deflate(strokeWidth / 2);
+    final path = Path()
+      ..moveTo(rect.left, rect.top)
+      ..lineTo(rect.right, rect.top)
+      ..lineTo(rect.right, rect.bottom)
+      ..lineTo(rect.left, rect.bottom)
+      ..close();
+    final metric = path.computeMetrics().first;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.square;
+    canvas.drawPath(metric.extractPath(0, metric.length * p), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _BorderProgressPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.color != color ||
+      oldDelegate.strokeWidth != strokeWidth;
 }
 
 /// 가이드 박스 안에 "티켓"/"입장티켓" 영역 경계를 표시하는 가로 점선.
