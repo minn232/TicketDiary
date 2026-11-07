@@ -56,5 +56,8 @@ class Ticket(Base):
     # 공연후 페이지 배치(포스터/사진/자유메모), 캔버스 폭=1 정규화 좌표
     # 배치 계산은 기기에서 하고 서버는 범위 검증 후 저장만 함 (형식은 schemas/ticket.py의 PageLayout)
     page_layout = Column(JSONB, nullable=True)
+    # 2일권/3일권처럼 한 번 산 티켓으로 여러 날 관람하면 날짜별 티켓을 묶음 - 값은 첫날 티켓 id라
+    # 따로 조회 없이 첫날(가격·배송 알림을 가진 티켓)을 알 수 있음. 삭제는 묶음 전체로만 함
+    pass_group_id = Column(UUID(as_uuid=True), nullable=True, index=True)
 
     concert = relationship("Concert", back_populates="tickets")

@@ -20,7 +20,7 @@ from app.schemas.setlist import (
     SetlistEditRequest, ArtistAnchorCandidate, ArtistAnchorRequest, ArtistCandidate,
     PreviewTracksResponse,
 )
-from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
+from app.schemas.ticket import TicketCreate, TicketListItem, TicketPassCreate, TicketUpdate, TicketWithConcert
 from app.services.artist_identity import (
     attach_artist_display_names,
     canonical_summary,
@@ -50,6 +50,7 @@ from app.services.setlist import (
     update_real_setlist,
 )
 from app.services.ticket import (
+    create_pass_tickets,
     create_ticket,
     get_sorted_tickets,
     get_ticket,
@@ -77,6 +78,27 @@ async def register_ticket(
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await create_ticket(db, current_user, body)
+    _add_registration_tasks(background_tasks, ticket)
+    await attach_artist_display_names(db, [ticket.concert])
+    return ticket
+
+
+# 2일권/3일권 등록 - 관람일마다 티켓을 만들어 묶고 날짜순으로 반환
+@router.post("/pass", response_model=list[TicketWithConcert], status_code=status.HTTP_201_CREATED)
+async def register_pass_tickets(
+    body: TicketPassCreate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tickets = await create_pass_tickets(db, current_user, body)
+    _add_registration_tasks(background_tasks, tickets[0])
+    await attach_artist_display_names(db, [tickets[0].concert])
+    return tickets
+
+
+# 등록 직후 백그라운드 작업 - 공연 단위라 묶음 등록도 한 번만 돌림
+def _add_registration_tasks(background_tasks: BackgroundTasks, ticket: Ticket) -> None:
     if ticket.ticketing_site:
         background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
     if ticket.concert and ticket.concert.artist_name:
@@ -86,9 +108,6 @@ async def register_ticket(
         # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
         # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
         background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
-    await attach_artist_display_names(db, [ticket.concert])
-    return ticket
-
 
 
 # 내 티켓 목록 조회 (limit/offset은 선택 - 생략하면 기본 상한(200건) 적용)

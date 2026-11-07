@@ -102,6 +102,10 @@ class TicketScanExtracted(BaseModel):
     price: int | None = None
     shipping_date: str | None = None  # YYYY-MM-DD
     event_type: Literal["SOLO", "FESTIVAL", "UNKNOWN"] | None = None
+    # 티켓에서 읽은 권종 일수("2일권"/"양일권"/"3DAY" -> 2/2/3), 하루짜리거나 못 읽으면 null
+    pass_days: int | None = None
+    # "전일권"/"올패스"처럼 공연 전체 날짜 관람권
+    pass_all_days: bool = False
 
 
 class TicketScanResponse(BaseModel):

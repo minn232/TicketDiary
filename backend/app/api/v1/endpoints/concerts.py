@@ -69,6 +69,8 @@ async def scan_ticket(
         price=extracted_raw.get("price"),
         shipping_date=extracted_raw.get("shipping_date"),
         event_type=extracted_raw.get("event_type"),
+        pass_days=extracted_raw.get("pass_days"),
+        pass_all_days=extracted_raw.get("pass_all_days", False),
     )
 
     # 티켓이 아닌 사물(카메라 정렬 인식 오탐)을 찍어서 아무 필드도 못 뽑은 스캔은
