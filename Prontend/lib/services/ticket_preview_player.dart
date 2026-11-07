@@ -89,8 +89,23 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     // 같은 티켓의 오버레이가 겹쳐 열리면 재생을 이어감
+    _handOffTimer?.cancel();
     _owners.add(owner);
     if (_ticketId == ticketId && _current != null) return;
+    // [백엔드 수정] 다른 관람일 페이지로 넘어온 경우 - 그 날 곡 목록에 지금 아티스트가 있으면 끊지 않고 이어감.
+    final playing = _current;
+    if (playing != null) {
+      _ticketId = ticketId;
+      try {
+        final tracks = await _tracksFor(ticketId);
+        if (_ticketId != ticketId || _current != playing || tracks.isEmpty) {
+          return;
+        }
+        if (tracks.any((t) => t.artistName == playing.artistName)) return;
+        await playAnother(auto: true);
+      } catch (_) {}
+      return;
+    }
     final token = ++_token;
     _ticketId = ticketId;
     try {
@@ -218,6 +233,23 @@ class TicketPreviewPlayer extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> stop(Object owner) async {
     // 겹친 오버레이 중 마지막이 닫힐 때만 멈춤
     if (!_owners.remove(owner) || _owners.isNotEmpty) return;
+    await _stopAll();
+  }
+
+  // [백엔드 수정] 2일권/양일 공연에서 다른 관람일 페이지로 넘어갈 때 - 멈추지 않고 다음 페이지의
+  // [start]가 이어받게 함. 다음 페이지가 안 열리면 잠시 뒤 멈춤.
+  Timer? _handOffTimer;
+  static const _handOffWait = Duration(seconds: 2);
+
+  void handOff(Object owner) {
+    if (!_owners.remove(owner) || _owners.isNotEmpty) return;
+    _handOffTimer?.cancel();
+    _handOffTimer = Timer(_handOffWait, () {
+      if (_owners.isEmpty) unawaited(_stopAll());
+    });
+  }
+
+  Future<void> _stopAll() async {
     final token = ++_token;
     final hadTrack = _current != null;
     _current = null;

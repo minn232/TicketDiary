@@ -83,8 +83,11 @@ class TicketData {
   // 열 때 고르게 함(관람일이 없으면 서버가 실제 셋리 날짜를 몰라 400).
   List<DateTime> attendedDayChoices;
 
-  // [백엔드 수정] 2일권/3일권 묶음(날짜별 티켓 전체). 다이어리엔 그중 한 날만 카드로 보임.
+  // [백엔드 수정] 같은 공연 여러 날 묶음(날짜별 티켓 전체). 다이어리엔 그중 한 날만 카드로 보임.
   PassGroup? passGroup;
+
+  // [백엔드 수정] 2일권/3일권으로 같이 산 티켓 묶음 id(서버 pass_group_id), 따로 산 티켓은 null.
+  final String? passGroupId;
 
   static int _nextId = 0;
 
@@ -96,6 +99,7 @@ class TicketData {
     this.tornRevealed = false,
     this.attendedDayChoices = const [],
     this.passGroup,
+    this.passGroupId,
   }) : overlayKey = GlobalKey(),
        posterOverlayKey = GlobalKey(),
        id = id ?? 'ticket_${_nextId++}';
@@ -170,13 +174,14 @@ class TicketData {
       tornRevealed:
           ticket.tornAt != null || TornTicketStore.instance.isTorn(ticket.id),
       attendedDayChoices: days.length > 1 ? days : const [],
+      passGroupId: ticket.passGroupId,
     );
   }
 }
 
-// [백엔드 수정] 2일권/3일권으로 등록한 날짜별 티켓 묶음 신규.
+// [백엔드 수정] 같은 공연 여러 날 티켓 묶음 신규(2일권/3일권, 날마다 따로 산 양일 공연 모두).
 /// 날짜순 티켓 목록. 다이어리엔 [initialDay] 한 장만 카드로 보이고, 공연 전/후
-/// 페이지 위쪽 날짜 표시로 다른 날로 넘어갑니다.
+/// 페이지 위쪽 날짜 탭으로 다른 날로 넘어갑니다.
 class PassGroup {
   PassGroup(this.days) {
     for (final day in days) {
@@ -203,10 +208,21 @@ class PassGroup {
     return isDue && index > 0 ? days[index - 1] : next;
   }
 
-  /// 카드 표시용 - 이어진 날이면 "3일권 · 08.01~08.03", 띄엄띄엄이면 "2일권 · 09.04, 09.06".
+  /// 전부 한 번에 산 2일권/3일권인지(아니면 날마다 따로 산 티켓이 섞인 묶음).
+  bool get isSinglePass =>
+      days.first.passGroupId != null &&
+      days.every((d) => d.passGroupId == days.first.passGroupId);
+
+  /// [day]와 같이 산 날들(2일권이면 그 권종의 모든 날, 따로 산 티켓이면 그 날만).
+  List<TicketData> boughtWith(TicketData day) => day.passGroupId == null
+      ? [day]
+      : days.where((d) => d.passGroupId == day.passGroupId).toList();
+
+  /// 카드 표시용 - 2일권이면 "2일권 · 09.04, 09.06", 따로 산 티켓 묶음이면 "2회 관람 · 02.15~02.16".
   String get label {
+    final kind = isSinglePass ? '${days.length}일권' : '${days.length}회 관람';
     final dates = [for (final d in days) d.info?.date];
-    if (dates.contains(null)) return '${days.length}일권';
+    if (dates.contains(null)) return kind;
     const md = passDateLabel;
     final consecutive = [
       for (var i = 1; i < dates.length; i++)
@@ -215,7 +231,7 @@ class PassGroup {
     final range = consecutive
         ? '${md(dates.first!)}~${md(dates.last!)}'
         : dates.map((d) => md(d!)).join(', ');
-    return '${days.length}일권 · $range';
+    return '$kind · $range';
   }
 
   PassDayTabs tabsFor(TicketData day) => PassDayTabs(
@@ -232,48 +248,62 @@ class PassGroup {
   }
 }
 
-/// 서버 티켓 목록을 다이어리 카드 목록으로 - 같은 묶음 티켓은 한 장으로 합침(서버 정렬에서 처음 나온 자리).
-/// 가격은 첫날 티켓에만 저장돼 있어 다른 날도 같은 가격을 보여줌.
+/// 서버 티켓 목록을 다이어리 카드 목록으로(묶음 규칙은 [regroupTickets]).
 List<TicketData> ticketDataFromBackend(
   List<TicketWithConcert> tickets, {
   TicketScanExtracted? scanExtracted,
-}) {
-  final result = <TicketData>[];
+}) => regroupTickets([
+  for (final ticket in tickets)
+    TicketData.fromBackend(ticket, scanExtracted: scanExtracted),
+]);
+
+// [백엔드 수정] 같은 공연 티켓 자동 묶음 신규.
+/// 카드 목록을 날짜 티켓으로 펼쳐 다시 묶음 - 같은 공연 티켓은 카드 한 장(그 공연이 처음 나온 자리).
+/// 배송 전 티켓은 실물이 따로라 받기 전까진 같이 산 날끼리만 묶음. 2일권 가격은 첫날 티켓에만
+/// 저장돼 있어 같이 산 날도 같은 가격을 보여줌. 카드로 보일 날은 [focusId], 원래 카드로 보이던 날,
+/// [PassGroup.initialDay] 순.
+List<TicketData> regroupTickets(List<TicketData> cards, {String? focusId}) {
+  final shown = {for (final card in cards) card.id};
+  final order = <String>[];
   final groups = <String, List<TicketData>>{};
-  for (final ticket in tickets) {
-    final data = TicketData.fromBackend(ticket, scanExtracted: scanExtracted);
-    final groupId = ticket.passGroupId;
-    if (groupId == null) {
-      result.add(data);
-      continue;
-    }
-    final days = groups[groupId];
-    if (days == null) {
-      groups[groupId] = [data];
-      result.add(data);
-    } else {
-      days.add(data);
-    }
-  }
-  for (final days in groups.values) {
-    if (days.length < 2) continue;
-    final slot = result.indexOf(days.first);
-    days.sort(
-      (a, b) =>
-          (a.info?.date ?? DateTime(0)).compareTo(b.info?.date ?? DateTime(0)),
-    );
-    final price = days
-        .map((d) => d.info?.price ?? '')
-        .firstWhere((p) => p.isNotEmpty, orElse: () => '');
-    for (final day in days) {
-      final info = day.info;
-      if (price.isNotEmpty && info != null && info.price.isEmpty) {
-        day.info = info.copyWith(price: price);
+  for (final card in cards) {
+    for (final day in card.passGroup?.days ?? [card]) {
+      final key = day.status == TicketStatus.beforeDelivery
+          ? 'delivery:${day.passGroupId ?? day.id}'
+          : 'concert:${day.info?.concertId ?? day.id}';
+      final days = groups[key];
+      if (days == null) {
+        groups[key] = [day];
+        order.add(key);
+      } else if (!days.contains(day)) {
+        days.add(day);
       }
     }
-    result[slot] = PassGroup(days).initialDay;
   }
-  return result;
+  return [for (final key in order) _cardFor(groups[key]!, shown, focusId)];
+}
+
+TicketData _cardFor(List<TicketData> days, Set<String> shown, String? focusId) {
+  if (days.length == 1) return days.single..passGroup = null;
+  days.sort(
+    (a, b) =>
+        (a.info?.date ?? DateTime(0)).compareTo(b.info?.date ?? DateTime(0)),
+  );
+  for (final day in days) {
+    final info = day.info;
+    if (day.passGroupId == null || info == null || info.price.isNotEmpty) {
+      continue;
+    }
+    final price = days
+        .where((d) => d.passGroupId == day.passGroupId)
+        .map((d) => d.info?.price ?? '')
+        .firstWhere((p) => p.isNotEmpty, orElse: () => '');
+    if (price.isNotEmpty) day.info = info.copyWith(price: price);
+  }
+  final group = PassGroup(days);
+  return days.where((d) => d.id == focusId).firstOrNull ??
+      days.where((d) => shown.contains(d.id)).firstOrNull ??
+      group.initialDay;
 }
 
 // [백엔드 수정]
@@ -1013,6 +1043,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       info: ticket.info,
       id: ticket.id,
       attendedDayChoices: ticket.attendedDayChoices,
+      passGroupId: ticket.passGroupId,
     );
     ticket.passGroup?.replace(ticket, promoted);
     _tickets[index] = promoted;
@@ -1246,18 +1277,28 @@ class _DiaryScreenState extends State<DiaryScreen>
         final sameTitle = t.title.trim().toLowerCase() == normalizedTitle;
         return sameConcertId || sameTitle;
       });
-      if (index >= 0 && newTicket.status != TicketStatus.beforeDelivery) {
+      final arriving =
+          index >= 0 && newTicket.status != TicketStatus.beforeDelivery;
+      if (arriving) {
         _tickets[index] = newTicket;
-        _currentPageIndex = index < _firstPageTicketCapacity
+      } else {
+        _tickets.insert(0, newTicket);
+      }
+      // [백엔드 수정] 같은 공연의 다른 날 카드가 있으면 한 장으로 합치고 새 티켓 날을 보여줌.
+      final regrouped = regroupTickets(_tickets, focusId: newTicket.id);
+      _tickets
+        ..clear()
+        ..addAll(regrouped);
+      if (arriving) {
+        final placed = _tickets.indexWhere((t) => t.id == newTicket.id);
+        _currentPageIndex = placed < _firstPageTicketCapacity
             ? 0
             : 1 +
-                  (index - _firstPageTicketCapacity) ~/
+                  (placed - _firstPageTicketCapacity) ~/
                       _otherPageTicketCapacity;
         _arrivingTicketId = newTicket.id;
         _arrivalTarget = null;
         unawaited(_prepareTicketArrival(newTicket.id));
-      } else {
-        _tickets.insert(0, newTicket);
       }
     });
   }
@@ -1812,6 +1853,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                 status: next.status,
                 info: day.info,
                 id: day.id,
+                passGroupId: day.passGroupId,
               ),
     ]);
     return next;
@@ -1825,30 +1867,38 @@ class _DiaryScreenState extends State<DiaryScreen>
   ///   게스트는 로컬 저장소).
   /// - 로컬 예시/디버그 티켓(등록된 적 없는 것)은 화면에서만 지웁니다.
   Future<void> _confirmDeleteTicket(TicketData ticket) async {
-    // [백엔드 수정] 2일권/3일권은 날짜 하나만 지우지 않고 묶음 전체를 지움.
-    final passDays = ticket.passGroup?.days ?? [ticket];
-    final confirmed = await showPaperDialog<bool>(
-      context,
-      title: '티켓 삭제',
-      emphasis: ticket.title,
-      message: passDays.length > 1
-          ? '${passDays.length}일권 티켓이라 ${passDays.length}일 모두 삭제돼요.\n'
-                '삭제하면 되돌릴 수 없어요.'
-          : '이 티켓을 삭제할까요?\n삭제하면 되돌릴 수 없어요.',
-      actions: const [
-        PaperDialogAction(
-          label: '취소',
-          value: false,
-          style: PaperButtonStyle.outline,
-        ),
-        PaperDialogAction(
-          label: '삭제',
-          value: true,
-          style: PaperButtonStyle.danger,
-        ),
-      ],
-    );
-    if (confirmed != true || !mounted) return;
+    // [백엔드 수정] 같은 공연 묶음 삭제 - 2일권만 묶였으면 전체, 따로 산 티켓이 섞였으면 이 날만/전부 고르게 함.
+    final group = ticket.passGroup;
+    List<TicketData> targets;
+    if (group == null || group.isSinglePass) {
+      targets = group?.days ?? [ticket];
+      final confirmed = await showPaperDialog<bool>(
+        context,
+        title: '티켓 삭제',
+        emphasis: ticket.title,
+        message: targets.length > 1
+            ? '${targets.length}일권 티켓이라 ${targets.length}일 모두 삭제돼요.\n'
+                  '삭제하면 되돌릴 수 없어요.'
+            : '이 티켓을 삭제할까요?\n삭제하면 되돌릴 수 없어요.',
+        actions: const [
+          PaperDialogAction(
+            label: '취소',
+            value: false,
+            style: PaperButtonStyle.outline,
+          ),
+          PaperDialogAction(
+            label: '삭제',
+            value: true,
+            style: PaperButtonStyle.danger,
+          ),
+        ],
+      );
+      if (confirmed != true || !mounted) return;
+    } else {
+      final picked = await _pickDeleteScope(ticket, group);
+      if (picked == null || !mounted) return;
+      targets = picked;
+    }
 
     if (ticket.info?.ticketId == null) {
       // 등록된 적 없는 로컬 예시/디버그 티켓은 화면에서만 제거합니다.
@@ -1858,32 +1908,92 @@ class _DiaryScreenState extends State<DiaryScreen>
 
     showPaperLoading(context, '티켓을 지우는 중이에요…');
 
+    // 같이 산 날은 서버가 한 번에 지우므로 산 묶음마다 한 번만 요청
+    final deleted = <String>{};
+    final requested = <String>{};
     try {
-      await _ticketService.deleteTicket(ticket.id);
-      for (final day in passDays) {
-        unawaited(TornTicketStore.instance.clear(day.id));
+      for (final day in targets) {
+        if (!requested.add(day.passGroupId ?? day.id)) continue;
+        try {
+          await _ticketService.deleteTicket(day.id);
+        } on TicketNotFoundException {
+          // 이미 지워진 티켓도 화면에서 뺌
+        }
+        final boughtWith = group?.boughtWith(day) ?? [day];
+        deleted.addAll(boughtWith.map((d) => d.id));
+        for (final d in boughtWith) {
+          unawaited(TornTicketStore.instance.clear(d.id));
+        }
       }
       if (!mounted) return;
       Navigator.pop(context);
-      setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
+      _removeTicketDays(ticket, deleted);
       _showSnack('티켓을 삭제했어요.');
-    } on TicketNotFoundException {
-      for (final day in passDays) {
-        unawaited(TornTicketStore.instance.clear(day.id));
-      }
-      if (!mounted) return;
-      Navigator.pop(context);
-      setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
-      _showSnack('이미 삭제된 티켓이에요.');
     } on ApiException catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
+      _removeTicketDays(ticket, deleted);
       _showSnack('삭제에 실패했어요: ${e.message}');
     } catch (_) {
       if (!mounted) return;
       Navigator.pop(context);
+      _removeTicketDays(ticket, deleted);
       _showSnack('알 수 없는 오류가 발생했어요. 잠시 후 다시 시도해주세요.');
     }
+  }
+
+  // [백엔드 수정] 따로 산 티켓이 섞인 묶음의 삭제 범위 선택. 닫으면 null(삭제 안 함).
+  Future<List<TicketData>?> _pickDeleteScope(
+    TicketData ticket,
+    PassGroup group,
+  ) {
+    final boughtWith = group.boughtWith(ticket);
+    final date = ticket.info?.date;
+    String dates(List<TicketData> days) => days
+        .map((d) => d.info?.date)
+        .whereType<DateTime>()
+        .map(passDateLabel)
+        .join(', ');
+    return showPaperSheet<List<TicketData>>(
+      context,
+      title: '어떤 티켓을 삭제할까요?\n삭제하면 되돌릴 수 없어요.',
+      dismissible: true,
+      rows: (context) => [
+        PaperSheetRow(
+          title: boughtWith.length > 1
+              ? '${boughtWith.length}일권 티켓만 삭제'
+              : '${date == null ? '이 날' : passDateLabel(date, weekday: true)} 티켓만 삭제',
+          subtitle: boughtWith.length > 1
+              ? '같이 산 ${dates(boughtWith)} 티켓이 함께 삭제돼요'
+              : null,
+          onTap: () => Navigator.pop(context, boughtWith),
+        ),
+        PaperSheetRow(
+          title: '${group.days.length}장 모두 삭제',
+          subtitle: dates(group.days),
+          onTap: () => Navigator.pop(context, group.days),
+        ),
+      ],
+    );
+  }
+
+  // [백엔드 수정] 지운 날을 카드에서 빼고 남은 날로 카드를 다시 만듦(한 장 남으면 묶음 해제).
+  void _removeTicketDays(TicketData card, Set<String> ids) {
+    if (ids.isEmpty) return;
+    setState(() {
+      final index = _tickets.indexOf(card);
+      if (index < 0) return;
+      final remaining = (card.passGroup?.days ?? [card])
+          .where((d) => !ids.contains(d.id))
+          .toList();
+      _tickets.removeAt(index);
+      if (remaining.isEmpty) return;
+      if (remaining.length == 1) {
+        _tickets.insert(index, remaining.single..passGroup = null);
+      } else {
+        _tickets.insert(index, PassGroup(remaining).initialDay);
+      }
+    });
   }
 
   @override

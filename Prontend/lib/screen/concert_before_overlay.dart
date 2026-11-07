@@ -192,7 +192,8 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   void _switchDay(int index) {
     if (_isClosing || _controller.value < 0.85) return;
     _isClosing = true;
-    unawaited(TicketPreviewPlayer.instance.stop(this));
+    // 곡은 끊지 않고 다음 날 페이지가 이어받음
+    TicketPreviewPlayer.instance.handOff(this);
     Navigator.of(context).pop(index);
   }
 
