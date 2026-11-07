@@ -30,6 +30,8 @@ _MAX_ATTEMPTS = 7
 _CONCURRENCY = 3
 # 한 건 생성에 수십 초(모델 호출 2번) - 동시 3건이 LLM 쪽에서 대기하는 시간까지 감안
 _REQUEST_TIMEOUT_SECONDS = 180.0
+# LLM이 사진마다 시점 분류를 한 번씩 부름 - 생성 시간이 사진 수에 비례해 늘지 않게 상한
+_MAX_PHOTOS = 20
 
 
 _KST = timezone(timedelta(hours=9))
@@ -127,6 +129,34 @@ def _performance_date(ticket: Ticket) -> date | None:
     return None
 
 
+# 사진을 올린 순서 키 - 앱 사진 id는 "legacy{n}"(concert_photo_urls n번째를 옮긴 것, 가장 먼저 올림) 또는
+# "p" + 추가 시각(마이크로초, 36진수 10자리) + 순번. 둘 다 아니면 저장 순서(index)대로 맨 뒤
+def _photo_order_key(item: dict, index: int) -> tuple[int, int]:
+    item_id = item.get("id") or ""
+    if item_id.startswith("legacy") and item_id[6:].isdigit():
+        return 0, int(item_id[6:])
+    if item_id.startswith("p") and len(item_id) > 11:
+        try:
+            return 1, int(item_id[1:11], 36)
+        except ValueError:
+            pass
+    return 2, index
+
+
+# 공연후 페이지 사진(올린 순서) - page_layout은 겹침 순서라 id로 다시 정렬. 배치가 아직 없는 예전 티켓은
+# concert_photo_urls. taken_at은 앱이 채운 경우만(없으면 LLM이 사진 EXIF에서 읽음)
+def _ticket_photos(ticket: Ticket) -> list[dict]:
+    items = [i for i in (ticket.page_layout or {}).get("items", []) if i.get("type") == "photo" and i.get("ref")]
+    if not items:
+        return [{"url": url} for url in (ticket.concert_photo_urls or [])[:_MAX_PHOTOS]]
+    order = sorted(range(len(items)), key=lambda i: _photo_order_key(items[i], i))
+    photos = []
+    for i in order[:_MAX_PHOTOS]:
+        taken_at = (items[i].get("photo") or {}).get("taken_at")
+        photos.append({"url": items[i]["ref"], **({"taken_at": taken_at} if taken_at else {})})
+    return photos
+
+
 # LLM 요청 바디. 셋리는 그날 실제 셋리만 - 예상 셋리를 넣으면 "○○를 불러주었어요"처럼 안 부른
 # 곡이 글에 들어갈 수 있어서 없으면 빈 목록. 페스티벌은 아티스트별 셋리 구성이 정해지지 않아
 # 곡이 엉뚱한 아티스트에 붙을 수 있어서 안 보냄
@@ -150,6 +180,7 @@ async def _build_payload(db: AsyncSession, draft: BlogDraft, ticket: Ticket) -> 
         "venue": concert.venue,
         "concert_date": (performance_date or concert.start_date.date()).isoformat(),
         "setlist": setlist,
+        "photos": _ticket_photos(ticket),
     }
 
 

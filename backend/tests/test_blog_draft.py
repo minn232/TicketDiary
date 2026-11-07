@@ -189,6 +189,72 @@ async def test_send_without_real_setlist_sends_empty_setlist():
     assert sent["setlist"] == []
 
 
+async def _set_photos(ticket_id: str, page_layout: dict | None, photo_urls: list[str] | None = None) -> None:
+    async with AsyncSessionLocal() as db:
+        ticket = await db.get(Ticket, uuid.UUID(ticket_id))
+        ticket.page_layout = page_layout
+        ticket.concert_photo_urls = photo_urls
+        await db.commit()
+
+
+def _photo_item(item_id: str, url: str, z: int, taken_at: str | None = None) -> dict:
+    photo = {"w": 300, "h": 400, **({"taken_at": taken_at} if taken_at else {})}
+    return {"id": item_id, "type": "photo", "ref": url, "cx": 0.5, "cy": 0.5, "w": 0.4, "rot": 0, "z": z, "photo": photo}
+
+
+@pytest.mark.asyncio
+async def test_send_includes_page_photos_in_added_order():
+    # 겹침 순서(z)와 상관없이 옮겨 온 예전 사진(legacyN) → 추가 시각 순서, 둘 다 아닌 id는 맨 뒤
+    token, _, ticket_id = await _ticket("PF_BLOG_LAYOUT")
+    old = "p" + _base36(1_700_000_000_000_000) + "0"
+    new = "p" + _base36(1_700_000_000_500_000) + "1"
+    await _set_photos(
+        ticket_id,
+        {
+            "version": 1,
+            "canvas_aspect": 1.5,
+            "items": [
+                {"id": "poster", "type": "poster", "cx": 0.5, "cy": 0.5, "w": 0.5, "rot": 0, "z": 0},
+                _photo_item(new, "https://img.test/new.jpg", 1),
+                _photo_item("x1", "https://img.test/unknown.jpg", 2),
+                _photo_item(old, "https://img.test/old.jpg", 3, taken_at="2026:11:06 19:30:00"),
+                _photo_item("legacy1", "https://img.test/legacy1.jpg", 4),
+                _photo_item("legacy0", "https://img.test/legacy0.jpg", 5),
+            ],
+        },
+    )
+    # 배치가 없는 예전 티켓은 concert_photo_urls 그대로
+    legacy_token, _, legacy_ticket_id = await _ticket("PF_BLOG_LEGACY")
+    await _set_photos(legacy_ticket_id, None, ["https://img.test/a.jpg", "https://img.test/b.jpg"])
+    for tok, tid in ((token, ticket_id), (legacy_token, legacy_ticket_id)):
+        await _post_draft(tid, tok)
+        await _backdate(tid)
+
+    calls: list[dict] = []
+    with _blog_url(), _llm_client(calls):
+        await send_blog_drafts_to_llm()
+
+    sent = next(c for c in calls if c["concert_name"].startswith("PF_BLOG_LAYOUT"))
+    assert sent["photos"] == [
+        {"url": "https://img.test/legacy0.jpg"},
+        {"url": "https://img.test/legacy1.jpg"},
+        {"url": "https://img.test/old.jpg", "taken_at": "2026:11:06 19:30:00"},
+        {"url": "https://img.test/new.jpg"},
+        {"url": "https://img.test/unknown.jpg"},
+    ]
+    legacy = next(c for c in calls if c["concert_name"].startswith("PF_BLOG_LEGACY"))
+    assert legacy["photos"] == [{"url": "https://img.test/a.jpg"}, {"url": "https://img.test/b.jpg"}]
+
+
+def _base36(n: int) -> str:
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while n:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+    return out
+
+
 @pytest.mark.asyncio
 async def test_send_failure_retries_until_limit_then_failed():
     token, _, ticket_id = await _ticket("PF_BLOG_FAIL")
