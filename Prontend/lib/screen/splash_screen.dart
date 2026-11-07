@@ -17,6 +17,7 @@ import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart'
     show BentLeafPainter, DiaryPageFlipper;
 import 'package:ticketdiary/widgets/app_network_image.dart';
+import 'package:ticketdiary/widgets/diary_desk_backdrop.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart'
@@ -48,9 +49,8 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   // 다이어리 프레임(diary_page_frame.dart)과 통일감 있는 배색.
-  static const Color _coverColor = Color(0xFF5C4033);
   static const Color _pageColor = Color(0xFFF4F1E1);
 
   /// 속지 규격의 기준(세로/가로 비율). 예전엔 A4(297/210)를 썼는데, 실제
@@ -58,10 +58,6 @@ class _SplashScreenState extends State<SplashScreen>
   /// 속 페이지가 실제 다이어리 페이지보다 세로로 길어 보이는 문제가
   /// 있었습니다. 실제 다이어리와 같은 비율을 쓰도록 여기서 반전해 씁니다.
   static const double _pageRatio = 1 / DiaryPageFrame.diaryAspectRatio;
-
-  /// 애니메이션 도중(화면을 다 채우기 전까지) 보이는 겉 가죽케이스를 이
-  /// 배율만큼 더 크게 보여줍니다. 최종 페이지 크기에는 영향이 없습니다.
-  static const double _bookSizeBoost = 1.2;
 
   // ---- 닫힌 책 장식 요소 비율(책 폭 w / 높이 h 기준) ----
   // 아래 값들은 예전에 고정 픽셀(아이폰17 기준 book≈251x441)로 짜여
@@ -75,15 +71,7 @@ class _SplashScreenState extends State<SplashScreen>
   static const double _edgeRadiusRatio = 0.01993; // 5 / 250.85
   static const double _edgeShadowBlurRatio = 0.0877; // 22 / 250.85
   static const double _edgeShadowOffsetRatio = 0.02719; // 12 / 441.3
-  static const double _ribbonProtrudeRatio = 0.02946; // 13 / 441.3
   static const double _ribbonWidthRatio = 0.03588; // 9 / 250.85
-  static const double _ribbonHeightRatio = 0.05439; // 24 / 441.3
-  static const double _ribbonRadiusRatio = 0.00797; // 2 / 250.85
-  static const double _coverRadiusRatio = 0.0279; // 7 / 250.85
-  static const double _coverShadowBlurRatio = 0.07176; // 18 / 250.85
-  static const double _coverShadowOffsetXRatio = 0.00797; // 2 / 250.85
-  static const double _coverShadowOffsetYRatio = 0.02266; // 10 / 441.3
-  static const double _coverEdgeHighlightWidthRatio = 0.04784; // 12 / 250.85
   static const double _bandInsetRatio = 0.00453; // 2 / 441.3
   static const double _bandRadiusRatio = 0.01196; // 3 / 250.85
   static const double _bandShadowOffsetXRatio = 0.00399; // 1 / 250.85
@@ -139,8 +127,11 @@ class _SplashScreenState extends State<SplashScreen>
   /// [_zoomPageEnd](0.82)가 다 끝나고 약간의 여유(0.04) 뒤에 시작해서,
   /// book 배율이 확실히 안정된 뒤에 미리보기가 뜨도록 합니다.
   static const double _finalFlipStart = 0.86;
-  static const double _finalFlipDuration = 0.11;
-  static const double _finalFlipAngle = math.pi * 0.56; // 약 100도.
+  // [백엔드 수정]
+  // 100도에서 멈추던 걸 다른 장처럼 왼쪽 더미 맨 위에 눕도록(0.11 -> 0.14,
+  // 컨트롤러 끝 1.0에 정착). 각도는 4번 장(+0.04)보다 살짝 더 눕힘.
+  static const double _finalFlipDuration = 0.14;
+  static const double _finalFlipAngle = _settleRestAngle + 0.06;
 
   /// 마지막 속지가 이 각도(도)를 넘으면 실제 화면 미리보기(탭 포함)를
   /// 그리기 시작합니다.
@@ -150,10 +141,11 @@ class _SplashScreenState extends State<SplashScreen>
   // 미리보기 세로 보정 매직 넘버 제거, DiaryPageFrame.scaleOverride/
   // marginEachSideOverride로 대체.
 
-  /// 마지막 장이 90도를 넘어 사실상 안 보이게 된 시점에 진짜 화면으로
-  /// 넘어갑니다. 정적인 페이지가 페이드로 사라지는 대신, 페이지가 실제로
-  /// 넘어가는 도중 그 자리에 진짜 화면이 자연스럽게 이어받는 느낌입니다.
-  static const double _navigateAt = 0.96;
+  /// [백엔드 수정]
+  /// 마지막 장까지 다 눕은 뒤(메인 컨트롤러 끝) 왼쪽 표지·속지 더미를 통째로
+  /// 왼쪽으로 밀어내며 옅게 하는 시간. 이게 끝나야 진짜 화면으로 넘어감
+  /// (예전 _navigateAt=0.96 대신).
+  static const Duration _exitDuration = Duration(milliseconds: 650);
 
   /// [백엔드 수정]
   /// 크로스페이드 완전히 제거(지속 시간 0) - 겹쳐 보이는 프레임 자체를 없앰.
@@ -163,6 +155,7 @@ class _SplashScreenState extends State<SplashScreen>
   static const Duration _fadeToMainDuration = Duration.zero;
 
   late final AnimationController _controller;
+  late final AnimationController _exitController;
 
   bool _dataReady = false;
   bool _brandLogoVisible = false;
@@ -189,7 +182,14 @@ class _SplashScreenState extends State<SplashScreen>
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, duration: _totalDuration)
-      ..addListener(_onTick);
+      ..addListener(_onTick)
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) _exitController.forward();
+      });
+    _exitController = AnimationController(vsync: this, duration: _exitDuration)
+      ..addStatusListener((status) {
+        if (status == AnimationStatus.completed) _maybeNavigate();
+      });
     unawaited(_playBrandIntro());
     unawaited(_loadData());
     unawaited(_prepareLeafAssets());
@@ -402,16 +402,15 @@ class _SplashScreenState extends State<SplashScreen>
       _controller.stop();
       return;
     }
-    if (_controller.value >= _navigateAt) _maybeNavigate();
   }
 
-  /// 마지막 장이 넘어가 사실상 안 보이게 된 시점([_navigateAt]) 이후 + 데이터
+  /// 왼쪽 더미가 다 밀려난 뒤([_exitController] 끝) + 데이터
   /// 준비 완료일 때 메인 화면을 겹쳐 올립니다. 짧은 페이드가 진행되는 동안 이
   /// 화면의 남은 줌 애니메이션은 아래에서 계속 재생되므로 전환이 끊겨 보이지
   /// 않습니다. 데이터가 더 늦게 끝나면 마지막 프레임(넘어간 뒤)에서 대기합니다.
   void _maybeNavigate() {
     if (_navigated || !mounted) return;
-    if (!_dataReady || _controller.value < _navigateAt) return;
+    if (!_dataReady || !_exitController.isCompleted) return;
     // 마지막에 덧붙인 종이 소리가 끝날 때까지 마지막 프레임을 유지합니다.
     if (!_splashSoundFinished) return;
     _navigated = true;
@@ -444,6 +443,7 @@ class _SplashScreenState extends State<SplashScreen>
   void dispose() {
     _splashSound?.stop();
     _controller.dispose();
+    _exitController.dispose();
     for (final image in _leafImages) {
       image?.dispose();
     }
@@ -550,14 +550,16 @@ class _SplashScreenState extends State<SplashScreen>
           );
 
           // 속지가 실제 다이어리와 같은 비율이 되도록 크기를 잡습니다.
-          // _bookSizeBoost는 애니메이션이 진행되는 동안(화면을 다 채우기
+          // splashBookSizeBoost는 애니메이션이 진행되는 동안(화면을 다 채우기
           // 전까지) 보이는 겉 가죽케이스 자체를 더 크게 보이도록 키우는
           // 배율입니다. fillScale이 항상 "bookWidth * fillScale = 실제
           // 화면 크기"가 되도록 스스로 맞춰지므로, 다 자란 뒤 최종 페이지
           // 크기(실제 DiaryPageFrame과 정확히 일치)에는 영향이 없습니다.
-          final bookWidth =
-              _bookSizeBoost *
-              math.min(screenW * 0.52, screenHForBook * 0.6 / _pageRatio);
+          // [백엔드 수정] 메인 책상 배율(DiaryDeskBackdrop)과 같은 식을 공유.
+          final bookWidth = DiaryDeskBackdrop.splashBookWidth(
+            screenW: screenW,
+            screenHForBook: screenHForBook,
+          );
           final bookHeight = bookWidth * _pageRatio;
 
           // 마지막에 페이지가 실제 다이어리 화면과 같은 크기가 되는 배율.
@@ -567,9 +569,9 @@ class _SplashScreenState extends State<SplashScreen>
           // 써야 합니다. 예전엔 math.max에 1.04배까지 더해서 일부러 화면을
           // 살짝 넘치게 채웠는데, 그 결과 애니메이션 끝의 페이지가 실제
           // 다이어리 페이지보다 커 보이는 문제가 있었습니다.
-          final fillScale = math.min(
-            screenW / bookWidth,
-            screenHForBook / bookHeight,
+          final fillScale = DiaryDeskBackdrop.splashFillScale(
+            screenW: screenW,
+            screenHForBook: screenHForBook,
           );
 
           // 실제 DiaryPageFrame이 이 화면에서 스스로 계산할 scale/marginEachSide와
@@ -594,7 +596,7 @@ class _SplashScreenState extends State<SplashScreen>
               : math.max(0.0, (screenW - frameWidthReal) / 2);
 
           return AnimatedBuilder(
-            animation: _controller,
+            animation: Listenable.merge([_controller, _exitController]),
             builder: (context, _) => _buildScene(
               bookWidth,
               bookHeight,
@@ -613,7 +615,7 @@ class _SplashScreenState extends State<SplashScreen>
   /// 시작 시점에 다이어리가 테이블 위에서 차지하는 크기 비율.
   /// 장면 전체가 하나의 배율로 확대되므로, 다이어리는 처음부터 이 크기로
   /// "테이블에 놓여" 있고 카메라가 다가가며 화면에 들어차게 됩니다.
-  static const double _bookStartScale = 0.34;
+  static const double _bookStartScale = DiaryDeskBackdrop.splashBookStartScale;
 
   Widget _buildScene(
     double bookW,
@@ -667,7 +669,7 @@ class _SplashScreenState extends State<SplashScreen>
         children: [
           const Positioned.fill(
             child: CustomPaint(
-              painter: _RoomTablePainter(),
+              painter: RoomTablePainter(),
               child: SizedBox.expand(),
             ),
           ),
@@ -772,16 +774,43 @@ class _SplashScreenState extends State<SplashScreen>
     final outlineAlpha = 0.30 * (1.0 - zoomPage);
 
     // _MainPageReplica 자신의 회전각(도). 아래 rotateY에 그대로 씀.
-    final finalFlipAngleDeg =
-        _seg(t, _finalFlipStart, _finalFlipStart + _finalFlipDuration) *
-        _finalFlipAngle *
-        180 /
-        math.pi;
+    //
+    // [백엔드 수정]
+    // 다른 장([_buildFlipPage])처럼 90도까지 넘긴 뒤 easeOut으로 눕힘.
+    final finalP = _seg(
+      t,
+      _finalFlipStart,
+      _finalFlipStart + _finalFlipDuration,
+    );
+    final finalFlipAngle = finalP <= 0.5
+        ? finalP * math.pi
+        : math.pi / 2 +
+              (_finalFlipAngle - math.pi / 2) *
+                  Curves.easeOut.transform((finalP - 0.5) / 0.5);
+    final finalFlipAngleDeg = finalFlipAngle * 180 / math.pi;
 
     // [백엔드 수정]
     // 탭 등장 기준을 _MainPageReplica 회전각 대신 마지막 속지(i=4)
     // 회전각으로 변경.
     final lastRegularLeafStart = _flipStart + (_flipCount - 1) * _flipStagger;
+    // easeInCubic은 처음에 거의 안 움직여 화면 왼쪽 좁은 띠에선 멈췄다가
+    // 끝에 훅 사라져 보였음 - 밀기는 easeInOut으로 고르게, 옅어짐은 따로.
+    final exitSlide = Curves.easeInOutCubic.transform(_exitController.value);
+    final exitFade = Curves.easeIn.transform(_exitController.value);
+    final replicaLeaf = Positioned.fill(
+      child: Transform(
+        alignment: Alignment.centerLeft,
+        transform: Matrix4.identity()
+          ..setEntry(3, 2, 0.00016)
+          ..rotateY(finalFlipAngle),
+        child: _MainPageReplica(
+          bookW: w,
+          bookH: h,
+          fillScale: fillScale,
+          outlineAlpha: outlineAlpha,
+        ),
+      ),
+    );
     final lastRegularLeafAngleDeg =
         _seg(t, lastRegularLeafStart, lastRegularLeafStart + _flipDuration) *
         180;
@@ -831,23 +860,9 @@ class _SplashScreenState extends State<SplashScreen>
           // 갈피끈(리본). 속지 아래로 삐져나온 디테일.
           //
           // [백엔드 수정]
-          // 미리보기가 뜨는 t>=_finalFlipStart부터는 숨김(실제 화면엔 없는
-          // 장식이라 계속 삐져나와 보였음).
-          if (t < _finalFlipStart)
-            Positioned(
-              right: w * 0.22,
-              bottom: -h * _ribbonProtrudeRatio,
-              child: Container(
-                width: w * _ribbonWidthRatio,
-                height: h * _ribbonHeightRatio,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFB0413E),
-                  borderRadius: BorderRadius.vertical(
-                    bottom: Radius.circular(w * _ribbonRadiusRatio),
-                  ),
-                ),
-              ),
-            ),
+          // t>=_finalFlipStart에 숨기던 걸 끝까지 그림 - 메인 화면
+          // (DiaryDeskBackdrop)에도 같은 자리에 있어서 그대로 이어짐.
+          DiaryDeskBackdrop.buildRibbon(w, h),
 
           // ---- 고정 가죽 배경(회전하지 않음) ----
           // [백엔드 수정]
@@ -909,20 +924,11 @@ class _SplashScreenState extends State<SplashScreen>
           // [백엔드 수정]
           // 다른 속지들처럼 [_finalFlipStart]~+[_finalFlipDuration]에 넘어가
           // 사라짐. book 전체를 꽉 채워 왼쪽 끝=책등이라 pivotX 트릭 불필요.
-          Positioned.fill(
-            child: Transform(
-              alignment: Alignment.centerLeft,
-              transform: Matrix4.identity()
-                ..setEntry(3, 2, 0.00016)
-                ..rotateY(finalFlipAngleDeg * math.pi / 180),
-              child: _MainPageReplica(
-                bookW: w,
-                bookH: h,
-                fillScale: fillScale,
-                outlineAlpha: outlineAlpha,
-              ),
-            ),
-          ),
+          //
+          // [백엔드 수정]
+          // 90도 전까지만 여기(속지 그림자 아래)에 그리고, 넘어간 뒤엔 왼쪽
+          // 더미 맨 위로 옮겨 그 더미와 함께 밀려남(아래 exitSlide 묶음).
+          if (finalFlipAngleDeg <= 90) replicaLeaf,
 
           // ---- 열리는 표지가 다이어리 내부 전체에 드리우는 그림자(입체감) ----
           if (coverShadow > 0.001)
@@ -970,7 +976,32 @@ class _SplashScreenState extends State<SplashScreen>
           // [백엔드 수정]
           // 정착한 순서대로 그려야 쌓이는 더미가 침범 안 함 - 아직 안 정착한
           // 건 항상 위(표지>0번>...>4번 순)로, 매 프레임 재계산.
-          ..._buildCoverAndPagesInSettleOrder(t, w, h, pageRect, k, coverT),
+          // [백엔드 수정]
+          // 메인 화면엔 없는 왼쪽 표지·속지 더미(마지막 장 포함)를 다 눕은
+          // 뒤 [_exitController] 동안 왼쪽 화면 밖으로 밀어내며 옅게 함
+          // (전환 순간 툭 사라지던 문제). 다 정착해 있어 통째로 옮겨도 순서 그대로.
+          Positioned.fill(
+            child: Transform.translate(
+              offset: Offset(-w * 0.3 * exitSlide, 0),
+              child: Opacity(
+                opacity: 1.0 - exitFade,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    ..._buildCoverAndPagesInSettleOrder(
+                      t,
+                      w,
+                      h,
+                      pageRect,
+                      k,
+                      coverT,
+                    ),
+                    if (finalFlipAngleDeg > 90) replicaLeaf,
+                  ],
+                ),
+              ),
+            ),
+          ),
 
           // ---- 왼쪽 바인더 링 ----
           //
@@ -1164,111 +1195,61 @@ class _SplashScreenState extends State<SplashScreen>
         transform: Matrix4.identity()
           ..setEntry(3, 2, 0.00014)
           ..rotateY(angle),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            // 가죽 느낌: 위가 살짝 밝고 아래로 갈수록 짙어지는 그라데이션.
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF6E4C39), _coverColor, Color(0xFF4A3227)],
-            ),
-            borderRadius: BorderRadius.circular(w * _coverRadiusRatio),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.266),
-                blurRadius: w * _coverShadowBlurRatio,
-                offset: Offset(
-                  w * _coverShadowOffsetXRatio,
-                  h * _coverShadowOffsetYRatio,
-                ),
-              ),
-            ],
-          ),
-          child: Stack(
-            children: [
-              // 가죽 질감(얼룩) + 박음질 라인.
-              const Positioned.fill(
-                child: CustomPaint(painter: _LeatherCoverPainter()),
-              ),
-
-              // 책등 쪽 접힘 하이라이트.
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: w * _coverEdgeHighlightWidthRatio,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.horizontal(
-                      left: Radius.circular(w * _coverRadiusRatio),
-                    ),
-                    gradient: LinearGradient(
-                      begin: Alignment.centerLeft,
-                      end: Alignment.centerRight,
-                      colors: [
-                        Colors.white.withValues(alpha: 0.10),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              // 밴드(고무줄) 디테일.
-              Positioned(
-                right: w * 0.12,
-                top: -h * _bandInsetRatio,
-                bottom: -h * _bandInsetRatio,
-                width: w * _ribbonWidthRatio,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF3B2A20),
-                    borderRadius: BorderRadius.circular(w * _bandRadiusRatio),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.266),
-                        blurRadius: w * _bandRadiusRatio,
-                        offset: Offset(w * _bandShadowOffsetXRatio, 0),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // 음각(엠보싱) 느낌의 타이틀.
-              Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.local_activity_outlined,
-                      size: w * 0.16,
-                      color: const Color(0xFF48342A),
-                      shadows: const [
-                        Shadow(color: Color(0x33FFFFFF), offset: Offset(0, 1)),
-                      ],
-                    ),
-                    SizedBox(height: h * _coverTitleGapRatio),
-                    Text(
-                      'TICKET DIARY',
-                      style: TextStyle(
-                        fontSize: w * 0.062,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 3.5,
-                        color: const Color(0xFF48342A),
-                        shadows: const [
-                          Shadow(
-                            color: Color(0x30FFFFFF),
-                            offset: Offset(0, 1),
-                          ),
-                        ],
-                      ),
+        child: DiaryLeatherCover(
+          bookWidth: w,
+          bookHeight: h,
+          children: [
+            // 밴드(고무줄) 디테일.
+            Positioned(
+              right: w * 0.12,
+              top: -h * _bandInsetRatio,
+              bottom: -h * _bandInsetRatio,
+              width: w * _ribbonWidthRatio,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3B2A20),
+                  borderRadius: BorderRadius.circular(w * _bandRadiusRatio),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.266),
+                      blurRadius: w * _bandRadiusRatio,
+                      offset: Offset(w * _bandShadowOffsetXRatio, 0),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+
+            // 음각(엠보싱) 느낌의 타이틀.
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.local_activity_outlined,
+                    size: w * 0.16,
+                    color: const Color(0xFF48342A),
+                    shadows: const [
+                      Shadow(color: Color(0x33FFFFFF), offset: Offset(0, 1)),
+                    ],
+                  ),
+                  SizedBox(height: h * _coverTitleGapRatio),
+                  Text(
+                    'TICKET DIARY',
+                    style: TextStyle(
+                      fontSize: w * 0.062,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 3.5,
+                      color: const Color(0xFF48342A),
+                      shadows: const [
+                        Shadow(color: Color(0x30FFFFFF), offset: Offset(0, 1)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1329,330 +1310,6 @@ class _DustBurstPainter extends CustomPainter {
       oldDelegate.progress != progress ||
       oldDelegate.bookW != bookW ||
       oldDelegate.bookH != bookH;
-}
-
-/// 방 안 테이블 위 풍경: 나무 널빤지 테이블 + 나뭇결/옹이 + 머그컵/연필/티켓
-/// 조각 같은 소품 + 따뜻한 스탠드 조명과 비네트.
-///
-/// 스플래시 시작부터 끝까지 화면 전체를 덮어서(다이어리보다 아래 레이어)
-/// 흰 배경이 절대 드러나지 않습니다.
-class _RoomTablePainter extends CustomPainter {
-  const _RoomTablePainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // 시드를 고정해 매 프레임 같은 무늬가 그려지게 합니다.
-    final rng = math.Random(7);
-
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = const Color(0xFF3A281B),
-    );
-
-    final plankH = size.height / 7;
-    for (var i = 0; i < 8; i++) {
-      final top = i * plankH;
-
-      final plankColor = Color.lerp(
-        const Color(0xFF4C3423),
-        const Color(0xFF5D4029),
-        rng.nextDouble(),
-      )!;
-      canvas.drawRect(
-        Rect.fromLTWH(0, top, size.width, plankH - 1.4),
-        Paint()..color = plankColor,
-      );
-      // 널빤지 사이의 어두운 이음새.
-      canvas.drawRect(
-        Rect.fromLTWH(0, top + plankH - 1.4, size.width, 1.4),
-        Paint()..color = const Color(0xFF261709),
-      );
-
-      // 나뭇결(가로로 흐르는 얇은 곡선).
-      final grainPaint = Paint()
-        ..color = Colors.black.withValues(alpha: 0.10)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
-      final streaks = 3 + rng.nextInt(3);
-      for (var s = 0; s < streaks; s++) {
-        final y = top + rng.nextDouble() * plankH;
-        final path = Path()..moveTo(0, y);
-        var x = 0.0;
-        var currentY = y;
-        while (x < size.width) {
-          final nextX = x + 50 + rng.nextDouble() * 90;
-          final nextY = y + (rng.nextDouble() - 0.5) * 7;
-          path.quadraticBezierTo(
-            (x + nextX) / 2,
-            currentY + (rng.nextDouble() - 0.5) * 8,
-            nextX,
-            nextY,
-          );
-          x = nextX;
-          currentY = nextY;
-        }
-        canvas.drawPath(path, grainPaint);
-      }
-
-      // 가끔 나타나는 옹이.
-      if (rng.nextDouble() < 0.45) {
-        final cx = rng.nextDouble() * size.width;
-        final cy = top + plankH * (0.3 + rng.nextDouble() * 0.4);
-        canvas.drawOval(
-          Rect.fromCenter(center: Offset(cx, cy), width: 15, height: 8),
-          Paint()
-            ..color = Colors.black.withValues(alpha: 0.16)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.4,
-        );
-        canvas.drawOval(
-          Rect.fromCenter(center: Offset(cx, cy), width: 6, height: 3.2),
-          Paint()..color = Colors.black.withValues(alpha: 0.20),
-        );
-      }
-    }
-
-    // ---- 테이블 위 소품들(방 안 정경) ----
-    _paintMug(canvas, size);
-    _paintPencil(canvas, size);
-    _paintTicketStubs(canvas, size);
-
-    // 따뜻한 스탠드 불빛이 왼쪽 위에서 비치는 느낌.
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.7, -0.8),
-          radius: 1.3,
-          colors: [
-            const Color(0xFFFFD9A0).withValues(alpha: 0.10),
-            Colors.transparent,
-          ],
-          stops: const [0.0, 0.7],
-        ).createShader(Offset.zero & size),
-    );
-
-    // 중앙이 밝고 가장자리가 어두운 조명(비네트)으로 "테이블 위" 느낌을 줍니다.
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()
-        ..shader = RadialGradient(
-          center: Alignment.center,
-          radius: 1.15,
-          colors: [
-            Colors.white.withValues(alpha: 0.05),
-            Colors.transparent,
-            Colors.black.withValues(alpha: 0.42),
-          ],
-          stops: const [0.0, 0.55, 1.0],
-        ).createShader(Offset.zero & size),
-    );
-  }
-
-  /// 오른쪽 위, 위에서 내려다본 커피 머그컵(+받침).
-  void _paintMug(Canvas canvas, Size size) {
-    final center = Offset(size.width * 0.84, size.height * 0.16);
-    final r = size.shortestSide * 0.075;
-
-    // 받침(코스터).
-    canvas.drawCircle(
-      center,
-      r * 1.45,
-      Paint()..color = const Color(0xFF2B1C10),
-    );
-    // 컵 몸통 그림자 + 몸통.
-    canvas.drawCircle(
-      center.translate(2, 3),
-      r,
-      Paint()..color = Colors.black.withValues(alpha: 0.35),
-    );
-    canvas.drawCircle(center, r, Paint()..color = const Color(0xFFEDE4D2));
-    // 손잡이.
-    final handleRect = Rect.fromCenter(
-      center: center.translate(r * 1.25, 0),
-      width: r * 0.9,
-      height: r * 1.1,
-    );
-    canvas.drawArc(
-      handleRect,
-      -math.pi / 2,
-      math.pi,
-      false,
-      Paint()
-        ..color = const Color(0xFFEDE4D2)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = r * 0.28,
-    );
-    // 커피.
-    canvas.drawCircle(
-      center,
-      r * 0.78,
-      Paint()..color = const Color(0xFF3B2417),
-    );
-    // 커피 표면의 은은한 하이라이트.
-    canvas.drawCircle(
-      center.translate(-r * 0.2, -r * 0.2),
-      r * 0.28,
-      Paint()..color = Colors.white.withValues(alpha: 0.08),
-    );
-  }
-
-  /// 왼쪽에 비스듬히 놓인 연필.
-  void _paintPencil(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(size.width * 0.13, size.height * 0.72);
-    canvas.rotate(-1.15);
-
-    final len = size.shortestSide * 0.30;
-    // 원래 고정 7px 몸통 폭 기준 비율(7 / iPhone17 기준 shortestSide 402).
-    final w = size.shortestSide * 0.0174;
-
-    // 몸통(노란 육각 연필 느낌으로 위/아래 톤 분리).
-    canvas.drawRect(
-      Rect.fromLTWH(0, -w / 2, len, w),
-      Paint()..color = const Color(0xFFD9A441),
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(0, -w / 2, len, w / 3),
-      Paint()..color = const Color(0xFFE6B95C),
-    );
-    // 깎인 나무 부분 + 심(폭 대비 비율은 고정 픽셀 시절과 동일하게 유지).
-    final tipLen = w * (13 / 7);
-    final tip = Path()
-      ..moveTo(len, -w / 2)
-      ..lineTo(len + tipLen, 0)
-      ..lineTo(len, w / 2)
-      ..close();
-    canvas.drawPath(tip, Paint()..color = const Color(0xFFE8D5B5));
-    final leadOffset = w * (8 / 7);
-    final leadHalf = w * (1.6 / 7);
-    final lead = Path()
-      ..moveTo(len + leadOffset, -leadHalf)
-      ..lineTo(len + tipLen, 0)
-      ..lineTo(len + leadOffset, leadHalf)
-      ..close();
-    canvas.drawPath(lead, Paint()..color = const Color(0xFF3A3A3A));
-    // 지우개 + 금속 밴드.
-    canvas.drawRect(
-      Rect.fromLTWH(-w * 4 / 7, -w / 2, w * 4 / 7, w),
-      Paint()..color = const Color(0xFF9E9E9E),
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(-w * 11 / 7, -w / 2, w, w),
-      Paint()..color = const Color(0xFFD98880),
-    );
-
-    canvas.restore();
-  }
-
-  /// 왼쪽 아래에 흩어져 있는 공연 티켓 조각들(앱 주제 디테일).
-  void _paintTicketStubs(Canvas canvas, Size size) {
-    void stub(Offset pos, double angle, Color color) {
-      canvas.save();
-      canvas.translate(pos.dx, pos.dy);
-      canvas.rotate(angle);
-
-      final w = size.shortestSide * 0.19;
-      final h = w * 0.42;
-      final rect = RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset.zero, width: w, height: h),
-        const Radius.circular(4),
-      );
-      // 그림자 + 몸통.
-      canvas.drawRRect(
-        rect.shift(const Offset(1.5, 2.5)),
-        Paint()..color = Colors.black.withValues(alpha: 0.3),
-      );
-      canvas.drawRRect(rect, Paint()..color = color);
-      // 절취선(세로 점선).
-      final dashX = w * 0.22;
-      final dashPaint = Paint()
-        ..color = Colors.black.withValues(alpha: 0.25)
-        ..strokeWidth = 1;
-      for (var y = -h / 2 + 3; y < h / 2 - 2; y += 4) {
-        canvas.drawLine(Offset(dashX, y), Offset(dashX, y + 2), dashPaint);
-      }
-      // 티켓 위 글자를 암시하는 옅은 줄.
-      final textPaint = Paint()
-        ..color = Colors.black.withValues(alpha: 0.18)
-        ..strokeWidth = 1.6;
-      canvas.drawLine(
-        Offset(-w * 0.32, -h * 0.16),
-        Offset(dashX - 6, -h * 0.16),
-        textPaint,
-      );
-      canvas.drawLine(
-        Offset(-w * 0.32, h * 0.10),
-        Offset(dashX - 14, h * 0.10),
-        textPaint,
-      );
-
-      canvas.restore();
-    }
-
-    stub(
-      Offset(size.width * 0.20, size.height * 0.88),
-      -0.28,
-      const Color(0xFFD3A39B),
-    );
-    stub(
-      Offset(size.width * 0.33, size.height * 0.93),
-      0.18,
-      const Color(0xFF9CB8A7),
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _RoomTablePainter oldDelegate) => false;
-}
-
-/// 가죽 표지 질감: 은은한 얼룩 + 가장자리 박음질(스티치) 라인.
-class _LeatherCoverPainter extends CustomPainter {
-  const _LeatherCoverPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rng = math.Random(21);
-
-    // 가죽의 얼룩덜룩한 질감을 아주 옅은 반점으로 표현. size는 이미 책
-    // 크기(w x h, 기기별로 diaryAspectRatio에 맞춰 조정됨)이므로, 반점/
-    // 박음질 크기를 size 비율로 두면 어느 기기에서든 커버와 같은 비율로
-    // 보입니다(예전엔 고정 픽셀이라 아이폰17 기준에서만 맞았습니다).
-    final blotch = Paint()..style = PaintingStyle.fill;
-    for (var i = 0; i < 46; i++) {
-      final cx = rng.nextDouble() * size.width;
-      final cy = rng.nextDouble() * size.height;
-      final r = size.shortestSide * (0.0239 + rng.nextDouble() * 0.0877);
-      blotch.color = (rng.nextBool() ? Colors.black : Colors.white).withValues(
-        alpha: 0.015 + rng.nextDouble() * 0.02,
-      );
-      canvas.drawCircle(Offset(cx, cy), r, blotch);
-    }
-
-    // 가장자리 박음질(점선) 라인.
-    final stitchPaint = Paint()
-      ..color = const Color(0xFF8A6A50).withValues(alpha: 0.75)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-    final stitchInset = size.shortestSide * 0.0319;
-    final rrect = RRect.fromRectAndRadius(
-      EdgeInsets.all(stitchInset).deflateRect(Offset.zero & size),
-      Radius.circular(size.shortestSide * 0.0239),
-    );
-    final dashLength = size.shortestSide * 0.01993;
-    final dashStep = size.shortestSide * 0.03987;
-    final path = Path()..addRRect(rrect);
-    for (final metric in path.computeMetrics()) {
-      var d = 0.0;
-      while (d < metric.length) {
-        canvas.drawPath(metric.extractPath(d, d + dashLength), stitchPaint);
-        d += dashStep;
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _LeatherCoverPainter oldDelegate) => false;
 }
 
 /// 스플래시에서 표지가 열리면 드러나는, 실제 메인 화면(다이어리 인덱스

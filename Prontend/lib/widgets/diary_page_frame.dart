@@ -10,6 +10,7 @@ import 'responsive_text.dart';
 import 'app_back_handler.dart';
 import 'tab_nav_coordinator.dart';
 import 'diary_route.dart';
+import 'diary_desk_backdrop.dart';
 
 /// 다이어리 UI의 공통 프레임(가죽 배경 + 겹친 페이지 레이어 + 바인더 링 + 우측 탭)을
 /// 여러 화면에서 재사용하기 위한 래퍼 위젯.
@@ -772,12 +773,25 @@ class DiaryPageFrame extends StatelessWidget {
       // 안의 AspectRatio 프레임(다이어리 페이지) 전체가 작아지고 위로
       // 밀립니다. 키보드는 그 위에 그냥 겹쳐서 그려지도록 false로 둡니다.
       resizeToAvoidBottomInset: false,
-      // maintainBottomViewPadding: 안 켜면 SafeArea가 하단 padding을
-      // 키보드에 "먹힌" 걸로 치고 그만큼 프레임을 매번 미세하게
-      // 키웠다줄였다 함(화면이 확대/축소되는 것처럼 보이던 원인).
-      body: useSafeArea
-          ? SafeArea(maintainBottomViewPadding: true, child: sizedFrame)
-          : sizedFrame,
+      // [백엔드 수정] 단색 갈색 대신 스플래시와 같은 책상 + 가죽 표지를 프레임 뒤에 깖(미리보기는 표지만).
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          DiaryDeskBackdrop(
+            useSafeArea: useSafeArea,
+            twoPageCapable: landscapeCompanionPanel != null,
+            showDesk: scaleOverride == null,
+            topReserve: scaleOverride == null ? indexTabTopReserve : 0.0,
+            aspectRatio: aspectRatio,
+          ),
+          // maintainBottomViewPadding: 안 켜면 SafeArea가 하단 padding을
+          // 키보드에 "먹힌" 걸로 치고 그만큼 프레임을 매번 미세하게
+          // 키웠다줄였다 함(화면이 확대/축소되는 것처럼 보이던 원인).
+          useSafeArea
+              ? SafeArea(maintainBottomViewPadding: true, child: sizedFrame)
+              : sizedFrame,
+        ],
+      ),
     );
 
     if (!isTabRoot) return scaffold;

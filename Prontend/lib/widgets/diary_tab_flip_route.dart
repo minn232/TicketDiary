@@ -10,6 +10,7 @@ import 'package:flutter/scheduler.dart';
 
 import 'diary_page_flipper.dart' show BentLeafPainter, DiaryPageFlipper;
 import 'diary_page_frame.dart';
+import 'diary_desk_backdrop.dart';
 import 'diary_route.dart';
 
 /// 인덱스 탭 전환 전용 라우트. 화면이 옆으로 슬라이드하는 대신, 약 0.5초
@@ -642,8 +643,8 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition>
             return Stack(
               fit: StackFit.expand,
               children: [
-                // [DiaryPageFrame.backgroundColor] 기본값과 같은 색.
-                const ColoredBox(color: Color(0xFF5C4033)),
+                // [백엔드 수정] 단색 대신 DiaryPageFrame과 같은 책상 + 표지.
+                const DiaryDeskBackdrop(),
                 scene,
               ],
             );
