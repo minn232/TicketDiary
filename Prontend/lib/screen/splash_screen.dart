@@ -814,6 +814,11 @@ class _SplashScreenState extends State<SplashScreen>
     final lastRegularLeafAngleDeg =
         _seg(t, lastRegularLeafStart, lastRegularLeafStart + _flipDuration) *
         180;
+    // [백엔드 수정] 미리보기 DiaryScreen이 깔렸는지. 깔렸으면 그 안의 링이
+    // 같은 자리에 그림자를 그려서, 아래 링까지 그림자를 그리면 두 겹으로
+    // 진해졌다가 메인 화면으로 넘어갈 때 갑자기 연해짐
+    final previewVisible =
+        lastRegularLeafAngleDeg >= _tabRevealAngleDeg && _dataReady;
 
     return SizedBox(
       width: w,
@@ -888,7 +893,7 @@ class _SplashScreenState extends State<SplashScreen>
           // [백엔드 수정]
           // 시간 기준 대신 마지막 속지 회전각(_tabRevealAngleDeg 이상)
           // 기준으로 그리기 시작하게 변경.
-          if (lastRegularLeafAngleDeg >= _tabRevealAngleDeg && _dataReady)
+          if (previewVisible)
             Positioned.fill(
               child: FittedBox(
                 fit: BoxFit.fill,
@@ -1026,6 +1031,7 @@ class _SplashScreenState extends State<SplashScreen>
                     binderBarWidth,
                     binderBarHeight,
                     binderCircleShiftX,
+                    showShadow: !previewVisible,
                   ),
                 ),
               ),
@@ -1459,8 +1465,9 @@ Widget _buildMiniBinderRing(
   double k,
   double barWidth,
   double barHeight,
-  double circleShiftX,
-) {
+  double circleShiftX, {
+  bool showShadow = true,
+}) {
   final circleDiameter =
       barHeight * DiaryPageFrame.binderCircleToBarHeightRatio;
   return Row(
@@ -1498,12 +1505,13 @@ Widget _buildMiniBinderRing(
           color: Colors.grey.shade300,
           borderRadius: BorderRadius.circular(3 * k),
           boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.385),
-              blurRadius: 5 * k,
-              spreadRadius: 0.5 * k,
-              offset: Offset(2 * k, 2 * k),
-            ),
+            if (showShadow)
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.385),
+                blurRadius: 5 * k,
+                spreadRadius: 0.5 * k,
+                offset: Offset(2 * k, 2 * k),
+              ),
           ],
         ),
       ),
