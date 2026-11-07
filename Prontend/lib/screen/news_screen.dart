@@ -225,7 +225,12 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     // 로딩을 기다리지 않고 곧바로 이 화면을 드러내며, 로딩 중에는 아래
     // 소식 본문 위에 백색 유리 글레어를 씌웠다가 로딩이 끝나면 걷어냅니다.
     // 진입 시 캐시 대신 최신 목록을 조회합니다.
-    _newsFuture = _loadNews();
+    // [백엔드 수정] 마지막으로 받은 목록이 있으면 바로 보여주고 최신 목록은 뒤에서 받아 바꿈.
+    final latest = NewsListService.latest;
+    _newsFuture = latest != null ? Future.value(latest) : _loadNews();
+    if (latest != null) {
+      unawaited(_loadNews().catchError((Object _) => <NewsModel>[]));
+    }
     NewsListService.updates.addListener(_onNewsListUpdated);
     TabNavCoordinator.instance.targetRequested.addListener(_onTargetRequested);
     _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {

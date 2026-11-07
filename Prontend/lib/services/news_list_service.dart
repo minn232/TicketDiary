@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../models/news_model.dart';
+import 'auth_service.dart';
 import 'favorites_store.dart';
 import 'social_service.dart';
 // import 'concert_search_service.dart';
@@ -8,9 +9,25 @@ import 'social_service.dart';
 class NewsListService {
   static final updates = ValueNotifier<List<NewsModel>?>(null);
   static Future<List<NewsModel>>? _pending;
+
+  // [백엔드 수정] 탭을 다시 열 때 바로 보여줄 마지막 목록. 다른 유저거나 그 뒤 찜을 바꿨으면 null.
+  static String? _latestUserId;
+  static int? _latestRevision;
+  static List<NewsModel>? get latest {
+    final items = updates.value;
+    if (items == null ||
+        _latestUserId != AuthService.instance.userId ||
+        _latestRevision != FavoritesStore.instance.revision) {
+      return null;
+    }
+    return items;
+  }
+
   Future<List<NewsModel>> load() {
     return _pending ??= _fetch()
         .then((items) {
+          _latestUserId = AuthService.instance.userId;
+          _latestRevision = FavoritesStore.instance.revision;
           updates.value = items;
           return items;
         })

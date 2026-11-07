@@ -8,6 +8,8 @@ import '../widgets/summary_calendar.dart';
 import '../widgets/summary_report.dart';
 import '../widgets/scrapbook_page_background.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
+import '../models/ticket_response.dart';
 import '../services/news_list_service.dart';
 import '../services/news_card_identity.dart';
 import '../services/favorites_store.dart';
@@ -30,10 +32,68 @@ const _pageColor = Color(0xFFCEB99B);
 Future<Map<String, dynamic>> _defaultLoader(String period) =>
     ApiClient.instance.get('/summary?period=$period');
 
+// [백엔드 수정] 아직 안 간 내 티켓을 관람일(없으면 공연 첫날)에 'myTicket'으로 - 연 모아보기·관람 횟수엔 안 셈.
+List<Map<String, dynamic>> _upcomingFrom(List<TicketWithConcert> tickets) => [
+  for (final t in tickets)
+    if (t.status != 'after_concert')
+      if ((t.attendedDate ?? t.concert?.startDate) case final date?)
+        {
+          'kind': 'myTicket',
+          'ticket_id': t.id,
+          'concert_name': t.concert?.name ?? '',
+          'poster_url': t.concert?.posterUrl,
+          'date': DateUtils.dateOnly(date.toLocal()).toIso8601String(),
+          'price': t.price,
+        },
+];
+
+// [백엔드 수정] 탭을 다시 열 때 바로 보이도록 받은 결산 값을 화면 밖에 둠(유저가 바뀌면 비움).
+class _SummaryMemory {
+  static String? _userId;
+  static final Map<String, Map<String, dynamic>> _periods = {};
+  static List<Map<String, dynamic>>? _upcoming;
+
+  static void _checkUser() {
+    final userId = AuthService.instance.userId;
+    if (_userId == userId) return;
+    _userId = userId;
+    _periods.clear();
+    _upcoming = null;
+  }
+
+  static Map<String, Map<String, dynamic>> get periods {
+    _checkUser();
+    return _periods;
+  }
+
+  static List<Map<String, dynamic>>? get upcoming {
+    _checkUser();
+    return _upcoming;
+  }
+
+  static set upcoming(List<Map<String, dynamic>>? value) {
+    _checkUser();
+    _upcoming = value;
+  }
+}
+
 class SummaryScreen extends StatefulWidget {
   const SummaryScreen({super.key, this.loader = _defaultLoader});
 
   final SummaryJsonLoader loader;
+
+  // [백엔드 수정] 스플래시에서 결산 첫 화면(전체 기간)과 다가오는 티켓을 미리 받아둠.
+  static Future<void> preload() async {
+    try {
+      final data = await _defaultLoader('all');
+      _SummaryMemory.periods['all'] = data;
+    } catch (_) {}
+    try {
+      _SummaryMemory.upcoming = _upcomingFrom(
+        await TicketService().listTickets(),
+      );
+    } catch (_) {}
+  }
 
   @override
   State<SummaryScreen> createState() => _SummaryScreenState();
@@ -50,7 +110,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
   String _shownPeriod = 'all';
   // 기간별로 받아둔 값. 보고서는 지금 고른 기간의 값으로만 그림 - 예전엔 새 기간을
   // 불러오는 동안 다른 기간(캘린더의 전체 기간) 숫자를 보여줬다가 바뀌어 보였음
-  final Map<String, Map<String, dynamic>> _cache = {};
+  // [백엔드 수정] 기본 서버 조회일 때만 화면 밖 값과 공유(테스트처럼 loader를 바꾸면 이 화면에만).
+  late final Map<String, Map<String, dynamic>> _cache =
+      identical(widget.loader, _defaultLoader) ? _SummaryMemory.periods : {};
   Object? _error; // 첫 로딩 실패(보여줄 이전 값이 없을 때)만 화면 전체 오류로 표시
   bool _loading = false;
   int _requestId = 0;
@@ -87,8 +149,20 @@ class _SummaryScreenState extends State<SummaryScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
-    _newsFuture = _loadCalendarNews();
+    // [백엔드 수정] 받아둔 값이 있으면 바로 보여주고 최신 값은 진행 막대 없이 뒤에서 받음.
+    final cached = _cache[_period];
+    if (cached != null) {
+      _data = cached;
+      _shownPeriod = _period;
+    }
+    if (identical(widget.loader, _defaultLoader)) {
+      _upcomingTickets = _SummaryMemory.upcoming ?? const [];
+    }
+    _load(quiet: cached != null);
+    final latestNews = NewsListService.latest;
+    _newsFuture = latestNews != null
+        ? Future.value(latestNews)
+        : _loadCalendarNews();
     NewsListService.updates.addListener(_onNewsListUpdated);
     _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
@@ -113,39 +187,31 @@ class _SummaryScreenState extends State<SummaryScreen> {
     });
   }
 
-  // [백엔드 수정] 관람일(없으면 공연 첫날)에 'myTicket'으로 표시 - 연 모아보기·관람 횟수엔 안 셈.
+  // [백엔드 수정] 다가오는 내 티켓([_upcomingFrom]) - 기본 조회면 화면 밖에도 둠.
   Future<void> _loadUpcomingTickets() async {
     try {
-      final tickets = await TicketService().listTickets();
+      final upcoming = _upcomingFrom(await TicketService().listTickets());
+      if (identical(widget.loader, _defaultLoader)) {
+        _SummaryMemory.upcoming = upcoming;
+      }
       if (!mounted) return;
-      setState(() {
-        _upcomingTickets = [
-          for (final t in tickets)
-            if (t.status != 'after_concert')
-              if ((t.attendedDate ?? t.concert?.startDate) case final date?)
-                {
-                  'kind': 'myTicket',
-                  'ticket_id': t.id,
-                  'concert_name': t.concert?.name ?? '',
-                  'poster_url': t.concert?.posterUrl,
-                  'date': DateUtils.dateOnly(date.toLocal()).toIso8601String(),
-                  'price': t.price,
-                },
-        ];
-      });
+      setState(() => _upcomingTickets = upcoming);
     } catch (_) {
       // 못 불러오면 관람 기록·소식 일정만 보여줌
     }
   }
 
   // 마지막으로 보낸 요청의 결과만 반영(연달아 눌렀을 때 늦게 온 이전 응답이 덮어쓰지 않게)
-  Future<void> _load() async {
+  // [백엔드 수정] quiet: 받아둔 값을 보여주는 중이라 진행 막대 없이 갱신.
+  Future<void> _load({bool quiet = false}) async {
     final id = ++_requestId;
     final period = _period;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (!quiet) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       final data = await widget.loader(period);
       if (!mounted) return;

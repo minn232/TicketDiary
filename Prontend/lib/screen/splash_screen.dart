@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/first_launch_choice_sheet.dart';
 
 import 'package:ticketdiary/screen/diary_screen.dart';
+import 'package:ticketdiary/screen/summary_screen.dart';
+import 'package:ticketdiary/services/news_list_service.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
 import 'package:ticketdiary/services/fcm_service.dart';
@@ -354,6 +356,12 @@ class _SplashScreenState extends State<SplashScreen>
       const Duration(seconds: 3),
       onTimeout: () {},
     );
+
+    // [백엔드 수정] 소식·결산을 뒤에서 미리 받아둠(스플래시는 안 기다림) - 탭을 처음 열 때 빈 화면 줄이기.
+    unawaited(
+      NewsListService().load().then<void>((_) {}, onError: (Object _) {}),
+    );
+    unawaited(SummaryScreen.preload());
 
     // [백엔드 수정]
     // FCM 초기화를 fire-and-forget으로 분리 - 스플래시를 막지 않음.
