@@ -145,6 +145,8 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
 
   // [백엔드 수정] 관람일 탭을 페이지 위 가장자리에 붙이는 기준.
   final LayerLink _pageLink = LayerLink();
+  // [백엔드 수정] 페이지 앞뒷면 넘김 회전각 - 날짜 탭도 같은 각도로 돌림.
+  final ValueNotifier<double> _flipAngle = ValueNotifier(0);
 
   @override
   void initState() {
@@ -194,7 +196,9 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
 
   // [백엔드 수정] 다른 관람일로 이동 - 접는 연출 없이, 다이어리가 그 날 페이지를 위에 띄운 뒤 이 페이지를 뺌.
   void _switchDay(int index) {
-    if (_isClosing || _controller.value < 0.85) return;
+    if (_isClosing || _controller.value < 0.85 || _flipAngle.value != 0) {
+      return;
+    }
     _isClosing = true;
     // 곡은 끊지 않고 다음 날 페이지가 이어받음
     TicketPreviewPlayer.instance.handOff(this);
@@ -244,7 +248,29 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     unawaited(TicketPreviewPlayer.instance.stop(this));
     _transitionSound.dispose();
     _controller.dispose();
+    _flipAngle.dispose();
     super.dispose();
+  }
+
+  /// [백엔드 수정] 날짜 탭을 페이지와 같은 원근·회전으로 돌림. 탭 왼쪽 아래가 페이지 왼쪽 위
+  /// (18, 1.5) 지점에 붙어 있으니, 거기서 페이지 중심까지를 회전 중심으로 씀.
+  Widget _flipWithPage(Widget tabs) {
+    return ValueListenableBuilder<double>(
+      valueListenable: _flipAngle,
+      child: tabs,
+      builder: (context, angle, child) {
+        final page = _pageLink.leaderSize;
+        if (angle == 0 || page == null) return child!;
+        return Transform(
+          alignment: Alignment.bottomLeft,
+          origin: Offset(page.width / 2 - 18, page.height / 2 - 1.5),
+          transform: Matrix4.identity()
+            ..setEntry(3, 2, .001)
+            ..rotateY(angle),
+          child: child,
+        );
+      },
+    );
   }
 
   /// [ConcertBeforeOverlay._endRect]와 동일한 기준(SafeArea로 줄어든
@@ -356,6 +382,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
               issueNumber: widget.issueNumber,
               frameScale: frameScale,
               pageLink: _pageLink,
+              flipAngle: _flipAngle,
             ),
           ),
         ),
@@ -445,10 +472,12 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
                         offset: const Offset(18, 1.5),
                         child: FadeTransition(
                           opacity: _postItOpacity,
-                          child: PassDaySwitcher(
-                            tabs: passDays,
-                            onSelect: _switchDay,
-                            pageColor: const Color(0xFFF4F1E1),
+                          child: _flipWithPage(
+                            PassDaySwitcher(
+                              tabs: passDays,
+                              onSelect: _switchDay,
+                              pageColor: const Color(0xFFF4F1E1),
+                            ),
                           ),
                         ),
                       ),
@@ -472,6 +501,7 @@ class _ExpandedConcertAfter extends StatefulWidget {
   final int issueNumber;
   final double frameScale;
   final LayerLink pageLink;
+  final ValueNotifier<double> flipAngle;
 
   const _ExpandedConcertAfter({
     required this.postItOpacity,
@@ -480,6 +510,7 @@ class _ExpandedConcertAfter extends StatefulWidget {
     required this.issueNumber,
     required this.frameScale,
     required this.pageLink,
+    required this.flipAngle,
     this.ticketInfo,
     this.onTicketInfoChanged,
   });
@@ -512,6 +543,7 @@ class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
                   onTicketInfoChanged: widget.onTicketInfoChanged,
                   pageBoundaryKey: _pageBoundaryKey,
                   issueNumber: widget.issueNumber,
+                  flipAngle: widget.flipAngle,
                 ),
               ),
             ),

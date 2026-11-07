@@ -1301,6 +1301,9 @@ class _MonthFlipState extends State<_MonthFlip>
   /// 테이프 바로 아래 찢는 선 위치(종이 윗변에서)
   static const _tearY = 14.0;
 
+  /// [백엔드 수정] 이전 달로 연타할 때 올라오는 연출을 시작할 지점(0~1).
+  static const _rapidRewindFrom = 0.7;
+
   @override
   void initState() {
     super.initState();
@@ -1315,10 +1318,14 @@ class _MonthFlipState extends State<_MonthFlip>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.monthIndex != widget.monthIndex) {
       // 빠르게 연달아 넘기면 진행 중이던 연출은 버리고 바로 다음 것으로
+      final rapid = _controller.isAnimating;
       _old = oldWidget.child;
       _forward = widget.monthIndex > oldWidget.monthIndex;
       _seed = math.max(widget.monthIndex, oldWidget.monthIndex);
-      _controller.forward(from: 0).whenComplete(() {
+      // [백엔드 수정] 이전 달은 아래에서 올라와 붙어야 보여서, 연타 때 처음부터 올리면 미래 쪽보다
+      // 느리게 느껴짐 - 넘기는 중에 또 누르면 거의 다 올라온 지점부터 시작.
+      final from = !_forward && rapid ? _rapidRewindFrom : 0.0;
+      _controller.forward(from: from).whenComplete(() {
         if (mounted) setState(() => _old = null);
       });
     }
@@ -1414,6 +1421,9 @@ class _MonthFlipState extends State<_MonthFlip>
               fit: StackFit.expand,
               children: [
                 IgnorePointer(child: old),
+                // [백엔드 수정] 올라오는 종이는 터치를 막아 연출이 끝날 때까지 버튼이 안 눌려 연타가 느렸음 -
+                // 안 보이는 이번 달을 제자리에 깔아 바로 누를 수 있게 함(미래 쪽은 새 달이 밑에 깔려 있어 원래 됨)
+                Opacity(opacity: 0, child: widget.child),
                 _torn(
                   widget.child,
                   1 - v,

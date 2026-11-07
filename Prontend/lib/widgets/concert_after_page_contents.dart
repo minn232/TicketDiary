@@ -132,6 +132,9 @@ class ConcertAfterPageContents extends StatefulWidget {
   /// 공연 기록에 표시할 발행 호수.
   final int issueNumber;
 
+  /// [백엔드 수정] 앞뒷면 넘김 회전각(라디안) - 페이지 밖 날짜 탭이 같이 돌게 알려줌.
+  final ValueNotifier<double>? flipAngle;
+
   const ConcertAfterPageContents({
     super.key,
     required this.concertTitle,
@@ -141,6 +144,7 @@ class ConcertAfterPageContents extends StatefulWidget {
     this.onTicketInfoChanged,
     this.pageBoundaryKey,
     this.issueNumber = 1,
+    this.flipAngle,
   });
 
   @override
@@ -341,6 +345,7 @@ class _ConcertAfterPageContentsState extends State<ConcertAfterPageContents> {
       pageBoundaryKey: widget.pageBoundaryKey,
       issueNumber: widget.issueNumber,
       onArtistIdentityChanged: _refreshArtistField,
+      flipAngle: widget.flipAngle,
     );
 
     return canvas;
@@ -1455,6 +1460,7 @@ class _ScrapbookCanvas extends StatefulWidget {
   final int issueNumber;
   // [백엔드 수정] 실제 셋리에서 아티스트 연결을 바꿨을 때.
   final VoidCallback? onArtistIdentityChanged;
+  final ValueNotifier<double>? flipAngle;
 
   /// 공유 이미지용 읽기 전용 페이지 (편집 UI/제스처/저장 없음).
   final bool exportMode;
@@ -1480,6 +1486,7 @@ class _ScrapbookCanvas extends StatefulWidget {
     this.pageBoundaryKey,
     this.issueNumber = 1,
     this.onArtistIdentityChanged,
+    this.flipAngle,
     this.exportMode = false,
     this.exportBack = false,
   });
@@ -1525,6 +1532,17 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     });
   }
 
+  /// 넘김 중 회전각. 앞 절반은 떠나는 면, 뒤 절반은 들어오는 면 각도.
+  double get _flipAngleNow {
+    if (!_flip.isAnimating) return 0;
+    final progress = Curves.easeInOutCubic.transform(_flip.value);
+    return _flipDirection *
+        math.pi *
+        (progress >= .5 ? progress - 1 : progress);
+  }
+
+  void _reportFlipAngle() => widget.flipAngle?.value = _flipAngleNow;
+
   Widget _flippablePage(Widget front) {
     if (widget.exportMode) return _pageSheet(front, back: _showBack);
     final flipGestureEnabled = _canFlip;
@@ -1551,11 +1569,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
             final back = _flip.isAnimating
                 ? (secondHalf ? _showBack : !_showBack)
                 : _showBack;
-            final angle = _flip.isAnimating
-                ? _flipDirection *
-                      math.pi *
-                      (secondHalf ? progress - 1 : progress)
-                : 0.0;
+            final angle = _flipAngleNow;
             return Transform(
               alignment: Alignment.center,
               transform: Matrix4.identity()
@@ -1818,7 +1832,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     _flip = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 480),
-    );
+    )..addListener(_reportFlipAngle);
     _loadEnvelopeAccent();
     unawaited(_initLayout());
     _watchTimetableRows();
