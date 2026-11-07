@@ -125,7 +125,9 @@ def _llm_exclusion_reasons(concert: Concert, now: datetime) -> list[str]:
     if not concert.poster_url:
         reasons.append("포스터 없음")
     attempted_at = concert.artist_extraction_attempted_at
-    if attempted_at is not None:
+    if concert.artist_extraction_received_at is not None:
+        reasons.append("추출 결과 받음")
+    elif attempted_at is not None:
         if concert.artist_extraction_attempt_count >= MAX_ARTIST_EXTRACTION_ATTEMPTS:
             reasons.append("재시도 상한 도달")
         elif now - attempted_at < ARTIST_EXTRACTION_RETRY_COOLDOWN:

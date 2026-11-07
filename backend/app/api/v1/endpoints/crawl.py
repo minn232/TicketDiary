@@ -277,6 +277,10 @@ async def receive_artist_extraction_result(
         logger.warning(f"[LLM] 아티스트 추출 콜백의 공연을 찾을 수 없음 concert_id={concert_id}")
         raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
 
+    # 결과가 비어 있어도 받은 것 - 포스터가 같으니 다시 보내도 같은 결과
+    concert.artist_extraction_received_at = datetime.now(timezone.utc)
+    await db.commit()
+
     known_artist_names: set[str] | None = None
     if body.artist_name or body.lineup:
         known_artist_names = await get_known_artist_names(db)

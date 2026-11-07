@@ -915,3 +915,51 @@ async def test_crawl_result_queues_even_when_nothing_else_changed():
         )
         row = result.scalar_one()
     assert row.status == "pending"
+
+
+# 콜백을 받으면 받은 시각이 찍히고(결과가 비어도), 그 공연은 쿨다운이 지나도 다시 안 보냄
+@pytest.mark.asyncio
+async def test_artist_result_marks_received_and_stops_resend():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_RECEIVED_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=25), 1)
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": []},
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+
+    async with AsyncSessionLocal() as db:
+        concert = (await db.execute(select_concert_by_id(concert_id))).scalar_one()
+    assert concert.artist_extraction_received_at is not None
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id not in _sent_concert_ids(mock_client)
+
+
+# 매일 같은 시각 배치가 몇 초 차로 24h 쿨다운에 걸려 하루 건너뛰던 것 - 전날 배치(약 24h 전)면 다시 대상
+@pytest.mark.asyncio
+async def test_send_posters_retries_next_day_batch_even_if_slightly_under_24h():
+    token = await _get_token()
+    concert_id = await _create_concert(f"PF_NEXTDAY_{uuid.uuid4().hex[:6]}", "", token)
+    await _set_attempted(concert_id, datetime.now(timezone.utc) - timedelta(hours=23, minutes=59), 1)
+
+    mock_client = _mock_llm_client()
+    with patch("app.services.crawler.settings.LLM_ARTIST_URL", "https://llm.example.com/artist"), \
+         patch("app.services.crawler.httpx.AsyncClient", return_value=mock_client):
+        from app.services.crawler import send_posters_for_artist_extraction
+
+        await send_posters_for_artist_extraction()
+
+    assert concert_id in _sent_concert_ids(mock_client)

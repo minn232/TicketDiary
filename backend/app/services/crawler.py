@@ -957,8 +957,9 @@ async def send_screenshots_to_llm() -> int:
 
 # 콜백(/artist-result)이 타임아웃/522로 유실되면 attempted_at만 찍히고 영영 재시도가 안 되던
 # 구조적 갭 수정용 - 포스터 내용은 안 바뀌므로 crawl_and_save처럼 오래 재시도할 이유는 없어
-# 상한을 크롤링(24h/최대 30회)보다 훨씬 낮게 잡는다
-ARTIST_EXTRACTION_RETRY_COOLDOWN = timedelta(hours=24)
+# 상한을 크롤링(24h/최대 30회)보다 훨씬 낮게 잡는다. 24h면 매일 같은 시각 배치가 몇 초 차로 쿨다운에
+# 걸려 하루씩 건너뛰어서 20h로(하루 한 번 배치라 그날 안에 두 번 가지는 않음)
+ARTIST_EXTRACTION_RETRY_COOLDOWN = timedelta(hours=20)
 MAX_ARTIST_EXTRACTION_ATTEMPTS = 5
 
 
@@ -972,6 +973,8 @@ def artist_extraction_target_filter(now: datetime):
         # ai_reviewed_at(Claude 검수)도 같은 이유로 함께 제외
         Concert.admin_reviewed_at.is_(None),
         Concert.ai_reviewed_at.is_(None),
+        # 결과를 이미 받은 공연은 다시 안 보냄(포스터 내용은 안 바뀜)
+        Concert.artist_extraction_received_at.is_(None),
         or_(
             Concert.artist_extraction_attempted_at.is_(None),
             and_(

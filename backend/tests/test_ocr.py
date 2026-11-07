@@ -1442,3 +1442,65 @@ def test_shrink_for_vision_reencodes_large_jpeg_keeping_resolution():
     out = _shrink_for_vision(big.getvalue())
     assert len(out) < len(big.getvalue())
     assert Image.open(io.BytesIO(out)).size == (1500, 2000)
+
+
+# 양도 티켓(BABO AND THE NIGHT, 11/7 친구 등록 서버 로그의 OCR 줄) - 원매일자를 공연일로 쓰고,
+# 날짜 줄·좌석 번호 줄·매매자 줄(구매자 이름)이 KOPIS 검색어로 나갔던 케이스
+_TRANSFER_TICKET_TEXT = (
+    "BABO AND THE NIGHT\n"
+    "일 시: 2020년 11월 01일(일) 오후 6:00\n"
+    "장 소: 강서호박나이트\n"
+    "번호 B39 (1/1)\n"
+    "매매자: **0320 홍길동\n"
+    "원매일자, 2026-10-23\n"
+)
+
+
+def test_transfer_ticket_title_candidates_skip_date_seat_and_buyer_lines():
+    candidates = _extract_title_candidates(_TRANSFER_TICKET_TEXT)
+
+    assert candidates[0] == "BABO AND THE NIGHT"
+    assert not any("2020" in c or "B39" in c or "매매자" in c or "원매일자" in c for c in candidates)
+
+
+def test_transfer_ticket_concert_date_ignores_original_purchase_date():
+    from app.services.ocr import _fix_year_by_purchase_date
+
+    # "일 시"(띄어쓰기) 라벨 날짜를 고르고, 연도 오인식(2026→2020)은 원매일자 뒤로 보정
+    date = _extract_concert_date(_TRANSFER_TICKET_TEXT)
+    assert date == "2020-11-01"
+    assert _fix_year_by_purchase_date(date, _TRANSFER_TICKET_TEXT) == "2026-11-01"
+
+
+def test_concert_date_fallback_skips_purchase_label_line():
+    text = "BABO AND THE NIGHT\n원매일자, 2026-10-23\n2026.11.01 18:00\n"
+    assert _extract_concert_date(text) == "2026-11-01"
+
+
+def test_fix_year_by_purchase_date_keeps_normal_dates():
+    from app.services.ocr import _fix_year_by_purchase_date
+
+    assert _fix_year_by_purchase_date("2026-11-01", "예매일 2026-10-23") == "2026-11-01"
+    assert _fix_year_by_purchase_date("2020-11-01", "구매 정보 없음") == "2020-11-01"
+    # 구매일이 연말이고 공연이 다음 해 초면 다음 해로
+    assert _fix_year_by_purchase_date("2020-01-05", "결제일 2026.12.20") == "2027-01-05"
+
+
+def test_date_line_with_long_prefix_stays_title_candidate():
+    candidates = _extract_title_candidates("콘서트 서울 2026.05.03\n일사 2026년 11월 01일 오후 6:00")
+    assert candidates == ["콘서트 서울 2026.05.03"]
+
+
+def test_date_anchor_skips_original_purchase_date_and_accepts_ocr_label():
+    from app.services.ocr import _find_date_anchor
+
+    annotation = _page_annotation([
+        _paragraph_with_word_boxes("BABO AND THE NIGHT", 1200, 1100, 2600, 1200),
+        # OCR이 "일시"를 "일사"로 읽은 줄 - 사진 가장자리
+        _paragraph_with_word_boxes("일사 2026년 11월 01일 오후 6:00", 1200, 300, 2600, 380),
+        # 원매일자가 사진 중앙에 가장 가까움
+        _paragraph_with_word_boxes("원매일자, 2026-10-23", 1600, 1450, 2400, 1530),
+    ])
+
+    date, _ = _find_date_anchor(annotation)
+    assert date == "2026-11-01"
