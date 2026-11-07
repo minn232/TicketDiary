@@ -254,6 +254,75 @@ async def test_kopis_search_multi_prefers_most_specific_confident_keyword():
     assert [c.kopis_id for c in result] == ["RIGHT"]
 
 
+# 첫 후보에서 날짜 맞는 결과를 찾으면, 그보다 구체적일 수 없는 후보·장소 줄·안내문 문장은 KOPIS에 안 보내는지 테스트
+# (결과는 전부 찾아볼 때와 같아야 함 - 더 구체적인 후보는 그대로 시도)
+@pytest.mark.asyncio
+async def test_kopis_search_multi_skips_candidates_that_cannot_win():
+    right = MagicMock(
+        kopis_id="RIGHT", name="Dragon Pony Concert: Calling back", venue="블루스퀘어",
+        start_date=datetime(2030, 12, 5), end_date=datetime(2030, 12, 6),
+    )
+    searched: list[str] = []
+
+    async def _once(db, q, *a, **k):
+        searched.append(q)
+        return [right] if q == "Dragon Pony Concert: Calling back" else []
+
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis._search_concerts_once", _once):
+            result = await kopis_search_concerts_multi(
+                db,
+                ["Dragon Pony Concert: Calling back", "블루스퀘어", "R석 1층 5열 12번", "본 티켓은 재판매할 수 없습니다"],
+                date(2030, 11, 28), date(2030, 12, 12), "블루스퀘어",
+            )
+
+    assert [c.kopis_id for c in result] == ["RIGHT"]
+    assert searched == ["Dragon Pony Concert: Calling back"]
+
+
+# 아직 아무것도 못 찾았을 땐 문장으로 끝나는 줄도 공연명일 수 있어 그대로 검색하는지 테스트
+@pytest.mark.asyncio
+async def test_kopis_search_multi_tries_sentence_like_title_before_any_match():
+    right = MagicMock(
+        kopis_id="RIGHT", name="윤하 콘서트: 안녕하세요",
+        start_date=datetime(2030, 12, 5), end_date=datetime(2030, 12, 6),
+    )
+    searched: list[str] = []
+
+    async def _once(db, q, *a, **k):
+        searched.append(q)
+        return [right] if q == "윤하 콘서트: 안녕하세요" else []
+
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis._search_concerts_once", _once):
+            result = await kopis_search_concerts_multi(
+                db, ["윤하 콘서트: 안녕하세요"], date(2030, 11, 28), date(2030, 12, 12)
+            )
+
+    assert [c.kopis_id for c in result] == ["RIGHT"]
+    assert searched[0] == "윤하 콘서트: 안녕하세요"
+
+
+# 긴 안내문 문장은 아직 못 찾았어도 끝단어 축소 검색을 하지 않는지 테스트
+@pytest.mark.asyncio
+async def test_kopis_search_multi_skips_long_notice_sentence():
+    searched: list[str] = []
+
+    async def _once(db, q, *a, **k):
+        searched.append(q)
+        return []
+
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis._search_concerts_once", _once):
+            await kopis_search_concerts_multi(
+                db,
+                ["본 티켓은 앞면에 표시된 해당 일시에 한하여 사용 가능하며, 도난이나 분실 시 재발행 되지 않습니다."],
+                date(2030, 11, 28), date(2030, 12, 12),
+            )
+
+    assert searched == []
+
+
 # 한글 검색어는 글자 수가 적어도 정보량이 많음 - "셰본 내한공연"이 "IN SEOUL"보다 구체적으로 판정돼야 함
 def test_query_specificity_weights_hangul():
     assert _query_specificity("셰본 내한공연") > _query_specificity("IN SEOUL")

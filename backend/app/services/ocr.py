@@ -6,7 +6,7 @@ import base64
 import tempfile
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageOps
 from fastapi import HTTPException
 
 from app.core.config import settings
@@ -164,6 +164,25 @@ def _detect_format(image_bytes: bytes, content_type: str) -> str:
     if "bmp" in ct:
         return "bmp"
     return "unknown"
+
+
+# 폰 갤러리 원본 사진(2~4MB)은 Vision 처리가 오래 걸려(실물 앨범 사진 11장 평균 3.5초) 이보다 크면 다시 저장.
+# 해상도는 그대로 두고 화질만 낮춤 - 해상도를 줄이면 겹쳐 찍힌 다른 티켓 제목을 잡는 등 결과가 바뀌었음
+_VISION_REENCODE_OVER = 1_500_000
+_VISION_REENCODE_QUALITY = 80
+
+
+# 티켓 스캔용 - 큰 JPEG만 같은 해상도·낮은 화질로 다시 저장. EXIF 회전은 픽셀에 반영해 둠(다시 저장하면
+# EXIF가 빠져서). 원본 높이와 좌표를 맞추는 타임테이블(to_jpeg 직접 사용)엔 안 씀
+def _shrink_for_vision(jpeg_bytes: bytes) -> bytes:
+    if len(jpeg_bytes) <= _VISION_REENCODE_OVER:
+        return jpeg_bytes
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(jpeg_bytes)))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=_VISION_REENCODE_QUALITY)
+    return buf.getvalue()
 
 
 # 여러 포맷 JPEG 변환
@@ -999,7 +1018,9 @@ def _parse_ticket_fields(raw_text: str) -> dict:
 async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     loop = asyncio.get_running_loop()
     try:
-        jpeg_bytes = await loop.run_in_executor(None, to_jpeg, image_bytes, content_type)
+        jpeg_bytes = await loop.run_in_executor(
+            None, lambda: _shrink_for_vision(to_jpeg(image_bytes, content_type))
+        )
     except (Image.UnidentifiedImageError, Image.DecompressionBombError, OSError) as e:
         # 깨진 파일/이미지가 아닌 파일/픽셀 폭탄은 서버 오류가 아니라 입력 문제
         raise HTTPException(status_code=422, detail="이미지를 읽을 수 없습니다.") from e

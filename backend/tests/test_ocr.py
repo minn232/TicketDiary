@@ -1418,3 +1418,27 @@ def test_extract_pass_days(seat, raw_text, expected):
     from app.services.ocr import _extract_pass_days
 
     assert _extract_pass_days(seat, raw_text) == expected
+
+
+# 큰 갤러리 사진은 해상도는 그대로·화질만 낮춰 Vision에 보내고, EXIF 회전은 픽셀에 반영하는지 테스트
+def test_shrink_for_vision_reencodes_large_jpeg_keeping_resolution():
+    import io
+    import numpy as np
+    from PIL import Image
+    from app.services.ocr import _shrink_for_vision, _VISION_REENCODE_OVER
+
+    small = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(small, format="JPEG")
+    assert _shrink_for_vision(small.getvalue()) == small.getvalue()
+
+    pixels = np.random.default_rng(0).integers(0, 255, (1500, 2000, 3), dtype=np.uint8)
+    img = Image.fromarray(pixels)
+    exif = img.getexif()
+    exif[0x0112] = 6  # 시계 방향 90도로 보이게 저장된 세로 사진
+    big = io.BytesIO()
+    img.save(big, format="JPEG", quality=98, exif=exif)
+    assert len(big.getvalue()) > _VISION_REENCODE_OVER
+
+    out = _shrink_for_vision(big.getvalue())
+    assert len(out) < len(big.getvalue())
+    assert Image.open(io.BytesIO(out)).size == (1500, 2000)
