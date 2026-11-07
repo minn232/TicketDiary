@@ -507,14 +507,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   onChanged: _setPinnedConcert,
                                   indent: true,
                                 ),
-                                _divider,
-                                // [백엔드 수정] blog_draft로 서버 저장
-                                _SwitchRow(
-                                  title: '감상 메모 정리 알림',
-                                  value: pushBlogDraft,
-                                  onChanged: _setBlogDraft,
-                                  indent: true,
-                                ),
+                                // [백엔드 수정] 감상 메모 정리 알림은 안 보냄(블로그 공유에서만 씀).
+                                // _divider,
+                                // // [백엔드 수정] blog_draft로 서버 저장
+                                // _SwitchRow(
+                                //   title: '감상 메모 정리 알림',
+                                //   value: pushBlogDraft,
+                                //   onChanged: _setBlogDraft,
+                                //   indent: true,
+                                // ),
                               ],
                             ),
                           ),

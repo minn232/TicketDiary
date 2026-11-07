@@ -13,6 +13,7 @@ class BlogDraft {
     this.text,
     this.edited = false,
     this.generatedAt,
+    this.requestedAt,
   });
 
   static const empty = BlogDraft(status: BlogDraftStatus.none);
@@ -31,6 +32,18 @@ class BlogDraft {
   final bool edited;
   final DateTime? generatedAt;
 
+  /// [백엔드 수정] 메모를 마지막으로 고친 시각.
+  final DateTime? requestedAt;
+
+  /// [백엔드 수정] 고친 뒤 자정이 지났는데 아직 정리 전(밤 배치가 못 돎).
+  bool get overdue {
+    final at = requestedAt;
+    if (at == null) return false;
+    final kst = DateTime.now().toUtc().add(const Duration(hours: 9));
+    final midnightKst = DateTime.utc(kst.year, kst.month, kst.day);
+    return at.toUtc().isBefore(midnightKst.subtract(const Duration(hours: 9)));
+  }
+
   /// 이전에라도 정리된 글이 있는지(stale·failed여도 이전 정리본은 볼 수 있음).
   bool get hasResult => text != null;
 
@@ -45,6 +58,7 @@ class BlogDraft {
     text: json['text'] as String?,
     edited: json['edited'] as bool? ?? false,
     generatedAt: DateTime.tryParse(json['generated_at'] as String? ?? ''),
+    requestedAt: DateTime.tryParse(json['requested_at'] as String? ?? ''),
   );
 }
 

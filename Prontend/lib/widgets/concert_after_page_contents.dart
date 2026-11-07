@@ -2066,7 +2066,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       // [백엔드 수정] 정리된 블로그 글 연결.
       loadBlogDraft: widget.setlistTicketId == null
           ? null
-          : () => loadBlogDraftText(widget.setlistTicketId!),
+          // : () => loadBlogDraftText(widget.setlistTicketId!),
+          : () => loadBlogDraft(widget.setlistTicketId!),
       pageBuilder: ({required bool back}) => _ScrapbookCanvas(
         key: ValueKey('share_$back'),
         layoutKey: widget.layoutKey,

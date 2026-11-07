@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/blog_draft_service.dart';
 import '../services/external_share_service.dart';
 import 'blog_memo_page.dart';
 import 'concert_after_share_card.dart';
@@ -42,7 +43,7 @@ Future<void> showConcertAfterShareSheet(
   required String infoText,
   required String fileStem,
   DiaryFrameScale? frameScale,
-  Future<String?> Function()? loadBlogDraft,
+  Future<BlogDraft> Function()? loadBlogDraft,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -78,8 +79,8 @@ class ConcertAfterShareSheet extends StatefulWidget {
   final String fileStem;
   final DiaryFrameScale? frameScale;
 
-  /// 백엔드 연결 후 자동 작성된 글을 반환합니다. 미연결/빈 글은 복사하지 않습니다.
-  final Future<String?> Function()? loadBlogDraft;
+  /// [백엔드 수정] 감상 메모 정리 결과. 정리가 끝난 글만 블로그로 옮길 수 있음.
+  final Future<BlogDraft> Function()? loadBlogDraft;
 
   const ConcertAfterShareSheet({
     super.key,
@@ -117,9 +118,25 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
   final GlobalKey _hiddenFrontKey = GlobalKey();
   final GlobalKey _hiddenBackKey = GlobalKey();
 
+  // [백엔드 수정] 블로그 버튼 상태 - 시트를 열 때 미리 조회.
+  BlogDraft? _blogDraft;
+  Future<BlogDraft>? _blogLoad;
+
+  Future<BlogDraft> _loadBlogDraft() {
+    final load = widget.loadBlogDraft;
+    if (load == null) return Future.value(BlogDraft.empty);
+    final future = load();
+    _blogLoad = future;
+    future.then((draft) {
+      if (mounted) setState(() => _blogDraft = draft);
+    }, onError: (Object _) => _blogLoad = null);
+    return future;
+  }
+
   @override
   void initState() {
     super.initState();
+    unawaited(_loadBlogDraft().then((_) {}, onError: (Object _) {}));
     unawaited(
       ExternalShareService.installedApps().then((apps) {
         if (mounted) setState(() => _apps = apps);
@@ -210,35 +227,38 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
     return shots.length > 1 ? '사진 2장을 저장했어요.' : '사진을 저장했어요.';
   }
 
+  // [백엔드 수정] 정리가 끝났을 때만 글 복사 후 네이버 열기, 아니면 안내만.
   Future<String> _blog() async {
-    String? draft;
+    final BlogDraft draft;
     try {
-      draft = await widget.loadBlogDraft?.call();
+      draft = await (_blogLoad ?? _loadBlogDraft());
     } catch (_) {
       return '블로그 글을 불러오지 못했어요. 다시 시도해 주세요.';
     }
-    final hasDraft = draft != null && draft.trim().isNotEmpty;
-    if (hasDraft) {
-      try {
-        await Clipboard.setData(ClipboardData(text: draft));
-      } catch (_) {
-        return '글을 복사하지 못했어요. 다시 시도해 주세요.';
-      }
+    final text = draft.text?.trim() ?? '';
+    if (draft.status != BlogDraftStatus.done || text.isEmpty) {
+      return _blogWaitMessage(draft);
+    }
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } catch (_) {
+      return '글을 복사하지 못했어요. 다시 시도해 주세요.';
     }
     if (!mounted) return '';
-    // [백엔드 수정] 정리 전이면 감상 메모 버튼으로 안내.
-    final message = hasDraft
-        ? '글을 복사했어요. 네이버 블로그 본문에 붙여넣어 주세요.'
-        : '정리된 글이 아직 없어요. 페이지 아래 감상 메모에 적으면 다음 날 정리돼요.';
+    const message = '글을 복사했어요. 네이버 블로그 본문에 붙여넣어 주세요.';
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-    // [백엔드 수정] 네이버 열기는 감상 메모 화면과 같이 씀.
+    ).showSnackBar(const SnackBar(content: Text(message)));
     if (await openNaverBlogWrite()) return message;
-    return hasDraft
-        ? '글은 복사했지만 네이버 블로그를 열지 못했어요. 브라우저에서 열어 주세요.'
-        : '네이버 블로그를 열지 못했어요. 다시 시도해 주세요.';
+    return '글은 복사했지만 네이버 블로그를 열지 못했어요. 브라우저에서 열어 주세요.';
   }
+
+  String _blogWaitMessage(BlogDraft draft) => switch (draft.status) {
+    BlogDraftStatus.none => '감상 메모를 적으면 다음 날부터 블로그로 옮길 수 있어요.',
+    BlogDraftStatus.failed => '감상 메모를 글로 정리하지 못했어요. 메모를 고치면 다시 정리해요.',
+    _ when draft.overdue => '글 정리가 늦어지고 있어요. 조금만 기다려 주세요.',
+    _ => '감상 메모를 정리하고 있어요. 다음 날부터 블로그로 옮길 수 있어요.',
+  };
 
   /// 시스템 공유창 (인스타 DM, 그 밖의 앱).
   Future<String> _more() async {
@@ -649,18 +669,30 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
             ),
           ),
           const SizedBox(height: 10),
-          if (_busy || (_message != null && _message!.isNotEmpty))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                _busy ? '공유를 준비하는 중이에요…' : _message!,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: _ink.withValues(alpha: .8),
+          // [백엔드 수정] 안내 문구 자리(두 줄)를 늘 비워 둬서 문구가 생겨도 위 내용이 안 밀림.
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: SizedBox(
+              height: MediaQuery.textScalerOf(context).scale(12) * 1.4 * 2,
+              child: Center(
+                child: AnimatedOpacity(
+                  opacity: _busy || (_message?.isNotEmpty ?? false) ? 1 : 0,
+                  duration: const Duration(milliseconds: 150),
+                  child: Text(
+                    _busy ? '공유를 준비하는 중이에요…' : _message ?? '',
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: _ink.withValues(alpha: .8),
+                    ),
+                  ),
                 ),
               ),
             ),
+          ),
           // 설치된 앱만. 누르면 그 앱의 게시/보내기 화면으로 바로.
           Row(
             children: [
@@ -741,6 +773,8 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
                   color: Color(0xFF03C75A),
                   child: Icon(Icons.edit_note_rounded, color: Colors.white),
                 ),
+                // [백엔드 수정] 정리 전엔 흐리게(눌러서 안내는 보임).
+                dimmed: _blogDraft?.status != BlogDraftStatus.done,
                 onTap: !_busy ? () => _run(_blog) : null,
               ),
               _ShareTarget(
@@ -814,18 +848,22 @@ class _ShareTarget extends StatelessWidget {
   final Widget icon;
   final VoidCallback? onTap;
 
+  /// [백엔드 수정] 누를 수는 있지만 흐리게.
+  final bool dimmed;
+
   const _ShareTarget({
     super.key,
     required this.label,
     required this.icon,
     required this.onTap,
+    this.dimmed = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       child: Opacity(
-        opacity: onTap == null ? .45 : 1,
+        opacity: onTap == null || dimmed ? .45 : 1,
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(12),

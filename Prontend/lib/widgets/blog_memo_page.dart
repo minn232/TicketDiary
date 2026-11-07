@@ -24,6 +24,9 @@ String _keepWords(String text) {
   return text.split(' ').map((token) => token.split('').join(wj)).join(' ');
 }
 
+/// [백엔드 수정] 감상 메모에 정리된 글(탭·블로그 옮기기·정리본 종이·정리 안내)을 보일지. 블로그 공유에서만 써서 끔.
+bool _showDraftResult = false;
+
 /// 정리된 글을 아직 안 열어봤는지(버튼 색 구분용).
 abstract final class BlogMemoSeen {
   static String _key(String ticketId) => 'blog_draft_seen_$ticketId';
@@ -52,6 +55,10 @@ abstract final class BlogMemoSeen {
 /// 정리된 글(앱에서 고친 게 있으면 그것, 다시 정리 대기 중이면 이전 글). 공유 시트 블로그 버튼용.
 Future<String?> loadBlogDraftText(String ticketId) async =>
     (await BlogDraftService().get(ticketId)).text;
+
+/// [백엔드 수정] 공유 시트 블로그 버튼 상태용 정리 결과 조회.
+Future<BlogDraft> loadBlogDraft(String ticketId) =>
+    BlogDraftService().get(ticketId);
 
 /// 네이버 블로그 글쓰기 열기. 네이버 앱 인앱브라우저 → 기본 브라우저 순.
 Future<bool> openNaverBlogWrite() async {
@@ -130,11 +137,12 @@ class _BlogMemoButtonState extends State<BlogMemoButton> {
     return Builder(
       builder: (context) {
         final status = widget.draft?.status ?? BlogDraftStatus.none;
-        final hasResult = widget.draft?.hasResult ?? false;
-        final highlight = widget.unseen;
+        final hasResult =
+            _showDraftResult && (widget.draft?.hasResult ?? false);
+        final highlight = _showDraftResult && widget.unseen;
         final label = switch (status) {
           BlogDraftStatus.none => '감상 적기',
-          BlogDraftStatus.done => '정리된 글',
+          BlogDraftStatus.done when _showDraftResult => '정리된 글',
           _ => '감상 메모',
         };
         final w = context.rs(40);
@@ -241,7 +249,10 @@ class _BlogMemoButtonState extends State<BlogMemoButton> {
                             ],
                           ),
                           child: Text(
-                            '감상을 적어두면 다음 날 글이 정리돼요',
+                            // [백엔드 수정] 정리 안내 대신 메모 안내.
+                            _showDraftResult
+                                ? '감상을 적어두면 다음 날 글이 정리돼요'
+                                : '공연 감상을 여기에 적어 둘 수 있어요',
                             style: TextStyle(
                               fontSize: context.sp(10.5),
                               fontWeight: FontWeight.w700,
@@ -361,7 +372,7 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
   final _resultScroll = ScrollController();
 
   late BlogDraft _draft = widget.initial ?? BlogDraft.empty;
-  late int _tab = widget.showResult ? 1 : 0;
+  late int _tab = _showDraftResult && widget.showResult ? 1 : 0;
   bool _saving = false;
 
   /// 정리본을 불러온 직후 값 - 바뀌었을 때만 저장.
@@ -422,7 +433,7 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
       showPaperSnackBar(context, '빈 메모는 저장하지 않았어요.');
       return true;
     }
-    if (_draft.status == BlogDraftStatus.done) {
+    if (_showDraftResult && _draft.status == BlogDraftStatus.done) {
       final ok = await showPaperDialog<bool>(
         context,
         title: '메모를 고칠까요?',
@@ -497,7 +508,7 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
     if (_saving) return;
     FocusManager.instance.primaryFocus?.unfocus();
     if (!await _saveMemoIfChanged()) return;
-    await _saveResultEdit();
+    if (_showDraftResult) await _saveResultEdit();
     if (mounted) Navigator.of(context).pop(_draft);
   }
 
@@ -640,7 +651,7 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
                   color: PaperColors.card.withValues(alpha: .7),
                 ),
               )
-            else if (_tab == 1 && _draft.hasResult)
+            else if (_showDraftResult && _tab == 1 && _draft.hasResult)
               // 종이 안엔 글만 두고, 블로그에 옮기기는 책상 위에 놓인 작은 종이 쪽지로.
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -709,17 +720,19 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
             ),
           ),
           const SizedBox(height: 14),
-          _Tabs(
-            labels: const ['내 메모', '정리된 글'],
-            selected: _tab,
-            dotIndex: _draft.hasResult && _tab != 1 ? 1 : null,
-            onSelected: (i) {
-              FocusManager.instance.primaryFocus?.unfocus();
-              setState(() => _tab = i);
-              if (i == 1) _markSeen();
-            },
-          ),
-          const SizedBox(height: 8),
+          if (_showDraftResult) ...[
+            _Tabs(
+              labels: const ['내 메모', '정리된 글'],
+              selected: _tab,
+              dotIndex: _draft.hasResult && _tab != 1 ? 1 : null,
+              onSelected: (i) {
+                FocusManager.instance.primaryFocus?.unfocus();
+                setState(() => _tab = i);
+                if (i == 1) _markSeen();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
           Container(height: 1, color: _ink.withValues(alpha: .14)),
         ],
       ),
@@ -749,9 +762,11 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
         ),
         _footer(
           context,
-          note: note,
+          note: _showDraftResult ? note : '',
           counter: '${_memo.text.characters.length}/$_maxMemoLength',
-          link: status == BlogDraftStatus.failed ? '오늘 밤 다시 정리하기' : null,
+          link: _showDraftResult && status == BlogDraftStatus.failed
+              ? '오늘 밤 다시 정리하기'
+              : null,
           onLink: _saving ? null : _retry,
         ),
       ],
