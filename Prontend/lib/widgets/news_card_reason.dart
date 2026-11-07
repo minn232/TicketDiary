@@ -68,10 +68,9 @@ class _NewsCardReasonState extends State<NewsCardReason>
     if (artists.isEmpty) {
       return Semantics(
         label: '찜한 공연',
-        child: Text(
-          '♥',
-          textAlign: TextAlign.left,
-          style: TextStyle(fontSize: 18, height: 1, color: Color(0xFFC96B72)),
+        child: const Align(
+          alignment: Alignment.centerLeft,
+          child: _FavoriteConcertMark(),
         ),
       );
     }
@@ -176,6 +175,31 @@ class _NewsCardReasonState extends State<NewsCardReason>
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// [백엔드 수정] 찜한 공연 표시 - 이모지 ♥는 기기 컬러 이모지로 그려져 종이 톤과 안 맞아서
+// 아티스트 프로필과 같은 동그라미 안에 평평한 하트로.
+class _FavoriteConcertMark extends StatelessWidget {
+  const _FavoriteConcertMark();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 20,
+      height: 20,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: PaperColors.tile,
+        border: Border.all(color: PaperColors.muted.withValues(alpha: .35)),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.favorite,
+        size: 11,
+        color: Color.lerp(PaperColors.tapeRose, PaperColors.stamp, .3),
       ),
     );
   }

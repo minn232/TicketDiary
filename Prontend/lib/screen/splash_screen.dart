@@ -16,6 +16,7 @@ import 'package:ticketdiary/services/fcm_service.dart';
 import 'package:ticketdiary/services/sound_effect_service.dart';
 import 'package:ticketdiary/widgets/diary_page_flipper.dart'
     show BentLeafPainter, DiaryPageFlipper;
+import 'package:ticketdiary/widgets/app_network_image.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/diary_tabs.dart';
 import 'package:ticketdiary/widgets/responsive_text.dart'
@@ -356,10 +357,24 @@ class _SplashScreenState extends State<SplashScreen>
       const Duration(seconds: 3),
       onTimeout: () {},
     );
+    // [백엔드 수정] 첫 화면 포스터를 스플래시 중에 미리 디코드 - 다이어리·소식을 처음 열 때 빈 포스터 줄이기.
+    unawaited(
+      AppNetworkImage.precache(
+        DiaryScreen.firstPagePosterUrls(),
+        decodeWidth: AppNetworkImage.diaryPosterDecodeWidth,
+      ),
+    );
 
     // [백엔드 수정] 소식·결산을 뒤에서 미리 받아둠(스플래시는 안 기다림) - 탭을 처음 열 때 빈 화면 줄이기.
     unawaited(
-      NewsListService().load().then<void>((_) {}, onError: (Object _) {}),
+      NewsListService().load().then<void>(
+        // 소식 앞 두 장(카드 8개) 포스터.
+        (items) => AppNetworkImage.precache(
+          items.take(8).map((item) => item.imageUrl),
+          decodeWidth: AppNetworkImage.newsPosterDecodeWidth,
+        ),
+        onError: (Object _) {},
+      ),
     );
     unawaited(SummaryScreen.preload());
 

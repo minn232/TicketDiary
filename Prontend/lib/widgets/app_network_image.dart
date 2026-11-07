@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -83,6 +85,51 @@ class AppNetworkImage extends StatelessWidget {
           ? null
           : (context, url, error) => errorBuilder!(context),
     );
+  }
+
+  /// [백엔드 수정] 화면에 그리기 전에 메모리에 미리 디코드해 둠 - 처음 열 때 자리표시·페이드 없이
+  /// 바로 뜨게. memCacheWidth/Height 없이 쓰는 곳(포스터)과 같은 키라야 캐시가 맞음.
+  /// 화면(context)과 무관하게 돌아서 스플래시가 닫힌 뒤 끝나도 됨.
+  /// [decodeWidth]는 그 이미지를 그리는 쪽의 [memCacheWidth]와 같아야 캐시 키가 맞음.
+  static Future<void> precache(Iterable<String?> urls, {int? decodeWidth}) {
+    if (kIsWeb) return Future.value();
+    final keys = {
+      for (final raw in urls)
+        if (raw != null && raw.trim().isNotEmpty) _normalizeUrl(raw),
+    };
+    return Future.wait(keys.map((url) => _precacheOne(url, decodeWidth)));
+  }
+
+  // [백엔드 수정] 카드 포스터 디코드 가로 픽셀 - 원본 그대로 디코드하면 장당 수 MB라
+  // 이미지 메모리 캐시가 금방 차서, 다른 화면을 보고 오면 포스터를 다시 읽고 페이드했음.
+  // 노트9 기준 소식 카드 약 360px, 다이어리 티켓 약 650px에 태블릿 여유.
+  static const int newsPosterDecodeWidth = 640;
+  static const int diaryPosterDecodeWidth = 960;
+
+  static Future<void> _precacheOne(String url, int? decodeWidth) {
+    final done = Completer<void>();
+    final ImageProvider base = CachedNetworkImageProvider(url);
+    final stream = ResizeImage.resizeIfNeeded(
+      decodeWidth,
+      null,
+      base,
+    ).resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    void finish() {
+      if (done.isCompleted) return;
+      done.complete();
+      // 다음 프레임에 떼야 캐시에 남음(precacheImage와 같은 방식).
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => stream.removeListener(listener),
+      );
+    }
+
+    listener = ImageStreamListener(
+      (_, _) => finish(),
+      onError: (_, _) => finish(),
+    );
+    stream.addListener(listener);
+    return done.future;
   }
 
   /// 일부 KOPIS/기존 DB 데이터는 `www.example.com/path`처럼 스킴 없이

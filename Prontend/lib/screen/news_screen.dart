@@ -1,6 +1,7 @@
 import '../widgets/diary_page_indicator.dart';
 import 'dart:async';
 import '../widgets/news_card_reason.dart';
+import '../widgets/app_network_image.dart';
 import '../services/news_list_service.dart';
 import '../services/news_card_identity.dart';
 
@@ -400,6 +401,20 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
 
   Future<List<NewsModel>> _loadNews() => NewsListService().load();
 
+  // [백엔드 수정] 지금 장 앞뒤 장 포스터를 미리 디코드 - 넘길 때 자리표시·페이드 없이 바로 보이게.
+  void _precacheAround(List<NewsModel> ordered, int page) {
+    final urls = <String>[
+      for (final p in [page - 1, page + 1])
+        if (p >= 0) ...ordered.skip(p * 4).take(4).map((item) => item.imageUrl),
+    ];
+    unawaited(
+      AppNetworkImage.precache(
+        urls,
+        decodeWidth: AppNetworkImage.newsPosterDecodeWidth,
+      ),
+    );
+  }
+
   /// 카드를 누르는 시점부터 오버레이가 완전히 닫히는 시점까지의 흐름을
   /// 다이어리 티켓 오버레이([_DiaryScreenState]의 "공연 전"/"공연 후" 티켓
   /// 탭 처리)와 동일한 4단계로 맞춥니다:
@@ -756,6 +771,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _newsPageInfo.value = (targetPage, pageCount);
     });
+    _precacheAround(ordered, targetPage);
 
     return SizedBox.expand(
       child: PageView.builder(
@@ -765,6 +781,7 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
           _newsPageTarget = page;
           _newsPageInfo.value = (page, pageCount);
           _visibleCardKey = newsCardKey(ordered[page * 4]);
+          _precacheAround(ordered, page);
         },
         itemCount: pageCount,
         physics: const PageScrollPhysics(),
@@ -1259,7 +1276,10 @@ class _PolaroidCard extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                PosterBackground(imageUrl: data.imageUrl),
+                PosterBackground(
+                  imageUrl: data.imageUrl,
+                  memCacheWidth: AppNetworkImage.newsPosterDecodeWidth,
+                ),
                 // [백엔드 수정] 모든 카드 포스터 오른쪽 아래에 공연 D-day 도장.
                 Positioned(
                   right: 5,

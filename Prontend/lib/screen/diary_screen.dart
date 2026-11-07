@@ -389,6 +389,10 @@ class DiaryScreen extends StatefulWidget {
   static Future<void> preloadTickets() =>
       _DiaryScreenState._loadTicketsFromBackend();
 
+  // [백엔드 수정] 첫 페이지 티켓 포스터 주소 - 스플래시 중에 미리 디코드해 둠.
+  static Iterable<String?> firstPagePosterUrls() =>
+      _DiaryScreenState._posterUrlsForPage(0);
+
   @override
   State<DiaryScreen> createState() => _DiaryScreenState();
 }
@@ -1067,6 +1071,31 @@ class _DiaryScreenState extends State<DiaryScreen>
   /// 개수)을 씁니다. 목록에서 못 찾으면(index -1) 총 개수로 둡니다.
   int _issueNumberForIndex(int index) =>
       index < 0 ? _tickets.length : _tickets.length - index;
+
+  // [백엔드 수정] 페이지 포스터 주소 - 넘기기 전에 미리 디코드해 둠.
+  static Iterable<String?> _posterUrlsForPage(int pageIndex) {
+    if (pageIndex < 0) return const [];
+    final start = pageIndex == 0
+        ? 0
+        : _firstPageTicketCapacity + (pageIndex - 1) * _otherPageTicketCapacity;
+    final count = pageIndex == 0
+        ? _firstPageTicketCapacity
+        : _otherPageTicketCapacity;
+    return _tickets.skip(start).take(count).map((t) => t.info?.posterImageUrl);
+  }
+
+  // [백엔드 수정] 지금 페이지 앞뒤 페이지 포스터를 미리 디코드(같은 페이지면 다시 안 함).
+  int? _precachedAroundPage;
+  void _precacheAroundPage(int page) {
+    if (_precachedAroundPage == page) return;
+    _precachedAroundPage = page;
+    unawaited(
+      AppNetworkImage.precache([
+        ..._posterUrlsForPage(page - 1),
+        ..._posterUrlsForPage(page + 1),
+      ], decodeWidth: AppNetworkImage.diaryPosterDecodeWidth),
+    );
+  }
 
   /// 해당 페이지에 표시할 티켓 목록(최신 티켓이 항상 앞쪽 페이지에 오도록 순서 유지).
   List<TicketData> _ticketsForPage(int pageIndex) {
@@ -2646,6 +2675,7 @@ class _DiaryScreenState extends State<DiaryScreen>
           final pivotX = usesTwoPage
               ? twoPageLayout.spineCenterX - twoPageLayout.rightPageLeft
               : 30 - (constraints.maxWidth - 75) * 0.05;
+          _precacheAroundPage(_currentPageIndex);
           return DiaryPageFlipper(
             key: ValueKey('flipper_$_currentPageIndex'),
             pivotX: pivotX,
@@ -3734,6 +3764,7 @@ class _PosterTicketFace extends StatelessWidget {
             AppNetworkImage(
               posterUrl,
               fit: BoxFit.cover,
+              memCacheWidth: AppNetworkImage.diaryPosterDecodeWidth,
               // 그래도 실패하면 아무것도 그리지 않아 아래 그라데이션이 보임
               errorBuilder: (_) => const SizedBox.shrink(),
             ),

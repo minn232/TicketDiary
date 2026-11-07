@@ -9,6 +9,8 @@ export 'package:ticketdiary/main/ticket_diary_app.dart' show TicketDiaryApp;
 /// 앱 실행 엔트리포인트.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // [백엔드 수정] 이미지 메모리 캐시 100MB → 200MB - 다이어리·소식 포스터를 오가도 다시 안 읽게.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 << 20;
 
   // [백엔드 수정]
   // Firebase(FCM) 연동 추가로 runApp 전에 초기화 필요.

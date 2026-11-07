@@ -13,7 +13,10 @@ import 'app_network_image.dart';
 class PosterBackground extends StatelessWidget {
   final String? imageUrl;
 
-  const PosterBackground({super.key, this.imageUrl});
+  /// [백엔드 수정] 작은 카드에서 쓸 때 디코드 가로 픽셀([AppNetworkImage.memCacheWidth]).
+  final int? memCacheWidth;
+
+  const PosterBackground({super.key, this.imageUrl, this.memCacheWidth});
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +32,7 @@ class PosterBackground extends StatelessWidget {
       child: AppNetworkImage(
         url,
         fit: BoxFit.cover,
+        memCacheWidth: memCacheWidth,
         placeholderBuilder: (context) => const PosterGradientPlaceholder(),
         errorBuilder: (context) => const PosterGradientPlaceholder(),
       ),
