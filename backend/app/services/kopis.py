@@ -533,6 +533,11 @@ _MAX_TITLE_KEYWORDS = 6
 _NOTICE_SENTENCE_RE = re.compile(r"(니다|세요|십시오)[.!]?$")
 _NOTICE_SENTENCE_MIN_LEN = 25  # 이보다 긴 안내문 문장은 결과를 찾기 전에도 건너뜀
 _SEAT_LINE_RE = re.compile(r"\d+\s*열|\d+\s*번$|입장\s*번호|정리\s*번호|\d+\s*층|구역")
+# 공연명일 리 없는 줄 - 글머리표로 시작하는 안내 줄, 유의사항 제목, "본 티켓은", 좌석 종류만 있는 줄("스탠딩 s").
+# OCR이 문장을 중간에 끊어 "~니다"로 안 끝나도 걸리게 함. "스탠딩에그"처럼 붙은 이름은 안 걸림
+_NON_TITLE_LINE_RE = re.compile(
+    r"^[•·※▶►■□○●◆◇]|유의\s*사항|안내\s*및|본\s*티켓|^(스탠딩|지정석|비지정석)(\s|$)"
+)
 
 
 # 검색어 구체성 점수 - 한글 같은 전각 문자는 정보량이 많아 2, 나머지는 1로 셈
@@ -582,6 +587,9 @@ async def search_concerts_multi(
                 continue
             # 긴 안내문 문장은 공연명일 리 없는데 끝단어 축소로 열 번 넘게 검색돼 10초 넘게 걸린 적 있음 - 항상 건너뜀
             if len(kw) > _NOTICE_SENTENCE_MIN_LEN and _NOTICE_SENTENCE_RE.search(kw):
+                continue
+            # 제목을 못 찾았을 때 안내 줄을 끝단어 축소로 하나씩 검색해 KOPIS 13번(4.5초) 더 쓴 적 있음 - 항상 건너뜀
+            if _NON_TITLE_LINE_RE.search(kw):
                 continue
             if _query_specificity(kw) <= best_specificity:
                 continue

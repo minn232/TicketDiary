@@ -323,6 +323,27 @@ async def test_kopis_search_multi_skips_long_notice_sentence():
     assert searched == []
 
 
+# 글머리표 안내 줄·유의사항 제목·좌석 종류 줄은 아직 못 찾았어도 검색하지 않는지 테스트
+# (OCR이 문장을 끊어 "~니다"로 안 끝나는 경우). "스탠딩에그" 같은 이름은 그대로 검색
+@pytest.mark.asyncio
+async def test_kopis_search_multi_skips_non_title_lines():
+    searched: list[str] = []
+
+    async def _once(db, q, *a, **k):
+        searched.append(q)
+        return []
+
+    async with AsyncSessionLocal() as db:
+        with patch("app.services.kopis._search_concerts_once", _once):
+            await kopis_search_concerts_multi(
+                db,
+                ["•본 티켓은 해당 일시 및 기간에", "안내 및 유의사항", "스탠딩 s", "※ 공연 당일", "스탠딩에그"],
+                date(2030, 11, 28), date(2030, 12, 12),
+            )
+
+    assert searched and all(q.startswith("스탠딩에그") for q in searched)
+
+
 # 한글 검색어는 글자 수가 적어도 정보량이 많음 - "셰본 내한공연"이 "IN SEOUL"보다 구체적으로 판정돼야 함
 def test_query_specificity_weights_hangul():
     assert _query_specificity("셰본 내한공연") > _query_specificity("IN SEOUL")
