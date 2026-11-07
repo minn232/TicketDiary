@@ -9,6 +9,7 @@ import '../services/ticket_preview_player.dart';
 import '../widgets/now_playing_chip.dart';
 import '../widgets/concert_before_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
+import '../widgets/pass_day_switcher.dart';
 import '../widgets/responsive_text.dart';
 
 /// 다이어리 화면 위에 "공연 전" 상세를 오버레이로 띄우는 위젯.
@@ -49,6 +50,12 @@ class ConcertBeforeOverlay extends StatefulWidget {
   // [백엔드 수정] 아티스트 연결 수정으로 공연 정보가 바뀌었을 때(다이어리 티켓에 반영).
   final ValueChanged<TicketInfo>? onTicketInfoChanged;
 
+  // [백엔드 수정] 2일권/3일권 관람일 이동 표시. 다른 날을 고르면 그 날 번호를 돌려주며 닫힘.
+  final PassDayTabs? passDays;
+
+  // [백엔드 수정] 다른 관람일에서 넘어올 때 펼치는 연출 없이 바로 펼친 상태로 시작.
+  final bool instant;
+
   const ConcertBeforeOverlay({
     super.key,
     required this.startRect,
@@ -59,10 +66,12 @@ class ConcertBeforeOverlay extends StatefulWidget {
     this.issueNumber = 1,
     this.readOnly = false,
     this.onTicketInfoChanged,
+    this.passDays,
+    this.instant = false,
   });
 
-  /// 다이어리 위에 오버레이를 띄우는 헬퍼.
-  static Future<void> show(
+  /// 다이어리 위에 오버레이를 띄우는 헬퍼. 관람일 이동으로 닫히면 고른 날 번호를 돌려줍니다.
+  static Future<int?> show(
     BuildContext context, {
     required Rect startRect,
     required Widget collapsedTicket,
@@ -72,9 +81,15 @@ class ConcertBeforeOverlay extends StatefulWidget {
     int issueNumber = 1,
     bool readOnly = false,
     ValueChanged<TicketInfo>? onTicketInfoChanged,
+    PassDayTabs? passDays,
+    bool instant = false,
   }) {
-    return showGeneralDialog<void>(
+    return showGeneralDialog<int>(
       context: context,
+      // [백엔드 수정] 다른 관람일에서 넘어올 땐 바로 덮어서 닫히는 페이지 사이로 다이어리가 안 비치게 함.
+      transitionDuration: instant
+          ? Duration.zero
+          : const Duration(milliseconds: 200),
       barrierDismissible: false, // 반드시 우리 로직(페이지 밖 탭)으로만 닫히도록
       barrierLabel: 'concert_before_overlay',
       barrierColor:
@@ -89,6 +104,8 @@ class ConcertBeforeOverlay extends StatefulWidget {
           issueNumber: issueNumber,
           readOnly: readOnly,
           onTicketInfoChanged: onTicketInfoChanged,
+          passDays: passDays,
+          instant: instant,
         );
       },
     );
@@ -116,6 +133,9 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
   late final Animation<double> _collapsedOpacity;
 
   bool _isClosing = false;
+
+  // [백엔드 수정] 관람일 탭을 페이지 위 가장자리에 붙이는 기준.
+  final LayerLink _pageLink = LayerLink();
 
   @override
   void initState() {
@@ -150,16 +170,30 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
       controller: _controller,
       pageOpacity: _expandedOpacity,
     );
+    void startPreview() => unawaited(
+      TicketPreviewPlayer.instance.start(
+        widget.ticketInfo?.ticketId,
+        this,
+        otherAudio: otherAudio,
+      ),
+    );
+    if (widget.instant) {
+      _controller.value = 1;
+      startPreview();
+      return;
+    }
     _controller.forward().then((_) {
       if (!mounted || _isClosing) return;
-      unawaited(
-        TicketPreviewPlayer.instance.start(
-          widget.ticketInfo?.ticketId,
-          this,
-          otherAudio: otherAudio,
-        ),
-      );
+      startPreview();
     });
+  }
+
+  // [백엔드 수정] 다른 관람일로 이동 - 접는 연출 없이 닫고 다이어리가 그 날 페이지를 바로 띄움.
+  void _switchDay(int index) {
+    if (_isClosing || _controller.value < 0.85) return;
+    _isClosing = true;
+    unawaited(TicketPreviewPlayer.instance.stop(this));
+    Navigator.of(context).pop(index);
   }
 
   @override
@@ -284,6 +318,7 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
               readOnly: widget.readOnly,
               onTicketInfoChanged: widget.onTicketInfoChanged,
               onOutsideTap: _handleOutsideTap,
+              pageLink: _pageLink,
             ),
           ),
         ),
@@ -362,6 +397,27 @@ class _ConcertBeforeOverlayState extends State<ConcertBeforeOverlay>
                       child: const NowPlayingChip(),
                     ),
                   ),
+
+                  // [백엔드 수정] 2일권/3일권 관람일 탭(페이지 위 가장자리에 붙임).
+                  if (widget.passDays case final passDays?)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      child: CompositedTransformFollower(
+                        link: _pageLink,
+                        showWhenUnlinked: false,
+                        followerAnchor: Alignment.bottomLeft,
+                        offset: const Offset(18, 1.5),
+                        child: FadeTransition(
+                          opacity: _postItOpacity,
+                          child: PassDaySwitcher(
+                            tabs: passDays,
+                            onSelect: _switchDay,
+                            pageColor: const Color(0xFFE9E6DC),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               );
             },
@@ -380,12 +436,14 @@ class _ExpandedConcertBefore extends StatelessWidget {
   final bool readOnly;
   final VoidCallback onOutsideTap;
   final ValueChanged<TicketInfo>? onTicketInfoChanged;
+  final LayerLink pageLink;
 
   const _ExpandedConcertBefore({
     required this.postItOpacity,
     required this.concertTitle,
     required this.onOutsideTap,
     required this.issueNumber,
+    required this.pageLink,
     this.readOnly = false,
     this.ticketInfo,
     this.onTicketInfoChanged,
@@ -403,63 +461,67 @@ class _ExpandedConcertBefore extends StatelessWidget {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 562),
-            child: Stack(
-              children: [
-                // 카드 배경(신문지색/테두리/그림자)만 그리는 장식용 레이어.
-                // IgnorePointer로 히트테스트에서 완전히 제외해야, 이 색만
-                // 있는 자리(콘텐츠가 비어 있는 곳)를 눌렀을 때 탭이 이
-                // 레이어에 막히지 않고 아래 "바깥 탭으로 닫기" 감지기까지
-                // 그대로 전달됩니다. 그림자가 모서리 클립에 잘리지 않도록
-                // 클립 레이어 바깥(이 자리)에 둡니다.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        // 신문지(newsprint) 느낌 — 약간 회색끼 도는 미색.
-                        color: const Color(0xFFE9E6DC),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: Colors.black.withValues(alpha: 0.10),
-                          width: 1.5,
+            // [백엔드 수정] 관람일 탭을 이 카드 위 가장자리에 붙임.
+            child: CompositedTransformTarget(
+              link: pageLink,
+              child: Stack(
+                children: [
+                  // 카드 배경(신문지색/테두리/그림자)만 그리는 장식용 레이어.
+                  // IgnorePointer로 히트테스트에서 완전히 제외해야, 이 색만
+                  // 있는 자리(콘텐츠가 비어 있는 곳)를 눌렀을 때 탭이 이
+                  // 레이어에 막히지 않고 아래 "바깥 탭으로 닫기" 감지기까지
+                  // 그대로 전달됩니다. 그림자가 모서리 클립에 잘리지 않도록
+                  // 클립 레이어 바깥(이 자리)에 둡니다.
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          // 신문지(newsprint) 느낌 — 약간 회색끼 도는 미색.
+                          color: const Color(0xFFE9E6DC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: Colors.black.withValues(alpha: 0.10),
+                            width: 1.5,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
 
-                // 콘텐츠는 카드와 같은 둥근 모서리 밖으로 삐져나오지 않도록
-                // 별도로 clip합니다.
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(
-                    children: [
-                      // 빈 곳 탭 = 닫기 감지기(투명). 신문 지면의 인터랙티브
-                      // 요소는 이 Stack에서 나중에(=위에) 그려져 먼저 히트되므로
-                      // 경합하지 않고, 지면이 아닌 빈 자리를 눌렀을 때만 이
-                      // 감지기가 받아 오버레이를 닫습니다.
-                      Positioned.fill(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: onOutsideTap,
-                          child: const SizedBox.expand(),
+                  // 콘텐츠는 카드와 같은 둥근 모서리 밖으로 삐져나오지 않도록
+                  // 별도로 clip합니다.
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    clipBehavior: Clip.antiAlias,
+                    child: Stack(
+                      children: [
+                        // 빈 곳 탭 = 닫기 감지기(투명). 신문 지면의 인터랙티브
+                        // 요소는 이 Stack에서 나중에(=위에) 그려져 먼저 히트되므로
+                        // 경합하지 않고, 지면이 아닌 빈 자리를 눌렀을 때만 이
+                        // 감지기가 받아 오버레이를 닫습니다.
+                        Positioned.fill(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: onOutsideTap,
+                            child: const SizedBox.expand(),
+                          ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
-                        child: ConcertBeforePageContents(
-                          concertTitle: concertTitle,
-                          ticketInfo: ticketInfo,
-                          postItOpacity: postItOpacity,
-                          issueNumber: issueNumber,
-                          readOnly: readOnly,
-                          onTicketInfoChanged: onTicketInfoChanged,
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 22, 20, 18),
+                          child: ConcertBeforePageContents(
+                            concertTitle: concertTitle,
+                            ticketInfo: ticketInfo,
+                            postItOpacity: postItOpacity,
+                            issueNumber: issueNumber,
+                            readOnly: readOnly,
+                            onTicketInfoChanged: onTicketInfoChanged,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

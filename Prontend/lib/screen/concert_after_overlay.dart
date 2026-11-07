@@ -12,6 +12,7 @@ import '../widgets/now_playing_chip.dart';
 import '../widgets/concert_after_page_contents.dart';
 import '../widgets/diary_page_frame.dart';
 import '../widgets/paper_texture_cache.dart';
+import '../widgets/pass_day_switcher.dart';
 import '../widgets/responsive_text.dart';
 import 'concert_before_overlay.dart';
 
@@ -51,6 +52,12 @@ class ConcertAfterOverlay extends StatefulWidget {
   // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 신규.
   final int issueNumber;
 
+  // [백엔드 수정] 2일권/3일권 관람일 이동 표시. 다른 날을 고르면 그 날 번호를 돌려주며 닫힘.
+  final PassDayTabs? passDays;
+
+  // [백엔드 수정] 다른 관람일에서 넘어올 때 펼치는 연출 없이 바로 펼친 상태로 시작.
+  final bool instant;
+
   const ConcertAfterOverlay({
     super.key,
     required this.startRect,
@@ -60,10 +67,12 @@ class ConcertAfterOverlay extends StatefulWidget {
     this.ticketInfo,
     this.onTicketInfoChanged,
     this.issueNumber = 1,
+    this.passDays,
+    this.instant = false,
   });
 
-  /// 다이어리 위에 오버레이를 띄우는 헬퍼.
-  static Future<void> show(
+  /// 다이어리 위에 오버레이를 띄우는 헬퍼. 관람일 이동으로 닫히면 고른 날 번호를 돌려줍니다.
+  static Future<int?> show(
     BuildContext context, {
     required Rect startRect,
     required Widget collapsedTicket,
@@ -72,9 +81,15 @@ class ConcertAfterOverlay extends StatefulWidget {
     TicketInfo? ticketInfo,
     ValueChanged<TicketInfo>? onTicketInfoChanged,
     int issueNumber = 1,
+    PassDayTabs? passDays,
+    bool instant = false,
   }) {
-    return showGeneralDialog<void>(
+    return showGeneralDialog<int>(
       context: context,
+      // [백엔드 수정] 다른 관람일에서 넘어올 땐 바로 덮어서 닫히는 페이지 사이로 다이어리가 안 비치게 함.
+      transitionDuration: instant
+          ? Duration.zero
+          : const Duration(milliseconds: 200),
       barrierDismissible: false, // 반드시 우리 로직(페이지 밖 탭)으로만 닫히도록
       barrierLabel: 'concert_after_overlay',
       barrierColor:
@@ -88,6 +103,8 @@ class ConcertAfterOverlay extends StatefulWidget {
           ticketInfo: ticketInfo,
           onTicketInfoChanged: onTicketInfoChanged,
           issueNumber: issueNumber,
+          passDays: passDays,
+          instant: instant,
         );
       },
     );
@@ -115,6 +132,9 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
   late final Animation<double> _collapsedOpacity;
 
   bool _isClosing = false;
+
+  // [백엔드 수정] 관람일 탭을 페이지 위 가장자리에 붙이는 기준.
+  final LayerLink _pageLink = LayerLink();
 
   @override
   void initState() {
@@ -149,7 +169,26 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
       controller: _controller,
       pageOpacity: _expandedOpacity,
     );
-    unawaited(_forwardAfterWarmUp(otherAudio));
+    if (widget.instant) {
+      _warmingUp = false;
+      _controller.value = 1;
+      unawaited(_startPreview(otherAudio));
+    } else {
+      unawaited(_forwardAfterWarmUp(otherAudio));
+    }
+  }
+
+  Future<void> _startPreview(Future<bool> otherAudio) => TicketPreviewPlayer
+      .instance
+      .start(widget.ticketInfo?.ticketId, this, otherAudio: otherAudio);
+
+  // [백엔드 수정] 다른 관람일로 이동 - 접는 연출 없이 닫고 다이어리가 그 날 페이지를 바로 띄움.
+  void _switchDay(int index) {
+    if (_isClosing || _controller.value < 0.85) return;
+    _isClosing = true;
+    unawaited(TicketPreviewPlayer.instance.stop(this));
+    hideConcertAfterFloatingControls();
+    Navigator.of(context).pop(index);
   }
 
   // [백엔드 수정] 펼치기 전 페이지를 안 보이게 그려 질감을 미리 구움 - 새로 굽는 게 없는 프레임이 나오면 바로 펼침.
@@ -174,13 +213,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     setState(() => _warmingUp = false);
     await _controller.forward();
     if (!mounted || _isClosing) return;
-    unawaited(
-      TicketPreviewPlayer.instance.start(
-        widget.ticketInfo?.ticketId,
-        this,
-        otherAudio: otherAudio,
-      ),
-    );
+    unawaited(_startPreview(otherAudio));
   }
 
   @override
@@ -299,6 +332,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
               onTicketInfoChanged: widget.onTicketInfoChanged,
               issueNumber: widget.issueNumber,
               frameScale: frameScale,
+              pageLink: _pageLink,
             ),
           ),
         ),
@@ -375,6 +409,27 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
                       child: const NowPlayingChip(),
                     ),
                   ),
+
+                  // [백엔드 수정] 2일권/3일권 관람일 탭(페이지 위 가장자리에 붙임).
+                  if (widget.passDays case final passDays?)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      child: CompositedTransformFollower(
+                        link: _pageLink,
+                        showWhenUnlinked: false,
+                        followerAnchor: Alignment.bottomLeft,
+                        offset: const Offset(18, 1.5),
+                        child: FadeTransition(
+                          opacity: _postItOpacity,
+                          child: PassDaySwitcher(
+                            tabs: passDays,
+                            onSelect: _switchDay,
+                            pageColor: const Color(0xFFF4F1E1),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               );
             },
@@ -393,6 +448,7 @@ class _ExpandedConcertAfter extends StatefulWidget {
   final ValueChanged<TicketInfo>? onTicketInfoChanged;
   final int issueNumber;
   final double frameScale;
+  final LayerLink pageLink;
 
   const _ExpandedConcertAfter({
     required this.postItOpacity,
@@ -400,6 +456,7 @@ class _ExpandedConcertAfter extends StatefulWidget {
     required this.onOutsideTap,
     required this.issueNumber,
     required this.frameScale,
+    required this.pageLink,
     this.ticketInfo,
     this.onTicketInfoChanged,
   });
@@ -421,27 +478,30 @@ class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 562),
-            child: SizedBox.expand(
-              key: _pageBoundaryKey,
-              child: ConcertAfterPageContents(
-                concertTitle: widget.concertTitle,
-                ticketInfo: widget.ticketInfo,
-                postItOpacity: widget.postItOpacity,
-                onTicketInfoChanged: widget.onTicketInfoChanged,
-                pageBoundaryKey: _pageBoundaryKey,
-                issueNumber: widget.issueNumber,
-                // [백엔드 수정] "공연 전 신문"을 누르면 공연 전 페이지를 읽기 전용으로 엶.
-                onOpenBeforePage: (startRect, collapsed) =>
-                    ConcertBeforeOverlay.show(
-                      context,
-                      startRect: startRect,
-                      collapsedTicket: collapsed,
-                      concertTitle: widget.concertTitle,
-                      frameScale: widget.frameScale,
-                      ticketInfo: widget.ticketInfo,
-                      issueNumber: widget.issueNumber,
-                      readOnly: true,
-                    ),
+            child: CompositedTransformTarget(
+              link: widget.pageLink,
+              child: SizedBox.expand(
+                key: _pageBoundaryKey,
+                child: ConcertAfterPageContents(
+                  concertTitle: widget.concertTitle,
+                  ticketInfo: widget.ticketInfo,
+                  postItOpacity: widget.postItOpacity,
+                  onTicketInfoChanged: widget.onTicketInfoChanged,
+                  pageBoundaryKey: _pageBoundaryKey,
+                  issueNumber: widget.issueNumber,
+                  // [백엔드 수정] "공연 전 신문"을 누르면 공연 전 페이지를 읽기 전용으로 엶.
+                  onOpenBeforePage: (startRect, collapsed) =>
+                      ConcertBeforeOverlay.show(
+                        context,
+                        startRect: startRect,
+                        collapsedTicket: collapsed,
+                        concertTitle: widget.concertTitle,
+                        frameScale: widget.frameScale,
+                        ticketInfo: widget.ticketInfo,
+                        issueNumber: widget.issueNumber,
+                        readOnly: true,
+                      ),
+                ),
               ),
             ),
           ),

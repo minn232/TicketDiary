@@ -52,6 +52,9 @@ class TicketWithConcert {
   // 공연후 페이지 배치(page_layout) 추가. 형식이 깨졌으면 null.
   final PageLayout? pageLayout;
 
+  // [백엔드 수정] 2일권/3일권 묶음 id(첫날 티켓 id), 하루짜리 티켓은 null.
+  final String? passGroupId;
+
   const TicketWithConcert({
     required this.id,
     this.concertId,
@@ -70,6 +73,7 @@ class TicketWithConcert {
     this.concert,
     this.tornAt,
     this.pageLayout,
+    this.passGroupId,
   });
 
   factory TicketWithConcert.fromJson(Map<String, dynamic> json) {
@@ -101,6 +105,7 @@ class TicketWithConcert {
           ? DateTime.parse(json['torn_at'] as String)
           : null,
       pageLayout: PageLayout.tryParse(json['page_layout']),
+      passGroupId: json['pass_group_id'] as String?,
     );
   }
 
@@ -124,6 +129,7 @@ class TicketWithConcert {
     'concert': concert?.toJson(),
     'torn_at': tornAt?.toIso8601String(),
     'page_layout': pageLayout?.toJson(),
+    'pass_group_id': passGroupId,
   };
 
   TicketWithConcert copyWith({
@@ -163,6 +169,7 @@ class TicketWithConcert {
       isLastDay: isLastDay ?? this.isLastDay,
       concert: concert,
       pageLayout: pageLayout ?? this.pageLayout,
+      passGroupId: passGroupId,
     );
   }
 }

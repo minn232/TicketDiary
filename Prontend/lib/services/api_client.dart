@@ -87,6 +87,19 @@ class ApiClient {
     );
   }
 
+  // [백엔드 수정] 응답이 배열인 POST용 신규(예: `POST /tickets/pass`).
+  Future<List<dynamic>> postList(
+    String path, {
+    Map<String, dynamic>? body,
+    bool allowAuthRetry = true,
+  }) async {
+    return _send(
+      () => _dio.post(path, data: body, options: _authOptions),
+      _asList,
+      allowAuthRetry: allowAuthRetry,
+    );
+  }
+
   Future<Map<String, dynamic>> patch(
     String path, {
     Map<String, dynamic>? body,

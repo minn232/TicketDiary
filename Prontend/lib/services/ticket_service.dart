@@ -79,6 +79,48 @@ class TicketService {
     }
   }
 
+  // [백엔드 수정] 2일권/3일권 등록 - 관람일마다 티켓을 만들어 묶음(날짜순 반환, 가격은 첫날에만 저장).
+  Future<List<TicketWithConcert>> createPassTickets({
+    required String concertId,
+    required List<DateTime> attendedDates,
+    DateTime? deliveryDate,
+    String? startTime,
+    String? ticketingSite,
+    int? price,
+    String? seatType,
+    bool awaitingDelivery = false,
+  }) async {
+    try {
+      final list = await _client.postList(
+        '/tickets/pass',
+        body: {
+          'concert_id': concertId,
+          'attended_dates': [
+            for (final date in attendedDates) date.toIso8601String(),
+          ],
+          if (deliveryDate != null)
+            'delivery_date': deliveryDate.toIso8601String(),
+          'start_time': ?startTime,
+          'ticketing_site': ?ticketingSite,
+          'price': ?price,
+          'seat_type': ?seatType,
+          if (awaitingDelivery) 'awaiting_delivery': true,
+        },
+      );
+      final tickets = list
+          .map((e) => TicketWithConcert.fromJson(e as Map<String, dynamic>))
+          .toList();
+      final concertName = tickets.firstOrNull?.concert?.name;
+      if (concertName != null) {
+        unawaited(FavoritesStore.instance.removeConcert(concertName));
+      }
+      return tickets;
+    } on ApiException catch (e) {
+      if (e.statusCode == 409) throw const TicketAlreadyRegisteredException();
+      rethrow;
+    }
+  }
+
   /// 내 티켓 목록 조회(`GET /tickets`). 공연 전 티켓을 먼저, 그중 공연일이
   /// 가까운 순으로 정렬해서 줍니다.
   Future<List<TicketWithConcert>> listTickets() async {

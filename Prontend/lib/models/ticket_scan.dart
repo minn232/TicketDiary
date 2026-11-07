@@ -169,6 +169,10 @@ class TicketScanExtracted {
   final String? shippingDate;
   final String? eventType;
 
+  // [백엔드 수정] 티켓에서 읽은 권종 일수(2일권 -> 2, 하루짜리는 null), 전일권 여부.
+  final int? passDays;
+  final bool passAllDays;
+
   const TicketScanExtracted({
     this.title,
     this.date,
@@ -179,6 +183,8 @@ class TicketScanExtracted {
     this.price,
     this.shippingDate,
     this.eventType,
+    this.passDays,
+    this.passAllDays = false,
   });
 
   factory TicketScanExtracted.fromJson(Map<String, dynamic> json) {
@@ -192,6 +198,8 @@ class TicketScanExtracted {
       price: json['price'] as int?,
       shippingDate: json['shipping_date'] as String?,
       eventType: json['event_type'] as String?,
+      passDays: json['pass_days'] as int?,
+      passAllDays: json['pass_all_days'] as bool? ?? false,
     );
   }
 }

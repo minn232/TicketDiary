@@ -15,6 +15,7 @@ import 'package:ticketdiary/models/ticket_info.dart';
 import 'package:ticketdiary/services/ticket_preview_player.dart';
 import 'package:ticketdiary/models/ticket_response.dart';
 import 'package:ticketdiary/models/ticket_scan.dart';
+import 'package:ticketdiary/models/ticket_pass.dart';
 import 'package:ticketdiary/services/api_client.dart';
 import 'package:ticketdiary/services/app_settings_store.dart';
 import 'package:ticketdiary/services/auth_service.dart';
@@ -45,6 +46,7 @@ import 'package:ticketdiary/widgets/scrapbook_page_background.dart';
 import 'package:ticketdiary/widgets/ticket_scan_camera_screen.dart';
 import 'package:ticketdiary/widgets/app_network_image.dart';
 import 'package:ticketdiary/widgets/paper_style.dart';
+import 'package:ticketdiary/widgets/pass_day_switcher.dart';
 import 'package:ticketdiary/widgets/poster_background.dart';
 import 'package:ticketdiary/widgets/shake_to_meet.dart';
 
@@ -81,6 +83,9 @@ class TicketData {
   // 열 때 고르게 함(관람일이 없으면 서버가 실제 셋리 날짜를 몰라 400).
   List<DateTime> attendedDayChoices;
 
+  // [백엔드 수정] 2일권/3일권 묶음(날짜별 티켓 전체). 다이어리엔 그중 한 날만 카드로 보임.
+  PassGroup? passGroup;
+
   static int _nextId = 0;
 
   TicketData({
@@ -90,6 +95,7 @@ class TicketData {
     String? id,
     this.tornRevealed = false,
     this.attendedDayChoices = const [],
+    this.passGroup,
   }) : overlayKey = GlobalKey(),
        posterOverlayKey = GlobalKey(),
        id = id ?? 'ticket_${_nextId++}';
@@ -168,17 +174,122 @@ class TicketData {
   }
 }
 
+// [백엔드 수정] 2일권/3일권으로 등록한 날짜별 티켓 묶음 신규.
+/// 날짜순 티켓 목록. 다이어리엔 [initialDay] 한 장만 카드로 보이고, 공연 전/후
+/// 페이지 위쪽 날짜 표시로 다른 날로 넘어갑니다.
+class PassGroup {
+  PassGroup(this.days) {
+    for (final day in days) {
+      day.passGroup = this;
+    }
+  }
+
+  final List<TicketData> days;
+
+  /// 처음 보여줄 날 - 아직 공연 후가 아닌 첫 날, 다 끝났으면 첫날. 그 날이 공연 당일이라 반짝임
+  /// (눌러서 공연 후로 넘기는) 상태면 바로 전 끝난 날을 보여줌 - 둘째 날 아침에 전날 페이지를 쓰려고
+  /// 오늘 공연을 먼저 끝낸 걸로 처리하지 않아도 되게. 오늘은 날짜 탭으로 열고, 자정에 서버가 넘김.
+  TicketData get initialDay {
+    final index = days.indexWhere(
+      (day) => day.status != TicketStatus.afterConcert,
+    );
+    if (index < 0) return days.first;
+    final next = days[index];
+    final date = next.info?.date;
+    final isDue =
+        next.status == TicketStatus.beforeConcert &&
+        date != null &&
+        !date.isAfter(DateTime.now());
+    return isDue && index > 0 ? days[index - 1] : next;
+  }
+
+  /// 카드 표시용 - 이어진 날이면 "3일권 · 08.01~08.03", 띄엄띄엄이면 "2일권 · 09.04, 09.06".
+  String get label {
+    final dates = [for (final d in days) d.info?.date];
+    if (dates.contains(null)) return '${days.length}일권';
+    const md = passDateLabel;
+    final consecutive = [
+      for (var i = 1; i < dates.length; i++)
+        dates[i]!.difference(dates[i - 1]!).inDays == 1,
+    ].every((c) => c);
+    final range = consecutive
+        ? '${md(dates.first!)}~${md(dates.last!)}'
+        : dates.map((d) => md(d!)).join(', ');
+    return '${days.length}일권 · $range';
+  }
+
+  PassDayTabs tabsFor(TicketData day) => PassDayTabs(
+    days: [for (final d in days) d.info?.date ?? DateTime(0)],
+    selected: days.indexOf(day),
+  );
+
+  /// 상태 전환 등으로 날짜 티켓 객체가 새로 만들어졌을 때 묶음 안에서도 바꿈.
+  void replace(TicketData old, TicketData next) {
+    final index = days.indexOf(old);
+    if (index < 0) return;
+    days[index] = next;
+    next.passGroup = this;
+  }
+}
+
+/// 서버 티켓 목록을 다이어리 카드 목록으로 - 같은 묶음 티켓은 한 장으로 합침(서버 정렬에서 처음 나온 자리).
+/// 가격은 첫날 티켓에만 저장돼 있어 다른 날도 같은 가격을 보여줌.
+List<TicketData> ticketDataFromBackend(
+  List<TicketWithConcert> tickets, {
+  TicketScanExtracted? scanExtracted,
+}) {
+  final result = <TicketData>[];
+  final groups = <String, List<TicketData>>{};
+  for (final ticket in tickets) {
+    final data = TicketData.fromBackend(ticket, scanExtracted: scanExtracted);
+    final groupId = ticket.passGroupId;
+    if (groupId == null) {
+      result.add(data);
+      continue;
+    }
+    final days = groups[groupId];
+    if (days == null) {
+      groups[groupId] = [data];
+      result.add(data);
+    } else {
+      days.add(data);
+    }
+  }
+  for (final days in groups.values) {
+    if (days.length < 2) continue;
+    final slot = result.indexOf(days.first);
+    days.sort(
+      (a, b) =>
+          (a.info?.date ?? DateTime(0)).compareTo(b.info?.date ?? DateTime(0)),
+    );
+    final price = days
+        .map((d) => d.info?.price ?? '')
+        .firstWhere((p) => p.isNotEmpty, orElse: () => '');
+    for (final day in days) {
+      final info = day.info;
+      if (price.isNotEmpty && info != null && info.price.isEmpty) {
+        day.info = info.copyWith(price: price);
+      }
+    }
+    result[slot] = PassGroup(days).initialDay;
+  }
+  return result;
+}
+
 // [백엔드 수정]
 // 가로모드 동반 패널용 "다가오는 공연" 조회 함수 추가(다이어리 티켓 캐시 공유, 없으면 null).
 TicketData? nearestUpcomingTicketGlobally() {
   final now = DateTime.now();
   TicketData? nearest;
-  for (final ticket in _DiaryScreenState._tickets) {
-    if (ticket.status != TicketStatus.beforeConcert) continue;
-    final date = ticket.info?.date;
-    if (date == null || !date.isAfter(now)) continue;
-    if (nearest == null || date.isBefore(nearest.info!.date!)) {
-      nearest = ticket;
+  // [백엔드 수정] 2일권/3일권은 카드에 안 보이는 날도 봄.
+  for (final card in _DiaryScreenState._tickets) {
+    for (final ticket in card.passGroup?.days ?? [card]) {
+      if (ticket.status != TicketStatus.beforeConcert) continue;
+      final date = ticket.info?.date;
+      if (date == null || !date.isAfter(now)) continue;
+      if (nearest == null || date.isBefore(nearest.info!.date!)) {
+        nearest = ticket;
+      }
     }
   }
   return nearest;
@@ -591,23 +702,22 @@ class _DiaryScreenState extends State<DiaryScreen>
             setState(() {});
             return;
           }
+          // [백엔드 수정] 2일권/3일권은 카드에 안 보이는 날도 찾아서 그 날 카드로 바꿈.
           var ticketIndex = pendingId == null
               ? -1
-              : _tickets.indexWhere(
-                  (ticket) =>
-                      ticket.info?.ticketId == pendingId ||
-                      ticket.id == pendingId,
+              : _showTicketDay(
+                  (day) =>
+                      day.info?.ticketId == pendingId || day.id == pendingId,
                 );
           if (pendingId == null && record != null) {
             final date = DateTime.tryParse('${record['date']}');
-            final matches = _tickets.asMap().entries.where((entry) {
-              final info = entry.value.info;
+            ticketIndex = _showTicketDay((day) {
+              final info = day.info;
               return info?.concertName == record['concert_name'] &&
                   date != null &&
                   info?.date != null &&
                   DateUtils.isSameDay(info!.date, date);
-            }).toList();
-            if (matches.length == 1) ticketIndex = matches.single.key;
+            });
           }
           coordinator.pendingDiaryTicket = null;
           coordinator.pendingDiaryTicketId = null;
@@ -636,6 +746,23 @@ class _DiaryScreenState extends State<DiaryScreen>
         });
       }),
     );
+  }
+
+  // [백엔드 수정] 조건에 맞는 티켓이 딱 한 장이면 그 카드 자리(묶음이면 그 날을 카드로 바꿈), 아니면 -1.
+  int _showTicketDay(bool Function(TicketData day) test) {
+    var found = -1;
+    TicketData? match;
+    for (var i = 0; i < _tickets.length; i++) {
+      final ticket = _tickets[i];
+      for (final day in ticket.passGroup?.days ?? [ticket]) {
+        if (!test(day)) continue;
+        if (match != null) return -1;
+        found = i;
+        match = day;
+      }
+    }
+    if (match != null) _tickets[found] = match;
+    return found;
   }
 
   Future<void> _startDeliveryAttentionIfNeeded() async {
@@ -767,7 +894,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       // 티켓 목록을 변환하기 전에 먼저 다 불러와둡니다.
       await TornTicketStore.instance.ensureLoaded();
       final tickets = await TicketService().listTickets();
-      final nextTickets = tickets.map(TicketData.fromBackend).toList();
+      final nextTickets = ticketDataFromBackend(tickets);
       // [백엔드 수정]
       // 조회를 시작한 화면이 먼저 사라져도(스플래시 미리보기) static 목록은 채움.
       // 서버 조회에 성공했을 때만 기존 서버 티켓을 교체(일시 실패가 빈 목록으로 덮지 않게).
@@ -799,7 +926,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       userId: AuthService.instance.userId,
     );
     if (cached == null || cached.isEmpty) return;
-    _tickets.addAll(cached.map(TicketData.fromBackend));
+    _tickets.addAll(ticketDataFromBackend(cached));
     _usingCachedTickets = true;
   }
 
@@ -880,13 +1007,15 @@ class _DiaryScreenState extends State<DiaryScreen>
     final newTitle = ticket.title.contains('공연 전')
         ? ticket.title.replaceFirst('공연 전', '공연 후')
         : ticket.title;
-    _tickets[index] = TicketData(
+    final promoted = TicketData(
       title: newTitle,
       status: TicketStatus.afterConcert,
       info: ticket.info,
       id: ticket.id,
       attendedDayChoices: ticket.attendedDayChoices,
     );
+    ticket.passGroup?.replace(ticket, promoted);
+    _tickets[index] = promoted;
 
     if (mounted) setState(() {});
   }
@@ -937,7 +1066,11 @@ class _DiaryScreenState extends State<DiaryScreen>
 
   // [백엔드 수정] 결산 캘린더에서 티켓을 눌러 들어오면 그 티켓 오버레이까지 자동으로 엶.
   // 열기 동작은 화면에 그려진 티켓만 build 때 등록(눌렀을 때와 같은 동작을 그대로 씀).
-  final Map<String, Future<void> Function()> _ticketOpeners = {};
+  // [백엔드 수정] instant: 2일권/3일권 다른 날에서 넘어올 때 펼치는 연출 없이 엶.
+  final Map<String, Future<void> Function([bool instant])> _ticketOpeners = {};
+
+  // [백엔드 수정] 공연 시간이 지나 눌러도 전환 연출만 하는 공연 전 티켓의 페이지 열기(날짜 탭 이동 전용).
+  final Map<String, Future<void> Function([bool instant])> _passDueOpeners = {};
   String? _autoOpenTicketId;
 
   // 탭 전환(페이지 넘김) 중엔 티켓이 움직이는 중이라 시작 위치가 틀어져서 끝날 때까지 기다림
@@ -953,6 +1086,35 @@ class _DiaryScreenState extends State<DiaryScreen>
     _autoOpenTicketId = null;
     if (_isAddTicketExpanded || _interactionLocked) return;
     await _ticketOpeners[id]?.call();
+  }
+
+  // [백엔드 수정] 공연 전/후 페이지에서 다른 관람일을 고르면 카드를 그 날로 바꾸고 그 날 페이지를 바로 엶.
+  Future<void> _switchPassDay(TicketData current, int dayIndex) async {
+    final group = current.passGroup;
+    final index = _tickets.indexOf(current);
+    if (group == null ||
+        index < 0 ||
+        dayIndex < 0 ||
+        dayIndex >= group.days.length) {
+      setState(() => _overlayHiddenRegionKey = null);
+      return;
+    }
+    final next = group.days[dayIndex];
+    setState(() {
+      _tickets[index] = next;
+      // 닫히는 페이지가 사라지는 동안 바뀐 카드가 비쳐 보이지 않게 미리 숨김
+      _overlayHiddenRegionKey = next.status == TicketStatus.afterConcert
+          ? next.posterOverlayKey
+          : next.overlayKey;
+    });
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final open = _ticketOpeners[next.id] ?? _passDueOpeners[next.id];
+    if (open == null) {
+      setState(() => _overlayHiddenRegionKey = null);
+      return;
+    }
+    await open(true);
   }
 
   Rect? _globalRectOf(GlobalKey key) {
@@ -1139,17 +1301,8 @@ class _DiaryScreenState extends State<DiaryScreen>
     if (selected == null || !mounted) return; // 여러 후보 중 아무것도 선택 안 하고 취소함
 
     final extracted = scanResult.extracted;
-    // [백엔드 수정] 여러 날 공연인데 관람일을 못 읽었거나 공연 기간 밖이면 고르게 함
-    // (관람일이 없으면 서버가 셋리/아티스트 연결을 어느 날 기준으로 할지 몰라 실패함).
     DateTime? attendedDate = _parseYmd(extracted.date);
     final days = _concertDays(selected);
-    if (days.length > 1 &&
-        (attendedDate == null ||
-            !days.any((d) => DateUtils.isSameDay(d, attendedDate)))) {
-      final picked = await _pickAttendedDate(days);
-      if (picked == null || !mounted) return;
-      attendedDate = picked;
-    }
 
     // 모바일 티켓 캡쳐처럼 사진에 가격/좌석이 없는 경우, KOPIS 가격표
     // (candidate.price)로 채움 - 하나만 없으면 자동 추정, 추정 실패하거나
@@ -1184,39 +1337,78 @@ class _DiaryScreenState extends State<DiaryScreen>
       }
     }
 
+    // [백엔드 수정] 2일권/3일권이면 관람일 조합을 고르게 함(가격표에서 고른 등급명도 확인). 하루만 고르면 1장.
+    List<DateTime>? passDates;
+    final passDays = _passDaysFor(extracted, finalSeat, days.length);
+    if (passDays != null) {
+      final combos = passDayCombos(days, passDays, firstDay: attendedDate);
+      if (combos.isNotEmpty && combos.length <= _maxPassCombos) {
+        final picked = await _pickPassDates(passDays, combos);
+        if (picked == null || !mounted) return;
+        if (picked.length > 1) passDates = picked;
+      }
+    }
+
+    // [백엔드 수정] 여러 날 공연인데 관람일을 못 읽었거나 공연 기간 밖이면 고르게 함
+    // (관람일이 없으면 서버가 셋리/아티스트 연결을 어느 날 기준으로 할지 몰라 실패함).
+    if (passDates == null &&
+        days.length > 1 &&
+        (attendedDate == null ||
+            !days.any((d) => DateUtils.isSameDay(d, attendedDate)))) {
+      final picked = await _pickAttendedDate(days);
+      if (picked == null || !mounted) return;
+      attendedDate = picked;
+    }
+    final firstDate = passDates?.first ?? attendedDate;
+
     // [백엔드 수정] 갤러리 등록은 배송 대기 여부를 물음(같은 공연 배송 전 티켓이 있으면 실물 도착이라 생략).
     var awaitingDelivery = false;
     if (fromGallery &&
-        _canAwaitDelivery(attendedDate ?? selected.startDate) &&
-        !_hasBeforeDeliveryTicket(selected.id, attendedDate)) {
+        _canAwaitDelivery(firstDate ?? selected.startDate) &&
+        !_hasBeforeDeliveryTicket(selected.id, firstDate)) {
       final answer = await _askAwaitingDelivery();
       if (answer == null || !mounted) return;
       awaitingDelivery = answer;
     }
+    if (!mounted) return;
 
     showPaperLoading(context, '다이어리에 붙이는 중이에요…');
 
     try {
-      final ticket = await _ticketService.createTicket(
-        awaitingDelivery: awaitingDelivery,
-        concertId: selected.id,
-        deliveryDate: _parseYmd(extracted.shippingDate),
-        // [백엔드 수정]
-        // extracted.time을 버리지 않고 넘기도록 수정.
-        startTime: extracted.time,
-        // [백엔드 수정]
-        // extracted.date(OCR 관람일)도 같은 이유로 넘기도록 수정.
-        attendedDate: attendedDate,
-        ticketingSite: extracted.platform,
-        price: finalPrice,
-        seatType: finalSeat,
-      );
+      final List<TicketWithConcert> created = passDates == null
+          ? [
+              await _ticketService.createTicket(
+                awaitingDelivery: awaitingDelivery,
+                concertId: selected.id,
+                deliveryDate: _parseYmd(extracted.shippingDate),
+                // [백엔드 수정]
+                // extracted.time을 버리지 않고 넘기도록 수정.
+                startTime: extracted.time,
+                // [백엔드 수정]
+                // extracted.date(OCR 관람일)도 같은 이유로 넘기도록 수정.
+                attendedDate: attendedDate,
+                ticketingSite: extracted.platform,
+                price: finalPrice,
+                seatType: finalSeat,
+              ),
+            ]
+          : await _ticketService.createPassTickets(
+              awaitingDelivery: awaitingDelivery,
+              concertId: selected.id,
+              attendedDates: passDates,
+              deliveryDate: _parseYmd(extracted.shippingDate),
+              startTime: extracted.time,
+              ticketingSite: extracted.platform,
+              price: finalPrice,
+              seatType: finalSeat,
+            );
 
       if (!mounted) return;
       Navigator.pop(context); // 로딩 다이얼로그 닫기
 
+      final ticket = created.first;
       _insertTicketReplacingBeforeDelivery(
-        TicketData.fromBackend(ticket, scanExtracted: extracted),
+        ticketDataFromBackend(created, scanExtracted: extracted).first,
         matchConcertId: ticket.concertId,
         matchTitle: ticket.concert?.name ?? selected.name,
       );
@@ -1226,6 +1418,8 @@ class _DiaryScreenState extends State<DiaryScreen>
           unawaited(_startDeliveryAttentionIfNeeded());
         });
         _showSnack('배송 전 티켓으로 추가했어요.');
+      } else if (created.length > 1) {
+        _showSnack('${created.length}일권 티켓이 추가되었습니다.');
       } else {
         _showSnack('다이어리에 티켓이 추가되었습니다.');
       }
@@ -1279,9 +1473,16 @@ class _DiaryScreenState extends State<DiaryScreen>
   Future<ConcertResponse?> _pickConcertCandidate(
     List<ConcertResponse> candidates,
   ) {
-    String ymd(DateTime d) =>
-        '${d.year}.${d.month.toString().padLeft(2, '0')}.'
-        '${d.day.toString().padLeft(2, '0')}';
+    // [백엔드 수정] 날짜 표기 통일(하루 공연은 요일까지, 여러 날 공연은 기간).
+    String period(ConcertResponse c) {
+      final start = c.startDate.toUtc();
+      final end = c.endDate.toUtc();
+      if (DateUtils.isSameDay(start, end)) {
+        return passDateLabel(start, year: true, weekday: true);
+      }
+      return '${passDateLabel(start, year: true)} ~ ${passDateLabel(end)}';
+    }
+
     return showPaperSheet<ConcertResponse>(
       context,
       title: '일치하는 공연이 여러 개예요.\n하나를 선택해주세요.',
@@ -1298,8 +1499,7 @@ class _DiaryScreenState extends State<DiaryScreen>
               ),
             ),
             title: candidate.name,
-            subtitle:
-                '${candidate.venue ?? '장소 미정'} · ${ymd(candidate.startDate)}',
+            subtitle: '${candidate.venue ?? '장소 미정'} · ${period(candidate)}',
             onTap: () => Navigator.pop(context, candidate),
           ),
       ],
@@ -1366,9 +1566,53 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
+  // [백엔드 수정] 2일권/3일권 등록 신규.
+  /// 조합 수가 이보다 많으면(긴 기간 공연) 고르기 어려워서 하루짜리로 등록.
+  static const int _maxPassCombos = 12;
+
+  /// 관람 일수 - 좌석(가격표에서 고른 등급명 포함) 표기를 먼저 보고, 없으면 서버가 티켓 글자에서 읽은 값.
+  /// 하루짜리거나 공연 기간보다 길면 null.
+  int? _passDaysFor(
+    TicketScanExtracted extracted,
+    String? seat,
+    int concertDayCount,
+  ) {
+    final days =
+        passDaysFromText(seat) ??
+        (extracted.passAllDays ? passAllDays : extracted.passDays);
+    if (days == null || concertDayCount < 2) return null;
+    if (days == passAllDays) return concertDayCount;
+    return days <= concertDayCount ? days : null;
+  }
+
+  /// 관람일 조합 선택. 권종을 잘못 읽었을 때를 위해 하루만 등록도 고를 수 있음(빈 목록).
+  /// 뒤로가기로 닫으면 등록 취소(null).
+  Future<List<DateTime>?> _pickPassDates(
+    int passDays,
+    List<List<DateTime>> combos,
+  ) {
+    String label(DateTime d) => passDateLabel(d, weekday: true);
+    return showPaperSheet<List<DateTime>>(
+      context,
+      title: '$passDays일권 티켓이에요.\n관람하는 날짜를 선택해주세요.',
+      dismissible: true,
+      rows: (context) => [
+        for (final combo in combos)
+          PaperSheetRow(
+            title: combo.map(label).join(' · '),
+            onTap: () => Navigator.pop(context, combo),
+          ),
+        PaperSheetRow(
+          title: '하루만 관람해요',
+          subtitle: '티켓 한 장만 등록해요',
+          onTap: () => Navigator.pop(context, const <DateTime>[]),
+        ),
+      ],
+    );
+  }
+
   /// 관람일 선택. 뒤로가기로 닫으면 티켓 등록을 취소합니다.
   Future<DateTime?> _pickAttendedDate(List<DateTime> days) {
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
     return showPaperSheet<DateTime>(
       context,
       title: '여러 날 열리는 공연이에요.\n관람한 날짜를 선택해주세요.',
@@ -1376,9 +1620,8 @@ class _DiaryScreenState extends State<DiaryScreen>
       rows: (context) => [
         for (final day in days)
           PaperSheetRow(
-            title:
-                '${day.year}. ${day.month}. ${day.day} '
-                '(${weekdays[day.weekday - 1]})',
+            // [백엔드 수정] 날짜 표기 통일("2026.09.04 (금)").
+            title: passDateLabel(day, year: true, weekday: true),
             onTap: () => Navigator.pop(context, day),
           ),
       ],
@@ -1531,7 +1774,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       if (!mounted) return;
       Navigator.pop(context);
       _insertTicketReplacingBeforeDelivery(
-        TicketData.fromBackend(updated),
+        _deliveredTicketData(ticket, updated),
         matchConcertId: updated.concertId,
         matchTitle: updated.concert?.name ?? ticket.title,
       );
@@ -1552,6 +1795,28 @@ class _DiaryScreenState extends State<DiaryScreen>
     }
   }
 
+  // [백엔드 수정] 2일권/3일권은 서버가 다른 날도 같이 넘기므로 묶음 전체를 같은 상태로 다시 만듦.
+  TicketData _deliveredTicketData(
+    TicketData ticket,
+    TicketWithConcert updated,
+  ) {
+    final next = TicketData.fromBackend(updated);
+    final group = ticket.passGroup;
+    if (group == null) return next;
+    PassGroup([
+      for (final day in group.days)
+        day.id == updated.id
+            ? next
+            : TicketData(
+                title: day.title,
+                status: next.status,
+                info: day.info,
+                id: day.id,
+              ),
+    ]);
+    return next;
+  }
+
   /// 티켓을 길게 누르면 삭제를 확인합니다.
   ///
   /// - 실제로 등록된 티켓(`info.ticketId`가 있는 것 — 백엔드에 저장된
@@ -1560,11 +1825,16 @@ class _DiaryScreenState extends State<DiaryScreen>
   ///   게스트는 로컬 저장소).
   /// - 로컬 예시/디버그 티켓(등록된 적 없는 것)은 화면에서만 지웁니다.
   Future<void> _confirmDeleteTicket(TicketData ticket) async {
+    // [백엔드 수정] 2일권/3일권은 날짜 하나만 지우지 않고 묶음 전체를 지움.
+    final passDays = ticket.passGroup?.days ?? [ticket];
     final confirmed = await showPaperDialog<bool>(
       context,
       title: '티켓 삭제',
       emphasis: ticket.title,
-      message: '이 티켓을 삭제할까요?\n삭제하면 되돌릴 수 없어요.',
+      message: passDays.length > 1
+          ? '${passDays.length}일권 티켓이라 ${passDays.length}일 모두 삭제돼요.\n'
+                '삭제하면 되돌릴 수 없어요.'
+          : '이 티켓을 삭제할까요?\n삭제하면 되돌릴 수 없어요.',
       actions: const [
         PaperDialogAction(
           label: '취소',
@@ -1590,13 +1860,17 @@ class _DiaryScreenState extends State<DiaryScreen>
 
     try {
       await _ticketService.deleteTicket(ticket.id);
-      unawaited(TornTicketStore.instance.clear(ticket.id));
+      for (final day in passDays) {
+        unawaited(TornTicketStore.instance.clear(day.id));
+      }
       if (!mounted) return;
       Navigator.pop(context);
       setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
       _showSnack('티켓을 삭제했어요.');
     } on TicketNotFoundException {
-      unawaited(TornTicketStore.instance.clear(ticket.id));
+      for (final day in passDays) {
+        unawaited(TornTicketStore.instance.clear(day.id));
+      }
       if (!mounted) return;
       Navigator.pop(context);
       setState(() => _tickets.removeWhere((t) => t.id == ticket.id));
@@ -2103,12 +2377,14 @@ class _DiaryScreenState extends State<DiaryScreen>
                   issueNumber: _issueNumberForIndex(
                     _tickets.indexWhere((t) => t.id == ticket.id),
                   ),
+                  passDay: ticket.passGroup == null ? null : ticket,
                 ),
               )
             : wrap(
                 child: _buildTicketBeforeConcert(
                   title: ticket.title,
                   info: ticket.info,
+                  passLabel: ticket.passGroup?.label,
                 ),
               ),
       ),
@@ -2531,15 +2807,18 @@ class _DiaryScreenState extends State<DiaryScreen>
         // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
         unawaited(TicketPreviewPlayer.instance.prepare(ticket.info?.ticketId));
         final isDue = _isDueForPromotion(ticket);
-        Future<void> openBefore() async {
+        Future<void> openBefore([bool instant = false]) async {
           final startRect = _globalRectOf(ticket.overlayKey);
-          if (startRect == null) return;
+          if (startRect == null) {
+            if (instant) setState(() => _overlayHiddenRegionKey = null);
+            return;
+          }
 
           // [백엔드 수정]
           // 오버레이가 떠있는 동안 리스트의 진짜 티켓을 숨겨서
           // 복사본(collapsedTicket)과 겹쳐 보이지 않도록 함.
           setState(() => _overlayHiddenRegionKey = ticket.overlayKey);
-          await ConcertBeforeOverlay.show(
+          final switchTo = await ConcertBeforeOverlay.show(
             context,
             startRect: startRect,
             // startRect 크기로 그대로 채움.
@@ -2547,8 +2826,11 @@ class _DiaryScreenState extends State<DiaryScreen>
               child: _buildTicketBeforeConcert(
                 title: ticket.title,
                 info: ticket.info,
+                passLabel: ticket.passGroup?.label,
               ),
             ),
+            passDays: ticket.passGroup?.tabsFor(ticket),
+            instant: instant,
             concertTitle: ticket.title,
             ticketInfo: ticket.info,
             issueNumber: _issueNumberForIndex(
@@ -2563,12 +2845,19 @@ class _DiaryScreenState extends State<DiaryScreen>
             onTicketInfoChanged: (updated) =>
                 setState(() => ticket.info = updated),
           );
-          if (mounted) setState(() => _overlayHiddenRegionKey = null);
+          if (!mounted) return;
+          if (switchTo != null) {
+            unawaited(_switchPassDay(ticket, switchTo));
+            return;
+          }
+          setState(() => _overlayHiddenRegionKey = null);
         }
 
         // [백엔드 수정] 결산 캘린더 자동 열기용 - 전환 연출 대상은 페이지 이동만.
+        // 2일권/3일권 날짜 탭으로 넘어올 땐 전환 대상이라도 그 날 페이지를 엶.
         if (isDue) {
           _ticketOpeners.remove(ticket.id);
+          _passDueOpeners[ticket.id] = openBefore;
         } else {
           _ticketOpeners[ticket.id] = openBefore;
         }
@@ -2587,6 +2876,7 @@ class _DiaryScreenState extends State<DiaryScreen>
               child: _buildTicketBeforeConcert(
                 title: ticket.title,
                 info: ticket.info,
+                passLabel: ticket.passGroup?.label,
               ),
             ),
           ),
@@ -2612,6 +2902,7 @@ class _DiaryScreenState extends State<DiaryScreen>
               _tickets.indexWhere((t) => t.id == ticket.id),
             ),
             openerTicketId: ticket.id,
+            passDay: ticket.passGroup == null ? null : ticket,
             ensureAttendedDate: ticket.attendedDayChoices.isEmpty
                 ? null
                 : () => _ensureAttendedDate(ticket),
@@ -2904,7 +3195,12 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
-  Widget _buildTicketBeforeConcert({required String title, TicketInfo? info}) {
+  // [백엔드 수정] passLabel: 2일권/3일권 표시("3일권 · 8.1~8.3").
+  Widget _buildTicketBeforeConcert({
+    required String title,
+    TicketInfo? info,
+    String? passLabel,
+  }) {
     // "입장 티켓" 라벨을 카드 왼쪽으로 옮기고, 공연 정보(포스터/제목)를
     // 오른쪽으로 옮김 — 바깥쪽 모서리 둥글림도 함께 뒤집는다.
     if (_usePosterTicketDesign) {
@@ -2916,6 +3212,7 @@ class _DiaryScreenState extends State<DiaryScreen>
               label: '입장 티켓',
               date: info?.date,
               radiusOnLeft: true,
+              passLabel: passLabel,
             ),
           ),
           const _DashedVerticalDivider(),
@@ -2991,19 +3288,25 @@ class _DiaryScreenState extends State<DiaryScreen>
     String? openerTicketId,
     // [백엔드 수정] 관람일 없는 여러 날 공연이면 열기 전에 관람일을 고르게 함.
     Future<TicketInfo?> Function()? ensureAttendedDate,
+    // [백엔드 수정] 2일권/3일권이면 그 날 티켓(카드 날짜 표시·페이지 안 날짜 이동용).
+    TicketData? passDay,
   }) {
     // [백엔드 수정] 티켓 미리듣기 곡 미리 받기.
     unawaited(TicketPreviewPlayer.instance.prepare(info?.ticketId));
+    final passGroup = passDay?.passGroup;
     // 입장 티켓을 뜯은 뒤에는, 티켓 어디를 눌러도 "공연 후" 페이지가 뜹니다.
     // (예전의 뜯긴 왼쪽 = "공연전" 바로가기/공연 전 페이지 진입은 제거.)
-    Future<void> openAfter() async {
+    Future<void> openAfter([bool instant = false]) async {
       if (ensureAttendedDate != null) {
         final picked = await ensureAttendedDate();
         if (picked == null || !context.mounted) return;
         info = picked;
       }
       final startRect = _globalRectOf(posterOverlayKey);
-      if (startRect == null) return;
+      if (startRect == null) {
+        if (instant) setState(() => _overlayHiddenRegionKey = null);
+        return;
+      }
       final frameScale =
           DiaryFrameScale.maybeOf(context) ?? diaryScaleFromMediaQuery(context);
       final collapsedTicket = _buildAfterConcertPosterFace(
@@ -3011,10 +3314,12 @@ class _DiaryScreenState extends State<DiaryScreen>
         info: info,
         radiusOnRight: true,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!instant) {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
       if (!context.mounted) return;
       setState(() => _overlayHiddenRegionKey = posterOverlayKey);
-      await ConcertAfterOverlay.show(
+      final switchTo = await ConcertAfterOverlay.show(
         context,
         startRect: startRect,
         collapsedTicket: collapsedTicket,
@@ -3024,8 +3329,15 @@ class _DiaryScreenState extends State<DiaryScreen>
         // [백엔드 수정] 이 리스트에서 쓰이는 배율을 그대로 넘김.
         frameScale: frameScale,
         issueNumber: issueNumber,
+        passDays: passDay == null ? null : passGroup?.tabsFor(passDay),
+        instant: instant,
       );
-      if (mounted) setState(() => _overlayHiddenRegionKey = null);
+      if (!mounted) return;
+      if (switchTo != null && passDay != null) {
+        unawaited(_switchPassDay(passDay, switchTo));
+        return;
+      }
+      setState(() => _overlayHiddenRegionKey = null);
     }
 
     if (openerTicketId != null) _ticketOpeners[openerTicketId] = openAfter;
@@ -3046,6 +3358,7 @@ class _DiaryScreenState extends State<DiaryScreen>
               label: '관람 완료',
               date: info?.date,
               radiusOnLeft: true,
+              passLabel: passGroup?.label,
             ),
             // 뜯긴 뒤: 현재 대표 이미지의 닫힌 다이어리 형태를 뜯긴 조각의
             // 밝은 색감으로 윤곽선만 남긴다. 눌러도 (오른쪽 포스터와 동일하게)
@@ -3475,12 +3788,16 @@ class _TicketStub extends StatelessWidget {
     required this.label,
     this.date,
     this.radiusOnLeft = false,
+    this.passLabel,
   });
 
   static const List<String> _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
 
   final String label;
   final DateTime? date;
+
+  // [백엔드 수정] 2일권/3일권 표시(날짜 아래 한 줄).
+  final String? passLabel;
 
   /// 이 조각이 카드의 왼쪽 끝에 놓일 때(예: 입장 티켓 라벨을 왼쪽으로 옮긴
   /// 경우) true로 줘서 바깥쪽 모서리(왼쪽)를 둥글게 한다. 기본값(false)은
@@ -3549,6 +3866,17 @@ class _TicketStub extends StatelessWidget {
                             color: Colors.black.withValues(alpha: 0.45),
                           ),
                         ),
+                        if (passLabel case final pass?) ...[
+                          SizedBox(height: context.rs(3)),
+                          Text(
+                            pass,
+                            style: TextStyle(
+                              fontSize: context.sp(9),
+                              fontWeight: FontWeight.w800,
+                              color: color,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
