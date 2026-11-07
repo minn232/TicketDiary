@@ -5,33 +5,73 @@ import '../models/artist_model.dart';
 import 'paper_style.dart';
 
 /// 카드 왼쪽 위 테두리: 아티스트 프로필을 공연 찜 문구보다 우선합니다.
-class NewsCardReason extends StatelessWidget {
+class NewsCardReason extends StatefulWidget {
   const NewsCardReason({super.key, required this.data});
   final NewsModel data;
 
   @override
+  State<NewsCardReason> createState() => _NewsCardReasonState();
+}
+
+class _NewsCardReasonState extends State<NewsCardReason>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _marquee;
+  final _contentKey = GlobalKey();
+  double _overflow = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _marquee = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 4),
+    );
+  }
+
+  @override
+  void dispose() {
+    _marquee.dispose();
+    super.dispose();
+  }
+
+  void _measure() {
+    final box = _contentKey.currentContext?.findRenderObject() as RenderBox?;
+    final viewport = context.findRenderObject() as RenderBox?;
+    if (box == null || viewport == null) return;
+    final next = (box.size.width - viewport.size.width).clamp(
+      0.0,
+      double.infinity,
+    );
+    if ((next - _overflow).abs() < .5) return;
+    _overflow = next;
+    if (_overflow > 0) {
+      _marquee.repeat(reverse: true);
+    } else {
+      _marquee.stop();
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final artists = data.matchedArtists.isNotEmpty
-        ? data.matchedArtists
-        : data.isFavoritedConcert
+    final artists = widget.data.matchedArtists.isNotEmpty
+        ? widget.data.matchedArtists
+        : widget.data.isFavoritedConcert
         ? <ArtistModel>[]
         // [백엔드 수정] artist는 출연진 표시("A 외 N팀")라 매칭된 아티스트 이름을 씀.
         : [
             ArtistModel(
-              name: data.matchedArtist ?? data.artist,
+              name: widget.data.matchedArtist ?? widget.data.artist,
               profileImageUrl: '',
             ),
           ];
     if (artists.isEmpty) {
-      return const Text(
-        '찜한 공연',
-        textAlign: TextAlign.left,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          color: PaperColors.muted,
+      return Semantics(
+        label: '찜한 공연',
+        child: Text(
+          '♥',
+          textAlign: TextAlign.left,
+          style: TextStyle(fontSize: 18, height: 1, color: Color(0xFFC96B72)),
         ),
       );
     }
@@ -49,36 +89,61 @@ class NewsCardReason extends StatelessWidget {
                 PointerDeviceKind.mouse,
               },
             ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final a in artists)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 3),
-                      child: Container(
-                        key: ValueKey('news-artist-${a.name}'),
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: PaperColors.tile,
-                          border: Border.all(
-                            color: PaperColors.muted.withValues(alpha: .35),
-                          ),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: a.profileImageUrl.trim().isEmpty
-                            ? _fallback(a.name)
-                            : Image.network(
-                                a.profileImageUrl,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => _fallback(a.name),
+            child: ClipRect(
+              child: AnimatedBuilder(
+                animation: _marquee,
+                builder: (_, child) => Transform.translate(
+                  offset: Offset(
+                    -_overflow * Curves.easeInOut.transform(_marquee.value),
+                    0,
+                  ),
+                  child: child,
+                ),
+                child: Builder(
+                  builder: (_) {
+                    WidgetsBinding.instance.addPostFrameCallback(
+                      (_) => _measure(),
+                    );
+                    return OverflowBox(
+                      alignment: Alignment.centerLeft,
+                      minWidth: 0,
+                      maxWidth: double.infinity,
+                      child: Row(
+                        key: _contentKey,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final a in artists)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 3),
+                              child: Container(
+                                key: ValueKey('news-artist-${a.name}'),
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: PaperColors.tile,
+                                  border: Border.all(
+                                    color: PaperColors.muted.withValues(
+                                      alpha: .35,
+                                    ),
+                                  ),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: a.profileImageUrl.trim().isEmpty
+                                    ? _fallback(a.name)
+                                    : Image.network(
+                                        a.profileImageUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, _, _) =>
+                                            _fallback(a.name),
+                                      ),
                               ),
+                            ),
+                        ],
                       ),
-                    ),
-                ],
+                    );
+                  },
+                ),
               ),
             ),
           ),

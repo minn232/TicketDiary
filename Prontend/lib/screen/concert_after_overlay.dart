@@ -14,7 +14,6 @@ import '../widgets/diary_page_frame.dart';
 import '../widgets/paper_texture_cache.dart';
 import '../widgets/pass_day_switcher.dart';
 import '../widgets/responsive_text.dart';
-import 'concert_before_overlay.dart';
 
 /// 다이어리 화면 위에 "공연 후" 상세를 오버레이로 띄우는 위젯.
 ///
@@ -49,7 +48,7 @@ class ConcertAfterOverlay extends StatefulWidget {
   // 탭 시점의 배율을 넘겨받아 오버레이 안에서도 같은 배율 사용.
   final double frameScale;
 
-  // [백엔드 수정] 뒷면 "공연 전 신문"용 호수 신규.
+  /// 공연 기록에 표시할 발행 호수.
   final int issueNumber;
 
   // [백엔드 수정] 2일권/3일권 관람일 이동 표시. 다른 날을 고르면 그 날 번호를 돌려주며 닫힘.
@@ -513,18 +512,6 @@ class _ExpandedConcertAfterState extends State<_ExpandedConcertAfter> {
                   onTicketInfoChanged: widget.onTicketInfoChanged,
                   pageBoundaryKey: _pageBoundaryKey,
                   issueNumber: widget.issueNumber,
-                  // [백엔드 수정] "공연 전 신문"을 누르면 공연 전 페이지를 읽기 전용으로 엶.
-                  onOpenBeforePage: (startRect, collapsed) =>
-                      ConcertBeforeOverlay.show(
-                        context,
-                        startRect: startRect,
-                        collapsedTicket: collapsed,
-                        concertTitle: widget.concertTitle,
-                        frameScale: widget.frameScale,
-                        ticketInfo: widget.ticketInfo,
-                        issueNumber: widget.issueNumber,
-                        readOnly: true,
-                      ),
                 ),
               ),
             ),

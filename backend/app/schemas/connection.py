@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.concert import DisplayVenue
+
 
 class NearbyCodeResponse(BaseModel):
     # 내 BLE 광고 코드 - 앱은 만료 1시간 전부터 새로 받아 둠(오프라인에서도 쓸 수 있게)
@@ -67,7 +69,7 @@ class CardConcert(BaseModel):
     id: UUID
     name: str
     poster_url: str | None
-    venue: str | None
+    venue: DisplayVenue
     start_date: datetime
     end_date: datetime
     attended_date: date | None = None

@@ -403,6 +403,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ],
                             ),
                           ),
+                          _divider,
                           const _SectionLabel('알림'),
                           if (FcmService.supported)
                             ValueListenableBuilder<String>(
@@ -536,6 +537,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               },
                             ),
                           ),
+                          _divider,
                           const _SectionLabel('나누기'),
                           // [백엔드 수정]
                           // 연결된 친구 목록은 일회용 만남(다이어리에서 흔들기)으로 바뀌어 꺼 둠.
@@ -701,35 +703,41 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 56,
-      child: Padding(
-        padding: EdgeInsets.only(left: indent ? 32 : 16, right: 16),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontSize: context.sp(indent ? 14 : 15),
-                  fontWeight: indent ? FontWeight.w700 : FontWeight.w800,
-                  color: PaperColors.ink,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => onChanged(!value),
+        child: SizedBox(
+          height: 56,
+          child: Padding(
+            padding: EdgeInsets.only(left: indent ? 32 : 16, right: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: context.sp(indent ? 14 : 15),
+                      fontWeight: indent ? FontWeight.w700 : FontWeight.w800,
+                      color: PaperColors.ink,
+                    ),
+                  ),
                 ),
-              ),
+                // 초록 기본 스위치 대신 갈색 잉크
+                Switch.adaptive(
+                  value: value,
+                  onChanged: onChanged,
+                  activeThumbColor: PaperColors.card,
+                  activeTrackColor: PaperColors.ink.withValues(alpha: 0.8),
+                  inactiveThumbColor: PaperColors.muted,
+                  inactiveTrackColor: PaperColors.tile,
+                  trackOutlineColor: WidgetStatePropertyAll(
+                    PaperColors.ink.withValues(alpha: 0.18),
+                  ),
+                ),
+              ],
             ),
-            // 초록 기본 스위치 대신 갈색 잉크
-            Switch.adaptive(
-              value: value,
-              onChanged: onChanged,
-              activeThumbColor: PaperColors.card,
-              activeTrackColor: PaperColors.ink.withValues(alpha: 0.8),
-              inactiveThumbColor: PaperColors.muted,
-              inactiveTrackColor: PaperColors.tile,
-              trackOutlineColor: WidgetStatePropertyAll(
-                PaperColors.ink.withValues(alpha: 0.18),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

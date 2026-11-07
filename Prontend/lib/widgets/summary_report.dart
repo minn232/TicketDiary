@@ -405,10 +405,10 @@ class _Metric extends StatelessWidget {
         // 왼쪽 아래 구석에 몰려 보였음. 보조 문구 줄은 늘 자리를 잡아 한 줄의 숫자 높이를 맞춤
         Expanded(
           child: Align(
-            alignment: Alignment.centerLeft,
+            alignment: Alignment.center,
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 if (multiline)
                   Tooltip(
@@ -416,6 +416,7 @@ class _Metric extends StatelessWidget {
                     child: Text(
                       value,
                       maxLines: 2,
+                      textAlign: TextAlign.center,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: _ink,
@@ -429,7 +430,7 @@ class _Metric extends StatelessWidget {
                 else
                   FittedBox(
                     fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
+                    alignment: Alignment.center,
                     child: countUpTo == null
                         ? _valueText(value)
                         : TweenAnimationBuilder<double>(
@@ -443,6 +444,7 @@ class _Metric extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   note ?? '',
+                  textAlign: TextAlign.center,
                   style: const TextStyle(color: _muted, fontSize: 10),
                 ),
               ],

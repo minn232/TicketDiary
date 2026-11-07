@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_validator
 from uuid import UUID
 from app.models.user import UserRole
 
@@ -36,6 +36,17 @@ class UserProfileUpdate(BaseModel):
     # 회원 프로필 수정 요청 (수정할 필드만 전달)
     nickname: str | None = Field(default=None, max_length=50)
     profile_image_url: str | None = Field(default=None, max_length=2048)
+
+    # 앞뒤 공백 정리 후 빈 닉네임("", "   ")은 거부 - 그대로 저장되면 셋리 수정자/만남 카드에 빈 이름으로 보임
+    @field_validator("nickname", mode="after")
+    @classmethod
+    def _strip_nickname(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("닉네임은 공백일 수 없습니다.")
+        return v
 
 
 class UserResponse(BaseModel):

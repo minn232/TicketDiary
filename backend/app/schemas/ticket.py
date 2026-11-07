@@ -67,6 +67,24 @@ class TicketCreate(BaseModel):
         return self
 
 
+# 페스티벌 최대 일수 여유분 - KOPIS 페스티벌 권종은 4일권까지 확인됨
+_MAX_PASS_DAYS = 7
+
+
+class TicketPassCreate(TicketCreate):
+    # 2일권/3일권 등록 요청 - 관람일마다 티켓을 만들어 묶음. attended_date는 쓰지 않고 이 목록을 씀
+    attended_dates: list[datetime] = Field(min_length=2, max_length=_MAX_PASS_DAYS)
+
+    # 날짜 문자열만 오면 하루 밀리지 않게 UTC로 맞추고(_ensure_utc), 날짜순 정렬
+    @field_validator("attended_dates", mode="after")
+    @classmethod
+    def normalize_attended_dates(cls, values: list[datetime]) -> list[datetime]:
+        dates = sorted(_ensure_utc(v) for v in values)
+        if len({d.date() for d in dates}) != len(dates):
+            raise ValueError("관람일이 중복되었습니다.")
+        return dates
+
+
 class PageLayoutPhoto(BaseModel):
     # 사진 아이템 부가 정보 - w/h는 EXIF 회전 적용 후 크기, 다른 비율 기기에서 재배치할 때 씀
     w: int = Field(gt=0, le=20000)
@@ -150,6 +168,8 @@ class TicketResponse(BaseModel):
     is_last_day: bool | None
     torn_at: datetime | None
     page_layout: PageLayout | None = None
+    # 2일권/3일권 묶음(첫날 티켓 id), 하루짜리 티켓은 null
+    pass_group_id: UUID | None = None
 
 
 class TicketWithConcert(TicketResponse):

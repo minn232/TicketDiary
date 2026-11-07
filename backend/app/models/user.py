@@ -33,7 +33,7 @@ class User(Base):
         nullable=False,
         server_default=text(
             '\'{"delivery": true, "day_before": true, "concert_day": true, '
-            '"ticketing": true, "new_concert": true}\'::jsonb'
+            '"ticketing": true, "new_concert": true, "blog_draft": true}\'::jsonb'
         ),
         default=lambda: {
             "delivery": True,
@@ -41,6 +41,7 @@ class User(Base):
             "concert_day": True,
             "ticketing": True,
             "new_concert": True,
+            "blog_draft": True,
         },
     )
     tickets = relationship("Ticket", backref="user", cascade="all, delete-orphan")

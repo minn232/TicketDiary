@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 from uuid import UUID
 from datetime import datetime
 
-from app.schemas.concert import TicketingPhaseEntry
+from app.schemas.concert import DisplayVenue, TicketingPhaseEntry
 
 
 class ArtistEntry(BaseModel):
@@ -59,7 +59,7 @@ class NewsFeedConcert(BaseModel):
     poster_url: str | None
     start_date: datetime
     end_date: datetime
-    venue: str | None
+    venue: DisplayVenue
     # 예매처 바로가기 버튼용 (concert.py의 ConcertResponse와 동일 형식)
     ticketing_links: dict[str, str] | None
     # 티켓팅 날짜 타일용. 예전엔 빠져 있어서 아티스트 소식 카드는 항상 "미정"으로

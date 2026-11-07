@@ -49,6 +49,9 @@ class ConcertAfterTextCanvas extends StatefulWidget {
   final double width, minHeight;
   final double minContentTop;
   final bool editMode;
+
+  /// 기존 메모만 표시하고 입력·이동·삭제·저장을 막습니다.
+  final bool readOnly;
   final List<Rect> obstacles;
   final List<Widget> backgroundOverlays;
   final List<Widget> memos;
@@ -73,6 +76,7 @@ class ConcertAfterTextCanvas extends StatefulWidget {
     required this.minHeight,
     this.minContentTop = 0,
     required this.editMode,
+    this.readOnly = false,
     required this.obstacles,
     this.backgroundOverlays = const [],
     required this.memos,
@@ -147,6 +151,13 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   Future<void> _load() async {
+    if (widget.readOnly) {
+      // 메모 기능을 폐기한 페이지에서는 과거 기기 캐시도 읽지 않습니다.
+      _prefs = await SharedPreferences.getInstance();
+      await _prefs!.remove(_key);
+      if (mounted) setState(() => _ready = true);
+      return;
+    }
     final items = widget.initialItems;
     if (items != null) {
       // initState 안에서 동기로 채우므로 setState 없이 바로 준비 완료.
@@ -251,6 +262,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   void _saveLocal() {
+    if (widget.readOnly) return;
     final onTextsChanged = widget.onTextsChanged;
     if (onTextsChanged != null) {
       onTextsChanged(_toItems());
@@ -266,6 +278,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   void _edit(_TextBox box) {
+    if (widget.readOnly) return;
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _selected = box.id;
@@ -279,6 +292,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   void _select(_TextBox box) {
+    if (widget.readOnly) return;
     if (!widget.editMode) return;
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
@@ -290,6 +304,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   void _deleteTextBox(_TextBox box) {
+    if (widget.readOnly) return;
     final index = _boxes.indexOf(box);
     if (index < 0) return;
     setState(() {
@@ -342,6 +357,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
 
   /// 자유메모를 전부 지움 (합쳐 저장하던 후기도 빈 값이 됨).
   void clearAll() {
+    if (widget.readOnly) return;
     if (_boxes.isEmpty) return;
     final removed = [..._boxes];
     FocusManager.instance.primaryFocus?.unfocus();
@@ -375,6 +391,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
   }
 
   void _create() {
+    if (widget.readOnly) return;
     if (!_ready || !widget.editMode) return;
     final box = _TextBox(
       DateTime.now().microsecondsSinceEpoch.toString(),
@@ -591,10 +608,10 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
                   key: const ValueKey('after_blank_space'),
                   behavior: HitTestBehavior.opaque,
                   onTap: _deselect,
-                  onDoubleTapDown: widget.editMode
+                  onDoubleTapDown: widget.editMode && !widget.readOnly
                       ? (d) => _doubleTap = d.localPosition
                       : null,
-                  onDoubleTap: _create,
+                  onDoubleTap: widget.readOnly ? null : _create,
                   onLongPress: widget.editMode ? widget.onBlankLongPress : null,
                   child: const ScrapbookPageBackground(),
                 ),
@@ -612,7 +629,7 @@ class ConcertAfterTextCanvasState extends State<ConcertAfterTextCanvas> {
                       child: Transform.scale(
                         scale: box.scale,
                         child: IgnorePointer(
-                          ignoring: !widget.editMode,
+                          ignoring: widget.readOnly || !widget.editMode,
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onLongPress: () => _select(box),

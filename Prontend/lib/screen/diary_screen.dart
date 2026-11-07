@@ -1,3 +1,4 @@
+import '../widgets/diary_page_indicator.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:ticketdiary/widgets/diary_tab_flip_route.dart';
@@ -2543,6 +2544,18 @@ class _DiaryScreenState extends State<DiaryScreen>
                   children: [
                     _buildPageContent(context, pageIndex, constraints),
                     const ScrapbookPaperTextureOverlay(opacity: .75, seed: 110),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 4,
+                      height: 18,
+                      child: IgnorePointer(
+                        child: DiaryPageIndicator(
+                          page: pageIndex,
+                          pageCount: _totalPages,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),

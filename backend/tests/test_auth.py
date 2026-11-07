@@ -407,3 +407,74 @@ async def test_update_profile_nickname_too_long_422():
         res = await ac.patch("/api/v1/auth/me", json={"nickname": "가" * 51}, headers={"Authorization": f"Bearer {token}"})
 
     assert res.status_code == 422
+
+
+# 닉네임 앞뒤 공백은 정리해서 저장하는지 테스트
+@pytest.mark.asyncio
+async def test_update_profile_nickname_stripped():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res = await ac.patch("/api/v1/auth/me", json={"nickname": "  공백닉네임  "}, headers=headers)
+
+    assert res.status_code == 200
+    assert res.json()["nickname"] == "공백닉네임"
+
+
+# 빈 닉네임/공백만 있는 닉네임은 거부하고 기존 값을 유지하는지 테스트
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nickname", ["", "   "])
+async def test_update_profile_blank_nickname_rejected(nickname):
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.patch("/api/v1/auth/me", json={"nickname": "원래닉네임"}, headers=headers)
+        res = await ac.patch("/api/v1/auth/me", json={"nickname": nickname}, headers=headers)
+        me = await ac.get("/api/v1/auth/me", headers=headers)
+
+    assert res.status_code == 422
+    assert me.json()["nickname"] == "원래닉네임"
+
+
+# 게스트 -> 카카오 전환 시 앱에서 바꾼 닉네임은 유지하고, 비어 있던 이미지만 카카오 값으로 채우는지 테스트
+@pytest.mark.asyncio
+async def test_migrate_to_kakao_keeps_changed_nickname():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    user_info = {
+        "id": uuid.uuid4().int % 10**12,
+        "kakao_account": {"profile": {"nickname": "카카오닉네임", "thumbnail_image_url": "https://example.com/k.jpg"}},
+    }
+
+    with patch("app.services.auth._exchange_kakao_code", new=AsyncMock(return_value="mock-token")),          patch("app.services.auth._get_kakao_user_info", new=AsyncMock(return_value=user_info)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.patch("/api/v1/auth/me", json={"nickname": "게스트때닉네임"}, headers=headers)
+            res = await ac.post("/api/v1/auth/migrate", json={"code": "kakao-code"}, headers=headers)
+            new_headers = {"Authorization": f"Bearer {res.json()['access_token']}"}
+            me = await ac.get("/api/v1/auth/me", headers=new_headers)
+
+    assert res.status_code == 200
+    assert me.json()["nickname"] == "게스트때닉네임"
+    assert me.json()["profile_image_url"] == "https://example.com/k.jpg"
+
+
+# 게스트 닉네임이 비어 있으면 전환 시 카카오 닉네임으로 채우는지 테스트
+@pytest.mark.asyncio
+async def test_migrate_to_kakao_fills_empty_nickname():
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+    user_info = {
+        "id": uuid.uuid4().int % 10**12,
+        "kakao_account": {"profile": {"nickname": "카카오닉네임", "thumbnail_image_url": None}},
+    }
+
+    with patch("app.services.auth._exchange_kakao_code", new=AsyncMock(return_value="mock-token")),          patch("app.services.auth._get_kakao_user_info", new=AsyncMock(return_value=user_info)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post("/api/v1/auth/migrate", json={"code": "kakao-code"}, headers=headers)
+            new_headers = {"Authorization": f"Bearer {res.json()['access_token']}"}
+            me = await ac.get("/api/v1/auth/me", headers=new_headers)
+
+    assert res.status_code == 200
+    assert me.json()["nickname"] == "카카오닉네임"

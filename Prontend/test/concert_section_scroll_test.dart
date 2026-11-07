@@ -126,10 +126,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.dragFrom(const Offset(450, 350), const Offset(-220, 0));
     await tester.pumpAndSettle();
-    // 뒷면은 칸 전체(제목 포함)가 칸별로 스크롤됨. 타임테이블이 짧으면(여기선 0줄) 공연 정보+
-    // 타임테이블이 왼쪽 한 칸(0)으로 묶이고 셋리스트(2)는 따로
+    // 2열에서도 공연 정보와 타임테이블은 별도 공간을 갖습니다.
     const info = PageStorageKey('after_back_section_0');
     const songs = PageStorageKey('after_back_section_2');
+    const timetable = PageStorageKey('after_back_section_1');
+    final timetableRect = tester.getRect(find.byKey(timetable));
+    expect(
+      tester.getRect(find.byKey(info)).bottom,
+      lessThanOrEqualTo(timetableRect.top),
+    );
     expect(positionOf(tester, songs).maxScrollExtent, greaterThan(0));
     await tester.drag(find.byKey(songs), const Offset(0, -150));
     await tester.pumpAndSettle();
@@ -144,6 +149,17 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(position(tester, 'after-artists').pixels, greaterThan(0));
+    expect(positionOf(tester, info).pixels, infoOffset);
+    expect(tester.getRect(find.byKey(timetable)), timetableRect);
+    expect(positionOf(tester, timetable).pixels, 0);
+    final artistOffset = position(tester, 'after-artists').pixels;
+    final songsOffset = positionOf(tester, songs).pixels;
+    expect(positionOf(tester, timetable).maxScrollExtent, greaterThan(0));
+    await tester.drag(find.byKey(timetable), const Offset(0, -100));
+    await tester.pumpAndSettle();
+    expect(positionOf(tester, timetable).pixels, greaterThan(0));
+    expect(position(tester, 'after-artists').pixels, artistOffset);
+    expect(positionOf(tester, songs).pixels, songsOffset);
     expect(positionOf(tester, info).pixels, infoOffset);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

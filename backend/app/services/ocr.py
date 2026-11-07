@@ -6,7 +6,7 @@ import base64
 import tempfile
 
 import httpx
-from PIL import Image
+from PIL import Image, ImageOps
 from fastapi import HTTPException
 
 from app.core.config import settings
@@ -164,6 +164,25 @@ def _detect_format(image_bytes: bytes, content_type: str) -> str:
     if "bmp" in ct:
         return "bmp"
     return "unknown"
+
+
+# 폰 갤러리 원본 사진(2~4MB)은 Vision 처리가 오래 걸려(실물 앨범 사진 11장 평균 3.5초) 이보다 크면 다시 저장.
+# 해상도는 그대로 두고 화질만 낮춤 - 해상도를 줄이면 겹쳐 찍힌 다른 티켓 제목을 잡는 등 결과가 바뀌었음
+_VISION_REENCODE_OVER = 1_500_000
+_VISION_REENCODE_QUALITY = 80
+
+
+# 티켓 스캔용 - 큰 JPEG만 같은 해상도·낮은 화질로 다시 저장. EXIF 회전은 픽셀에 반영해 둠(다시 저장하면
+# EXIF가 빠져서). 원본 높이와 좌표를 맞추는 타임테이블(to_jpeg 직접 사용)엔 안 씀
+def _shrink_for_vision(jpeg_bytes: bytes) -> bytes:
+    if len(jpeg_bytes) <= _VISION_REENCODE_OVER:
+        return jpeg_bytes
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(jpeg_bytes)))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=_VISION_REENCODE_QUALITY)
+    return buf.getvalue()
 
 
 # 여러 포맷 JPEG 변환
@@ -936,6 +955,40 @@ def _extract_price(text: str) -> int | None:
     return candidates[0] if candidates else None
 
 
+# 권종 표기 - KOPIS 페스티벌 가격표에서 많이 쓰이는 형태 기준("2일권", "양일권", "일일권", "2DAY",
+# "3-DAYS", "전일권"). "DAY1"/"DAY2"는 몇 번째 날이라 숫자가 앞에 올 때만 일수로 봄
+_PASS_DAYS_RE = re.compile(
+    r"(?<!\d)([1-9])\s*일\s*권|(?<![A-Za-z\d])([1-9])\s*-?\s*DAYS?(?![A-Za-z])",
+    re.IGNORECASE,
+)
+_PASS_WORD_DAYS = {"양일권": 2, "일일권": 1}
+_PASS_ALL_RE = re.compile(r"전일권|올\s*패스|풀\s*패스|ALL\s*-?\s*PASS", re.IGNORECASE)
+_PASS_ALL = 0
+
+
+# 텍스트에 나온 권종 일수들(전일권은 _PASS_ALL)
+def _pass_days_in(text: str) -> set[int]:
+    found = {int(m.group(1) or m.group(2)) for m in _PASS_DAYS_RE.finditer(text)}
+    found |= {days for word, days in _PASS_WORD_DAYS.items() if word in text}
+    if _PASS_ALL_RE.search(text):
+        found.add(_PASS_ALL)
+    return found
+
+
+# 권종 일수 추출 -> (일수, 전일권 여부). 좌석 칸을 먼저 보고, 없으면 전체 글자에서 한 종류만 나올 때만 씀 -
+# 안내문에 다른 권종("양일권 소지자는...")이 같이 찍히면 어느 쪽인지 몰라 버림. 하루짜리는 (None, False)
+def _extract_pass_days(seat: str | None, raw_text: str) -> tuple[int | None, bool]:
+    found = _pass_days_in(seat or "")
+    if len(found) != 1:
+        found = _pass_days_in(raw_text)
+    if len(found) != 1:
+        return None, False
+    days = found.pop()
+    if days == _PASS_ALL:
+        return None, True
+    return (days, False) if days >= 2 else (None, False)
+
+
 # 단독 공연 / 페스티벌 분류
 def _classify_event_type(text: str) -> str:
     lower = text.lower()
@@ -965,7 +1018,9 @@ def _parse_ticket_fields(raw_text: str) -> dict:
 async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     loop = asyncio.get_running_loop()
     try:
-        jpeg_bytes = await loop.run_in_executor(None, to_jpeg, image_bytes, content_type)
+        jpeg_bytes = await loop.run_in_executor(
+            None, lambda: _shrink_for_vision(to_jpeg(image_bytes, content_type))
+        )
     except (Image.UnidentifiedImageError, Image.DecompressionBombError, OSError) as e:
         # 깨진 파일/이미지가 아닌 파일/픽셀 폭탄은 서버 오류가 아니라 입력 문제
         raise HTTPException(status_code=422, detail="이미지를 읽을 수 없습니다.") from e
@@ -991,4 +1046,5 @@ async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
     seat = _extract_seat_detail(annotation, raw_text, anchor[1] if anchor else None)
     if seat:
         fields["seat"] = seat
+    fields["pass_days"], fields["pass_all_days"] = _extract_pass_days(fields.get("seat"), raw_text)
     return fields

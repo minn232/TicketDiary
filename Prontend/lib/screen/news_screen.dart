@@ -1,3 +1,4 @@
+import '../widgets/diary_page_indicator.dart';
 import 'dart:async';
 import '../widgets/news_card_reason.dart';
 import '../services/news_list_service.dart';
@@ -144,7 +145,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
   void _onNewsListUpdated() {
     final items = NewsListService.updates.value;
     if (mounted && items != null) {
-      setState(() => _newsFuture = Future.value(items));
+      setState(() {
+        _newsFuture = Future.value(items);
+      });
     }
   }
 
@@ -655,7 +658,9 @@ class _NewsScreenState extends State<NewsScreen> with TickerProviderStateMixin {
       actionLabel: '다시 시도',
       onAction: () {
         // [백엔드 수정] 소식 탭 캐싱을 껐으므로(initState 참고) 여기도 직접 호출.
-        setState(() => _newsFuture = _loadNews());
+        setState(() {
+          _newsFuture = _loadNews();
+        });
         _armGlassReveal(_newsFuture);
       },
     );
@@ -862,7 +867,7 @@ class _NewsFrame extends StatelessWidget {
                     builder: (context, info, _) => AnimatedOpacity(
                       opacity: info.$2 > 1 ? 1 : 0,
                       duration: const Duration(milliseconds: 200),
-                      child: _HorizontalScrollHint(
+                      child: DiaryPageIndicator(
                         page: info.$1,
                         pageCount: info.$2,
                       ),
@@ -871,51 +876,6 @@ class _NewsFrame extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 액자 테두리 아래쪽에 그리는 "가로로 더 스크롤할 수 있어요" 화살표 힌트.
-class _HorizontalScrollHint extends StatelessWidget {
-  final int page;
-  final int pageCount;
-
-  const _HorizontalScrollHint({required this.page, required this.pageCount});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = PaperColors.muted;
-    // [백엔드 수정] 아래 여백 높이(_insets.bottom)는 고정인데 아이콘/글자는 화면 배율로
-    // 커져서 세로모드에서 위아래가 잘렸음 - 넘칠 때만 여백 높이에 맞춰 축소.
-    return Center(
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.chevron_left,
-              size: context.rs(15),
-              color: color.withValues(alpha: page > 0 ? 1 : 0.3),
-            ),
-            SizedBox(width: context.rs(2)),
-            Text(
-              '${page + 1} / $pageCount',
-              style: TextStyle(
-                fontSize: context.sp(10),
-                fontWeight: FontWeight.w800,
-                color: color,
-              ),
-            ),
-            SizedBox(width: context.rs(2)),
-            Icon(
-              Icons.chevron_right,
-              size: context.rs(15),
-              color: color.withValues(alpha: page < pageCount - 1 ? 1 : 0.3),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

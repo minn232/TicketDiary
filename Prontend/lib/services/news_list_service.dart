@@ -3,7 +3,6 @@ import '../models/news_model.dart';
 import 'auth_service.dart';
 import 'favorites_store.dart';
 import 'social_service.dart';
-// import 'concert_search_service.dart';
 
 /// 소식탭과 결산 캘린더가 사용하는 동일한 카드 목록.
 class NewsListService {
@@ -57,29 +56,6 @@ class NewsListService {
 
     final feed = await _socialService.getNewsFeed();
 
-    // [백엔드 수정] 피드가 공연 전체 출연진(artist_name)을 보내므로 공연 검색으로 보완하던 호출은 꺼 둠.
-    // // 피드에는 대표 아티스트 한 명만 있어, 기존 검색 API에서 같은 UUID의
-    // // 공연 출연진을 보완합니다. 한 번에 4건만 조회합니다.
-    // for (var offset = 0; offset < feed.length; offset += 4) {
-    //   await Future.wait(
-    //     feed.skip(offset).take(4).map((item) async {
-    //       if (item.concertId == null || item.lineup.isNotEmpty) return;
-    //       try {
-    //         final concerts = await BackendConcertSearchService().search(
-    //           item.concert,
-    //         );
-    //         for (final concert in concerts) {
-    //           if (concert.id == item.concertId) {
-    //             item.lineup = concert.artistName;
-    //             break;
-    //           }
-    //         }
-    //       } catch (_) {
-    //         // 실패 시 서버가 확인한 대표 아티스트 정보는 유지합니다.
-    //       }
-    //     }),
-    //   );
-    // }
     for (final item in feed) {
       item.matchFavorites(FavoritesStore.instance.favoriteArtists);
     }

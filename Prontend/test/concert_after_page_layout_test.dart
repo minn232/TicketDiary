@@ -181,7 +181,7 @@ void main() {
     expect(saved!.photos.every((p) => p.pinned), isTrue);
   });
 
-  testWidgets('자유메모가 있으면 자동 배치 전에 확인하고, 취소하면 그대로 둔다', (tester) async {
+  testWidgets('자동 배치는 기존 메모를 제거하고 고정 사진만 보존한다', (tester) async {
     await tester.pumpWidget(
       page(
         TicketInfo(
@@ -196,21 +196,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('정말 좋았다'), findsOneWidget);
+    expect(find.text('정말 좋았다'), findsNothing);
 
     await enterEditMode(tester);
     await tester.tap(find.text('자동 배치'));
-    await tester.pumpAndSettle();
-    expect(find.text('메모가 지워져요'), findsOneWidget);
-
-    await tester.tap(find.text('취소'));
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(find.text('메모가 지워져요'), findsNothing);
-    expect(find.text('정말 좋았다'), findsOneWidget);
-
-    await tester.tap(find.text('자동 배치'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('지우고 배치'));
     await tester.runAsync(() async {
       for (var i = 0; i < 100; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -267,7 +258,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('최고의 밤'), findsOneWidget);
+    expect(find.text('최고의 밤'), findsNothing);
 
     // 사진 고정을 바꿔서 저장을 한 번 일으킴.
     await enterEditMode(tester);
@@ -275,15 +266,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final saved = await cachedLayout('local_after_테스트 공연');
-    final memo = saved!.items.singleWhere(
-      (i) => i.type == PageLayoutItemType.text,
-    );
-    expect(memo.text, '최고의 밤');
-    expect(memo.ref, 'm1');
-    expect(memo.cx, closeTo(0.55, 0.01));
-    expect(memo.cy, closeTo(1.0, 0.01));
-    expect(memo.w, closeTo(0.4, 0.01));
-    expect(memo.rot, closeTo(0.05, 1e-6));
+    expect(saved!.items.any((i) => i.type == PageLayoutItemType.text), isFalse);
   });
 
   testWidgets('배치가 없는 페이지는 서버 후기로 만든 자유메모를 page_layout에 담는다', (tester) async {
@@ -291,7 +274,7 @@ void main() {
       page(const TicketInfo(concertName: '테스트 공연', review: '좋았다')),
     );
     await tester.pumpAndSettle();
-    expect(find.text('좋았다'), findsOneWidget);
+    expect(find.text('좋았다'), findsNothing);
 
     // 포스터 고정을 바꿔서 저장을 한 번 일으킴.
     await enterEditMode(tester);
@@ -303,7 +286,7 @@ void main() {
       saved!.items
           .where((i) => i.type == PageLayoutItemType.text)
           .map((i) => i.text),
-      ['좋았다'],
+      isEmpty,
     );
     expect(saved.items.any((i) => i.type == PageLayoutItemType.poster), isTrue);
   });
@@ -431,7 +414,7 @@ void main() {
       final r = photoRect(id);
       expect(screen.contains(r.center), isTrue, reason: '$id $r');
     }
-    expect(find.text('최고'), findsOneWidget);
+    expect(find.text('최고'), findsNothing);
 
     // 다시 세로: 원래 자리로.
     tester.view.physicalSize = portrait * 2;
@@ -450,11 +433,11 @@ void main() {
     final saved = await cachedLayout('local_after_테스트 공연');
     expect(saved!.canvasAspect, 1.6);
     for (final orig in layout.items) {
+      if (orig.type == PageLayoutItemType.text) continue;
       final got = saved.items.singleWhere((i) => i.id == orig.id);
-      final tol = orig.type == PageLayoutItemType.text ? 0.01 : 1e-6;
-      expect(got.cx, closeTo(orig.cx, tol), reason: orig.id);
-      expect(got.cy, closeTo(orig.cy, tol), reason: orig.id);
-      expect(got.w, closeTo(orig.w, tol), reason: orig.id);
+      expect(got.cx, closeTo(orig.cx, 1e-6), reason: orig.id);
+      expect(got.cy, closeTo(orig.cy, 1e-6), reason: orig.id);
+      expect(got.w, closeTo(orig.w, 1e-6), reason: orig.id);
     }
   });
 
