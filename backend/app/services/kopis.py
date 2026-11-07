@@ -448,6 +448,7 @@ async def _search_concerts_matched(
     end_date: date | None = None,
     venue: str | None = None,
     client: httpx.AsyncClient | None = None,
+    min_specificity: int = 0,
 ) -> tuple[str | None, list[Concert]]:
     words = keyword.split()
     # "2025 렛츠락 페스티벌"처럼 맨 앞이 연도면 끝단어 축소로는 절대 못 떼어내고 "2025"만 남을 수 있는데,
@@ -460,6 +461,9 @@ async def _search_concerts_matched(
     any_succeeded = False
     for end in range(len(words), min_words - 1, -1):
         q = " ".join(words[:end])
+        # 이미 찾은 결과보다 구체적이지 않은 검색어는 이겨도 못 쓰므로 더 줄이지 않고 멈춤(search_concerts_multi 참고)
+        if _query_specificity(q) <= min_specificity:
+            break
         # 축소 도중 연도 하나만 남는 경우도 방어적으로 건너뜀 (위 처리로 보통 발생하지 않지만 안전장치)
         if re.fullmatch(r"(19|20)\d{2}", q):
             continue
@@ -525,6 +529,17 @@ _QUOTE_RE = re.compile(r"[\"“”‘’「」『』]")
 _MAX_TITLE_KEYWORDS = 6
 
 
+# 티켓 안내문 문장 끝("~없습니다", "~바랍니다", "~하세요")과 좌석 줄("R석 1층 5열 12번", "입장번호 150번")
+_NOTICE_SENTENCE_RE = re.compile(r"(니다|세요|십시오)[.!]?$")
+_NOTICE_SENTENCE_MIN_LEN = 25  # 이보다 긴 안내문 문장은 결과를 찾기 전에도 건너뜀
+_SEAT_LINE_RE = re.compile(r"\d+\s*열|\d+\s*번$|입장\s*번호|정리\s*번호|\d+\s*층|구역")
+# 공연명일 리 없는 줄 - 글머리표로 시작하는 안내 줄, 유의사항 제목, "본 티켓은", 좌석 종류만 있는 줄("스탠딩 s").
+# OCR이 문장을 중간에 끊어 "~니다"로 안 끝나도 걸리게 함. "스탠딩에그"처럼 붙은 이름은 안 걸림
+_NON_TITLE_LINE_RE = re.compile(
+    r"^[•·※▶►■□○●◆◇]|유의\s*사항|안내\s*및|본\s*티켓|^(스탠딩|지정석|비지정석)(\s|$)"
+)
+
+
 # 검색어 구체성 점수 - 한글 같은 전각 문자는 정보량이 많아 2, 나머지는 1로 셈
 def _query_specificity(q: str) -> int:
     return sum(2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1 for ch in q)
@@ -552,6 +567,10 @@ async def search_concerts_multi(
             expanded_keywords.append(stripped)
 
     confident: list[tuple[str, list[Concert]]] = []  # (실제로 결과가 나온 검색어, 결과)
+    # 지금까지 확신 결과 중 가장 구체적인 검색어 점수 - 동률이면 앞 후보가 이기므로, 이 점수를 못 넘는
+    # 후보·축소 검색어는 결과가 나와도 선택될 수 없어 KOPIS 호출(요청당 0.35초 간격)을 건너뜀
+    best_specificity = 0
+    venue_key = (venue or "").strip()
     last_error: HTTPException | None = None
     any_succeeded = False
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -560,9 +579,23 @@ async def search_concerts_multi(
             if not kw or kw in tried:
                 continue
             tried.add(kw)
+            # 이미 찾은 결과가 있으면 장소·좌석 줄과 안내문 문장("본 티켓은 ... 없습니다")은 더 안 찾아봄 - 찾기
+            # 전엔 "...안녕하세요"처럼 문장으로 끝나는 진짜 공연명일 수도 있어 그대로 검색
+            if confident and (
+                kw == venue_key or _NOTICE_SENTENCE_RE.search(kw) or _SEAT_LINE_RE.search(kw)
+            ):
+                continue
+            # 긴 안내문 문장은 공연명일 리 없는데 끝단어 축소로 열 번 넘게 검색돼 10초 넘게 걸린 적 있음 - 항상 건너뜀
+            if len(kw) > _NOTICE_SENTENCE_MIN_LEN and _NOTICE_SENTENCE_RE.search(kw):
+                continue
+            # 제목을 못 찾았을 때 안내 줄을 끝단어 축소로 하나씩 검색해 KOPIS 13번(4.5초) 더 쓴 적 있음 - 항상 건너뜀
+            if _NON_TITLE_LINE_RE.search(kw):
+                continue
+            if _query_specificity(kw) <= best_specificity:
+                continue
             try:
                 matched_q, concerts = await _search_concerts_matched(
-                    db, kw, start_date, end_date, venue, client=client
+                    db, kw, start_date, end_date, venue, client=client, min_specificity=best_specificity
                 )
             except HTTPException as e:
                 # 이 후보는 KOPIS 검색이 전부 실패(예: 방화벽 차단) -> 다음 후보로 계속 진행
@@ -579,6 +612,7 @@ async def search_concerts_multi(
             # 날짜가 안 맞는 매칭(예: "스탠딩"이 "스탠딩에그"에 우연히 걸린 경우)은 신뢰할 수 없으므로 버림
             if _is_confident_match(concerts[0], target_date):
                 confident.append((matched_q, concerts))
+                best_specificity = max(best_specificity, _query_specificity(matched_q))
 
         if confident:
             # max()는 동률이면 먼저 나온 것 반환

@@ -126,11 +126,14 @@ async def migrate_to_kakao(db: AsyncSession, current_user: User, code: str) -> U
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="이미 가입된 카카오 계정입니다.")
 
-    # 카카오 계정으로 업데이트
+    # 카카오 계정으로 업데이트. 프로필은 비어 있을 때만 카카오 값으로 채움 - 게스트일 때 앱에서 바꾼
+    # 닉네임/이미지를 전환하면서 덮어쓰지 않기 위함(kakao_login과 같은 정책)
     profile = user_info.get("kakao_account", {}).get("profile", {})
     current_user.kakao_id = kakao_id
-    current_user.nickname = profile.get("nickname")
-    current_user.profile_image_url = profile.get("thumbnail_image_url")
+    if not current_user.nickname:
+        current_user.nickname = profile.get("nickname")
+    if not current_user.profile_image_url:
+        current_user.profile_image_url = profile.get("thumbnail_image_url")
     current_user.role = UserRole.KAKAO_USER
 
     await db.commit()

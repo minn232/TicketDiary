@@ -14,15 +14,34 @@
 .PARAMETER DeviceId
     설치 대상 adb 기기 ID. 생략하면 연결된 기기가 정확히 1대일 때만 자동 선택.
 
+.PARAMETER Install
+    빌드 없이 이미 있는 build\app\outputs\flutter-apk\app-release.apk만 설치. 빌드 시각을 먼저 보여줌.
+    --Install로 써도 됨.
+
 .EXAMPLE
     .\build_and_install_release.ps1
     .\build_and_install_release.ps1 -DeviceId R54TB00PZ2W
     .\build_and_install_release.ps1 -ApiBaseUrl http://localhost:8000/api/v1
+    .\build_and_install_release.ps1 --Install
 #>
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$ApiBaseUrl = "https://ticket-diary.com/api/v1",
-    [string]$DeviceId
+    [string]$DeviceId,
+    [switch]$Install,
+    # --Install처럼 대시 두 개로 쓴 것도 받기 위함(PowerShell은 원래 대시 하나)
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$ExtraArgs
 )
+
+foreach ($arg in @($ExtraArgs)) {
+    if ($arg -eq '--Install') {
+        $Install = $true
+    } elseif ($arg) {
+        Write-Host "알 수 없는 인자: $arg (설치만 하려면 --Install 또는 -Install)"
+        exit 1
+    }
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -48,6 +67,23 @@ if (-not $DeviceId) {
 }
 Write-Host "설치 대상 기기: $DeviceId"
 
+$apkPath = "build\app\outputs\flutter-apk\app-release.apk"
+
+# 빌드 없이 설치만 - 이전 빌드의 API 주소가 그대로 들어 있으니 시각만 보여주고 설치
+if ($Install) {
+    if (-not (Test-Path $apkPath)) {
+        Write-Error "설치할 APK가 없습니다: $apkPath (먼저 --Install 없이 빌드해주세요)"
+    }
+    $apk = Get-Item $apkPath
+    Write-Host ("기존 APK 설치 (빌드 시각 {0:yyyy-MM-dd HH:mm}, {1:N0}MB)..." -f $apk.LastWriteTime, ($apk.Length / 1MB))
+    & $adb -s $DeviceId install -r $apkPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "adb install 실패 (exit $LASTEXITCODE)"
+    }
+    Write-Host "완료: $DeviceId 에 설치됨."
+    exit 0
+}
+
 # 빌드 전 gradle.properties 상태 기록 - flutter build가 매번 마이그레이터 안내 줄을 자동으로
 # 끼워 넣는 부수효과가 있어서(실측 확인, 기능과 무관), 빌드 후 그 노이즈만
 # 걸러서 되돌리기 위함. 이후 단계에서 실패해도(빌드/설치 오류) 되돌림이 항상 실행되도록
@@ -65,7 +101,6 @@ try {
         Write-Error "flutter build apk 실패 (exit $LASTEXITCODE)"
     }
 
-    $apkPath = "build\app\outputs\flutter-apk\app-release.apk"
     if (-not (Test-Path $apkPath)) {
         Write-Error "빌드 결과물을 찾을 수 없습니다: $apkPath"
     }

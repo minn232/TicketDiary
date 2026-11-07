@@ -13,21 +13,21 @@ from app.models.user import User
 from app.schemas.artist_identity import (
     IdentityCandidatesResponse, IdentityChangeRequest, IdentityChangeResponse,
 )
-from app.schemas.blog_draft import BlogDraftCreate, BlogDraftResponse
+from app.schemas.blog_draft import BlogDraftCreate, BlogDraftResponse, BlogDraftTextUpdate
 from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.setlist import (
     RealSetlistResponse, PreSetlistResponse,
     SetlistEditRequest, ArtistAnchorCandidate, ArtistAnchorRequest, ArtistCandidate,
     PreviewTracksResponse,
 )
-from app.schemas.ticket import TicketCreate, TicketListItem, TicketUpdate, TicketWithConcert
+from app.schemas.ticket import TicketCreate, TicketListItem, TicketPassCreate, TicketUpdate, TicketWithConcert
 from app.services.artist_identity import (
     attach_artist_display_names,
     canonical_summary,
     change_concert_artist_identity,
     identity_candidates,
 )
-from app.services.blog_draft import get_blog_draft, request_blog_draft
+from app.services.blog_draft import get_blog_draft, request_blog_draft, save_blog_draft_text
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
@@ -50,6 +50,7 @@ from app.services.setlist import (
     update_real_setlist,
 )
 from app.services.ticket import (
+    create_pass_tickets,
     create_ticket,
     get_sorted_tickets,
     get_ticket,
@@ -77,6 +78,27 @@ async def register_ticket(
     db: AsyncSession = Depends(get_db),
 ):
     ticket = await create_ticket(db, current_user, body)
+    _add_registration_tasks(background_tasks, ticket)
+    await attach_artist_display_names(db, [ticket.concert])
+    return ticket
+
+
+# 2일권/3일권 등록 - 관람일마다 티켓을 만들어 묶고 날짜순으로 반환
+@router.post("/pass", response_model=list[TicketWithConcert], status_code=status.HTTP_201_CREATED)
+async def register_pass_tickets(
+    body: TicketPassCreate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    tickets = await create_pass_tickets(db, current_user, body)
+    _add_registration_tasks(background_tasks, tickets[0])
+    await attach_artist_display_names(db, [tickets[0].concert])
+    return tickets
+
+
+# 등록 직후 백그라운드 작업 - 공연 단위라 묶음 등록도 한 번만 돌림
+def _add_registration_tasks(background_tasks: BackgroundTasks, ticket: Ticket) -> None:
     if ticket.ticketing_site:
         background_tasks.add_task(crawl_and_save, ticket.concert_id, ticket.ticketing_site)
     if ticket.concert and ticket.concert.artist_name:
@@ -86,9 +108,6 @@ async def register_ticket(
         # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
         # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
         background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
-    await attach_artist_display_names(db, [ticket.concert])
-    return ticket
-
 
 
 # 내 티켓 목록 조회 (limit/offset은 선택 - 생략하면 기본 상한(200건) 적용)
@@ -354,8 +373,8 @@ async def receive_diary_result(
     return DiaryResultResponse(diary=ticket.diary)
 
 
-# 블로그 글 초안 요청 - 감상 글만 저장하고 즉시 반환(실제 생성은 밤 LLM 배치), 클라이언트는 GET으로
-# status가 done이 되는지 확인. 다시 요청하면 이전 초안을 지우고 새 글로 재생성
+# 감상 메모 저장 - 즉시 반환하고 정리는 마지막 수정 뒤 첫 자정이 지난 밤 LLM 배치가 함. 이전 정리본은
+# 새 정리본이 나올 때까지 남음. 같은 메모를 다시 보내면 failed일 때만 다시 정리 대기로 돌림
 @router.post("/{ticket_id}/blog-draft", response_model=BlogDraftResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_blog_draft(
     ticket_id: UUID,
@@ -375,6 +394,17 @@ async def read_blog_draft(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_blog_draft(db, current_user.id, ticket_id)
+
+
+# 앱에서 고친 정리본 저장
+@router.put("/{ticket_id}/blog-draft/text", response_model=BlogDraftResponse)
+async def update_blog_draft_text(
+    ticket_id: UUID,
+    body: BlogDraftTextUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await save_blog_draft_text(db, current_user.id, ticket_id, body.text)
 
 
 # 티켓 삭제

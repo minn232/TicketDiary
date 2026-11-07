@@ -7,13 +7,14 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
 
-# 알림 종류 (하루 전/당일/배송일/티켓팅 오픈일/팔로우 아티스트 신규 공연)
+# 알림 종류 (하루 전/당일/배송일/티켓팅 오픈일/팔로우 아티스트 신규 공연/감상 메모 정리 완료)
 class NotificationType(str, enum.Enum):
     DAY_BEFORE = "day_before"
     CONCERT_DAY = "concert_day"
     DELIVERY_DAY = "delivery_day"
     TICKETING_DAY = "ticketing_day"
     NEW_CONCERT = "new_concert"
+    BLOG_DRAFT = "blog_draft"
 
 
 # 유저에게 예약 발송되는 알림 한 건 (티켓/공연 이벤트 기준으로 생성)

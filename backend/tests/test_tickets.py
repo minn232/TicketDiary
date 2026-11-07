@@ -585,6 +585,199 @@ async def test_create_ticket_multi_day_concert_per_attended_date():
     assert moved.status_code == 409
 
 
+# 2일권 등록은 관람일마다 티켓을 만들어 첫날 티켓 id로 묶고, 가격은 첫날에만 넣는지 테스트
+@pytest.mark.asyncio
+async def test_create_pass_tickets_groups_days_and_prices_first_day():
+    concert_id = await _create_concert("PF_T_PASS_001", start="2030.08.01", end="2030.08.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/tickets/pass",
+            json={
+                "concert_id": concert_id,
+                "attended_dates": ["2030-08-03", "2030-08-01"],
+                "price": 180000,
+                "seat_type": "2일권",
+            },
+            headers=headers,
+        )
+        listed = await ac.get("/api/v1/tickets", headers=headers)
+
+    assert response.status_code == 201
+    first, last = response.json()
+    assert first["attended_date"].startswith("2030-08-01")
+    assert last["attended_date"].startswith("2030-08-03")
+    assert first["pass_group_id"] == last["pass_group_id"] == first["id"]
+    assert first["price"] == 180000
+    assert last["price"] is None
+    assert last["seat_type"] == "2일권"
+    group = [t for t in listed.json() if t["pass_group_id"] == first["id"]]
+    assert len(group) == 2
+
+
+# 이미 등록된 날과 겹치면 409, 공연 기간 밖 날짜는 400, 같은 날 두 번이면 422인지 테스트
+@pytest.mark.asyncio
+async def test_create_pass_tickets_rejects_overlap_and_invalid_dates():
+    concert_id = await _create_concert("PF_T_PASS_002", start="2030.08.01", end="2030.08.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        await ac.post(
+            "/api/v1/tickets", json={"concert_id": concert_id, "attended_date": "2030-08-02"}, headers=headers
+        )
+        overlap = await ac.post(
+            "/api/v1/tickets/pass",
+            json={"concert_id": concert_id, "attended_dates": ["2030-08-02", "2030-08-03"]},
+            headers=headers,
+        )
+        outside = await ac.post(
+            "/api/v1/tickets/pass",
+            json={"concert_id": concert_id, "attended_dates": ["2030-07-31", "2030-08-01"]},
+            headers=headers,
+        )
+        duplicated = await ac.post(
+            "/api/v1/tickets/pass",
+            json={"concert_id": concert_id, "attended_dates": ["2030-08-01", "2030-08-01"]},
+            headers=headers,
+        )
+
+    assert overlap.status_code == 409
+    assert outside.status_code == 400
+    assert duplicated.status_code == 422
+
+
+# 묶음 티켓은 어느 날을 지워도 묶음 전체가 지워지는지 테스트
+@pytest.mark.asyncio
+async def test_delete_pass_ticket_deletes_whole_group():
+    concert_id = await _create_concert("PF_T_PASS_003", start="2030.08.01", end="2030.08.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        created = await ac.post(
+            "/api/v1/tickets/pass",
+            json={"concert_id": concert_id, "attended_dates": ["2030-08-01", "2030-08-02", "2030-08-03"]},
+            headers=headers,
+        )
+        ids = [t["id"] for t in created.json()]
+        deleted = await ac.delete(f"/api/v1/tickets/{ids[1]}", headers=headers)
+        remaining = [(await ac.get(f"/api/v1/tickets/{i}", headers=headers)).status_code for i in ids]
+
+    assert deleted.status_code == 204
+    assert remaining == [404, 404, 404]
+
+
+# 배송 전 묶음은 한 날을 받았다고 하면 다른 날도 같이 공연 전이 되고, 배송 알림은 첫날에만,
+# 둘째 날 "내일 공연" 알림은 첫날 "오늘 공연" 알림과 겹쳐서 빠지는지 테스트
+@pytest.mark.asyncio
+async def test_pass_tickets_share_delivery_and_skip_overlapping_reminders():
+    from sqlalchemy import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.notification import Notification, NotificationType
+
+    concert_id = await _create_concert("PF_T_PASS_004", start="2030.08.01", end="2030.08.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        created = await ac.post(
+            "/api/v1/tickets/pass",
+            json={
+                "concert_id": concert_id,
+                "attended_dates": ["2030-08-01", "2030-08-02"],
+                "awaiting_delivery": True,
+            },
+            headers=headers,
+        )
+        first_id, second_id = [t["id"] for t in created.json()]
+
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(Notification.ticket_id, Notification.type).where(
+                    Notification.ticket_id.in_([uuid.UUID(first_id), uuid.UUID(second_id)])
+                )
+            )).all()
+
+        delivered = await ac.post(f"/api/v1/tickets/{second_id}/delivered", headers=headers)
+        first_after = await ac.get(f"/api/v1/tickets/{first_id}", headers=headers)
+
+    assert [t["status"] for t in created.json()] == ["before_delivery", "before_delivery"]
+    by_ticket = {
+        tid: {t for i, t in rows if str(i) == tid} for tid in (first_id, second_id)
+    }
+    assert by_ticket[first_id] == {
+        NotificationType.DELIVERY_DAY, NotificationType.DAY_BEFORE, NotificationType.CONCERT_DAY
+    }
+    assert by_ticket[second_id] == {NotificationType.CONCERT_DAY}
+    assert delivered.json()["status"] == "before_concert"
+    assert first_after.json()["status"] == "before_concert"
+
+
+# 묶음 티켓의 좌석은 다른 날에도 같이 바뀌고, 둘째 날에서 고친 가격은 첫날 티켓에만 들어가는지 테스트
+@pytest.mark.asyncio
+async def test_update_pass_ticket_syncs_shared_fields():
+    concert_id = await _create_concert("PF_T_PASS_005", start="2030.08.01", end="2030.08.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        created = await ac.post(
+            "/api/v1/tickets/pass",
+            json={"concert_id": concert_id, "attended_dates": ["2030-08-01", "2030-08-02"], "price": 100000},
+            headers=headers,
+        )
+        first_id, second_id = [t["id"] for t in created.json()]
+        updated = await ac.patch(
+            f"/api/v1/tickets/{second_id}", json={"seat_type": "스탠딩석", "price": 150000}, headers=headers
+        )
+        first = await ac.get(f"/api/v1/tickets/{first_id}", headers=headers)
+
+    assert updated.json()["seat_type"] == "스탠딩석"
+    assert updated.json()["price"] is None
+    assert first.json()["seat_type"] == "스탠딩석"
+    assert first.json()["price"] == 150000
+
+
+# 여러 날 공연은 공연 전체가 끝나기 전이라도 관람일이 지나면 공연 후로 넘어가는지 테스트
+@pytest.mark.asyncio
+async def test_sync_moves_ticket_after_its_attended_day():
+    from datetime import datetime, timedelta, timezone as tz
+    from sqlalchemy import update
+    from app.core.database import AsyncSessionLocal
+    from app.models.ticket import Ticket
+    from app.services.ticket import sync_ticket_statuses
+
+    concert_id = await _create_concert("PF_T_PASS_006", start="2030.08.01", end="2030.08.03")
+    token = await _get_token()
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        created = await ac.post(
+            "/api/v1/tickets/pass",
+            json={"concert_id": concert_id, "attended_dates": ["2030-08-01", "2030-08-02"]},
+            headers=headers,
+        )
+    first_id, second_id = [t["id"] for t in created.json()]
+
+    today = datetime.now(tz.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    await _move_concert_dates(concert_id, today - timedelta(days=2), today + timedelta(days=2))
+    async with AsyncSessionLocal() as db:
+        for tid, attended in ((first_id, today - timedelta(days=2)), (second_id, today + timedelta(days=1))):
+            await db.execute(update(Ticket).where(Ticket.id == uuid.UUID(tid)).values(attended_date=attended))
+        await db.commit()
+        await sync_ticket_statuses(db)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        first = await ac.get(f"/api/v1/tickets/{first_id}", headers=headers)
+        second = await ac.get(f"/api/v1/tickets/{second_id}", headers=headers)
+
+    assert first.json()["status"] == "after_concert"
+    assert second.json()["status"] == "before_concert"
+
+
 # 미인증 요청 401 테스트
 @pytest.mark.asyncio
 async def test_create_ticket_no_auth_401():
