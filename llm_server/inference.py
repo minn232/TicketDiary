@@ -8,7 +8,7 @@ analyze_crawl_screenshot은 extract_poster.py, extract_artists_from_poster는 �
 extract_artist.py 쪽 결과에만 event_type(SOLO/FESTIVAL/UNKNOWN)이 추가로 들어있음
 """
 
-from blog_draft import generate_blog_draft
+from blog_photos import generate_blog_draft_with_photos
 from config import settings
 from extract_artist import extract_artist_info
 from extract_poster import extract_poster_info
@@ -50,11 +50,13 @@ def generate_diary_text(item: DiaryGenerateItem) -> str:
 def generate_blog_post_draft(item: BlogDraftRequest) -> dict:
     """공연 정보와 사용자 감상 글(item.emotion)로 복사-붙여넣기용 블로그 글 초안을 만든다.
     공연 정보는 소개 문장("11월 20일에 ○○에 다녀왔어요" 등)이 되고 감상 문장은 해당 소개 문장 아래에
-    들어감. 반환: {"title", "body", "text"}"""
-    return generate_blog_draft(
+    들어감. 사진(item.photos)이 있으면 시점을 분류해 글 사이에 사진 자리 표시를 넣음(blog_photos.py).
+    반환: {"title", "body", "text", "blocks", "photos"}"""
+    return generate_blog_draft_with_photos(
         item.emotion,
         base_url=settings.VLLM_BASE_URL,
         api_key=settings.VLLM_API_KEY,
+        photos=[photo.model_dump() for photo in item.photos],
         concert_name=item.concert_name,
         artist_name=item.artist_name,
         venue=item.venue,

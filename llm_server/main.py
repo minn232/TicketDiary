@@ -151,7 +151,7 @@ async def artist_extract(items: list[ArtistExtractItem], background_tasks: Backg
 # 생성 완료까지 기다렸다가 응답 바디로 초안을 바로 돌려준다. 이 서버가 밤 배치 때만 떠서
 # 유저 요청은 백엔드가 저장해두고, 밤 배치(backend/app/services/blog_draft.py의
 # send_blog_drafts_to_llm)가 한 건씩 호출해 응답을 저장함 - 동시 3건, 타임아웃 180초.
-# 실패(502)하면 백엔드가 다음날 다시 보내고 3번 실패하면 멈춤
+# 실패(502)하면 백엔드가 다음날 다시 보내고 7번 실패하면 멈춤
 @app.post("/blog-draft", response_model=BlogDraftResponse, dependencies=[Depends(verify_backend_api_key)])
 async def blog_draft(item: BlogDraftRequest):
     try:
