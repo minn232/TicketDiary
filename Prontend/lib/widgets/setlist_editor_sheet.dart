@@ -43,7 +43,7 @@ class SetlistEditorSheet extends StatefulWidget {
       isScrollControlled: true,
       isDismissible: false,
       enableDrag: false,
-      // [백엔드 수정] 종이 배경은 내용 쪽에서 그림 - 제목을 끌어내릴 때 종이째 따라 내려가게
+      // [백엔드 수정] 종이 배경은 내용 쪽에서 그림 - 제목을 끌어내릴 때 종이째 따라 내려가게.
       backgroundColor: Colors.transparent,
       builder: (context) => SetlistEditorSheet(
         initialSongs: initialSongs,
@@ -343,7 +343,7 @@ class _SetlistEditorSheetState extends State<SetlistEditorSheet>
                           onPressed: _saving
                               ? null
                               : () => Navigator.of(context).maybePop(),
-                          // [백엔드 수정] 기본 보라색 대신 잉크색
+                          // [백엔드 수정] 기본 보라색 대신 잉크색.
                           style: TextButton.styleFrom(foregroundColor: _ink),
                           child: const Text('취소'),
                         ),

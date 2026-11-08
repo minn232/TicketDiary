@@ -129,7 +129,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
     DateUtils.dateOnly(DateTime.now()),
   );
 
-  // [백엔드 수정] 오늘 날짜 버튼을 누를 때마다 올려 캘린더를 오늘로 돌림
+  // [백엔드 수정] 오늘 날짜 버튼을 누를 때마다 올려 캘린더를 오늘로 돌림.
   final _calendarTodayRequest = ValueNotifier<int>(0);
 
   // 연도 칩 선택(차트별). 페이지가 화면에서 사라졌다 다시 만들어져도 유지하려고 화면 State에 보관

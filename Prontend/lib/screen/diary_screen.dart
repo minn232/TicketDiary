@@ -480,7 +480,7 @@ class _DiaryScreenState extends State<DiaryScreen>
   static const _flipCooldown = Duration(milliseconds: 450);
 
   // [백엔드 수정] 다이어리 탭을 다시 누르면 첫 페이지로 - 탭 전환과 같은 속지 여러 장
-  // 촤라락 넘김 연출(지금 화면을 바닥에 깔고 속지가 내려앉은 뒤 첫 페이지가 드러남)
+  // 촤라락 넘김 연출(지금 화면을 바닥에 깔고 속지가 내려앉은 뒤 첫 페이지가 드러남).
   late final AnimationController _riffle = AnimationController(
     vsync: this,
     duration: DiaryTabFlipTransition.transitionDuration,
@@ -3349,7 +3349,7 @@ class _DiaryScreenState extends State<DiaryScreen>
     if (nearest == null) return const SizedBox.shrink();
     final dDay = _deliveryDDayLabel(nearest.info!.date);
     // [백엔드 수정] 페이지 위 끝과 티켓 추가 칸 사이 가운데로 - 위에 붙여 두니 두 경계
-    // 사이에 애매하게 떠 보였음
+    // 사이에 애매하게 떠 보였음.
     return Center(
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: context.rs(4)),

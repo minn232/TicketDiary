@@ -410,7 +410,7 @@ class _RealSetlistContentState extends State<_RealSetlistContent> {
   bool _isUserEdited = false;
   // 연결 수정 후 서버가 다시 채우는 동안.
   bool _refilling = false;
-  // [백엔드 수정] 첫 응답을 기다리는 동안 - 이때 "없어요"가 먼저 떴다 바뀌었음
+  // [백엔드 수정] 첫 응답을 기다리는 동안 - 이때 "없어요"가 먼저 떴다 바뀌었음.
   bool _loading = false;
 
   @override

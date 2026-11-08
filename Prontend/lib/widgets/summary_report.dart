@@ -199,9 +199,7 @@ class _ReportPage extends StatelessWidget {
       builder: (context, box) {
         // Both pages fill exactly the same canvas. Scale the entire layout,
         // keeping labels, chart hit areas and portraits aligned.
-        // [백엔드 수정] 큰 화면에서도 키움 - 폰 기준 글자 크기 그대로라 태블릿에선
-        // 카드만 커지고 숫자가 왼쪽 아래 구석에 작게 붙어 보였음
-        // 다만 폰 비율 그대로(태블릿 세로 약 1.5배) 키우면 부담스러워 1.3배까지만
+        // [백엔드 수정] 큰 화면에서도 키움 - 태블릿은 폰 비율의 1.3배까지만.
         final scale = math.min(
           1.3,
           math.min(box.maxWidth / 300, box.maxHeight / 620),
@@ -309,7 +307,7 @@ class _Metrics extends StatelessWidget {
     // 가장 긴 값이 칸 폭에 들어가는 크기를 모두에 씀.
     return LayoutBuilder(
       builder: (context, c) {
-        // [백엔드 수정] 넓은 화면(태블릿)은 숫자가 칸 폭을 꽉 채우면 부담스러워 75%까지만
+        // [백엔드 수정] 넓은 화면(태블릿)은 숫자가 칸 폭을 꽉 채우면 부담스러워 75%까지만.
         final inner =
             ((c.maxWidth - 10) / 2 - 28) * (c.maxWidth > 360 ? .75 : 1);
         final scaler = MediaQuery.textScalerOf(context);
@@ -402,7 +400,7 @@ class _Metric extends StatelessWidget {
           ],
         ),
         // [백엔드 수정] 숫자+보조 문구를 남은 칸 세로 가운데에 - 아래에 붙여 두니 큰 카드에서
-        // 왼쪽 아래 구석에 몰려 보였음. 보조 문구 줄은 늘 자리를 잡아 한 줄의 숫자 높이를 맞춤
+        // 왼쪽 아래 구석에 몰려 보였음. 보조 문구 줄은 늘 자리를 잡아 한 줄의 숫자 높이를 맞춤.
         Expanded(
           child: Align(
             alignment: Alignment.center,
@@ -1345,7 +1343,7 @@ class _ArtistState extends State<_Artist> with AutomaticKeepAliveClientMixin {
           SizedBox(
             height: 32,
             // [백엔드 수정] 공동 순위면 이름 한 줄 + "외 N명" 한 줄 - 한 문장으로 두면
-            // "Novelbright 외 76 / 명"처럼 숫자와 "명"이 갈려 줄바꿈됐음
+            // "Novelbright 외 76 / 명"처럼 숫자와 "명"이 갈려 줄바꿈됐음.
             child: Center(
               child: canCycle
                   ? Column(

@@ -533,7 +533,7 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
               selection: _musicServiceSelection,
             );
     }
-    // [백엔드 수정] 첫 조회 중이거나, 비어서 서버가 만드는 동안은 "찾는 중"
+    // [백엔드 수정] 첫 조회 중이거나, 비어서 서버가 만드는 동안은 "찾는 중".
     if (_presetlistStatus == _FetchStatus.loading ||
         (_presetlistSearching && _fetchedSetlist.isEmpty)) {
       return const _SearchingText();

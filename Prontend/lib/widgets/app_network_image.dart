@@ -100,9 +100,8 @@ class AppNetworkImage extends StatelessWidget {
     return Future.wait(keys.map((url) => _precacheOne(url, decodeWidth)));
   }
 
-  // [백엔드 수정] 카드 포스터 디코드 가로 픽셀 - 원본 그대로 디코드하면 장당 수 MB라
-  // 이미지 메모리 캐시가 금방 차서, 다른 화면을 보고 오면 포스터를 다시 읽고 페이드했음.
-  // 노트9 기준 소식 카드 약 360px, 다이어리 티켓 약 650px에 태블릿 여유.
+  // [백엔드 수정] 카드 포스터 디코드 가로 픽셀 - 노트9 기준 소식 카드 약 360px,
+  // 다이어리 티켓 약 650px에 태블릿 여유.
   static const int newsPosterDecodeWidth = 640;
   static const int diaryPosterDecodeWidth = 960;
 

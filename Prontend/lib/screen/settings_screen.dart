@@ -781,7 +781,7 @@ class _MusicServiceRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(left: 32, right: 16),
       // [백엔드 수정] 제목+아이콘이 한 줄에 안 들어가면(분할 화면 등) 아이콘을 아래 줄로 -
-      // 한 줄에 억지로 두면 "노래 들을 / 앱"처럼 꺾였음(아이콘은 누르기 좋게 크기 유지)
+      // 한 줄에 억지로 두면 "노래 들을 / 앱"처럼 꺾였음(아이콘은 누르기 좋게 크기 유지).
       child: LayoutBuilder(
         builder: (context, box) {
           final labelWidth = (TextPainter(

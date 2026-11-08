@@ -289,7 +289,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     endWidth *= 1.1;
     endHeight *= 1.1;
     // [백엔드 수정] 높이는 안전 영역을 넘지 않게 - 분할 화면처럼 창이 작으면 10% 확대분이
-    // 안쪽 여백보다 커져 위아래(잠금 표시·공유 버튼 등)가 잘렸음. 폭은 그대로(끝까지 차는 모양 유지)
+    // 안쪽 여백보다 커져 위아래(잠금 표시·공유 버튼 등)가 잘렸음. 폭은 그대로(끝까지 차는 모양 유지).
     if (endHeight > safeHeight) endHeight = safeHeight;
     final safeCenter = Offset(
       safePadding.left + safeWidth / 2,
@@ -343,7 +343,7 @@ class _ConcertAfterOverlayState extends State<ConcertAfterOverlay>
     final screenSize = media.size;
     // 펼친 영역은 키보드와 무관한 viewPadding 기준으로 계산.
     final end = _endRect(screenSize, media.viewPadding);
-    // [백엔드 수정] 연 뒤 창 크기가 바뀌면(분할 화면 비율 조절) 페이지 폭에 맞춰 배율도 따라감
+    // [백엔드 수정] 연 뒤 창 크기가 바뀌면(분할 화면 비율 조절) 페이지 폭에 맞춰 배율도 따라감.
     _openEndWidth ??= end.width;
     final frameScale = widget.frameScale * end.width / _openEndWidth!;
 

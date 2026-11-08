@@ -127,7 +127,7 @@ class TicketDiaryApp extends StatelessWidget {
                 Positioned.fill(
                   child: TabHitCatcherOverlay(coordinator: tabNav),
                 ),
-                // [백엔드 수정] 분할 화면에서 창이 너무 작으면 안내 메모로 덮음
+                // [백엔드 수정] 분할 화면에서 창이 너무 작으면 안내 메모로 덮음.
                 const Positioned.fill(child: SmallWindowGuard()),
               ],
             ),

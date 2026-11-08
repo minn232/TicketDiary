@@ -222,7 +222,7 @@ class _SummaryCalendarState extends State<SummaryCalendar>
         if (nextIndex == monthIndex) return;
         final next = months[nextIndex];
         // [백엔드 수정] 앞뒤 모두 일정 있는 날로 - 뒤로 가면 그 달 마지막, 앞으로 가면 첫 일정.
-        // 공연(본 공연·내 티켓·소식 공연)이 있는 날을 먼저 보고, 없으면 예매일
+        // 공연(본 공연·내 티켓·소식 공연)이 있는 날을 먼저 보고, 없으면 예매일.
         final monthDays =
             grouped.keys
                 .where(
@@ -604,7 +604,7 @@ class _SummaryCalendarState extends State<SummaryCalendar>
     final byMonth = <int, List<Map<String, dynamic>>>{};
     for (final ticket in tickets) {
       final date = DateTime.tryParse('${ticket['date']}');
-      // [백엔드 수정] 아직 안 간 내 티켓(myTicket)은 연 모아보기에 안 붙임(본 공연만)
+      // [백엔드 수정] 아직 안 간 내 티켓(myTicket)은 연 모아보기에 안 붙임(본 공연만).
       if (date == null || date.year != year || ticket['kind'] != null) continue;
       (byMonth[date.month] ??= []).add(ticket);
     }
@@ -1030,7 +1030,7 @@ class _DayCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // [백엔드 수정] 아직 안 간 내 티켓도 가는 게 확정이라 본 공연처럼 포스터 스티커로
-    // (흐린 포스터는 소식 공연과 겹쳐 보였음)
+    // (흐린 포스터는 소식 공연과 겹쳐 보였음).
     final attended = items
         .where((item) => item['kind'] == null || item['kind'] == 'myTicket')
         .toList();
@@ -1422,7 +1422,7 @@ class _MonthFlipState extends State<_MonthFlip>
               children: [
                 IgnorePointer(child: old),
                 // [백엔드 수정] 올라오는 종이는 터치를 막아 연출이 끝날 때까지 버튼이 안 눌려 연타가 느렸음 -
-                // 안 보이는 이번 달을 제자리에 깔아 바로 누를 수 있게 함(미래 쪽은 새 달이 밑에 깔려 있어 원래 됨)
+                // 안 보이는 이번 달을 제자리에 깔아 바로 누를 수 있게 함(미래 쪽은 새 달이 밑에 깔려 있어 원래 됨).
                 Opacity(opacity: 0, child: widget.child),
                 _torn(
                   widget.child,

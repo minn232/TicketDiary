@@ -31,9 +31,7 @@ class DiaryDeskBackdrop extends StatelessWidget {
   });
 
   // [백엔드 수정]
-  // 스플래시 끝 장면과 책상 무늬(이음새·틈)가 같도록, 스플래시의 책 크기·줌
-  // 식을 여기서 공유. 스플래시 장면은 화면 가운데 기준으로 책상을
-  // splashFillScale / splashBookStartScale배 확대한 채 끝남.
+  // 스플래시 끝 장면과 책상 무늬가 같도록 스플래시의 책 크기·줌 식을 여기서 공유.
   static const double splashBookSizeBoost = 1.2;
   static const double splashBookStartScale = 0.34;
 

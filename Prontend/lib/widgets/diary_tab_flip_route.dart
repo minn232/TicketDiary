@@ -653,7 +653,7 @@ class _DiaryTabFlipTransitionState extends State<DiaryTabFlipTransition>
         }
         if (!_holding) {
           // [백엔드 수정] 넘김이 끝난 뒤 남은 조각을 목적지 위에서 페이지 뒤로 내려보냄(화면 좌표 그대로).
-          // 앞으로 넘김은 속지가 라우트 끝(t=1)보다 먼저 다 사라져서, 그때부터 바로 내려보냄
+          // 앞으로 넘김은 속지가 라우트 끝(t=1)보다 먼저 다 사라져서, 그때부터 바로 내려보냄.
           if (_flipShown &&
               _hasSlideAwayPiece &&
               !_slideAway.isAnimating &&

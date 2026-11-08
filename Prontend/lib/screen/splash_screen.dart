@@ -25,7 +25,7 @@ import 'package:ticketdiary/widgets/responsive_text.dart'
 
 // [백엔드 수정]
 // 다이어리 탭 페이지 넘김과 같은 곡면 렌더링(BentLeafPainter)을 스플래시
-// 인트로에도 사용합니다.
+// 인트로에도 사용함.
 
 /// 앱 실행 시 보여주는 시작 애니메이션.
 ///
@@ -818,8 +818,7 @@ class _SplashScreenState extends State<SplashScreen>
         _seg(t, lastRegularLeafStart, lastRegularLeafStart + _flipDuration) *
         180;
     // [백엔드 수정] 미리보기 DiaryScreen이 깔렸는지. 깔렸으면 그 안의 링이
-    // 같은 자리에 그림자를 그려서, 아래 링까지 그림자를 그리면 두 겹으로
-    // 진해졌다가 메인 화면으로 넘어갈 때 갑자기 연해짐
+    // 같은 자리에 그림자를 그려서 아래 링은 그림자를 안 그림.
     final previewVisible =
         lastRegularLeafAngleDeg >= _tabRevealAngleDeg && _dataReady;
 
@@ -930,8 +929,7 @@ class _SplashScreenState extends State<SplashScreen>
           // [_buildBook]의 pageRect와 정확히 같은 기준으로 계산됩니다.
           //
           // [백엔드 수정]
-          // 다른 속지들처럼 [_finalFlipStart]~+[_finalFlipDuration]에 넘어가
-          // 사라짐. book 전체를 꽉 채워 왼쪽 끝=책등이라 pivotX 트릭 불필요.
+          // 다른 속지들처럼 [_finalFlipStart]~+[_finalFlipDuration]에 넘어가 사라짐.
           //
           // [백엔드 수정]
           // 90도 전까지만 여기(속지 그림자 아래)에 그리고, 넘어간 뒤엔 왼쪽
@@ -985,9 +983,8 @@ class _SplashScreenState extends State<SplashScreen>
           // 정착한 순서대로 그려야 쌓이는 더미가 침범 안 함 - 아직 안 정착한
           // 건 항상 위(표지>0번>...>4번 순)로, 매 프레임 재계산.
           // [백엔드 수정]
-          // 메인 화면엔 없는 왼쪽 표지·속지 더미(마지막 장 포함)를 다 눕은
-          // 뒤 [_exitController] 동안 왼쪽 화면 밖으로 밀어내며 옅게 함
-          // (전환 순간 툭 사라지던 문제). 다 정착해 있어 통째로 옮겨도 순서 그대로.
+          // 메인 화면엔 없는 왼쪽 표지·속지 더미(마지막 장 포함)를 다 눕은 뒤
+          // [_exitController] 동안 왼쪽 화면 밖으로 밀어내며 옅게 함.
           Positioned.fill(
             child: Transform.translate(
               offset: Offset(-w * 0.3 * exitSlide, 0),

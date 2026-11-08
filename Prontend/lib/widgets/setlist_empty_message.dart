@@ -28,7 +28,7 @@ SetlistEmptyText setlistEmptyText(
   bool refilling = false,
   bool loading = false,
 }) {
-  // [백엔드 수정] 첫 응답 전에도 "없어요"가 먼저 뜨지 않게 찾는 중으로
+  // [백엔드 수정] 첫 응답 전에도 "없어요"가 먼저 뜨지 않게 찾는 중으로.
   if (refilling || loading) {
     return const SetlistEmptyText('셋리를 찾는 중이에요', searching: true);
   }

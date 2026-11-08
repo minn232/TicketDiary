@@ -514,14 +514,14 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
               ),
             ),
           // [백엔드 수정] 미리보기를 세로 가운데로 - 앞+뒤처럼 낮은 카드는 위에 붙고 아래가 비었음
-          // (뒤에 그리는 카드가 비치지 않게 가림막은 영역 전체에 깖)
+          // (뒤에 그리는 카드가 비치지 않게 가림막은 영역 전체에 깖).
           Positioned.fill(
             child: IgnorePointer(
               child: ColoredBox(
                 color: _sheetColor,
                 child: Center(
                   // [백엔드 수정] 칸을 반씩 나누지 않고 카드 크기만큼만 - 가로 모드처럼 높이에
-                  // 맞춰 카드가 작아지면 앞·뒷면 사이가 크게 벌어졌음
+                  // 맞춰 카드가 작아지면 앞·뒷면 사이가 크게 벌어졌음.
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -632,7 +632,7 @@ class _ConcertAfterShareSheetState extends State<ConcertAfterShareSheet> {
           // 화면이 낮으면(폰 가로 등) 미리보기가 줄어듦.
           Flexible(child: _preview(height * .48)),
           const SizedBox(height: 14),
-          // [백엔드 수정] 왼쪽에 붙어 있던 옵션을 가운데로 - 넓으면 나란히, 좁으면 위아래
+          // [백엔드 수정] 왼쪽에 붙어 있던 옵션을 가운데로 - 넓으면 나란히, 좁으면 위아래.
           Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 520),
