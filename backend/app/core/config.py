@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     RUNPOD_GPU_TYPE_IDS: str = ""
     RUNPOD_POD_NAME: str = "td-llm-batch"
     # 새 pod의 PUBLIC_KEY에 서버 키(RUNPOD_SSH_KEY_PATH에서 뽑음) 말고 추가로 넣을 공개키들(LLM팀 등, ';' 구분).
-    # 템플릿의 PUBLIC_KEY는 콘솔 한 줄 입력이라 줄바꿈이 안 들어가 두 키가 붙어버려서(11/9 SSH Permission denied)
+    # 템플릿의 PUBLIC_KEY는 콘솔 한 줄 입력이라 줄바꿈이 안 들어가 두 키가 붙어버려서 SSH 인증이 실패함
     # 생성 요청 env로 줄바꿈 구분해 덮어씀
     RUNPOD_EXTRA_PUBLIC_KEYS: str = ""
     # pod을 깨운 뒤 SSH로 접속해서 start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 원격

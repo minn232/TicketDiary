@@ -3,7 +3,7 @@ import re
 from datetime import date, datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,7 +91,7 @@ async def receive_crawl_result(
     concert = result.scalar_one_or_none()
     if concert is None:
         logger.warning(f"[LLM] 크롤링 콜백의 공연을 찾을 수 없음 concert_id={concert_id}")
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
 
     _warn_suspicious_crawl_result(concert, body)
 
@@ -275,7 +275,7 @@ async def receive_artist_extraction_result(
     concert = result.scalar_one_or_none()
     if concert is None:
         logger.warning(f"[LLM] 아티스트 추출 콜백의 공연을 찾을 수 없음 concert_id={concert_id}")
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
 
     # 결과가 비어 있어도 받은 것 - 포스터가 같으니 다시 보내도 같은 결과
     concert.artist_extraction_received_at = datetime.now(timezone.utc)

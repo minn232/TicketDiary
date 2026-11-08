@@ -164,7 +164,7 @@ async def confirm_ticket_delivered(
 # 서비스 함수들이 400으로 날짜 지정을 요구함(추측해서 엉뚱한 날짜의 셋리스트를 주지 않기 위함)
 def _ticket_concert_and_date(ticket: Ticket):
     if ticket.concert_id is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
     explicit_date = ticket.attended_date.date() if ticket.attended_date else None
     return ticket.concert_id, explicit_date
 
@@ -366,7 +366,7 @@ async def receive_diary_result(
     ticket = result.scalar_one_or_none()
     if ticket is None:
         logger.warning(f"[LLM] 일기 콜백의 티켓을 찾을 수 없음 ticket_id={ticket_id}")
-        raise HTTPException(status_code=404, detail="티켓을 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="티켓을 찾을 수 없습니다.")
 
     ticket.diary = body.diary
     await db.commit()

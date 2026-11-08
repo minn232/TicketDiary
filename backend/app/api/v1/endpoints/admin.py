@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -238,7 +238,7 @@ async def list_concerts(
 async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db)):
     concert = await db.get(Concert, concert_id)
     if concert is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
 
     status_rows = (
         await db.execute(
@@ -314,17 +314,17 @@ async def _lineup_entries(db: AsyncSession, concert_id: UUID) -> list[dict]:
 async def update_concert_lineup(concert_id: UUID, body: AdminLineupUpdate, db: AsyncSession = Depends(get_db)):
     concert = await db.get(Concert, concert_id)
     if concert is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
     days = set(_concert_days(concert))
     if not days:
-        raise HTTPException(status_code=400, detail="여러 날 공연이 아닙니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="여러 날 공연이 아닙니다.")
     names = set(concert.artist_name or [])
     unknown = sorted({e.artist for e in body.entries} - names)
     if unknown:
-        raise HTTPException(status_code=400, detail=f"아티스트 목록에 없는 이름: {', '.join(unknown)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"아티스트 목록에 없는 이름: {', '.join(unknown)}")
     outside = sorted({e.performance_date for e in body.entries} - days)
     if outside:
-        raise HTTPException(status_code=400, detail=f"공연 기간 밖 날짜: {', '.join(map(str, outside))}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"공연 기간 밖 날짜: {', '.join(map(str, outside))}")
 
     await replace_concert_lineup_by_admin(db, concert_id, [(e.artist, e.performance_date) for e in body.entries])
     return await get_concert_detail(concert_id, db)
@@ -335,7 +335,7 @@ async def update_concert_lineup(concert_id: UUID, body: AdminLineupUpdate, db: A
 async def _mark_reviewed(db: AsyncSession, concert_id: UUID) -> None:
     concert = await db.get(Concert, concert_id)
     if concert is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
     concert.admin_reviewed_at = datetime.now(timezone.utc)
     # 아티스트 수정 라우트가 전부 여길 거치므로 같이 처리 - 고치기 전 아티스트로 실패한 실제 셋리 기록 정리
     await clear_failed_real_setlist_attempts(db, concert_id)
@@ -516,7 +516,7 @@ async def mark_concert_reviewed(concert_id: UUID, db: AsyncSession = Depends(get
 async def _mark_festival(db: AsyncSession, concert_id: UUID) -> None:
     concert = await db.get(Concert, concert_id)
     if concert is None:
-        raise HTTPException(status_code=404, detail="공연 정보를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
     concert.event_type = EventType.FESTIVAL.value
     await db.commit()
 
@@ -531,7 +531,7 @@ async def mark_festival_route(concert_id: UUID, db: AsyncSession = Depends(get_d
 async def get_canonical_artist_name_options(name: str = Query(...), db: AsyncSession = Depends(get_db)):
     result = await get_canonical_name_options(db, name)
     if result is None:
-        raise HTTPException(status_code=404, detail="아직 매칭되지 않은 아티스트입니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="아직 매칭되지 않은 아티스트입니다.")
     canonical, options = result
     return AdminCanonicalNameOptions(
         canonical_id=canonical.id,
@@ -686,7 +686,7 @@ async def list_artists(
 async def get_artist_detail(canonical_id: UUID, db: AsyncSession = Depends(get_db)):
     canonical = await db.get(CanonicalArtist, canonical_id)
     if canonical is None:
-        raise HTTPException(status_code=404, detail="아티스트를 찾을 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="아티스트를 찾을 수 없습니다.")
 
     alias_rows = (
         await db.execute(
@@ -764,7 +764,7 @@ async def add_group_relation_route(
     canonical_id: UUID, body: AdminGroupRelationAddRequest, db: AsyncSession = Depends(get_db)
 ):
     if body.role not in ("member", "group"):
-        raise HTTPException(status_code=400, detail="role은 member 또는 group이어야 합니다.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="role은 member 또는 group이어야 합니다.")
     await add_group_relation(db, canonical_id, body.other_name, body.role)
     return await get_artist_detail(canonical_id, db)
 
@@ -831,11 +831,11 @@ async def upload_manual_crawl_screenshot(
 ):
     content_length = request.headers.get("content-length")
     if content_length and content_length.isdigit() and int(content_length) > _MAX_CRAWL_SCREENSHOT_SIZE:
-        raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
 
     image_bytes = await image.read(_MAX_CRAWL_SCREENSHOT_SIZE + 1)
     if len(image_bytes) > _MAX_CRAWL_SCREENSHOT_SIZE:
-        raise HTTPException(status_code=413, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="스크린샷 크기는 60MB를 초과할 수 없습니다.")
 
     concert = await save_manual_crawl_screenshot(db, concert_id, site, image_bytes)
     return AdminCrawlScreenshotUploadResponse(concert_id=concert.id, crawl_screenshot_url=concert.crawl_screenshot_url)

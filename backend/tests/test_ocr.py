@@ -1444,7 +1444,7 @@ def test_shrink_for_vision_reencodes_large_jpeg_keeping_resolution():
     assert Image.open(io.BytesIO(out)).size == (1500, 2000)
 
 
-# 양도 티켓(BABO AND THE NIGHT, 11/7 친구 등록 서버 로그의 OCR 줄) - 원매일자를 공연일로 쓰고,
+# 양도 티켓(BABO AND THE NIGHT, 친구 등록 서버 로그의 OCR 줄) - 원매일자를 공연일로 쓰고,
 # 날짜 줄·좌석 번호 줄·매매자 줄(구매자 이름)이 KOPIS 검색어로 나갔던 케이스
 _TRANSFER_TICKET_TEXT = (
     "BABO AND THE NIGHT\n"

@@ -38,7 +38,7 @@ def gpu_type_ids() -> list[str]:
     return list(dict.fromkeys(g.strip() for g in settings.RUNPOD_GPU_TYPE_IDS.split(",") if g.strip()))
 
 
-# Global 볼륨은 v1 REST(networkVolumeId)가 못 붙여서("network volume not found", 11/9 실측) v2 API를 씀.
+# Global 볼륨은 v1 REST(networkVolumeId)가 못 붙여서("network volume not found") v2 API를 씀.
 # v2 차이: 목록에 name 필터가 없어 클라이언트에서 거름, 상태 필드가 desiredStatus가 아니라 status
 # (PROVISIONING/STARTING/RUNNING/EXITED/ERROR/TERMINATED), GPU 종류는 요청당 1개(여러 개를 한 번에 못 줌)
 _RUNPOD_V2_PODS_URL = "https://api.runpod.io/v2/pods"
@@ -217,9 +217,8 @@ async def _create_and_launch_new_pod() -> bool:
             logger.error("[LLM] 잔재 pod 삭제를 확인하지 못해 기동 중단")
             return False
 
-    # 이미 RUNNING인 pod을 이어 쓰는 경우 start_vllm.sh를 무조건 다시 돌리면 떠 있던 vLLM·터널이 끊김(11/9 03시 정기
-    # 배치가 수동 테스트 pod에 끼어들어 health가 530으로 떨어짐) - 살아 있으면 그대로 쓰고, 기동 스크립트가
-    # 아직 도는 중이면 재실행 없이 준비만 기다림. 둘 다 아닐 때만 아래에서 다시 기동
+    # 이미 RUNNING인 pod을 이어 쓸 때 start_vllm.sh를 무조건 다시 돌리면 떠 있던 vLLM·터널이 끊김 - 살아 있으면
+    # 그대로 쓰고, 기동 스크립트가 도는 중이면 재실행 없이 준비만 기다림. 둘 다 아닐 때만 아래에서 다시 기동
     if pod_id is not None and settings.RUNPOD_SSH_KEY_PATH:
         if await _llm_server_healthy():
             logger.info(f"[LLM] 이미 켜진 pod의 llm_server가 살아 있어 그대로 사용 (pod={pod_id})")
@@ -295,7 +294,7 @@ async def start_pod(pod_id: str | None = None) -> bool:
     return True
 
 
-# pod 상태 조회(REST v1). 응답에 "runtime" 필드가 아예 없어서(10/16 실제 응답 확인) 상태는
+# pod 상태 조회(REST v1). 응답에 "runtime" 필드가 아예 없어서 상태는
 # desiredStatus(RUNNING/EXITED/TERMINATED)로만 알 수 있음 - 과금도 이 값 기준
 async def _fetch_pod_status(pod_id: str) -> dict:
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -364,7 +363,7 @@ async def _stop_one_pod(pod_id: str) -> bool:
 # pod을 깨운 직후 llm_server 헬스체크(base+"/health")가 응답할 때까지 폴링, 안 되면 False(다음날 재시도).
 # 기본 1500초 = 매 기동 vLLM 재설치(컨테이너 디스크가 stop마다 초기화, 5~10분) + vLLM 준비 최대 10분
 # abort_check: 기동 스크립트가 이미 실패했는지 보는 함수(실패 사유 문자열 또는 None) - 스크립트가
-# 설치 단계에서 죽어도 health는 530만 내서 1500초를 다 기다린 뒤에야 다음 후보로 넘어갔음(10/16)
+# 설치 단계에서 죽어도 health는 530만 내서 1500초를 다 기다린 뒤에야 다음 후보로 넘어갔음
 async def wait_until_llm_server_ready(
     timeout_seconds: float = 1500.0,
     interval_seconds: float = 10.0,
@@ -483,7 +482,7 @@ _VLLM_LOG_PATH = "/workspace/server/vllm.log"
 
 
 # 스크립트 출력 로그를 pod·실행 시각별로 분리 - 주/보조 pod, 03시/07시 실행이 한 파일을 덮어써서
-# 남은 로그가 어느 실행 것인지 알 수 없었음(10/16 LLM팀 지적)
+# 남은 로그가 어느 실행 것인지 알 수 없었음
 def _start_log_path(pod_id: str) -> str:
     return f"/workspace/start_vllm_remote_{pod_id}_{datetime.now(timezone.utc):%m%d_%H%M}.log"
 
@@ -516,10 +515,8 @@ async def run_start_script_via_ssh(pod_id: str | None = None, log_path: str | No
                 "command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_SESSION} 2>/dev/null; true", check=False)
-            # 끝에 sleep infinity - 스크립트가 끝나 세션이 닫히면 nohup/disown 없이 `&`로 띄운 vLLM이 같이 죽음.
-            # 11/9 새 pod 시험에서 start_vllm.sh는 "vLLM OK"까지 찍고 끝났는데 직후 vLLM 프로세스만 사라져
-            # llm_server가 APIConnectionError로 전부 실패, 콜백 0건(uvicorn·cloudflared는 nohup이라 살아남음).
-            # 세션을 계속 열어두면 막힘 - pod은 배치 뒤 삭제되니 남겨도 무해
+            # 끝에 sleep infinity - 스크립트가 끝나 세션이 닫히면 nohup 없이 `&`로 띄운 vLLM이 같이 죽음
+            # (uvicorn·cloudflared는 nohup이라 생존). pod은 배치 뒤 삭제되니 세션이 남아도 무해
             # asyncssh conn.run은 비대화형 셸이라 .bashrc가 앞에서 return해 RunPod pod 환경변수
             # (/etc/rp_environment, .bashrc 끝에서 source됨)가 안 실림 - 직접 로그인 실행과 환경을 맞춤
             await _run_remote(

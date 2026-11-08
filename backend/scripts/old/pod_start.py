@@ -6,7 +6,7 @@ SSH 접속 준비까지는 기다리지 않고 시작 요청만 보내고 바로
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/ongoing/pod_start.py
+    venv/bin/python3 scripts/old/pod_start.py
 """
 
 import asyncio

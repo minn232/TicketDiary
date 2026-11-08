@@ -274,7 +274,7 @@ _VENUE_ALIASES = [
     (re.compile(r"live\s*hall", re.IGNORECASE), "라이브홀"),
     (re.compile(r"wonder\s*rock\s*hall", re.IGNORECASE), "원더로크홀"),
     # 올림픽공원 안 공연장은 KOPIS 시설명이 "올림픽공원"이고 공연장명은 괄호 안("올림픽공원 (KSPO DOME(체조경기장))")
-    # 이라 "KSPO DOME"으로는 시설 검색이 안 됨 - 줄이다 "DOME"으로 엉뚱한 시설에 걸린 적 있음(잔나비 10/25)
+    # 이라 "KSPO DOME"으로는 시설 검색이 안 됨 - 줄이다 "DOME"으로 엉뚱한 시설에 걸린 적 있음(잔나비)
     (
         re.compile(
             r"(?<!올림픽공원 )(?<!올림픽공원)(KSPO\s*DOME|(?:올림픽\s*)?체조\s*경기장|올림픽\s*홀|핸드볼\s*경기장)",

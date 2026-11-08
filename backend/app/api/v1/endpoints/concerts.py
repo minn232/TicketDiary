@@ -1,7 +1,7 @@
 import logging
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,7 +48,7 @@ async def scan_ticket(
     # 최대 10MB+1 바이트만 읽어 초과 여부 판단
     image_bytes = await image.read(_MAX_IMAGE_SIZE + 1)
     if len(image_bytes) > _MAX_IMAGE_SIZE:
-        raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
     # 카메라 정렬 오인식으로 짧은 간격에 연달아 들어온 요청이면, 유료 Vision 호출 없이
     # 빈 결과로 바로 응답 (is_within_scan_cooldown 주석 참고)

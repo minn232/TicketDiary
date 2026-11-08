@@ -20,8 +20,8 @@ timetable_ranges가 null이면 아직 계산 안 된 것, []이면 계산됐지�
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/ongoing/export_llm_crawl_samples.py                        # 기본 out/llm_crawl_samples.json
-    venv/bin/python3 scripts/ongoing/export_llm_crawl_samples.py --out samples.json
+    venv/bin/python3 scripts/old/export_llm_crawl_samples.py                        # 기본 out/llm_crawl_samples.json
+    venv/bin/python3 scripts/old/export_llm_crawl_samples.py --out samples.json
 """
 
 import argparse

@@ -8,9 +8,9 @@ kopis_missing_at을 찍어 검색/추천에서 숨김(상세가 다시 성공하
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/ongoing/backfill_kopis_runtime.py --dry-run
-    venv/bin/python3 scripts/ongoing/backfill_kopis_runtime.py --limit 5
-    venv/bin/python3 scripts/ongoing/backfill_kopis_runtime.py
+    venv/bin/python3 scripts/old/backfill_kopis_runtime.py --dry-run
+    venv/bin/python3 scripts/old/backfill_kopis_runtime.py --limit 5
+    venv/bin/python3 scripts/old/backfill_kopis_runtime.py
 """
 
 import argparse

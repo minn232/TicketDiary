@@ -260,7 +260,7 @@ def _mock_graphql_client(ports):
 
 
 # 22/udp가 먼저 와도 22/tcp 공인 포트를 고름 - REST portMappings가 udp 포트를 줘서 SSH가
-# Connection refused로 실패하던 문제(10/16 실제 응답 순서 그대로)
+# Connection refused로 실패하던 문제(실제 응답 순서 그대로)
 @pytest.mark.asyncio
 async def test_fetch_ssh_endpoint_picks_public_tcp_22():
     ports = [
@@ -286,7 +286,7 @@ def _patch_graphql(*results):
 
 
 # 꺼진 pod은 podResume(gpuCount 1)으로 켬 - REST /start는 남은 gpuCount 0을 그대로 써서 보조 pod이
-# GPU 없이(메모리 488MB) 켜졌음(10/17)
+# GPU 없이(메모리 488MB) 켜졌음
 @pytest.mark.asyncio
 async def test_start_pod_resumes_with_gpu():
     graphql = AsyncMock(side_effect=[
@@ -625,7 +625,7 @@ async def test_new_pod_reuse_replaces_pod_when_running_start_never_ready():
     launcher.assert_awaited_once_with("p2")
 
 
-# tmux 세션이 start_vllm.sh 끝나고도 열려 있어야 함 - 닫히면 nohup 없이 띄운 vLLM이 같이 죽음(11/9 시험에서 확인)
+# tmux 세션이 start_vllm.sh 끝나고도 열려 있어야 함 - 닫히면 nohup 없이 띄운 vLLM이 같이 죽음
 @pytest.mark.asyncio
 async def test_start_script_tmux_session_stays_open_after_script_ends():
     from app.services.runpod import run_start_script_via_ssh

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -52,7 +52,7 @@ async def read_notification(
 
 
 # 알림 삭제
-@router.delete("/{notification_id}", status_code=204)
+@router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_notification(
     notification_id: UUID,
     current_user: User = Depends(get_current_user),

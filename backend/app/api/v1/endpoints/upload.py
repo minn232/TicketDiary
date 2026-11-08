@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 
 from app.core.deps import get_current_user, rate_limit_upload, reject_oversized_request
@@ -23,13 +23,13 @@ async def _read_and_validate(image: UploadFile) -> bytes:
     content_type = image.content_type or ""
     if content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
-            status_code=415,
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=f"지원하지 않는 이미지 형식입니다. ({', '.join(ALLOWED_CONTENT_TYPES)})",
         )
 
     image_bytes = await image.read(_MAX_IMAGE_SIZE + 1)
     if len(image_bytes) > _MAX_IMAGE_SIZE:
-        raise HTTPException(status_code=413, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="이미지 크기는 10MB를 초과할 수 없습니다.")
 
     return image_bytes
 
