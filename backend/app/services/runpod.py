@@ -176,6 +176,27 @@ async def delete_named_pods() -> bool:
     return False
 
 
+async def _llm_server_healthy() -> bool:
+    if not settings.LLM_CRAWL_URL:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            return (await client.get(settings.LLM_CRAWL_URL.rsplit("/", 1)[0] + "/health")).status_code == 200
+    except Exception:
+        return False
+
+
+# run_start_script_via_ssh가 만드는 tmux 세션(llm_start)이 아직 살아 있으면 기동 스크립트가 도는 중.
+# SSH가 안 되면 판단 못 하므로 False(호출부가 새로 기동해 안전한 쪽으로)
+async def _start_script_running(pod_id: str) -> bool:
+    try:
+        async with await _ssh_connect(pod_id, connect_timeout=10) as conn:
+            result = await conn.run(f"tmux has-session -t {_TMUX_SESSION}", check=False)
+        return result.exit_status == 0
+    except Exception:
+        return False
+
+
 # 새 pod 방식의 기동. 같은 이름의 RUNNING pod이 이미 있으면(03시 시도가 도는 중 등) 새로 만들지 않고 그걸 이어 씀
 # - 기존 방식도 이미 RUNNING이면 resume 없이 SSH·스크립트만 다시 하던 것과 같음. RUNNING이 아닌 잔재는 지우고 새로 만듦.
 # 기동에 실패하면 pod을 지우고 새 pod으로 1회만 더 시도(호스트가 문제인 경우를 피하려고). 그래도 실패하면 pod이 안 남게
@@ -195,6 +216,22 @@ async def _create_and_launch_new_pod() -> bool:
         if not await _wait_until_pods_gone(stale):
             logger.error("[LLM] 잔재 pod 삭제를 확인하지 못해 기동 중단")
             return False
+
+    # 이미 RUNNING인 pod을 이어 쓰는 경우 start_vllm.sh를 무조건 다시 돌리면 떠 있던 vLLM·터널이 끊김(11/9 03시 정기
+    # 배치가 수동 테스트 pod에 끼어들어 health가 530으로 떨어짐) - 살아 있으면 그대로 쓰고, 기동 스크립트가
+    # 아직 도는 중이면 재실행 없이 준비만 기다림. 둘 다 아닐 때만 아래에서 다시 기동
+    if pod_id is not None and settings.RUNPOD_SSH_KEY_PATH:
+        if await _llm_server_healthy():
+            logger.info(f"[LLM] 이미 켜진 pod의 llm_server가 살아 있어 그대로 사용 (pod={pod_id})")
+            return True
+        if await _start_script_running(pod_id):
+            logger.info(f"[LLM] 기동 스크립트가 진행 중이라 재실행 없이 준비 대기 (pod={pod_id})")
+            if await wait_until_llm_server_ready():
+                return True
+            logger.error(f"[LLM] 진행 중이던 기동이 끝내 준비되지 않음 - 삭제 후 새 pod으로 (pod={pod_id})")
+            await _delete_pod(pod_id)
+            await _wait_until_pods_gone({pod_id})
+            pod_id = None
 
     for attempt in (1, 2):
         if pod_id is None:

@@ -409,11 +409,13 @@ async def test_new_pod_launch_creates_when_none_exist():
     creator.assert_awaited_once()
 
 
-# 같은 이름의 RUNNING pod이 있으면 새로 안 만들고 이어 씀
+# 같은 이름의 RUNNING pod이 있으면 새로 안 만들고 이어 씀(서버가 죽어 있고 기동 스크립트도 안 도는 경우 - 다시 기동)
 @pytest.mark.asyncio
 async def test_new_pod_launch_reuses_running_pod():
     existing = [{"id": "p1", "status": "RUNNING"}]
     with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._start_script_running", AsyncMock(return_value=False)), \
          patch("app.services.runpod._create_pod", AsyncMock()) as creator, \
          patch("app.services.runpod._launch_services", AsyncMock(return_value=True)) as launcher:
         assert await start_pod_and_launch_services() is True
@@ -577,3 +579,47 @@ def test_authorized_public_keys_none_when_key_unreadable():
 
     with patch.multiple("app.services.runpod.settings", RUNPOD_SSH_KEY_PATH="/no/such/key", RUNPOD_EXTRA_PUBLIC_KEYS=""):
         assert _authorized_public_keys() is None
+
+
+# 이미 RUNNING이고 llm_server가 살아 있으면 start_vllm.sh를 다시 돌리지 않음(떠 있던 vLLM·터널이 끊기는 사고 방지)
+@pytest.mark.asyncio
+async def test_new_pod_reuse_skips_launch_when_server_healthy():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=True)), \
+         patch("app.services.runpod._create_pod", AsyncMock()) as creator, \
+         patch("app.services.runpod._launch_services", AsyncMock()) as launcher:
+        assert await start_pod_and_launch_services() is True
+    creator.assert_not_awaited()
+    launcher.assert_not_awaited()
+
+
+# 기동 스크립트가 아직 도는 중이면 재실행 없이 준비만 기다림
+@pytest.mark.asyncio
+async def test_new_pod_reuse_waits_when_start_script_running():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._start_script_running", AsyncMock(return_value=True)), \
+         patch("app.services.runpod.wait_until_llm_server_ready", AsyncMock(return_value=True)) as waiter, \
+         patch("app.services.runpod._launch_services", AsyncMock()) as launcher:
+        assert await start_pod_and_launch_services() is True
+    waiter.assert_awaited_once()
+    launcher.assert_not_awaited()
+
+
+# 진행 중이던 기동이 끝내 안 뜨면 그 pod을 지우고 새로 만들어 기동
+@pytest.mark.asyncio
+async def test_new_pod_reuse_replaces_pod_when_running_start_never_ready():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._start_script_running", AsyncMock(return_value=True)), \
+         patch("app.services.runpod.wait_until_llm_server_ready", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._delete_pod", AsyncMock(return_value=True)) as deleter, \
+         patch("app.services.runpod._wait_until_pods_gone", AsyncMock(return_value=True)), \
+         patch("app.services.runpod._create_pod", AsyncMock(return_value="p2")), \
+         patch("app.services.runpod._launch_services", AsyncMock(return_value=True)) as launcher:
+        assert await start_pod_and_launch_services() is True
+    deleter.assert_awaited_once_with("p1")
+    launcher.assert_awaited_once_with("p2")
