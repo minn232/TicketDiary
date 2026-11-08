@@ -82,6 +82,9 @@ class _SplashScreenState extends State<SplashScreen>
   static const Duration _brandLogoPopDelay = Duration(milliseconds: 260);
   static const Duration _brandLogoPopDuration = Duration(milliseconds: 430);
   static const Duration _brandDissolveDuration = Duration(milliseconds: 650);
+  // [백엔드 수정] 앱 아이콘과 같은 그림으로 바꾼 안(모서리만 둥글게 깎은 전용 파일).
+  // 다음 장면의 다이어리와 이어지는 기존 로고를 쓰기로 해서 주석으로 남겨둠.
+  // static const String _brandLogoAsset = 'assets/icon/app_icon_splash.png';
   static const String _brandLogoAsset = 'assets/icon/app_icon.png';
   static const Color _brandBackgroundColor = Color(0xFF513624);
 
