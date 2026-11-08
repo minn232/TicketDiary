@@ -623,3 +623,28 @@ async def test_new_pod_reuse_replaces_pod_when_running_start_never_ready():
         assert await start_pod_and_launch_services() is True
     deleter.assert_awaited_once_with("p1")
     launcher.assert_awaited_once_with("p2")
+
+
+# tmux 세션이 start_vllm.sh 끝나고도 열려 있어야 함 - 닫히면 nohup 없이 띄운 vLLM이 같이 죽음(11/9 시험에서 확인)
+@pytest.mark.asyncio
+async def test_start_script_tmux_session_stays_open_after_script_ends():
+    from app.services.runpod import run_start_script_via_ssh
+
+    commands: list[str] = []
+
+    class _Conn:
+        async def run(self, command, check=False):
+            commands.append(command)
+            return MagicMock(exit_status=0, stdout="", stderr="")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="k", RUNPOD_SSH_KEY_PATH="/key", RUNPOD_POD_ID="p"), \
+         patch("app.services.runpod._ssh_connect", AsyncMock(return_value=_Conn())):
+        assert await run_start_script_via_ssh("p1", "/workspace/x.log") is True
+    start = next(c for c in commands if "start_vllm.sh" in c and "new-session" in c)
+    assert start.rstrip("'").endswith("sleep infinity")

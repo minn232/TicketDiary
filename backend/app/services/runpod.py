@@ -516,13 +516,17 @@ async def run_start_script_via_ssh(pod_id: str | None = None, log_path: str | No
                 "command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_SESSION} 2>/dev/null; true", check=False)
+            # 끝에 sleep infinity - 스크립트가 끝나 세션이 닫히면 nohup/disown 없이 `&`로 띄운 vLLM이 같이 죽음.
+            # 11/9 새 pod 시험에서 start_vllm.sh는 "vLLM OK"까지 찍고 끝났는데 직후 vLLM 프로세스만 사라져
+            # llm_server가 APIConnectionError로 전부 실패, 콜백 0건(uvicorn·cloudflared는 nohup이라 살아남음).
+            # 세션을 계속 열어두면 막힘 - pod은 배치 뒤 삭제되니 남겨도 무해
             # asyncssh conn.run은 비대화형 셸이라 .bashrc가 앞에서 return해 RunPod pod 환경변수
             # (/etc/rp_environment, .bashrc 끝에서 source됨)가 안 실림 - 직접 로그인 실행과 환경을 맞춤
             await _run_remote(
                 conn,
                 "start_vllm.sh 세션 생성",
                 f"tmux new-session -d -s {_TMUX_SESSION} -c /workspace "
-                f"'. /etc/rp_environment 2>/dev/null; bash -l start_vllm.sh 2>&1 | tee {log_path}'",
+                f"'. /etc/rp_environment 2>/dev/null; bash -l start_vllm.sh 2>&1 | tee {log_path}; sleep infinity'",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_LOG_SESSION} 2>/dev/null; true", check=False)
             await _run_remote(
