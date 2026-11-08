@@ -29,6 +29,7 @@ import 'package:ticketdiary/widgets/offline_banner.dart';
 import 'package:ticketdiary/services/connectivity_status.dart';
 import 'package:ticketdiary/services/delivery_attention_store.dart';
 import 'package:ticketdiary/widgets/diary_landscape_cover_panel.dart';
+import 'package:ticketdiary/widgets/diary_desk_backdrop.dart';
 import 'package:ticketdiary/widgets/diary_page_frame.dart';
 import 'package:ticketdiary/widgets/landscape_upcoming_ticket_panel.dart';
 import 'package:ticketdiary/widgets/poster_fallback_gradient.dart';
@@ -2162,8 +2163,8 @@ class _DiaryScreenState extends State<DiaryScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // 사진을 못 찍었을 때도 검은 바탕이 안 보이게 책상 색
-        const ColoredBox(color: Color(0xFF5C4033)),
+        // 사진을 못 찍었을 때도 검은 바탕이 안 보이게 책상 + 표지
+        const DiaryDeskBackdrop(),
         if (floor != null) RawImage(image: floor, fit: BoxFit.fill),
         DiaryTabFlipTransition(
           key: ValueKey('riffle_$_riffleEpoch'),

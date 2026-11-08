@@ -130,5 +130,16 @@ flutter:
 flutter_launcher_icons:
   image_path: "assets/icon/app_icon.png"
   ios: true
-  android: false
+  # [백엔드 수정] iOS도 안드로이드와 같은 그림(재생성 때 옛 아이콘으로 돌아가지 않게).
+  image_path_ios: "assets/icon_android/app_icon_android.png"
+  # [백엔드 수정] 안드로이드는 표지 + 음각 티켓 + 인덱스 탭 3개를 꽉 채운 판.
+  # 다이어리 전체를 넣으면 작고 갈색 위 갈색이라 안 보였음. 전경은 가운데
+  # 72dp가 확대판이고 바깥 18dp는 가죽으로 채운 그림이라 inset 없이 꽉 채움.
+  # 두 그림은 assets/icon_android/(앱 번들 미포함)
+  android: "ic_launcher"
+  image_path_android: "assets/icon_android/app_icon_android.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#513624"
+  adaptive_icon_foreground: "assets/icon_android/app_icon_android_foreground.png"
+  adaptive_icon_foreground_inset: 0
   remove_alpha_ios: true

@@ -128,12 +128,24 @@ class ConcertAfterShareCard extends StatelessWidget {
                     ),
                   ),
                   SizedBox(width: bandH * .2),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(bandH * .09),
-                    child: Image.asset(
-                      'assets/images/share/logo.png',
-                      width: bandH * .38,
-                      height: bandH * .38,
+                  // [백엔드 수정] 로고 표지가 카드 배경과 같은 갈색이라 왼쪽 경계가
+                  // 묻혀서 얇은 테두리를 로고 위에 겹침(크기는 그대로).
+                  DecoratedBox(
+                    position: DecorationPosition.foreground,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(bandH * .09),
+                      border: Border.all(
+                        color: _cream.withValues(alpha: .6),
+                        width: bandH * .012,
+                      ),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(bandH * .09),
+                      child: Image.asset(
+                        'assets/images/share/logo.png',
+                        width: bandH * .38,
+                        height: bandH * .38,
+                      ),
                     ),
                   ),
                   SizedBox(width: bandH * .1),

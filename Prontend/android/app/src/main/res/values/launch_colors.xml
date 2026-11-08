@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- [백엔드 수정] iOS LaunchScreen.storyboard·Flutter 브랜드 인트로와 같은 갈색 -->
+    <color name="launch_background">#513624</color>
+</resources>
