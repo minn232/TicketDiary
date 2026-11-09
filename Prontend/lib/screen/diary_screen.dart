@@ -1193,9 +1193,7 @@ class _DiaryScreenState extends State<DiaryScreen>
   /// 카메라로 실시간 정렬 인식(초록 테두리) 스캔을 진행한 뒤,
   /// 사용자의 수정 없이 바로 다이어리에 추가합니다.
   ///
-  /// 카메라 화면은 실제 스캔 결과([TicketScanResponse]) 또는 "임시 스캔"
-  /// 디버그 버튼으로 나온 [DebugFakeScanRequested] 중 하나를 반환할 수 있어
-  /// `Object`로 받아 분기합니다.
+  /// 카메라 화면은 실제 스캔 결과([TicketScanResponse])를 반환합니다.
   Future<void> _startCameraScan() async {
     setState(() => _isAddTicketExpanded = false);
 
@@ -1208,41 +1206,9 @@ class _DiaryScreenState extends State<DiaryScreen>
 
     if (scanResult == null || !mounted) return;
 
-    if (scanResult is DebugFakeScanRequested) {
-      _addDebugFakeTicket();
-      return;
-    }
     if (scanResult is TicketScanResponse) {
       await _registerTicketFromScan(scanResult, fromGallery: false);
     }
-  }
-
-  /// "임시 스캔" 버튼 전용 테스트 티켓 추가. 카메라 촬영도, 백엔드 호출(OCR/
-  /// KOPIS 매칭/티켓 등록)도 거치지 않고 화면에 바로 보여줄 더미 데이터를
-  /// 추가합니다. concertId가 없으므로 공연 전 상세 화면도 서버 조회 없이
-  /// 이 값을 그대로 보여줍니다(예시 티켓과 동일한 방식).
-  void _addDebugFakeTicket() {
-    setState(() {
-      _tickets.insert(
-        0,
-        TicketData(
-          title: '임시 스캔 테스트 공연',
-          status: TicketStatus.beforeConcert,
-          info: TicketInfo(
-            concertName: '임시 스캔 테스트 공연',
-            venueName: '테스트 공연장',
-            date: DateTime.now().add(const Duration(days: 7)),
-            price: '99000',
-            seat: 'R석',
-            vendorName: 'INTERPARK',
-            // 포스터 티켓 디자인 확인용 샘플 이미지(CORS 허용이라 웹에서도 표시됨)
-            posterImageUrl: 'https://picsum.photos/seed/ticket/400/600',
-            extraFields: const {'아티스트': '테스트 아티스트', '공연 유형': '단독공연'},
-          ),
-        ),
-      );
-    });
-    _showSnack('테스트용 임시 티켓이 추가되었습니다.');
   }
 
   /// 갤러리에서 고른 이미지로 OCR 스캔 + 공연 매칭을 진행합니다. 카메라로
@@ -2121,10 +2087,6 @@ class _DiaryScreenState extends State<DiaryScreen>
             _buildTransitionSpotlightOverlay(),
             _buildDeliveryAttentionOverlay(),
             OfflineBanner(forceVisible: _usingCachedTickets),
-            // ===== [TEST-ONLY] 아래부터 다음 "===== [TEST-ONLY] 끝 =====" 줄까지
-            // 통째로 지우면 완전히 제거되는 임시 테스트 탭입니다. =====
-            _buildDebugTestTicketTab(),
-            // ===== [TEST-ONLY] 끝 =====
             if (_arrivingTicketId != null)
               const Positioned.fill(
                 child: AbsorbPointer(child: SizedBox.expand()),
@@ -2174,47 +2136,6 @@ class _DiaryScreenState extends State<DiaryScreen>
           child: child,
         ),
       ],
-    );
-  }
-
-  /// [TEST-ONLY] 왼쪽 아래에 붙는 테스트용 인덱스 탭. 누르면 실제 등록
-  /// 플로우를 거치지 않고 더미 티켓을 바로 추가해, 다이어리 화면(D-day
-  /// 배너/배송 전 카드의 "등록" 상태/중복 교체 등)이 실제 티켓 추가에
-  /// 어떻게 반응하는지 곧바로 확인할 수 있습니다. 지울 때는 이 메서드와
-  /// [_showDebugAddTestTicketFlow] 둘 다(또는 build()의 호출 한 줄만) 지우면
-  /// 됩니다 — 다른 코드는 이 둘을 참조하지 않습니다.
-  Widget _buildDebugTestTicketTab() {
-    return Positioned(
-      left: 0,
-      bottom: 60,
-      child: GestureDetector(
-        onTap: () => unawaited(_showDebugAddTestTicketFlow()),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
-          decoration: BoxDecoration(
-            color: Colors.redAccent.withValues(alpha: 0.85),
-            borderRadius: const BorderRadius.horizontal(
-              right: Radius.circular(8),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 4,
-                offset: Offset(2, 2),
-              ),
-            ],
-          ),
-          child: const Text(
-            'TEST',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
-              fontSize: 11,
-              letterSpacing: 1,
-            ),
-          ),
-        ),
-      ),
     );
   }
 

@@ -1655,24 +1655,27 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       bottom: _bottomBarInset,
       left: 0,
       right: 0,
-      child: _edit
-          ? Center(child: badge)
-          : Row(
-              children: [
-                const Spacer(),
-                badge,
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _ShareButton(onTap: _openShareSheet),
-                  ),
-                ),
-              ],
-            ),
+      child: Center(child: badge),
     );
   }
 
   static const double _toolButtonHeight = 34;
+
+  Widget _shareCorner() {
+    if (widget.exportMode || _edit || _activeMemoKey != null) {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      right: context.rs(_isTablet(context) ? 16 : 10),
+      bottom: _bottomBarInset - context.rs(2),
+      child: _ShareButton(
+        onTap: _openShareSheet,
+        memoBounds: BlogMemoButton.visibleBounds(
+          hasResult: _blogDraft?.hasResult ?? false,
+        ),
+      ),
+    );
+  }
 
   /// 자동 배치가 비워두는 아래쪽 띠 높이 (편집 도구 줄 + 여유).
   double get _bottomToolReserve =>
@@ -3070,6 +3073,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
                   ),
                   _frontEditBar(),
                   _blogMemoCorner(),
+                  _shareCorner(),
                 ],
               ),
             ),
@@ -3851,47 +3855,45 @@ class _ModeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TapeStrip(
-      tint: edit ? PaperColors.tapeRose : PaperColors.tapeMustard,
-      tintAmount: 0.6,
-      angle: edit ? 0.02 : -0.03,
-      padding: EdgeInsets.fromLTRB(
-        context.rs(10),
-        context.rs(3),
-        context.rs(10),
-        context.rs(3),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            edit ? Icons.edit : Icons.lock_outline,
-            size: context.rs(11),
-            color: _kraftInk.withValues(alpha: 0.75),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          edit ? Icons.edit : Icons.lock_outline,
+          size: context.rs(16),
+          color: _kraftInk.withValues(alpha: 0.75),
+        ),
+        SizedBox(width: context.rs(5)),
+        Text(
+          edit ? '편집 모드' : '잠금 (꾹 눌러 편집)',
+          style: TextStyle(
+            fontSize: context.sp(10),
+            fontWeight: FontWeight.w800,
+            color: _kraftInk.withValues(alpha: 0.62),
+            decoration: TextDecoration.none,
           ),
-          SizedBox(width: context.rs(4)),
-          Text(
-            edit ? '편집 모드' : '잠금 (꾹 눌러 편집)',
-            style: TextStyle(
-              fontSize: context.sp(10),
-              fontWeight: FontWeight.w800,
-              color: _kraftInk.withValues(alpha: 0.85),
-              decoration: TextDecoration.none,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
 
-/// 잠금 모드 하단 표시 옆 공유 버튼. 표시와 같은 테이프 조각.
+/// 잠금 모드 오른쪽 아래의 공유 버튼. 왼쪽 감상 메모지와 같은 크기.
 class _ShareButton extends StatelessWidget {
   final VoidCallback onTap;
-  const _ShareButton({required this.onTap});
+  final Rect memoBounds;
+  const _ShareButton({required this.onTap, required this.memoBounds});
 
   @override
   Widget build(BuildContext context) {
+    // 기존 기울기를 유지하면서 회전 후 표시 폭·높이를 메모지와 맞춥니다.
+    const angle = .05;
+    final c = math.cos(angle);
+    final s = math.sin(angle);
+    final denominator = c * c - s * s;
+    final width = (memoBounds.width * c - memoBounds.height * s) / denominator;
+    final height = 0.8 * (memoBounds.height * c - memoBounds.width * s) / denominator;
+    final center = Offset(63 - memoBounds.center.dx, memoBounds.center.dy);
     return Semantics(
       button: true,
       label: '공유하기',
@@ -3899,24 +3901,32 @@ class _ShareButton extends StatelessWidget {
         key: const ValueKey('after_share_button'),
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
-        // 누르는 영역만 가로로 넓힘.
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: context.rs(6)),
-          child: TapeStrip(
-            tint: PaperColors.tapeMustard,
-            tintAmount: 0.6,
-            angle: 0.05,
-            padding: EdgeInsets.fromLTRB(
-              context.rs(7),
-              context.rs(3),
-              context.rs(7),
-              context.rs(3),
-            ),
-            child: Icon(
-              Icons.ios_share,
-              size: context.rs(13),
-              color: _kraftInk.withValues(alpha: 0.8),
-            ),
+        child: SizedBox(
+          width: context.rs(63),
+          height: context.rs(45),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                left: context.rs(center.dx - width / 2),
+                top: context.rs(center.dy - height / 2),
+                width: context.rs(width),
+                height: context.rs(height),
+                child: TapeStrip(
+                  tint: PaperColors.tapeMustard,
+                  tintAmount: 0.6,
+                  angle: angle,
+                  padding: EdgeInsets.zero,
+                  child: Center(
+                    child: Icon(
+                      Icons.ios_share,
+                      size: context.rs(20),
+                      color: _kraftInk.withValues(alpha: 0.8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),

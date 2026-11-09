@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -82,6 +83,32 @@ Future<bool> openNaverBlogWrite() async {
 /// 공연후 페이지 아래 줄 감상 메모 버튼. 테이프로 붙인 작은 괘선 메모지,
 /// 정리가 끝나면 뒤에 타자기 정리본이 한 장 더 삐져나옴.
 class BlogMemoButton extends StatefulWidget {
+  /// 터치 여백을 제외한 종이·테이프의 회전 후 표시 영역(배율 적용 전).
+  static Rect visibleBounds({required bool hasResult}) {
+    Rect rotated(double x, double y, double w, double h, double angle) {
+      final c = math.cos(angle).abs();
+      final s = math.sin(angle).abs();
+      return Rect.fromCenter(
+        center: Offset(x + w / 2, y + h / 2),
+        width: w * c + h * s,
+        height: w * s + h * c,
+      );
+    }
+
+    // 좌우 8, 상하 2의 터치 패딩을 포함한 버튼 내부 좌표.
+    var bounds = rotated(
+      8,
+      8,
+      40,
+      33,
+      -.1,
+    ).expandToInclude(rotated(17, 4.5, 22, 8.5, -.12));
+    if (hasResult) {
+      bounds = bounds.expandToInclude(rotated(15, 3, 40, 33, .09));
+    }
+    return bounds;
+  }
+
   const BlogMemoButton({
     super.key,
     required this.draft,
