@@ -19,6 +19,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     force=True,
 )
+# httpx는 INFO에 요청 URL을 통째로 찍어 Google Vision 키(?key=...)가 journalctl에 남음 - 경고 이상만
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 # 앱 시작/종료 시 스케줄러 실행 및 중지, 관리자 페이지가 추가한 블록리스트를 인메모리로 로드

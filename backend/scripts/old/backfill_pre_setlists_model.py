@@ -13,12 +13,12 @@
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/ongoing/backfill_pre_setlists_model.py --dry-run          # 대상만 확인
-    venv/bin/python3 scripts/ongoing/backfill_pre_setlists_model.py --limit 5          # 5개만 먼저
-    venv/bin/python3 scripts/ongoing/backfill_pre_setlists_model.py
-    venv/bin/python3 scripts/ongoing/backfill_pre_setlists_model.py --all              # 지난 공연 포함
-    venv/bin/python3 scripts/ongoing/backfill_pre_setlists_model.py --all --force     # 전부 다시
-    venv/bin/python3 scripts/ongoing/backfill_pre_setlists_model.py --concert-id <uuid>
+    venv/bin/python3 scripts/old/backfill_pre_setlists_model.py --dry-run          # 대상만 확인
+    venv/bin/python3 scripts/old/backfill_pre_setlists_model.py --limit 5          # 5개만 먼저
+    venv/bin/python3 scripts/old/backfill_pre_setlists_model.py
+    venv/bin/python3 scripts/old/backfill_pre_setlists_model.py --all              # 지난 공연 포함
+    venv/bin/python3 scripts/old/backfill_pre_setlists_model.py --all --force     # 전부 다시
+    venv/bin/python3 scripts/old/backfill_pre_setlists_model.py --concert-id <uuid>
 """
 
 import argparse

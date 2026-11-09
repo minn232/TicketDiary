@@ -1,5 +1,7 @@
 """Qwen2.5-VL 출력에 강제할 JSON 스키마 정의 (vLLM response_format: json_schema 용)."""
 
+import copy
+
 # 연도를 "20\d{2}"로 제한한다(2000~2099년) - 그냥 "\d{4}"였을 때 모델이 가끔 "1225-12-25"처럼
 # 자릿수만 맞고 연도가 말이 안 되는 값을 뱉는 게 실측으로 확인됐다. vLLM의 json_schema
 # strict 강제 디코딩은 이 정규식을 생성 시점에 직접 적용하므로, 패턴을 좁히면 애초에 그런
@@ -190,3 +192,64 @@ POSTER_INFO_SCHEMA = {
     ],
     "additionalProperties": False,
 }
+
+# 2026-10-29: 시간표 구간 호출(extract_poster.py) 전용 스키마. timetable.time만 인쇄된 시각 글자를 그대로
+# 받는다("4:30PM", "13:00 - 13:40 (40)", "오후 6시") - HH:MM 패턴을 강제하면 모델이 12시간제를 머릿속으로 바꾸다
+# 틀렸다(prompts.py TIMETABLE_TEXT_TIME_SYSTEM_PROMPT 참고). 24시간제 변환은 extract_poster.parse_time_text가
+# 한다. 글자 수 상한은 루프에 빠져 time 칸을 끝없이 채우는 것을 막는다.
+TIME_TEXT_MAX_LENGTH = 40
+
+TIMETABLE_TEXT_TIME_ENTRY_SCHEMA = {
+    **TIMETABLE_ENTRY_SCHEMA,
+    "properties": {
+        **TIMETABLE_ENTRY_SCHEMA["properties"],
+        "time": {"anyOf": [{"type": "string", "maxLength": TIME_TEXT_MAX_LENGTH}, {"type": "null"}]},
+    },
+}
+
+TIMETABLE_TEXT_TIME_SCHEMA = {
+    **POSTER_INFO_SCHEMA,
+    "properties": {
+        **POSTER_INFO_SCHEMA["properties"],
+        "timetable": {
+            "anyOf": [
+                {"type": "array", "items": TIMETABLE_TEXT_TIME_ENTRY_SCHEMA, "maxItems": TIMETABLE_MAX_ITEMS},
+                {"type": "null"},
+            ]
+        },
+    },
+}
+
+# 2026-10-29: 길이 상한을 둔 스키마(extract_poster.py가 쓴다 - 2026-11-03 전엔 상한 없는 POSTER_INFO_SCHEMA를 썼다).
+# LINEUP/TIMETABLE_MAX_ITEMS만으로는 루프가 다 안 막혔다 - ticketing_date·ticket_prices 배열과 자유 문자열에는
+# 상한이 없어서, 모델이 같은 예매 단계("선예매 2026-08-20")나 null 아티스트 시간표 항목을 반복하는 루프에 빠지면
+# 응답이 max_tokens(20000)까지 이어졌다(EXO 상세페이지 실측: 배치 하나가 320초, 쪼개 재시도한 절반이 또 181초 -
+# 공연 1건 520초 중 절반 이상). 상한은 지금까지 병합 결과의 최댓값(예매 단계 10개, 가격 9개, 좌석명 14자)보다
+# 넉넉하게 잡았다. 모든 배열·문자열에 상한이 있으니 응답 길이도 유한해진다(BOUNDED_RESPONSE_MAX_TOKENS).
+TICKETING_PHASES_MAX_ITEMS = 15
+TICKET_PRICES_MAX_ITEMS = 30
+NAME_MAX_LENGTH = 80
+LABEL_MAX_LENGTH = 40
+
+
+def _bounded(schema: dict) -> dict:
+    """POSTER_INFO_SCHEMA 계열 스키마의 사본에 배열 개수·문자열 길이 상한을 넣는다."""
+    s = copy.deepcopy(schema)
+    props = s["properties"]
+    for key in ("lineup", "timetable"):
+        array = props[key] if props[key].get("type") == "array" else props[key]["anyOf"][0]
+        entry = array["items"]["properties"]
+        entry["artist"] = {"anyOf": [{"type": "string", "maxLength": NAME_MAX_LENGTH}, {"type": "null"}]}
+        if "stage" in entry:
+            entry["stage"] = {"anyOf": [{"type": "string", "maxLength": NAME_MAX_LENGTH}, {"type": "null"}]}
+    phases = props["ticketing_date"]["anyOf"][0]
+    phases["maxItems"] = TICKETING_PHASES_MAX_ITEMS
+    phases["items"]["properties"]["phase"] = {"type": "string", "maxLength": LABEL_MAX_LENGTH}
+    prices = props["ticket_prices"]["anyOf"][0]
+    prices["maxItems"] = TICKET_PRICES_MAX_ITEMS
+    prices["items"]["properties"]["seat_type"] = {"type": "string", "maxLength": NAME_MAX_LENGTH}
+    return s
+
+
+POSTER_INFO_BOUNDED_SCHEMA = _bounded(POSTER_INFO_SCHEMA)
+TIMETABLE_TEXT_TIME_BOUNDED_SCHEMA = _bounded(TIMETABLE_TEXT_TIME_SCHEMA)

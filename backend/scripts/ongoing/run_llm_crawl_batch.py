@@ -122,9 +122,9 @@ async def main(watch_minutes: float, poll_interval: float, skip_pod_start: bool,
     if skip_pod_start:
         print("--skip-pod-start: pod 시작 단계 건너뜀(이미 켜져있다고 가정)")
     else:
-        # start_pod_and_launch_services()는 무조건 start_vllm.sh를 SSH로 재실행하는데,
-        # llm이 이미 떠있는 상태에서 이걸 부르면 기존 tmux 세션을 죽이고 다시 띄우게 돼서
-        # 불필요한 재기동/방해가 될 수 있음 - 먼저 짧게 헬스체크해서 이미 켜져있으면 건너뜀
+        # 옛 방식의 start_pod_and_launch_services()는 무조건 start_vllm.sh를 SSH로 재실행해서,
+        # llm이 이미 떠있는 상태에서 부르면 기존 tmux 세션을 죽이고 다시 띄우게 됨(새 방식은 RUNNING +
+        # health 200이면 재실행 안 함) - 먼저 짧게 헬스체크해서 이미 켜져있으면 건너뜀
         print("LLM 서버 상태 확인 중...")
         already_up = await wait_until_llm_server_ready(timeout_seconds=5, interval_seconds=5)
         if already_up:
@@ -137,7 +137,7 @@ async def main(watch_minutes: float, poll_interval: float, skip_pod_start: bool,
     print("llm_server 준비 대기 중(최대 10분)...")
     ready = await wait_until_llm_server_ready()
     if not ready:
-        print("llm_server가 준비되지 않음 - 중단. RUNPOD_API_KEY/POD_ID/LLM_CRAWL_URL 설정을 확인할 것.")
+        print("llm_server가 준비되지 않음 - 중단. RUNPOD_API_KEY·pod 설정(새 방식 3개 또는 POD_ID)·LLM_CRAWL_URL을 확인할 것.")
         return
     print("  -> 준비됨")
 

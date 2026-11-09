@@ -38,6 +38,13 @@ class DiaryGenerateItem(BaseModel):
 # 돌려준다. 백엔드가 보내는 바디는 backend/app/services/blog_draft.py의 _build_payload와,
 # 받는 응답은 backend/app/schemas/blog_draft.py의 LlmBlogDraftResult와 필드명이 같아야 함.
 # setlist는 그날 실제 셋리만(없으면 []), concert_date는 관람일(없으면 공연 시작일)이 옴
+# photos는 공연후 페이지 사진을 올린 순서대로(최대 20장) - 글 사이에 넣을 자리를 blog_photos.py가 정함
+class BlogDraftPhoto(BaseModel):
+    url: str = Field(max_length=1024)
+    # 앱이 읽어 둔 EXIF 촬영 시각 원문(시간대 없음). 없으면 사진 파일 EXIF에서 직접 읽음
+    taken_at: str | None = Field(default=None, max_length=40)
+
+
 class BlogDraftRequest(BaseModel):
     # 사용자가 자유롭게 쓴 감상 글(여러 문장). 문장 단위로 쪼개져 해당하는 공연 정보 소개 문장 아래에
     # 끝부분만 블로그 말투로 바뀌어 들어감. 프롬프트에 그대로 실리므로 길이 제한
@@ -47,6 +54,7 @@ class BlogDraftRequest(BaseModel):
     venue: str | None = None
     concert_date: str | None = None  # YYYY-MM-DD
     setlist: list[str] = []  # 공연 순서대로
+    photos: list[BlogDraftPhoto] = Field(default=[], max_length=20)
 
 
 class BlogDraftResponse(BaseModel):

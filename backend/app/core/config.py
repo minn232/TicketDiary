@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     # RUNPOD_POD_ID가 GPU 부족/SSH 실패 등으로 못 뜰 때 순서대로 시도할 보조 pod ID들(쉼표 구분).
     # 같은 RunPod 계정(RUNPOD_API_KEY)·같은 서버 SSH 키·같은 cloudflared 터널이어야 함
     RUNPOD_FALLBACK_POD_IDS: str = ""
+    # 매번 새 pod을 만들고 쓴 뒤 삭제하는 방식 - TEMPLATE_ID·NETWORK_VOLUME_ID·GPU_TYPE_IDS(쉼표 구분,
+    # 앞이 우선)가 모두 있어야 켜지고, 하나라도 비면 위의 기존 pod stop/resume 방식으로 동작함(되돌리기 스위치).
+    # 켜면 POD_ID/FALLBACK은 안 씀. pod은 고정 이름(RUNPOD_POD_NAME)으로 찾아 지움
+    RUNPOD_TEMPLATE_ID: str = ""
+    RUNPOD_NETWORK_VOLUME_ID: str = ""
+    RUNPOD_GPU_TYPE_IDS: str = ""
+    RUNPOD_POD_NAME: str = "td-llm-batch"
+    # 새 pod의 PUBLIC_KEY에 서버 키(RUNPOD_SSH_KEY_PATH에서 뽑음) 말고 추가로 넣을 공개키들(LLM팀 등, ';' 구분).
+    # 템플릿의 PUBLIC_KEY는 콘솔 한 줄 입력이라 줄바꿈이 안 들어가 두 키가 붙어버려서 SSH 인증이 실패함
+    # 생성 요청 env로 줄바꿈 구분해 덮어씀
+    RUNPOD_EXTRA_PUBLIC_KEYS: str = ""
     # pod을 깨운 뒤 SSH로 접속해서 start_vllm.sh(vLLM+llm_server+cloudflared 기동)를 원격
     # 실행하기 위한 정보. RUNPOD_SSH_KEY_PATH 미설정이면 pod만 켜고 원격 실행은 건너뜀.
     # host/port는 여기 없음 - pod stop/start마다 RunPod이 SSH 외부포트를 바꿔버려서(실측

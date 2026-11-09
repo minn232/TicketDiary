@@ -718,6 +718,26 @@ def test_venue_candidates_aliases_english_and_skips_generic_words():
 
 
 # 빈 문자열은 빈 목록 반환
+# KSPO DOME은 KOPIS 시설명 "올림픽공원"으로 찾고, 일반 단어 "DOME"만 남은 후보로는 검색 안 함
+def test_venue_candidates_kspo_dome_uses_olympic_park():
+    candidates = _venue_candidates("KSPO DOME")
+
+    assert "올림픽공원" in candidates
+    assert "DOME" not in candidates
+    assert candidates[0] == "올림픽공원 KSPO DOME"
+
+
+def test_venue_alias_does_not_double_olympic_park_prefix():
+    candidates = _venue_candidates("올림픽공원 올림픽홀")
+
+    assert candidates[0] == "올림픽공원 올림픽홀"
+    assert "올림픽공원 올림픽공원 올림픽홀" not in candidates
+
+
+def test_venue_overlaps_kspo_dome_with_kopis_name():
+    assert _venue_overlaps("KSPO DOME", "올림픽공원 (KSPO DOME(체조경기장))")
+
+
 def test_venue_candidates_empty_string():
     assert _venue_candidates("") == []
     assert _venue_candidates("   ") == []

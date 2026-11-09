@@ -74,6 +74,35 @@ system 프롬프트와 조각 이미지만 보낸다. 예시 이미지(few_shot_
 배치에 있으면 붙일 이름도 없었다. 지금은 그 문구를 페스티벌로 한정하고, 이름이 안 보이는 배치는 artist=null로
 답하게 한 뒤 병합에서 lineup 이름으로 채운다(_fill_start_time_artists).
 
+2026-10-26 변경: 타일을 좌우로 나누기 전에 좌우 가장자리의 흰 여백을 잘라낸다(trim_side_whitespace). kopis 페이지는
+1920px 폭 중 좌우 합쳐 500px 넘게 흰 여백이라, 그대로 나누면 왼쪽 조각 앞부분과 오른쪽 조각 뒷부분이 빈 칸으로
+예산을 썼다. 이미지 전체에서 한 번(타일 높이를 실제 내용 폭 기준으로 정하기 위함), 띠마다 한 번 더 자른다.
+
+2026-10-27 변경: 시간표 구간도 trim_margins(상하좌우 단색 여백) 대신 trim_side_whitespace(좌우 흰 여백만)로
+자른다. 타일과 같은 기준으로 맞추고, trim_margins/_content_span/MARGIN_STD_THRESHOLD는 지웠다.
+
+2026-10-28 변경: 입장 안내 항목(매표소 오픈, 관객 입장, 게이트 오픈 등)을 페스티벌만이 아니라 모든 공연의
+timetable에 남긴다. 예전에는 그 외 공연은 공연 시작 시각만 남기고 입장 항목을 버렸다(_merge_results). 그 외
+공연의 timetable은 입장 항목과 공연 시작 시각을 날짜·시각 순으로 섞는다. 시간표 구간 프롬프트에 매표소 오픈 등을
+입장 관련 시각으로 넣었다 - 타일 프롬프트는 고쳐 보니 lineup을 놓쳐 그대로 뒀다(prompts.py 주석 참고).
+같은 날 두 번째 변경: 워크숍도 시간표에 남기기로 하고, 하루 한 칸 규칙에서 워크숍 칸은 공연 칸과 따로 센다
+(_one_slot_per_artist_day). 한 칸 규칙이 지운 칸에는 타일 배치들이 그 칸에서 읽은 다른 아티스트를 채운다
+(_fill_freed_slots). 행사명을 아티스트에서 거르는 규칙은 공연명을 아는 normalize.py에 넣었다.
+같은 날 세 번째 변경: 무대 이름(lineup 노이즈 필터 근거)을 무대 칸/아티스트 칸 등장 횟수 다수결로 정한다
+(_voted_stage_names). 배치가 무대와 아티스트를 뒤바꿔 적으면 아티스트가 lineup과 시간표에서 지워졌다(ACC 실측).
+
+2026-10-29 변경: 시간표 구간 조각은 시각을 인쇄된 글자 그대로 받고(TIMETABLE_TEXT_TIME_SYSTEM_PROMPT,
+TIMETABLE_TEXT_TIME_SCHEMA) 코드가 24시간제로 바꾼다(parse_time_text). 구간 조각의 마감·종료·대기 안내 항목은
+버린다(_clean_timetable). 하루짜리 공연은 구간 조각에서 날짜를 못 읽은 항목에 공연일을 채운다
+(_fill_single_day_dates, performance_start_date). 공연 종료일을 받으면 그 연도를 페이지 연도로 쓴다(_normalize_years).
+시간표 구간 정답 30건(tt_eval_20261028) 대조로 정했다 - 열 단위로
+잘라 읽기는 처음 보는 10건에서 모델 bbox가 틀려 성능이 떨어져 넣지 않았다.
+같은 날 세 번째 변경: 시간표 구간을 위쪽 끝만 다르게 세 번 잘라 읽고 (월일, 시각) 칸 다수결로 합친다
+(_vote_region_results, TIMETABLE_VOTE_TOP_OFFSETS_PX) - 모델이 자르는 위치에 민감해 한 번 읽기는 결과가 크게 흔들렸다.
+같은 날 두 번째 변경(속도): 출력 스키마에 배열 개수·문자열 길이 상한을 둔다(schema.py *_BOUNDED_SCHEMA) - 예매 단계나
+null 아티스트 항목을 반복하는 루프 배치 하나가 max_tokens까지 320초를 써서 공연 1건이 520초 걸렸다. 시간표 구간
+조각은 배치보다 먼저 보낸다.
+
 사전 준비:
     vllm serve Qwen/Qwen2.5-VL-7B-Instruct-AWQ \
         --quantization awq \
@@ -86,16 +115,16 @@ system 프롬프트와 조각 이미지만 보낸다. 예시 이미지(few_shot_
     python extract_poster.py "https://example.com/poster.jpg"
 
     # 로컬 파일 (여러 장 가능, glob도 지원)
-    /workspace/venv/bin/python server/extract_poster.py /workspace/poster_image/*.png --out-dir /workspace/poster_image/results
-    /workspace/venv/bin/python server/extract_poster.py poster_image/20260815_203732_사운드플래닛페스티벌2026_melon.png
-    /workspace/venv/bin/python server/extract_poster.py poster_image/20260815_203816_펜타포트2026_nol.png
-    /workspace/venv/bin/python server/extract_poster.py poster_image/20260823_031936_812295_ticket_yes24_com_Perf_54227.png --out-dir /workspace/poster_image/results
+    /opt/llm-venv/bin/python server/extract_poster.py /workspace/poster_image/*.png --out-dir /workspace/poster_image/results
+    /opt/llm-venv/bin/python server/extract_poster.py poster_image/20260815_203732_사운드플래닛페스티벌2026_melon.png
+    /opt/llm-venv/bin/python server/extract_poster.py poster_image/20260815_203816_펜타포트2026_nol.png
+    /opt/llm-venv/bin/python server/extract_poster.py poster_image/20260823_031936_812295_ticket_yes24_com_Perf_54227.png --out-dir /workspace/poster_image/results
 
     # 시간표 구간(원본 이미지의 세로 픽셀 범위)을 함께 줄 때 - 여러 개면 옵션을 반복
-    /workspace/venv/bin/python server/extract_poster.py poster.png --timetable-range 1200:3400 --timetable-range 3600:5200
+    /opt/llm-venv/bin/python server/extract_poster.py poster.png --timetable-range 1200:3400 --timetable-range 3600:5200
 
     # 손으로 자른 시간표 이미지(예전 extract_from_timetable.py)
-    /workspace/venv/bin/python server/extract_poster.py --timetable-crop timetable_image/*.png --out-dir /workspace/timetable_results
+    /opt/llm-venv/bin/python server/extract_poster.py --timetable-crop timetable_image/*.png --out-dir /workspace/timetable_results
 
 """
 
@@ -107,7 +136,7 @@ import math
 import re
 import sys
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from fractions import Fraction
@@ -128,10 +157,10 @@ from prompts import (
     POSTER_SYSTEM_PROMPT,
     POSTER_USER_PROMPT,
     TILE_GROUP_NOTE,
-    TIMETABLE_SYSTEM_PROMPT,
+    TIMETABLE_TEXT_TIME_SYSTEM_PROMPT,
     TIMETABLE_USER_PROMPT,
 )
-from schema import POSTER_INFO_SCHEMA
+from schema import POSTER_INFO_BOUNDED_SCHEMA, TIMETABLE_TEXT_TIME_BOUNDED_SCHEMA
 
 MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 
@@ -139,7 +168,7 @@ MODEL_NAME = "Qwen/Qwen2.5-VL-7B-Instruct-AWQ"
 # --out-dir로 저장하는 결과 파일에 "_pipeline_version"으로 같이 남김
 # grep으로 구버전 결과만 골라내기
 # --skip-up-to-date로 최신 버전의 파일 건너뛰기.
-PIPELINE_VERSION = "2026-09-28-2"
+PIPELINE_VERSION = "2026-11-03-1"
 
 # ── 업스케일 ────────────────────────────────────────────────────────
 # 자른 타일(조각)을 이 수치를 목표로 업스케일링
@@ -163,6 +192,16 @@ COLUMN_SPLIT_COUNT = 2
 COLUMN_SPLIT_WIDTH_RATIO = 2 / 3
 # 이보다 좁은 이미지는 나눠도 조각이 지나치게 좁아져 오히려 읽기 어려워지므로 나누지 않는다.
 MIN_WIDTH_FOR_COLUMN_SPLIT = 700
+# 좌우로 나누기 전에 흰 여백을 떼어낼 때(trim_side_whitespace) 흰색으로 보는 밝기(흑백 0~255). 이보다 어두운
+# 픽셀은 글자·선·색 배경으로 본다. 색 있는 배경 여백은 자르지 않는다.
+SIDE_WHITE_MIN_LEVEL = 240
+# 열을 이 높이(px)씩 끊어 보고, 어느 한 묶음에서라도 흰색이 아닌 픽셀이 SIDE_INK_MIN_PIXELS개 이상인 열은 내용으로
+# 남긴다. 페이지를 가로지르는 1~2px 구분선은 묶음마다 픽셀이 1~2개뿐이라 여백 판정을 막지 않고, 연한 회색 작은
+# 글씨도 몇 픽셀은 남겨 잘리지 않는다(열 표준편차로 보면 흐린 글씨 몇 픽셀은 여백으로 보였다).
+SIDE_TRIM_CHUNK_PX = 500
+SIDE_INK_MIN_PIXELS = 3
+# 여백을 잘라낼 때 내용 가장자리에 남겨두는 여유(px) - 테두리 선/글자 끝이 딱 붙어 잘리지 않게.
+MARGIN_PAD_PX = 12
 if COLUMN_SPLIT_COUNT < 1 or (
     COLUMN_SPLIT_COUNT > 1 and not 1 / COLUMN_SPLIT_COUNT < COLUMN_SPLIT_WIDTH_RATIO < 1
 ):
@@ -200,7 +239,7 @@ REQUEST_TIMEOUT_SEC = max(
 )
 
 # 배치 병렬화(2026-09-02 추가): 더 올리려면 vllm.log의 KV cache usage를 다시 보고 판단할 것.
-BATCH_CONCURRENCY = 16
+BATCH_CONCURRENCY = 8
 
 
 # 프롬프트 텍스트(POSTER_SYSTEM_PROMPT, FRAGMENT_NOTE, POSTER_USER_PROMPT, TILE_GROUP_NOTE)는 prompts.py에 있다.
@@ -286,6 +325,24 @@ def _split_columns(im: Image.Image) -> list[Image.Image]:
     return [im.crop((x, 0, x + col_w, h)) for x in (int(round(i * step)) for i in range(COLUMN_SPLIT_COUNT))]
 
 
+def trim_side_whitespace(im: Image.Image) -> Image.Image:
+    """좌우 가장자리의 흰 여백 열을 잘라낸다(2026-10-26). 내용 가장자리에 MARGIN_PAD_PX만큼 여유를 남긴다.
+    위아래는 자르지 않는다 - 띠 높이와 띠끼리의 겹침(TILE_OVERLAP_PX)이 그대로 유지되게 하기 위함.
+    전부 흰색이면 그대로 돌려준다."""
+    ink = np.asarray(im.convert("L")) < SIDE_WHITE_MIN_LEVEL
+    content = np.zeros(im.width, dtype=bool)
+    for top in range(0, im.height, SIDE_TRIM_CHUNK_PX):
+        content |= ink[top : top + SIDE_TRIM_CHUNK_PX].sum(axis=0) >= SIDE_INK_MIN_PIXELS
+    cols = np.flatnonzero(content)
+    if cols.size == 0:
+        return im
+    left = max(0, int(cols[0]) - MARGIN_PAD_PX)
+    right = min(im.width, int(cols[-1]) + 1 + MARGIN_PAD_PX)
+    if (left, right) == (0, im.width):
+        return im
+    return im.crop((left, 0, right, im.height))
+
+
 def _upscale_to_budget(im: Image.Image) -> Image.Image:
     """최종 타일을 RENDER_TARGET_PIXELS까지 확대한다(축소는 하지 않음). 이미 예산 이상이면
     그대로 두고, 확대 배율은 MAX_UPSCALE_FACTOR로 제한한다."""
@@ -322,7 +379,12 @@ def split_into_tiles(im: Image.Image) -> list[Image.Image]:
     원본 좌표로 해야 절단 위치 탐색(_find_cut_row)이 정확하고, 확대는 보낼 직전에 해야 확대된
     픽셀을 기준으로 또 자르는 낭비가 없다. 반환 순서는 띠마다 [왼쪽 ... 오른쪽]으로 끼워 넣어
     위에서 아래로 읽는 순서를 유지한다(한 배치 안에서 좌우가 인접하게 놓여, 날짜별 2열
-    라인업처럼 좌우를 나란히 봐야 하는 레이아웃도 같은 요청에 들어간다)."""
+    라인업처럼 좌우를 나란히 봐야 하는 레이아웃도 같은 요청에 들어간다).
+
+    2026-10-26: 좌우로 나누기 전에 흰 여백을 뗀다(trim_side_whitespace). 이미지 전체에서 먼저 떼어 타일 높이를
+    내용 폭 기준으로 정하고, 띠마다 한 번 더 뗀다 - 페이지 안에서도 구간마다 내용 폭이 달라서다. 떼고 나서
+    MIN_WIDTH_FOR_COLUMN_SPLIT보다 좁아진 띠는 좌우로 나누지 않는다."""
+    im = trim_side_whitespace(im)
     w, h = im.size
     col_w = _column_tile_width(w)
     # 좌우 조각이 높이 그대로 예산 안이면 세로로 자를 필요가 없다(아래 경로로 가도 띠가 하나라 결과는
@@ -334,14 +396,15 @@ def split_into_tiles(im: Image.Image) -> list[Image.Image]:
     tile_h = max(200, MAX_PIXELS_PER_TILE // col_w)
     tiles: list[Image.Image] = []
     for top, bottom in _band_coords(_row_activity(im), 0, h, tile_h, TILE_OVERLAP_PX):
-        tiles.extend(_upscale_to_budget(col) for col in _split_columns(im.crop((0, top, w, bottom))))
+        band = trim_side_whitespace(im.crop((0, top, w, bottom)))
+        tiles.extend(_upscale_to_budget(col) for col in _split_columns(band))
     return tiles
 
 
 # ── 시간표 구간 (2026-09-25, extract_from_timetable.py에서 옮김) ────────────────
 # 격자형 시간표는 좌우로 자른 타일로는 시각을 거의 못 읽는다(사운드플래닛 정답 확보 0/68, 그랜드민트
 # 1/33). 예전에는 "grid"로 답한 배치 구간을 자동으로 찾아 전체 폭 400px 높이로 다시 잘랐지만, 이제 구간은
-# 호출하는 쪽이 세로 범위로 준다. 구간은 좌우로 자르지 않고 전체 폭으로 잘라 단색 여백을 뗀 뒤 조각
+# 호출하는 쪽이 세로 범위로 준다. 구간은 좌우로 자르지 않고 전체 폭으로 잘라 좌우 흰 여백을 뗀 뒤 조각
 # 1장씩 보낸다 - 격자형 표를 가로로 자르면 아래 조각에 무대/날짜 머리글이 빠지므로 되도록 한 장으로 보낸다.
 # 모델에 보내는 조각 1장의 최대 픽셀 수. 서버의 --mm-processor-kwargs max_pixels(3_000_000)보다 작게 둔다.
 TIMETABLE_MAX_PIXELS = 2_500_000
@@ -349,34 +412,10 @@ TIMETABLE_MAX_PIXELS = 2_500_000
 # extract_from_timetable.py는 축소했다). 나눈 조각끼리 이만큼 겹쳐, 경계에 걸친 블록이 최소 한 조각에는
 # 온전히 담기게 한다. 머리글이 안 보이는 아래 조각의 날짜는 _merge_results가 lineup의 날짜로 채운다.
 TIMETABLE_SPLIT_OVERLAP_PX = 300
-# 한 열(또는 행)의 픽셀 표준편차가 이 값 이하면 "단색 여백"으로 본다(JPEG 노이즈 여유 포함).
-MARGIN_STD_THRESHOLD = 6.0
-# 여백을 잘라낼 때 내용 가장자리에 남겨두는 여유(px) - 테두리 선/글자 끝이 딱 붙어 잘리지 않게.
-MARGIN_PAD_PX = 12
-
-
-def _content_span(activity: np.ndarray) -> tuple[int, int]:
-    """열(또는 행)별 활동도 배열에서, 양 끝의 단색 여백을 뺀 내용 구간 [lo, hi)를 찾는다.
-    전부 단색이면 원래 범위를 그대로 돌려준다."""
-    busy = np.flatnonzero(activity > MARGIN_STD_THRESHOLD)
-    if busy.size == 0:
-        return 0, activity.size
-    lo = max(0, int(busy[0]) - MARGIN_PAD_PX)
-    hi = min(activity.size, int(busy[-1]) + 1 + MARGIN_PAD_PX)
-    return lo, hi
-
-
-def trim_margins(im: Image.Image) -> Image.Image:
-    """상하좌우 가장자리의 단색 여백(흰 배경, 페이지 좌우 배경색 등)을 잘라낸다. 각 열/행 안의
-    픽셀 표준편차가 MARGIN_STD_THRESHOLD 이하면 단색으로 본다 - 배경색을 하나로 가정하지 않고
-    열/행마다 따로 보므로 왼쪽은 초록, 오른쪽은 흰색처럼 양쪽 여백 색이 달라도 된다.
-    크롭 이미지 중 오른쪽 1/3이 통째로 흰 여백인 경우 등이 있어 픽셀 예산 낭비가 컸다."""
-    gray = np.asarray(im.convert("L"), dtype=np.float32)
-    left, right = _content_span(gray.std(axis=0))
-    top, bottom = _content_span(gray.std(axis=1))
-    if (left, top, right, bottom) == (0, 0, im.width, im.height):
-        return im
-    return im.crop((left, top, right, bottom))
+# 시간표 구간을 위쪽 끝만 이만큼씩 다르게 잘라 여러 번 읽고 다수결로 합친다(2026-10-29, _vote_region_results). 모델이 자르는
+# 위치에 아주 민감했다 - 같은 20건을 위쪽 여유 0/80/120/150/180/220px로 읽었을 때 재현율이 51~69%로 흔들렸고, 한 공연이
+# 16/16에서 1/16까지 오갔다(충주). 세 위치 다수결은 어떤 세 위치를 골라도 재현율 66~70%, 정밀도 70~72%였다(한 번 읽기 61%/64%).
+TIMETABLE_VOTE_TOP_OFFSETS_PX = (0, 120, 220)
 
 
 def fit_to_pixel_budget(im: Image.Image, max_pixels: int = TIMETABLE_MAX_PIXELS) -> Image.Image:
@@ -390,14 +429,14 @@ def fit_to_pixel_budget(im: Image.Image, max_pixels: int = TIMETABLE_MAX_PIXELS)
 
 
 def split_timetable_region(im: Image.Image, top: int, bottom: int) -> list[Image.Image]:
-    """원본 이미지의 [top, bottom) 세로 구간을 전체 폭으로 잘라 여백을 떼고, 모델에 1장씩 보낼 조각들로
-    돌려준다. TIMETABLE_MAX_PIXELS 안이면 1장, 넘으면 폭은 그대로 두고 세로로 나눈다(절단선은 상세페이지
+    """원본 이미지의 [top, bottom) 세로 구간을 전체 폭으로 잘라 좌우 흰 여백을 떼고(trim_side_whitespace),
+    모델에 1장씩 보낼 조각들로 돌려준다. TIMETABLE_MAX_PIXELS 안이면 1장, 넘으면 폭은 그대로 두고 세로로 나눈다(절단선은 상세페이지
     타일과 같은 _band_coords로 여백 줄을 고른다). 폭만으로 예산을 넘는 극단적인 경우에만 축소한다."""
     w, h = im.size
     top, bottom = max(0, top), min(h, bottom)
     if bottom <= top:
         return []
-    region = trim_margins(im.crop((0, top, w, bottom)))
+    region = trim_side_whitespace(im.crop((0, top, w, bottom)))
     rw, rh = region.size
     if rw * rh <= TIMETABLE_MAX_PIXELS:
         return [region]
@@ -438,7 +477,9 @@ def group_into_batches(tiles: list[Image.Image]) -> list[list[Image.Image]]:
 
 def image_to_data_uri(im: Image.Image) -> str:
     buf = io.BytesIO()
-    im.save(buf, format="PNG")
+    # 2026-10-29: compress_level=1 - 기본값(6)보다 3배 빠르고 픽셀은 똑같다(무손실, 크기만 약 17% 큼). 공연 1건의 타일
+    # 70~90장을 인코딩하는 데 기본값으론 20~30초가 걸렸다(그동안 GPU는 놂).
+    im.save(buf, format="PNG", compress_level=1)
     data = base64.b64encode(buf.getvalue()).decode("utf-8")
     return f"data:image/png;base64,{data}"
 
@@ -511,14 +552,30 @@ _PROMPT_PLACEHOLDER_RE = re.compile(r"[〈〉<>]")
 # 2026-09-13: 게이트 오픈 같은 입장 안내 항목은 timetable의 artist에 인쇄된 문구 그대로 들어온다
 # (timetable에 항목 종류 필드를 두지 않기로 함). 아티스트 이름이 아니므로 timetable에서는 lineup
 # 필터를 거치지 않게 따로 모으고, lineup에 섞여 들어오면 걸러낸다.
+# 2026-10-28: "도어 오픈"(한글 표기)을 추가했다 - 단독 공연의 입장 일정표에도 쓰인다.
+# 같은 날 "티켓 배부/수령/교환"도 추가했다 - SBMF 실측에서 "티켓 배부" 시각이 아티스트로 들어갔다.
 _ADMISSION_NOTICE_RE = re.compile(
-    r"(gate|doors?)\s*open|게이트\s*오픈|입장|ticket\s*booth|티켓\s*부스|매표소|box\s*office|팔찌\s*교환|wristband",
+    r"(gate|doors?)\s*open|게이트\s*오픈|도어\s*오픈|입장|ticket\s*booth|티켓\s*부스|매표소|box\s*office|팔찌\s*교환|wristband|티켓\s*(배부|수령|교환)",
     re.IGNORECASE,
 )
 
 
 def _looks_like_admission_notice(name: str) -> bool:
     return bool(_ADMISSION_NOTICE_RE.search(name))
+
+
+# 2026-10-27: 단독 공연의 입장 일정표("매표소 오픈 / 관객 입장 / 공연 시작" x 날짜)를 시간표 구간 조각이 읽으면
+# 행 제목 "공연 시작"이 artist 자리에 들어온다(이창섭 대구 실측 - 최종 lineup이 "공연 시작"만 남았다). 아티스트가
+# 아니라 "이 시각에 공연이 시작한다"는 표시이므로, lineup에서는 걸러내고 단독 공연 시간표에서는 이름 없는 공연
+# 시작 시각으로 보고 lineup 이름을 채운다(_fill_start_time_artists). 실제 이름과 겹치지 않게 전체 일치만 본다.
+_START_TIME_LABEL_RE = re.compile(
+    r"^(공연\s*시작|공연\s*시간|본\s*공연(\s*시작)?|(show\s*)?start|show\s*time)$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_start_time_label(name: str) -> bool:
+    return bool(_START_TIME_LABEL_RE.match(name.strip()))
 
 
 def _looks_like_placeholder_artist(name: str) -> bool:
@@ -537,6 +594,27 @@ def _looks_like_admission_category(name: str) -> bool:
 def _looks_like_stage_name(name: str, stage_names: set[str]) -> bool:
     stripped = name.strip()
     return stripped in stage_names or bool(_STAGE_SUFFIX_RE.search(stripped))
+
+
+def _voted_stage_names(stage_entries: list[dict], artist_names: list[str]) -> set[str]:
+    """timetable 항목의 stage 값 중, 무대 칸에 나온 횟수가 아티스트로 나온 횟수(timetable artist + lineup)보다
+    많은 이름만 무대 이름으로 본다(2026-10-28). 배치가 무대와 아티스트 칸을 뒤바꿔 적으면 아티스트 이름이 stage에
+    들어가는데, 예전에는 그 이름을 그대로 무대 이름으로 봐서 _filter_lineup_noise가 lineup에서 지우고, 이어서
+    _filter_timetable_to_lineup이 시간표 구간이 제대로 읽은 칸까지 지웠다(ACC 실측: 키라라·상자루·십센치).
+    "하늘마당 | Hanul Madang"처럼 "|"로 묶인 표기는 나눠서 센다 - 진짜 무대 이름은 여러 칸에 무대로 나와서
+    한두 번 아티스트 칸에 잘못 들어가도 계속 걸러진다."""
+    stage_votes: Counter = Counter()
+    names: set[str] = set()
+    for e in stage_entries:
+        stage = (e.get("stage") or "").strip()
+        if not stage:
+            continue
+        parts = {stage} | {p.strip() for p in stage.split("|") if p.strip()}
+        names |= parts
+        for key in {_artist_key(p) for p in parts}:
+            stage_votes[key] += 1
+    artist_votes = Counter(_artist_key(n) for n in artist_names if n)
+    return {n for n in names if stage_votes[_artist_key(n)] > artist_votes[_artist_key(n)]}
 
 
 def _looks_like_ticketing_platform(name: str) -> bool:
@@ -565,6 +643,7 @@ def _filter_lineup_noise(entries: list[dict], seat_type_names: set[str], stage_n
             or _looks_like_ticketing_platform(name)
             or _looks_like_placeholder_artist(name)
             or _looks_like_admission_notice(name)
+            or _looks_like_start_time_label(name)
         ):
             continue
         result.append(e)
@@ -713,12 +792,19 @@ def _phase_key(phase: str) -> str:
     return re.sub(r"[\W_]+", "", folded) or folded.strip()
 
 
-def _merge_ticketing_phases(results: list[dict], performance_dates: set[str]) -> list[dict] | None:
+def _merge_ticketing_phases(
+    results: list[dict], performance_dates: set[str], last_performance_date: str | None = None
+) -> list[dict] | None:
     """배치마다 답한 ticketing_date 배열([{phase, date}, ...])을 하나로 합친다(2026-09-28). 단계 이름이
     _phase_key로 같은 항목은 한 단계로 보고(표기는 먼저 나온 것), 그 단계의 날짜는 _pick_ticketing_date의
     다수결로 고른다 - 한 배치는 (단계, 날짜)마다 한 표다. 날짜를 답한 배치가 하나도 없는 단계("추후 공지")는
     date=null로 남긴다. 단계 이름이 비었거나 모델이 null 대신 쓴 문자열("null")인 항목은 버린다. 결과는
-    날짜순(null은 맨 뒤)이고, 항목이 없으면 None이다."""
+    날짜순(null은 맨 뒤)이고, 항목이 없으면 None이다.
+
+    2026-10-27: 날짜가 공연 종료일(last_performance_date)보다 뒤인 항목은 표에 넣지 않고 버린다 - 공연이
+    끝난 뒤에 예매가 열릴 수는 없다. 올패밀리 실측에서 공연 뒤 날짜(10/18, 10/19)가 예매일로 들어왔다. 단계
+    이름째 버린다 - 이름만 남기면 date=null("추후 공지")처럼 보인다. 종료일은 호출하는 쪽이 아는 값만 쓴다
+    (_merge_results 참고) - 모델이 읽은 공연일은 프롬프트 예시 날짜(10-18)를 베낀 경우가 있어 기준으로 못 쓴다."""
     labels: dict[str, str] = {}
     votes: dict[str, list[str]] = {}
     for r in results:
@@ -727,10 +813,12 @@ def _merge_ticketing_phases(results: list[dict], performance_dates: set[str]) ->
             phase = (e.get("phase") or "").strip()
             if not phase or phase.casefold() in ("null", "none"):
                 continue
+            date = e.get("date")
+            if date and last_performance_date and date > last_performance_date:
+                continue
             key = _phase_key(phase)
             labels.setdefault(key, phase)
             dates = votes.setdefault(key, [])
-            date = e.get("date")
             if date and (key, date) not in voted:
                 voted.add((key, date))
                 dates.append(date)
@@ -741,8 +829,99 @@ def _merge_ticketing_phases(results: list[dict], performance_dates: set[str]) ->
     return merged or None
 
 
-def _pick_delivery_date(results: list[dict]) -> str | None:
-    return _pick_majority([r.get("ticket_delivery_date") for r in results])
+def _pick_delivery_date(results: list[dict], last_performance_date: str | None = None) -> str | None:
+    """배치들이 답한 배송일 중 다수결. 공연 종료일보다 뒤인 값은 버린다(2026-10-27, _merge_ticketing_phases와
+    같은 이유 - 공연이 끝난 뒤에 티켓을 배송할 수는 없다)."""
+    return _pick_majority([
+        d for d in (r.get("ticket_delivery_date") for r in results)
+        if not (d and last_performance_date and d > last_performance_date)
+    ])
+
+
+# 2026-10-27: 모델이 "일괄배송 11월 6일"을 예매 단계로 답하는 경우가 있다(이창섭 대구 실측: 두 배치가 같은 값을
+# ticketing_date에 넣어 배송일은 null이 됐다). 예매 단계에서 빼고 그 배치의 배송일로 옮긴다.
+_DELIVERY_PHASE_RE = re.compile(r"배송|발송|delivery", re.IGNORECASE)
+
+
+def _move_delivery_phases(result: dict) -> dict:
+    """배치 하나의 ticketing_date에서 배송 단계를 빼고, 그 배치가 배송일을 따로 답하지 않았으면 그 날짜를
+    ticket_delivery_date로 쓴다."""
+    phases = result.get("ticketing_date") or []
+    delivery = [e for e in phases if _DELIVERY_PHASE_RE.search(e.get("phase") or "")]
+    if not delivery:
+        return result
+    kept = [e for e in phases if e not in delivery]
+    delivery_date = result.get("ticket_delivery_date") or next((e["date"] for e in delivery if e.get("date")), None)
+    return {**result, "ticketing_date": kept or None, "ticket_delivery_date": delivery_date}
+
+
+# 2026-10-27: 모델이 이미지를 읽지 못하고 출력을 "채우려다" 고장 나는 배치가 있다. 이런 배치가 함께 낸
+# 예매일·배송일은 페이지에 없는 날짜였는데(올패밀리 실측: 10/1, 10/5, 10/15, 10/17, 10/20), 이름은
+# _filter_lineup_noise가 하나씩 걸러 와도 날짜는 그대로 채택됐다. 고장은 두 가지로 나눠 다룬다.
+#   - 자리표시자 배치: 프롬프트 예시 〈아티스트1〉이나 "Various Artists"를 아티스트로 낸 배치. 실측에서 이런
+#     배치의 이름은 전부 자리표시자였다(렛츠락·사운드플래닛·그랜드민트 등) - 이미지를 읽지 않았으므로 결과를
+#     통째로 버린다(_is_placeholder_batch). "TBA"/"AND MORE"는 포스터에 실제로 인쇄되는 문구라 보지 않는다.
+#   - 반복 루프 배치: 같은 이름을 계속 반복한 배치. 루프에 빠지기 전까지는 실제 이름을 제대로 읽은 경우가
+#     많고(사운드플래닛: 루프 배치 넷이 체리필터·이바다·어반자카파 등을 읽음), 반복된 이름도 실제 출연자인
+#     경우가 있다(장범준·CNBLUE, 이름 넷을 3번씩 돈 배치의 "썬애플"(쏜애플 오독)). 그래서 이름 목록은 남기고,
+#     한 이름만 LOOP_NAME_DROP_REPEAT번 이상 반복했는데 다른 배치에는 안 나오는 이름만 지운다(올패밀리의
+#     "김민호" 11번, 사운드플래닛의 "Paradise" 5번 - 공연장 PARADISE CITY). 그 배치가 낸 예매일·배송일·가격은
+#     버린다(_drop_loop_output).
+_VARIOUS_ARTISTS_RE = re.compile(r"^various\s*artists?$", re.IGNORECASE)
+# 같은 (아티스트, 날짜)가 lineup에 이만큼 반복되면 반복 루프다. lineup은 원래 중복이 없어야 한다.
+LOOP_LINEUP_REPEAT = 3
+# timetable은 하루 2회 공연(낮/저녁)이 있어서 lineup보다 한 번 더 여유를 둔다. 입장 안내 항목은 세지 않는다.
+LOOP_TIMETABLE_REPEAT = 4
+# 반복된 이름 자체를 지우는 기준. 루프 판정보다 높게 둔다 - 이름 여러 개를 몇 번 돈 루프는 실제 이름일 수 있다.
+LOOP_NAME_DROP_REPEAT = 5
+
+
+def _is_placeholder_batch(result: dict) -> bool:
+    names = [e["artist"] for e in (result.get("lineup") or []) + (result.get("timetable") or []) if e.get("artist")]
+    return any(_PROMPT_PLACEHOLDER_RE.search(n) or _VARIOUS_ARTISTS_RE.match(n.strip()) for n in names)
+
+
+def _looped_artist_keys(result: dict, lineup_limit: int = LOOP_LINEUP_REPEAT,
+                        timetable_limit: int = LOOP_TIMETABLE_REPEAT) -> set[str]:
+    """배치 하나에서 같은 (아티스트, 날짜)를 기준 횟수 이상 반복한 아티스트의 _artist_key들."""
+    looped: set[str] = set()
+    for field, limit in (("lineup", lineup_limit), ("timetable", timetable_limit)):
+        counts = Counter(
+            (_artist_key(e["artist"]), e.get("performance_date"))
+            for e in result.get(field) or []
+            if e.get("artist") and not _looks_like_admission_notice(e["artist"])
+        )
+        looped |= {key for (key, _), n in counts.items() if n >= limit}
+    return looped
+
+
+def _drop_loop_output(results: list[dict], region_results: list[dict]) -> list[dict]:
+    """반복 루프 배치에서 예매일·배송일·가격을 지우고, LOOP_NAME_DROP_REPEAT번 이상 반복했는데 다른 배치(구간
+    결과 포함)에 안 나오는 이름을 지운다."""
+    keys_by_batch = [
+        {_artist_key(e["artist"]) for e in (r.get("lineup") or []) + (r.get("timetable") or []) if e.get("artist")}
+        for r in results + region_results
+    ]
+    cleaned = []
+    for i, r in enumerate(results):
+        if not _looped_artist_keys(r):
+            cleaned.append(r)
+            continue
+        seen_elsewhere = set().union(*(keys for j, keys in enumerate(keys_by_batch) if j != i))
+        drop = _looped_artist_keys(r, LOOP_NAME_DROP_REPEAT, LOOP_NAME_DROP_REPEAT) - seen_elsewhere
+
+        def keep(e: dict) -> bool:
+            return not (e.get("artist") and _artist_key(e["artist"]) in drop)
+
+        cleaned.append({
+            **r,
+            "lineup": [e for e in r.get("lineup") or [] if keep(e)],
+            "timetable": [e for e in r["timetable"] if keep(e)] if r.get("timetable") is not None else None,
+            "ticketing_date": None,
+            "ticket_delivery_date": None,
+            "ticket_prices": None,
+        })
+    return cleaned
 
 
 # 합동 공연 표기: 타임테이블은 한 칸(=한 공연)에 여러 아티스트를 묶어 쓰는 반면, 라인업 구역은
@@ -772,7 +951,9 @@ def _timetable_name_matches_lineup(name: str, lineup_keys: set[str]) -> bool:
     return len(parts) > 1 and all(_artist_key(p) in lineup_keys for p in parts)
 
 
-def _filter_timetable_to_lineup(timetable: list[dict], lineup_keys: set[str]) -> list[dict]:
+def _filter_timetable_to_lineup(
+    timetable: list[dict], lineup_keys: set[str], keep_start_labels: bool = False
+) -> list[dict]:
     """timetable의 artist는 반드시 lineup에 있는 이름과 같아야 한다(POSTER_SYSTEM_PROMPT 지시) - 하지만
     프롬프트만으로는 안 지켜지는 경우가 실측으로 확인됐다(부스/구역 코드 "N21","S6" 같은,
     lineup에 전혀 없는 이름이 timetable에 섞여 나옴). lineup을 먼저 확정한 뒤 여기서 lineup에
@@ -780,8 +961,17 @@ def _filter_timetable_to_lineup(timetable: list[dict], lineup_keys: set[str]) ->
     lineup ⊇ timetable.artists를 만족하게 코드 레벨에서 보장한다.
 
     2026-09-07: 합동 공연 표기(_split_collab_name)는 예외로 둔다. 라인업을 제대로 뽑을수록
-    "C JAMM x Black Nut" 같은 정상 항목이 오히려 지워지는 역효과가 나기 때문이다."""
-    return [e for e in timetable if e.get("artist") and _timetable_name_matches_lineup(e["artist"], lineup_keys)]
+    "C JAMM x Black Nut" 같은 정상 항목이 오히려 지워지는 역효과가 나기 때문이다.
+
+    2026-10-29: keep_start_labels이면 artist가 공연 시작 표시("공연 시작" 등)인 항목도 남긴다 - lineup이 빈 그 외
+    공연에서 _fill_start_time_artists가 이름 대신 남긴 항목이다."""
+    return [
+        e for e in timetable
+        if e.get("artist") and (
+            _timetable_name_matches_lineup(e["artist"], lineup_keys)
+            or (keep_start_labels and _looks_like_start_time_label(e["artist"]))
+        )
+    ]
 
 
 def _warn_if_undercounted(results: list[dict]) -> None:
@@ -825,7 +1015,7 @@ def _date_years(result: dict, include_ticket_dates: bool) -> list[int]:
     return [y for y in years if y != UNKNOWN_YEAR]
 
 
-def _normalize_years(results: list[dict]) -> list[dict]:
+def _normalize_years(results: list[dict], known_year: int | None = None) -> list[dict]:
     """조각에 연도가 안 보이면 모델이 연도를 지어내는데(펜타포트 실측: 8월 1일 시간표 전체가
     2023-08-01로 나옴), 이런 날짜를 페이지 연도로 바로잡는다. 페이지 연도와 2년 이상 차이 나는 날짜만
     바꾼다 - 연말~연초에 걸친 공연이나 전년도에 예매가 열리는 경우(1년 차이)는 그대로 둔다. 바꾼
@@ -835,9 +1025,15 @@ def _normalize_years(results: list[dict]) -> list[dict]:
     가장 많이 나온 연도다. results는 배치 순서(페이지 위에서 아래)대로 들어온다. 처음에는 "전체 배치
     날짜 중 최근 연도 우선"으로 정했는데, 지어낸 연도가 거의 항상 2023이라 2021년 이전의 옛날 페이지를
     처리하면 진짜 날짜가 2023으로 바뀔 수 있었다(사운드플래닛 실측: 2026이 214개, 지어낸 2023이
-    195개). 맨 위 배치들에 날짜가 하나도 없을 때만 그 규칙으로 돌아간다."""
+    195개). 맨 위 배치들에 날짜가 하나도 없을 때만 그 규칙으로 돌아간다.
+
+    known_year(2026-10-29)는 호출하는 쪽이 아는 공연 연도다 - 주면 배치 날짜 대신 그것을 페이지 연도로 쓴다. 맨 위
+    배치들이 연도를 한꺼번에 지어내는 페이지가 있었다(MAX CHANGMIN·DKB 실측: 2026년 공연의 날짜가 전부 2023 -
+    시간표 시각은 맞았는데 연도 때문에 다 틀렸다)."""
     top_years = Counter(y for r in results[:PAGE_YEAR_TOP_BATCHES] for y in _date_years(r, include_ticket_dates=True))
-    if top_years:
+    if known_year:
+        page_year = known_year
+    elif top_years:
         page_year = top_years.most_common(1)[0][0]
     else:
         years = Counter(y for r in results for y in _date_years(r, include_ticket_dates=False))
@@ -870,13 +1066,22 @@ def _normalize_years(results: list[dict]) -> list[dict]:
     return fixed
 
 
+_WORKSHOP_RE = re.compile(r"워크숍|workshop", re.IGNORECASE)
+
+
+def _is_workshop_entry(e: dict) -> bool:
+    return any(_WORKSHOP_RE.search(e.get(k) or "") for k in ("stage", "artist"))
+
+
 def _one_slot_per_artist_day(timetable: list[dict], raw_entries: list[dict]) -> list[dict]:
     """페스티벌에서 같은 아티스트가 같은 날 여러 (시각, 무대)로 나오면 가장 많은 배치가 낸 것 하나만
     남긴다(동률이면 먼저 나온 것). 펜타포트 실측에서 한 무대의 시간표 목록이 다른 무대 두 곳에 통째로
     복사되거나, 다른 무대 아티스트에게 일정 간격의 가짜 시각이 붙거나, 같은 아티스트가 한 무대에
     7번 반복되는 실패가 있었는데, 실제 공연은 하루 한 번이라 모두 이 규칙으로 걸러진다. 날짜가
-    채워진 항목이 있는 아티스트의 날짜 없는 항목도 버린다. 하루에 두 번 서는 경우(워크숍+공연 등)는
-    하나를 잃을 수 있다."""
+    채워진 항목이 있는 아티스트의 날짜 없는 항목도 버린다. 하루에 두 번 서는 경우는 하나를 잃을 수 있다.
+
+    2026-10-28: 워크숍 칸(무대나 이름에 "워크숍"/"Workshop")은 공연 칸과 따로 센다 - 워크숍도 시간표에 남기기로
+    했는데, ACC 실측에서 키라라의 15:00 워크숍이 남고 같은 날 18:00 공연이 지워졌다."""
     support: Counter = Counter(
         (_artist_key(e["artist"]), e.get("performance_date"), e.get("time"), e.get("stage"))
         for e in raw_entries
@@ -892,11 +1097,50 @@ def _one_slot_per_artist_day(timetable: list[dict], raw_entries: list[dict]) -> 
         score = support[(key, date, e.get("time"), e.get("stage"))]
         if date is not None:
             score += support[(key, None, e.get("time"), e.get("stage"))]
-        group = (key, date)
+        group = (key, date, _is_workshop_entry(e))
         if group not in best or score > best[group][0]:
             best[group] = (score, e)
     kept_ids = {id(entry) for _, entry in best.values()}
     return [e for e in timetable if id(e) in kept_ids]
+
+
+# 비운 칸을 채울 때 같은 (날짜, 시각, 아티스트)를 읽었어야 하는 타일 배치 수. 타일 시간표는 격자형에서 자주 틀려서
+# 한 배치만 읽은 이름으로는 채우지 않는다 - 타일은 서로 겹치게 잘라서 맞게 읽은 칸은 보통 두 배치 이상이 낸다.
+FREED_SLOT_MIN_SUPPORT = 2
+
+
+def _fill_freed_slots(
+    before: list[dict], after: list[dict], tile_entries: list[dict], lineup: list[dict]
+) -> list[dict]:
+    """_one_slot_per_artist_day가 지운 칸(날짜, 시각)에, 타일 배치들이 그 칸에서 읽은 다른 아티스트를 채운다
+    (2026-10-28). 시간표 구간 조각이 한 칸의 이름을 옆 칸 이름으로 잘못 읽으면, 한 칸 규칙이 중복을 지우면서
+    그 칸의 원래 주인은 시간표에서 사라졌다(올패밀리 실측: 구간 조각이 10/10 13:00 신계행을 "컬트빌리"로 읽어
+    컬트빌리가 13:00/14:00 - 13:00은 지워졌고, 타일 배치 둘은 13:00 신계행으로 읽었다). lineup에 있고 그날 칸이
+    아직 없는 아티스트만, FREED_SLOT_MIN_SUPPORT개 이상의 배치가 같은 날짜·시각으로 읽었을 때 채운다."""
+    kept_ids = {id(e) for e in after}
+    freed = [e for e in before if id(e) not in kept_ids and e.get("performance_date") and e.get("time")]
+    if not freed:
+        return after
+    display = {_artist_key(e["artist"]): e["artist"] for e in lineup if e.get("artist")}
+    taken = {(_artist_key(e["artist"]), e.get("performance_date")) for e in after if e.get("artist")}
+    support: Counter = Counter(
+        (_artist_key(e["artist"]), e["performance_date"], e["time"])
+        for e in tile_entries
+        if e.get("artist") and e.get("performance_date") and e.get("time")
+    )
+    filled = list(after)
+    for slot in freed:
+        date, time = slot["performance_date"], slot["time"]
+        candidates = [
+            (n, key) for (key, d, t), n in support.items()
+            if d == date and t == time and key in display and (key, date) not in taken and n >= FREED_SLOT_MIN_SUPPORT
+        ]
+        if not candidates:
+            continue
+        _, key = max(candidates)
+        taken.add((key, date))
+        filled.append({**slot, "artist": display[key]})
+    return filled
 
 
 # ── 시간표 구간 결과 정리 (2026-09-25, extract_from_timetable.py에서 옮김) ────────
@@ -910,10 +1154,73 @@ _PLACEHOLDER_STAGE_RE = re.compile(
 )
 
 
+# 시각 글자 -> HH:MM 변환(2026-10-29). "4:30PM", "오후 6시", "2:00 ~ 2:30PM", "13:00 - 13:40 (40)" 같은 글자를 읽는다.
+_TIME_MERIDIEM = r"(?:\s*(am|pm|a\.m\.|p\.m\.))?"
+_CLOCK_TIME_RE = re.compile(r"(오전|오후|낮|저녁|밤|새벽)?\s*(\d{1,2})\s*(?::|시)\s*(\d{2})?\s*분?" + _TIME_MERIDIEM, re.IGNORECASE)
+_HOUR_MERIDIEM_RE = re.compile(r"(오전|오후|낮|저녁|밤|새벽)?\s*(\d{1,2})\s*(am|pm|a\.m\.|p\.m\.)", re.IGNORECASE)
+_KO_PM_WORDS = {"오후", "저녁", "밤"}
+_KO_AM_WORDS = {"오전", "새벽"}
+
+
+def _time_parts(m: re.Match, has_minutes: bool) -> tuple[int, int, str | None]:
+    """정규식 일치 하나 -> (시, 분, "am"/"pm"/None)."""
+    ko, h = m.group(1), int(m.group(2))
+    mi = int(m.group(3)) if has_minutes and m.group(3) else 0
+    mer = ((m.group(4) if has_minutes else m.group(3)) or "").lower().replace(".", "")
+    if mer == "pm" or ko in _KO_PM_WORDS or (ko == "낮" and h < 12):
+        return h, mi, "pm"
+    if mer == "am" or ko in _KO_AM_WORDS:
+        return h, mi, "am"
+    return h, mi, None
+
+
+def parse_time_text(text: str | None) -> str | None:
+    """인쇄된 시각 글자 -> 시작 시각 "HH:MM". 범위("2:00 ~ 2:30PM")는 앞 시각을 쓰고, 오전/오후 표시가 뒤에만
+    있으면 앞에도 적용한다(그러면 앞이 뒤보다 늦어지는 경우엔 오전으로 본다 - "11:30 ~ 12:30PM"). 자정을 넘긴
+    "24:30"은 "00:30". 시각을 못 찾거나 범위를 벗어나면 None."""
+    if not text:
+        return None
+    t = text.strip()
+    clocks = list(_CLOCK_TIME_RE.finditer(t))
+    found = [(m.start(), _time_parts(m, True)) for m in clocks]
+    found += [
+        (m.start(), _time_parts(m, False))
+        for m in _HOUR_MERIDIEM_RE.finditer(t)
+        if not any(c.start() <= m.start() < c.end() for c in clocks)
+    ]
+    if not found:
+        return None
+    found.sort()
+    h, mi, mer = found[0][1]
+    if mer is None and len(found) > 1 and found[1][1][2]:
+        later_h, later_mi, mer = found[1][1]
+
+        def minutes(hh: int, mm: int) -> int:
+            return ((hh % 12) + (12 if mer == "pm" else 0)) * 60 + mm
+
+        if mer == "pm" and minutes(h, mi) > minutes(later_h, later_mi):
+            mer = "am"
+    if mer == "pm" and h < 12:
+        h += 12
+    elif mer == "am" and h == 12:
+        h = 0
+    if h == 24:
+        h = 0
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        return None
+    return f"{h:02d}:{mi:02d}"
+
+
+# 시간표 항목이 아닌 안내(2026-10-29): "티켓부스 마감", "공연 종료 예정", "스탠딩 대기 시작", "퇴장 안내". 프롬프트가
+# 대기·종료 안내는 만들지 말라고 하는데도 나온다(AKMU 실측: "공식 MD 판매 마감"·"공연 종료 예정"이 블록마다). 시간표
+# 구간 20건 + 처음 보는 10건 정답 대조에서 걸러지는 항목은 전부 정답 밖이었다(정밀도 +2~7%p, 재현율 그대로).
+_CLOSING_NOTICE_RE = re.compile(r"마감|종료|대기|퇴장")
+
+
 def _clean_timetable(entries: list[dict]) -> list[dict]:
     """구간 조각 하나의 timetable 항목을 정리한다: 자리표시자 무대 이름을 null로 바꾸고, 이름이나 시각이
-    없는 항목은 버리고, (날짜, 시각, 이름)이 같은 항목은 첫 번째만 남긴다 - 모델이 같은 이름을 무대만
-    바꿔가며 반복 생성하는 루프(gmf2025 실측: "Dragon Pony" 60회)를 걷어내기 위함."""
+    없는 항목과 마감·종료·대기 안내(_CLOSING_NOTICE_RE)는 버리고, (날짜, 시각, 이름)이 같은 항목은 첫 번째만
+    남긴다 - 모델이 같은 이름을 무대만 바꿔가며 반복 생성하는 루프(gmf2025 실측: "Dragon Pony" 60회)를 걷어내기 위함."""
     seen = set()
     cleaned = []
     for e in entries:
@@ -924,7 +1231,7 @@ def _clean_timetable(entries: list[dict]) -> list[dict]:
             stage = None
         # 이름 없는 항목은 쓸모가 없다(akmu_daejeon 실측: 시간축 눈금마다 artist=null 항목 13개).
         artist = (e.get("artist") or "").strip()
-        if not artist or not e.get("time"):
+        if not artist or not e.get("time") or _CLOSING_NOTICE_RE.search(artist):
             continue
         key = (e.get("performance_date"), e["time"], artist.casefold())
         if key in seen:
@@ -942,11 +1249,12 @@ def _clean_timetable(entries: list[dict]) -> list[dict]:
 def _lineup_from_timetable(timetable: list[dict]) -> list[dict]:
     """lineup은 모델이 따로 답한 목록 대신 timetable 항목에서 만든다(모델 lineup은 timetable보다 누락이
     많았음 - pentaport2026_3 실측 22팀 중 10팀). 같은 아티스트가 여러 번 나와도 항목마다 그대로 둔다.
-    이름이 없는 항목과 입장 안내 문구(DOOR OPEN 등)는 아티스트가 아니므로 뺀다."""
+    이름이 없는 항목과 입장 안내 문구(DOOR OPEN 등), 공연 시작 표시("공연 시작")는 아티스트가 아니므로 뺀다."""
     return [
         {"artist": e["artist"], "performance_date": e.get("performance_date")}
         for e in timetable
         if e.get("artist") and not _looks_like_admission_notice(e["artist"])
+        and not _looks_like_start_time_label(e["artist"])
     ]
 
 
@@ -983,7 +1291,16 @@ def _fill_start_time_artists(entries: list[dict], lineup: list[dict]) -> list[di
     항목 날짜에 lineup 항목이 있는 아티스트와 날짜를 모르는 아티스트마다 한 항목씩 만들고, 항목에 날짜가
     없거나 그렇게 고른 아티스트가 없으면 lineup 아티스트 전체로 채운다. 이름이 있는 항목도 lineup 표기로
     맞춘다 - 같은 시각을 이름을 본 구간과 못 본 구간이 함께 답하면, 표기가 달라 _dedupe_timetable이
-    중복으로 거르지 못한다. lineup이 비어 있으면 채울 이름이 없어 이름 없는 항목은 버린다."""
+    중복으로 거르지 못한다. lineup이 비어 있으면 채울 이름이 없어 이름 없는 항목은 버린다.
+
+    2026-10-27: 다음 두 경우도 이름 없는 항목처럼 lineup 이름으로 채운다.
+      - artist가 공연 시작 표시("공연 시작" 등, _looks_like_start_time_label)인 항목 - 시간표 구간이 입장 일정표를
+        읽으면 이렇게 들어온다(이창섭 대구 실측).
+      - artist가 lineup에 없는 이름인데, 그 날짜에 lineup 이름으로 된 시작 시각 항목이 하나도 없는 경우 - 공연
+        시작 시각 옆에는 그룹명("미라클라스")이, lineup에는 멤버 이름이 적힌 페이지에서 시작 시각이 통째로
+        지워졌다(미라클라스 고양 실측). 그 날짜에 lineup 이름 항목이 이미 있으면 그대로 둔다 - 투어명
+        ("Unknown")을 이름으로 적은 매표소 오픈 시각 같은 항목이 공연 시작 시각으로 둔갑하지 않게.
+    2026-10-29: lineup이 비어 있으면 공연 시작 표시 항목은 버리지 않고 표시 그대로 남긴다."""
     display: dict[str, str] = {}
     names_by_date: dict[str | None, list[str]] = {}
     for e in lineup:
@@ -992,30 +1309,114 @@ def _fill_start_time_artists(entries: list[dict], lineup: list[dict]) -> list[di
         key = _artist_key(e["artist"])
         display.setdefault(key, e["artist"])
         names_by_date.setdefault(e["performance_date"], []).append(display[key])
+    lineup_keys = set(display)
+
+    def named(e: dict) -> str | None:
+        name = (e.get("artist") or "").strip()
+        # 모델이 null 대신 문자열 "null"을 쓰는 경우가 있다(_clean_timetable 참고).
+        if not name or name.lower() in ("null", "none") or _looks_like_start_time_label(name):
+            return None
+        return name
+
+    dates_with_lineup_name = {
+        e.get("performance_date") for e in entries
+        if (name := named(e)) and _timetable_name_matches_lineup(name, lineup_keys)
+    }
 
     filled: list[dict] = []
     for e in entries:
-        name = (e.get("artist") or "").strip()
-        # 모델이 null 대신 문자열 "null"을 쓰는 경우가 있다(_clean_timetable 참고).
-        if name and name.lower() not in ("null", "none"):
+        name = named(e)
+        if name and (
+            _timetable_name_matches_lineup(name, lineup_keys) or e.get("performance_date") in dates_with_lineup_name
+        ):
             filled.append({**e, "artist": display.get(_artist_key(name), e["artist"])})
         elif e.get("time"):
             date = e.get("performance_date")
             names = names_by_date.get(date, []) + names_by_date.get(None, []) if date else []
             filled.extend({**e, "artist": n} for n in names or display.values())
+            if not display and name is None and _looks_like_start_time_label(e.get("artist") or ""):
+                # 2026-10-29: lineup이 비면 채울 이름이 없어 공연 시작 시각이 통째로 사라졌다(이창섭 대구 실측 - 타일 배치가
+                # lineup을 비워 낸 실행에서 18:00/17:00이 지워졌다). 인쇄된 "공연 시작" 표시 그대로 남긴다. 타일 시간표에서
+                # 이름을 빌려 오지 않는 건 같은 시각에 투어명("Unknown")도 이름처럼 적혀 있어서다.
+                filled.append(e)
     return filled
 
 
-def _merge_results(results: list[dict], timetable_results: list[dict] | None = None) -> dict:
+def _one_char_apart(a: str, b: str) -> bool:
+    return len(a) == len(b) >= 2 and sum(x != y for x, y in zip(a, b)) == 1
+
+
+def _snap_region_names(region_results: list[dict], tile_results: list[dict]) -> list[dict]:
+    """시간표 구간 조각이 읽은 이름 중 타일 lineup에 없는 이름을, 한 글자만 다른 타일 lineup 이름으로 바꾼다
+    (2026-10-27). 구간 조각은 시간표 한 장만 보고 읽어서 라인업 카드의 표기와 한 글자씩 어긋나는 일이 있다
+    (올패밀리 실측: 라인업 카드와 타일 배치 셋은 "단야", 구간 조각만 "단아" - 최종 lineup에 둘 다 남았다).
+    후보가 정확히 하나일 때만 바꾸고, 후보 이름이 구간 결과에 이미 따로 있으면 바꾸지 않는다 - "황민호"와
+    "황민우"처럼 한 글자 차이인 서로 다른 아티스트를 하나로 합치지 않게."""
+    tile_names: dict[str, str] = {}
+    for r in tile_results:
+        for e in r.get("lineup") or []:
+            if e.get("artist"):
+                tile_names.setdefault(_artist_key(e["artist"]), e["artist"])
+    region_keys = {
+        _artist_key(e["artist"])
+        for r in region_results
+        for e in (r.get("lineup") or []) + (r.get("timetable") or [])
+        if e.get("artist")
+    }
+    mapping: dict[str, str] = {}
+    for key in region_keys - set(tile_names):
+        candidates = [k for k in tile_names if k not in region_keys and _one_char_apart(key, k)]
+        if len(candidates) == 1:
+            mapping[key] = tile_names[candidates[0]]
+    if not mapping:
+        return region_results
+
+    def snap(e: dict) -> dict:
+        key = _artist_key(e["artist"]) if e.get("artist") else None
+        return {**e, "artist": mapping[key]} if key in mapping else e
+
+    return [
+        {
+            **r,
+            "lineup": [snap(e) for e in r.get("lineup") or []],
+            "timetable": [snap(e) for e in r["timetable"]] if r.get("timetable") is not None else None,
+        }
+        for r in region_results
+    ]
+
+
+def _merge_results(
+    results: list[dict], timetable_results: list[dict] | None = None, performance_end_date: str | None = None
+) -> dict:
     """타일 배치 결과(results)와 시간표 구간 조각 결과(timetable_results, _timetable_region_result로 정리한
     것)를 백엔드 계약 6키 결과로 합친다. timetable_results가 None이면 시간표 구간이 주어지지 않은 것이고,
-    []이면 구간은 주어졌지만 읽어낸 조각이 없는 것이다."""
+    []이면 구간은 주어졌지만 읽어낸 조각이 없는 것이다. performance_end_date(YYYY-MM-DD)는 호출하는 쪽이 아는
+    공연 종료일이다 - 주면 그보다 뒤인 예매일·배송일을 버린다(2026-10-27). 모델이 읽은 공연일로 대신하지 않는다 -
+    프롬프트 예시 날짜(10-18)를 베낀 공연일이 실측에서 나왔다(AoB·김두루미: 실제 12/11, 11/9). 종료일의 연도는 지어낸
+    연도를 바로잡는 페이지 연도로도 쓴다(_normalize_years, 2026-10-29)."""
     # 병합 전 보정(2026-09-14): 지어낸 연도를 페이지 연도로 바로잡는다. 구간 결과도 같이 보정한다 - 구간
     # 프롬프트는 연도가 안 보이면 UNKNOWN_YEAR를 쓴다. 구간 결과를 뒤에 붙이므로 페이지 연도는 그대로 맨 위
     # 타일 배치들이 정한다.
     n_tile_results = len(results)
-    corrected = _normalize_years(results + (timetable_results or []))
+    known_year = int(m.group(1)) if (m := _DATE_YEAR_RE.match(performance_end_date or "")) else None
+    corrected = _normalize_years(results + (timetable_results or []), known_year)
     results, region_results = corrected[:n_tile_results], corrected[n_tile_results:]
+    all_results = results
+
+    # 병합 전 정리(2026-10-27): 고장 난 배치를 걸러내고(_is_placeholder_batch, _drop_loop_output), 예매 단계로
+    # 잘못 들어온 배송 일정은 배송일로 옮긴다(_move_delivery_phases). 연도 보정보다 뒤에 한다 - 이름을 반복하며
+    # 고장 난 맨 위 배치도 페이지 머리의 연도는 맞게 읽는 경우가 있다(올패밀리 실측: 루프에 빠진 첫 배치만
+    # 2026을 냈고, 자리표시자 배치를 먼저 버리면 다음 배치들의 지어낸 2023이 페이지 연도가 됐다).
+    placeholder = [i + 1 for i, r in enumerate(results) if _is_placeholder_batch(r)]
+    looped = [i + 1 for i, r in enumerate(results) if _looped_artist_keys(r)]
+    if placeholder or looped:
+        print(
+            f"[경고] 자리표시자를 낸 배치 {placeholder}는 버리고, 반복 루프에 빠진 배치 {looped}는 "
+            "예매일·배송일·가격을 버립니다.",
+            file=sys.stderr,
+        )
+    results = [r for r in results if not _is_placeholder_batch(r)]
+    results = [_move_delivery_phases(r) for r in _drop_loop_output(results, region_results)]
 
     # ticket_prices/timetable을 먼저 합쳐서, 그 seat_type/stage 이름들을 lineup 노이즈 필터링
     # 근거로 쓴다(아래 _filter_lineup_noise) - lineup을 확정하기 전에 "아티스트가 아닌 것으로
@@ -1030,9 +1431,16 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     # 페스티벌이면 lineup/timetable은 "festival"로 답한 배치에서만 가져온다. "other" 배치는 그 외
     # 공연 절차(공연명/상단에서 이름 읽기)를 따르므로, 페스티벌 제목 영역의 행사명을 아티스트로
     # 적었을 수 있기 때문이다. 입장 안내 항목(artist가 "GATE OPEN" 등)은 아래에서 따로 다룬다.
-    # 시간표 구간 조각도 "festival"로 답했으면(여러 아티스트의 시각이 보이면) 페스티벌로 본다.
-    is_festival = any(r.get("event_category") == "festival" for r in results + region_results)
+    # 2026-10-27: 시간표 구간 조각의 답은 세지 않는다. 구간 조각은 시간표 한 장만 보고 "서로 다른 이름 둘 이상의
+    # 시각"이면 festival로 답하는데, 단독 공연의 입장 일정표(매표소 오픈/관객 입장/공연 시작)도 그렇게 보인다 -
+    # 이창섭 대구 실측에서 이 한 표로 페이지 전체가 페스티벌이 되어, 이름을 제대로 읽은 "other" 타일 배치가
+    # 전부 버려졌다. 진짜 페스티벌이면 라인업 구역을 본 타일 배치가 festival로 답한다. 페스티벌이 아니라고
+    # 봐도 구간이 주어졌으면 시간표는 아래에서 구간 결과로 정하므로, 구간이 읽은 아티스트 시간표는 그대로 남는다.
+    # 타일 배치가 아예 없는 --timetable-crop(extract_timetable_info)만 구간 조각의 답으로 정한다.
+    is_festival = any(r.get("event_category") == "festival" for r in (results or region_results))
     lineup_results = [r for r in results if r.get("event_category") == "festival"] if is_festival else results
+    if region_results:
+        region_results = _snap_region_names(region_results, lineup_results)
 
     # 아티스트 시간표의 출처(2026-09-25): 시간표 구간이 주어지면 구간 결과만 쓴다 - 좌우로 자른 타일에서
     # 읽은 시간표는 격자형에서 거의 틀렸다. 구간이 없으면 페스티벌은 아티스트 시간표를 비우고(입장 안내만
@@ -1044,11 +1452,7 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
         raw_timetable_entries = []
     else:
         raw_timetable_entries = _artist_timetable_entries(lineup_results)
-    stage_names = {
-        e["stage"].strip()
-        for e in _artist_timetable_entries(lineup_results) + raw_timetable_entries
-        if e.get("stage")
-    }
+    stage_entries = _artist_timetable_entries(lineup_results) + raw_timetable_entries
 
     # 라인업 출처 우선 채택(2026-09-07): 전용 라인업 구역을 본 배치가 하나라도 있으면, 시간표
     # 칸에서만 이름을 읽은 배치의 lineup은 버린다. 실측에서 페이지에 전용 구역(43팀)이 있는데도
@@ -1068,6 +1472,9 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     timetable_source_results = [r for r in lineup_results if r.get("lineup_source") == "timetable_only"]
     source_results = section_results + timetable_source_results or lineup_results
     all_lineup = [e for r in source_results + region_results for e in (r.get("lineup") or [])]
+    stage_names = _voted_stage_names(
+        stage_entries, [e.get("artist") for e in stage_entries + all_lineup]
+    )
     lineup = _dedupe_lineup(all_lineup)
     lineup = _filter_lineup_noise(lineup, seat_type_names, stage_names)
     lineup_keys = {_artist_key(e["artist"]) for e in lineup if e["artist"]}
@@ -1080,29 +1487,51 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     # 그 외 공연의 공연 시작 시각(2026-09-28): 공연시간 안내가 공연명·포스터와 다른 구간에 있으면 그 배치는
     # artist=null로 답한다. 이름 없는 항목은 아래 _filter_timetable_to_lineup이 지우므로, lineup이 정해진
     # 여기서 먼저 이름을 채운다.
-    if timetable_results is None and not is_festival:
+    # 2026-10-27: 시간표 구간이 주어진 경우에도 채운다 - 단독 공연에 구간이 주어지면 구간 조각이 입장 일정표의
+    # "공연 시작" 행을 이름으로 읽어 온다(_fill_start_time_artists 참고).
+    if not is_festival:
         raw_timetable_entries = _fill_start_time_artists(raw_timetable_entries, lineup)
 
     # 빈 결과는 맨 아래에서 null로 통일한다(2026-09-25: 예전에는 timetable_present를 보고 null과 []를
     # 여기서 구분했지만, 마지막의 `timetable or None`이 어차피 둘을 같게 만들어 뺐다).
     timetable = _dedupe_timetable(raw_timetable_entries, artist_dates)
-    timetable = _filter_timetable_to_lineup(timetable, lineup_keys)
+    timetable = _filter_timetable_to_lineup(timetable, lineup_keys, keep_start_labels=not is_festival and not lineup_keys)
     if is_festival:
-        timetable = _one_slot_per_artist_day(timetable, raw_timetable_entries)
+        # 2026-10-27: 구간 결과로 시간표를 정할 때도 타일 배치가 읽은 시간표를 표로 함께 센다. 구간 조각이 한
+        # 칸을 잘못 읽어 같은 아티스트가 하루에 두 번 나오면 동률에서 먼저 나온 오답이 남았다(올패밀리 실측:
+        # 10/10 컬트빌리가 13:00/14:00 - 타일 배치 둘은 14:00으로 읽었다).
+        support_entries = raw_timetable_entries
+        if timetable_results is not None:
+            support_entries = raw_timetable_entries + _artist_timetable_entries(lineup_results)
+        deduped = _one_slot_per_artist_day(timetable, support_entries)
+        if timetable_results is not None:
+            deduped = _fill_freed_slots(timetable, deduped, _artist_timetable_entries(results), lineup)
+        timetable = deduped
 
-    # 입장 안내 항목(2026-09-13): 페스티벌이면 artist가 입장 문구("GATE OPEN" 등)인 항목을 lineup
-    # 필터 없이 따로 모아 앞에 붙인다. 그 외 공연은 공연 시작 시각(아티스트 이름 항목, 위에서 처리)만
-    # 남기고 입장 항목은 버린다. 배치 구분 없이 전체 results에서 모은다 - 입장 시각은 흔히 라인업이
-    # 안 보이는 상단 공연정보 구간에 있어서, 페스티벌 페이지라도 그 구간 배치는 "other"로 답하기
-    # 때문이다. 같은 시각을 구간마다 다른 표기("GATE OPEN"/"게이트 오픈")로 적을 수 있어 (날짜, 시각,
-    # 무대) 칸이 같으면 먼저 나온 것만 남기고, 날짜 헤더가 안 보여 날짜가 null로 나온 항목은 같은
-    # 시각에 날짜가 채워진 항목이 있으면 버린다.
+    # 입장 안내 항목(2026-09-13): artist가 입장 문구("GATE OPEN" 등)인 항목을 lineup 필터 없이 따로 모아
+    # 앞에 붙인다. 배치 구분 없이 전체 results에서 모은다 - 입장 시각은 흔히 라인업이 안 보이는 상단
+    # 공연정보 구간에 있어서, 페스티벌 페이지라도 그 구간 배치는 "other"로 답하기 때문이다.
+    # 2026-10-28: 그 외 공연도 입장 항목을 남긴다(예전에는 공연 시작 시각만 남기고 버렸다). 단독 공연의 입장
+    # 일정표("매표소 오픈 / 관객 입장 / 공연 시작")도 시각이 적힌 일정이라 시간표에 함께 싣는다(이창섭 대구 실측).
+    # 같은 시각을 구간마다 다른 표기("GATE OPEN"/"게이트 오픈")로 적을 수 있어 (날짜, 시각, 무대) 칸이 같으면
+    # 먼저 나온 것만 남기고, 날짜 헤더가 안 보여 날짜가 null로 나온 항목은 같은 시각에 날짜가 채워진 항목이
+    # 있으면 버린다.
     admission_entries = [
         e
         for r in results + region_results
         for e in (r.get("timetable") or [])
-        if is_festival and e.get("artist") and e.get("time") and _looks_like_admission_notice(e["artist"])
+        if e.get("artist") and e.get("time") and _looks_like_admission_notice(e["artist"])
     ]
+    # 2026-10-29: 페스티벌로 본 페이지에서는 시간표 구간이 읽은 공연 시작 표시("공연 시작")도 입장 안내처럼 그대로 남긴다.
+    # 그 외 공연이면 _fill_start_time_artists가 lineup 이름을 채우지만 페스티벌 경로에는 그 단계가 없어 lineup 필터에
+    # 지워졌다 - 단독 공연인데 타일 배치 하나가 festival로 답해 공연 시작 시각 셋이 모두 사라졌다(EXO 실측).
+    if is_festival:
+        admission_entries += [
+            e
+            for r in region_results
+            for e in (r.get("timetable") or [])
+            if e.get("artist") and e.get("time") and _looks_like_start_time_label(e["artist"])
+        ]
     dated_times = {e["time"] for e in admission_entries if e.get("performance_date")}
     admission_slots: set[tuple] = set()
     notices: list[dict] = []
@@ -1115,6 +1544,10 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     if notices:
         notices.sort(key=lambda e: (e.get("performance_date") or "", e["time"]))
         timetable = notices + (timetable or [])
+        # 그 외 공연은 회차별 입장 일정과 공연 시작 시각이 한 표라 날짜·시각 순으로 섞는다(2026-10-28). 페스티벌은
+        # 입장 안내를 앞에 두고 아티스트 항목은 무대별 순서를 그대로 둔다.
+        if not is_festival:
+            timetable.sort(key=lambda e: (e.get("performance_date") or "", e["time"]))
 
     # 프롬프트 예시 자리표시자(〈무대1〉)가 무대명으로 새어 들어온 경우 무대명만 비운다 - 아티스트와
     # 시각은 실제일 수 있어 항목 자체는 남긴다. 또 lineup 필터가 지어낸 이름을 걷어내면서 그 이름에
@@ -1130,12 +1563,12 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     performance_dates = {e["performance_date"] for e in lineup if e["performance_date"]}
     performance_dates |= {e["performance_date"] for e in (timetable or []) if e.get("performance_date")}
 
-    ticketing_date = _merge_ticketing_phases(results, performance_dates)
-    ticket_delivery_date = _pick_delivery_date(results)
+    ticketing_date = _merge_ticketing_phases(results, performance_dates, performance_end_date)
+    ticket_delivery_date = _pick_delivery_date(results, performance_end_date)
 
     food_allowed = _pick_majority([(r.get("other_info") or {}).get("food_allowed") for r in results])
 
-    _warn_if_undercounted(results)
+    _warn_if_undercounted(all_results)
 
     # 반환 형태는 백엔드 계약(schemas.py) 그대로인 6개 키다 - event_category/lineup_source/
     # lineup_artist_count/timetable_present는 모델이 절차를 순서대로 밟게 만들기 위한 스캐폴딩 필드일 뿐이라 여기서
@@ -1150,12 +1583,24 @@ def _merge_results(results: list[dict], timetable_results: list[dict] | None = N
     }
 
 
-# 두 요청(타일 배치, 시간표 구간 조각) 모두 같은 스키마로 강제 출력한다.
+# 타일 배치 요청의 강제 출력 형식. 2026-10-29: 배열 개수·문자열 길이 상한을 둔 스키마로 바꿨다(schema.py
+# POSTER_INFO_BOUNDED_SCHEMA 설명 참고) - 루프에 빠진 배치 하나가 max_tokens까지 320초를 쓰던 것을 막는다.
 _POSTER_INFO_RESPONSE_FORMAT = {
     "type": "json_schema",
     "json_schema": {
         "name": "poster_info",
-        "schema": POSTER_INFO_SCHEMA,
+        "schema": POSTER_INFO_BOUNDED_SCHEMA,
+        "strict": True,
+    },
+}
+
+# 시간표 구간 조각 요청의 강제 출력 형식(2026-10-29). POSTER_INFO_SCHEMA와 같고 timetable.time만 인쇄된
+# 글자 그대로 받는다 - _call_timetable_model이 parse_time_text로 HH:MM으로 바꾼다.
+_TIMETABLE_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "poster_info",
+        "schema": TIMETABLE_TEXT_TIME_BOUNDED_SCHEMA,
         "strict": True,
     },
 }
@@ -1263,7 +1708,7 @@ def _call_batch_with_split_retry(
 
 
 def _call_timetable_model(client: OpenAI, piece: Image.Image, label: str) -> dict | None:
-    """시간표 구간 조각 1장을 TIMETABLE_SYSTEM_PROMPT로 보내고, _timetable_region_result로 정리한 결과를
+    """시간표 구간 조각 1장을 TIMETABLE_TEXT_TIME_SYSTEM_PROMPT로 보내고, _timetable_region_result로 정리한 결과를
     돌려준다(extract_from_timetable.py의 extract_timetable_info에서 옮김 - FRAGMENT_NOTE는 붙이지 않는다).
     응답이 max_tokens에 걸려 잘리면 타일 1장이 잘렸을 때처럼 경고만 남기고 None을 돌려준다 - 더 쪼갤 수
     없고 예외를 올리면 다른 배치의 정상 결과까지 버려진다. max_tokens는 배치와 같은 BATCH_MAX_TOKENS를
@@ -1271,7 +1716,7 @@ def _call_timetable_model(client: OpenAI, piece: Image.Image, label: str) -> dic
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
-            {"role": "system", "content": TIMETABLE_SYSTEM_PROMPT},
+            {"role": "system", "content": TIMETABLE_TEXT_TIME_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": [
@@ -1282,7 +1727,7 @@ def _call_timetable_model(client: OpenAI, piece: Image.Image, label: str) -> dic
         ],
         temperature=0,
         max_tokens=BATCH_MAX_TOKENS,
-        response_format=_POSTER_INFO_RESPONSE_FORMAT,
+        response_format=_TIMETABLE_RESPONSE_FORMAT,
     )
 
     choice = response.choices[0]
@@ -1293,18 +1738,111 @@ def _call_timetable_model(client: OpenAI, piece: Image.Image, label: str) -> dic
             file=sys.stderr,
         )
         return None
-    return _timetable_region_result(json.loads(choice.message.content))
+    raw = json.loads(choice.message.content)
+    # 2026-10-29: 모델은 시각을 인쇄된 글자 그대로 쓰고(TIMETABLE_TEXT_TIME_SYSTEM_PROMPT) 여기서 HH:MM으로 바꾼다.
+    # 못 바꾼 항목은 time=None이 되어 _clean_timetable에서 빠진다.
+    for e in raw.get("timetable") or []:
+        text = e.get("time")
+        e["time"] = parse_time_text(text)
+        if text and e["time"] is None:
+            print(f"[경고] {label}시각 글자 {text!r}를 HH:MM으로 바꾸지 못해 항목을 버립니다.", file=sys.stderr)
+    return _timetable_region_result(raw)
 
 
-def _timetable_region_calls(client: OpenAI, im: Image.Image, timetable_ranges: list[tuple[int, int]]) -> list:
-    """시간표 구간마다 split_timetable_region으로 자른 조각을 _call_timetable_model 호출로 만든다."""
-    calls = []
-    for top, bottom in timetable_ranges:
-        pieces = split_timetable_region(im, top, bottom)
-        for j, piece in enumerate(pieces):
-            label = f"[시간표 구간 y={top}-{bottom} {j + 1}/{len(pieces)}] "
-            calls.append(partial(_call_timetable_model, client, piece, label))
-    return calls
+def _fill_single_day_dates(
+    region_results: list[dict], performance_start_date: str | None, performance_end_date: str | None
+) -> list[dict]:
+    """하루짜리 공연(호출하는 쪽이 준 시작일 = 종료일)이면 구간 조각에서 날짜를 못 읽은 항목에 공연일을 채운다
+    (2026-10-29). 날짜 헤더가 없는 시간표에서 모델은 null 대신 "2000-01-01"을 자주 쓴다(단편선·DJMAX·먼데이프로젝트·
+    DKB·라라랜드 실측 - 시각과 항목은 다 맞고 날짜만 틀렸다). null과 1월 1일만 바꾼다 - 공연일이 1월 1일이면 바꿀
+    것이 없다. 여러 날 공연은 어느 날인지 알 수 없어 그대로 둔다."""
+    if not performance_start_date or performance_start_date != performance_end_date:
+        return region_results
+
+    def fill(date: str | None) -> str | None:
+        return performance_start_date if not date or date[4:] == "-01-01" else date
+
+    return [
+        {
+            **r,
+            "timetable": [{**e, "performance_date": fill(e.get("performance_date"))} for e in r.get("timetable") or []],
+            "lineup": [{**e, "performance_date": fill(e.get("performance_date"))} for e in r.get("lineup") or []],
+        }
+        for r in region_results
+    ]
+
+
+def _timetable_region_calls(
+    client: OpenAI,
+    im: Image.Image,
+    timetable_ranges: list[tuple[int, int]],
+    top_offsets: tuple[int, ...] = TIMETABLE_VOTE_TOP_OFFSETS_PX,
+) -> tuple[list, list[tuple[int, int]]]:
+    """시간표 구간마다, 위쪽 끝을 top_offsets만큼씩 올려 자른 변형별로 split_timetable_region 조각을
+    _call_timetable_model 호출로 만든다. 호출마다 (구간 번호, 변형 번호)를 함께 돌려준다 - _vote_region_outputs가
+    이것으로 결과를 묶는다. 이미지 맨 위에 닿아 자른 결과가 같아지는 변형은 한 번만 부른다."""
+    calls: list = []
+    keys: list[tuple[int, int]] = []
+    for i, (top, bottom) in enumerate(timetable_ranges):
+        tops = list(dict.fromkeys(max(0, top - offset) for offset in top_offsets))
+        for v, variant_top in enumerate(tops):
+            pieces = split_timetable_region(im, variant_top, bottom)
+            for j, piece in enumerate(pieces):
+                label = f"[시간표 구간 y={variant_top}-{bottom} {j + 1}/{len(pieces)}] "
+                calls.append(partial(_call_timetable_model, client, piece, label))
+                keys.append((i, v))
+    return calls, keys
+
+
+def _vote_region_results(variants: list[list[dict | None]]) -> dict | None:
+    """시간표 구간 하나를 위쪽 끝만 다르게 잘라 읽은 변형들(변형마다 조각 결과 목록, 위쪽 여유가 적은 순)을
+    (월일, 시각) 칸 다수결로 합쳐 조각 결과 1개로 만든다(TIMETABLE_VOTE_TOP_OFFSETS_PX). 과반 변형이 읽은 칸만
+    남기고, 그 칸의 항목은 그 칸을 읽은 첫 변형의 것을 그대로 쓴다. 연도는 자리표시값일 수 있어 비교하지 않는다.
+    응답이 잘린 조각(None)만 있는 변형과 항목을 하나도 못 읽은 변형은 표를 세지 않는다 - 위쪽을 넉넉히 자르면 위
+    내용까지 보여 모델이 시간표가 아니라고 답하기도 한다(DJMAX 실측: 0px만 5건을 다 읽고 120/220px는 빈 답). 표를
+    세는 변형이 1개뿐이면 그 결과를 그대로 합친 것과 같다. 조각이 전부 None이면 None.
+
+    2026-11-03: 10-29에 넣은 이 함수가 10-30 편집 중 본문이 빠져(호출만 남음) 시간표 구간이 있는 공연이 전부
+    실패했다. 위 설계대로 다시 짰다 - 정답 20건(gt_pick20) 원본 응답 대조에서 재현율 70%·정밀도 70%(한 번 읽기
+    59%/65%)로 10-29 기록과 같은 수준. 칸 안 이름까지 다수결하면 재현율 62%·정밀도 75%, 칸 안 항목을 변형끼리
+    합치면 재현율 76%·정밀도 51%였다."""
+    pieces = [[r for r in variant if r is not None] for variant in variants]
+    pieces = [variant for variant in pieces if variant]
+    if not pieces:
+        return None
+    cells: list[dict[tuple[str | None, str], list[dict]]] = []
+    for variant in pieces:
+        # 조각끼리 겹치는 부분(TIMETABLE_SPLIT_OVERLAP_PX)에서 같은 항목을 두 번 읽은 것은 한 번만 센다.
+        by_cell: dict[tuple[str | None, str], list[dict]] = defaultdict(list)
+        for e in _clean_timetable([e for r in variant for e in r.get("timetable") or []]):
+            by_cell[((e.get("performance_date") or "")[5:] or None, e["time"])].append(e)
+        if by_cell:
+            cells.append(by_cell)
+    need = len(cells) // 2 + 1
+    timetable = []
+    for key in dict.fromkeys(key for by_cell in cells for key in by_cell):
+        voters = [by_cell[key] for by_cell in cells if key in by_cell]
+        if len(voters) >= need:
+            timetable.extend(voters[0])
+    return {
+        **pieces[0][0],
+        # 손으로 자른 시간표(--timetable-crop)는 타일 배치가 없어 이 값으로 페스티벌 여부를 정한다(_merge_results) -
+        # 예전처럼 조각 하나라도 페스티벌이면 페스티벌로 본다.
+        "event_category": (
+            "festival" if any(r.get("event_category") == "festival" for variant in pieces for r in variant) else "other"
+        ),
+        "lineup": _lineup_from_timetable(timetable),
+        "timetable": timetable,
+    }
+
+
+def _vote_region_outputs(outputs: list[dict | None], keys: list[tuple[int, int]]) -> list[dict]:
+    """_timetable_region_calls 호출 결과를 구간마다 _vote_region_results로 합친다."""
+    groups: dict[int, dict[int, list]] = defaultdict(lambda: defaultdict(list))
+    for (i, v), out in zip(keys, outputs):
+        groups[i][v].append(out)
+    voted = [_vote_region_results([groups[i][v] for v in sorted(groups[i])]) for i in sorted(groups)]
+    return [r for r in voted if r is not None]
 
 
 def _run_parallel(calls: list) -> list:
@@ -1322,10 +1860,15 @@ def extract_poster_info(
     api_key: str = "EMPTY",
     timeout: float = REQUEST_TIMEOUT_SEC,
     timetable_ranges: list[tuple[int, int]] | None = None,
+    performance_end_date: str | None = None,
+    performance_start_date: str | None = None,
 ) -> dict:
     """상세페이지 이미지 1장에서 백엔드 계약 6키 결과를 뽑는다. timetable_ranges는 원본 이미지 안 시간표
     구간의 세로 픽셀 범위 [(top, bottom), ...]다 - 주면 그 구간을 시간표 방식으로 따로 읽어 아티스트
-    시간표를 그 결과로 대체하고, 안 주면(None 또는 []) 페스티벌의 아티스트 시간표는 비운다(_merge_results)."""
+    시간표를 그 결과로 대체하고, 안 주면(None 또는 []) 페스티벌의 아티스트 시간표는 비운다(_merge_results).
+    performance_end_date는 호출하는 쪽이 아는 공연 종료일(YYYY-MM-DD)이다 - 주면 그보다 뒤인 예매일·배송일을
+    버린다(2026-10-27). performance_start_date(YYYY-MM-DD)는 공연 시작일이다 - 종료일과 같으면(하루짜리 공연) 시간표
+    구간에서 날짜를 못 읽은 항목에 그 날짜를 쓴다(_fill_single_day_dates, 2026-10-29)."""
     client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
 
     im = load_image(image)
@@ -1353,12 +1896,16 @@ def extract_poster_info(
         partial(_call_batch_with_split_retry, client, batch, BATCH_MAX_TOKENS, f"[배치 {i + 1}/{len(batches)}] ")
         for i, batch in enumerate(batches)
     ]
-    region_calls = _timetable_region_calls(client, im, timetable_ranges or [])
-    outputs = _run_parallel(batch_calls + region_calls)
+    # 2026-10-29: 시간표 구간 조각을 배치보다 먼저 넣는다 - 뒤에 두면 배치가 다 끝난 뒤에야 시작돼 공연 1건 시간이
+    # 그만큼(실측 5~25초) 늘었다.
+    region_calls, region_keys = _timetable_region_calls(client, im, timetable_ranges or [])
+    outputs = _run_parallel(region_calls + batch_calls)
 
-    results = [r for rs in outputs[: len(batch_calls)] for r in rs]
-    timetable_results = [r for r in outputs[len(batch_calls):] if r is not None] if timetable_ranges else None
-    return _merge_results(results, timetable_results)
+    results = [r for rs in outputs[len(region_calls):] for r in rs]
+    timetable_results = _vote_region_outputs(outputs[: len(region_calls)], region_keys) if timetable_ranges else None
+    if timetable_results:
+        timetable_results = _fill_single_day_dates(timetable_results, performance_start_date, performance_end_date)
+    return _merge_results(results, timetable_results, performance_end_date)
 
 
 def extract_timetable_info(
@@ -1373,8 +1920,9 @@ def extract_timetable_info(
     client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
 
     im = load_image(image)
-    outputs = _run_parallel(_timetable_region_calls(client, im, [(0, im.height)]))
-    return _merge_results([], [r for r in outputs if r is not None])
+    # 이미지 전체가 구간이라 위쪽을 더 올릴 곳이 없다 - 한 번만 읽는다.
+    calls, keys = _timetable_region_calls(client, im, [(0, im.height)], top_offsets=(0,))
+    return _merge_results([], _vote_region_outputs(_run_parallel(calls), keys))
 
 
 def _classify_error(exc: BaseException) -> str:

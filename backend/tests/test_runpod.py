@@ -260,7 +260,7 @@ def _mock_graphql_client(ports):
 
 
 # 22/udp가 먼저 와도 22/tcp 공인 포트를 고름 - REST portMappings가 udp 포트를 줘서 SSH가
-# Connection refused로 실패하던 문제(10/16 실제 응답 순서 그대로)
+# Connection refused로 실패하던 문제(실제 응답 순서 그대로)
 @pytest.mark.asyncio
 async def test_fetch_ssh_endpoint_picks_public_tcp_22():
     ports = [
@@ -286,7 +286,7 @@ def _patch_graphql(*results):
 
 
 # 꺼진 pod은 podResume(gpuCount 1)으로 켬 - REST /start는 남은 gpuCount 0을 그대로 써서 보조 pod이
-# GPU 없이(메모리 488MB) 켜졌음(10/17)
+# GPU 없이(메모리 488MB) 켜졌음
 @pytest.mark.asyncio
 async def test_start_pod_resumes_with_gpu():
     graphql = AsyncMock(side_effect=[
@@ -332,3 +332,319 @@ async def test_start_pod_skips_resume_when_running_with_gpu():
          patch("app.services.runpod._graphql", graphql):
         assert await start_pod() is True
     assert graphql.await_count == 1
+
+
+# ---- 매번 새 pod 생성·삭제 방식 ----
+_NEW_MODE = {
+    "RUNPOD_API_KEY": "test-key",
+    "RUNPOD_TEMPLATE_ID": "tmpl",
+    "RUNPOD_NETWORK_VOLUME_ID": "vol",
+    "RUNPOD_GPU_TYPE_IDS": " A40, L4 ,A40",
+    "RUNPOD_POD_NAME": "td-llm-batch",
+    "RUNPOD_SSH_KEY_PATH": "/key",
+}
+
+
+def _new_mode():
+    return patch.multiple("app.services.runpod.settings", **_NEW_MODE)
+
+
+def test_new_pod_mode_requires_all_three_settings_and_dedupes_gpus():
+    from app.services.runpod import gpu_type_ids, new_pod_mode
+
+    with _new_mode():
+        assert new_pod_mode() is True
+        assert gpu_type_ids() == ["A40", "L4"]
+    for missing in ("RUNPOD_TEMPLATE_ID", "RUNPOD_NETWORK_VOLUME_ID", "RUNPOD_GPU_TYPE_IDS"):
+        with patch.multiple("app.services.runpod.settings", **{**_NEW_MODE, missing: ""}):
+            assert new_pod_mode() is False
+
+
+# 새 방식에서 stop_pod은 기존 후보 pod 정지 대신 이름으로 찾아 삭제함
+@pytest.mark.asyncio
+async def test_stop_pod_deletes_named_pods_in_new_mode():
+    with _new_mode(), patch("app.services.runpod.delete_named_pods", AsyncMock(return_value=True)) as deleter:
+        assert await stop_pod() is True
+    deleter.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_named_pods_noop_when_none_exist():
+    from app.services.runpod import delete_named_pods
+
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[])), \
+         patch("app.services.runpod._delete_pod", AsyncMock()) as deleter:
+        assert await delete_named_pods() is True
+    deleter.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_named_pods_true_only_when_gone_confirmed():
+    from app.services.runpod import delete_named_pods
+
+    for gone, expected in ((True, True), (False, False)):
+        with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[{"id": "p1"}])), \
+             patch("app.services.runpod._delete_pod", AsyncMock(return_value=True)), \
+             patch("app.services.runpod._wait_until_pods_gone", AsyncMock(return_value=gone)):
+            assert await delete_named_pods() is expected
+
+
+@pytest.mark.asyncio
+async def test_delete_named_pods_false_when_delete_request_fails():
+    from app.services.runpod import delete_named_pods
+
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[{"id": "p1"}])), \
+         patch("app.services.runpod._delete_pod", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._wait_until_pods_gone", AsyncMock()) as waiter:
+        assert await delete_named_pods() is False
+    waiter.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_new_pod_launch_creates_when_none_exist():
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[])), \
+         patch("app.services.runpod._create_pod", AsyncMock(return_value="p1")) as creator, \
+         patch("app.services.runpod._launch_services", AsyncMock(return_value=True)):
+        assert await start_pod_and_launch_services() is True
+    creator.assert_awaited_once()
+
+
+# 같은 이름의 RUNNING pod이 있으면 새로 안 만들고 이어 씀(서버가 죽어 있고 기동 스크립트도 안 도는 경우 - 다시 기동)
+@pytest.mark.asyncio
+async def test_new_pod_launch_reuses_running_pod():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._start_script_running", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._create_pod", AsyncMock()) as creator, \
+         patch("app.services.runpod._launch_services", AsyncMock(return_value=True)) as launcher:
+        assert await start_pod_and_launch_services() is True
+    creator.assert_not_awaited()
+    launcher.assert_awaited_once_with("p1")
+
+
+# RUNNING이 아닌 잔재는 지우고 새로 만듦
+@pytest.mark.asyncio
+async def test_new_pod_launch_deletes_stale_pod_first():
+    existing = [{"id": "old", "status": "EXITED"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._delete_pod", AsyncMock(return_value=True)) as deleter, \
+         patch("app.services.runpod._wait_until_pods_gone", AsyncMock(return_value=True)), \
+         patch("app.services.runpod._create_pod", AsyncMock(return_value="new")), \
+         patch("app.services.runpod._launch_services", AsyncMock(return_value=True)):
+        assert await start_pod_and_launch_services() is True
+    deleter.assert_awaited_once_with("old")
+
+
+# 기동 실패 → 삭제 후 새 pod으로 1회만 더, 둘 다 실패하면 pod이 안 남게 삭제하고 False
+@pytest.mark.asyncio
+async def test_new_pod_launch_retries_once_then_gives_up_and_deletes():
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[])), \
+         patch("app.services.runpod._create_pod", AsyncMock(side_effect=["p1", "p2"])) as creator, \
+         patch("app.services.runpod._launch_services", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._delete_pod", AsyncMock(return_value=True)) as deleter, \
+         patch("app.services.runpod._wait_until_pods_gone", AsyncMock(return_value=True)):
+        assert await start_pod_and_launch_services() is False
+    assert creator.await_count == 2
+    assert [c.args[0] for c in deleter.await_args_list] == ["p1", "p2"]
+
+
+@pytest.mark.asyncio
+async def test_new_pod_launch_second_attempt_can_succeed():
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[])), \
+         patch("app.services.runpod._create_pod", AsyncMock(side_effect=["p1", "p2"])), \
+         patch("app.services.runpod._launch_services", AsyncMock(side_effect=[False, True])), \
+         patch("app.services.runpod._delete_pod", AsyncMock(return_value=True)) as deleter, \
+         patch("app.services.runpod._wait_until_pods_gone", AsyncMock(return_value=True)):
+        assert await start_pod_and_launch_services() is True
+    deleter.assert_awaited_once_with("p1")
+
+
+# 생성 자체가 실패(GPU 부족)하면 재시도 없이 False, 지울 pod도 없음
+@pytest.mark.asyncio
+async def test_new_pod_launch_false_when_create_fails():
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=[])), \
+         patch("app.services.runpod._create_pod", AsyncMock(return_value=None)) as creator, \
+         patch("app.services.runpod._delete_pod", AsyncMock()) as deleter:
+        assert await start_pod_and_launch_services() is False
+    creator.assert_awaited_once()
+    deleter.assert_not_awaited()
+
+
+# 새 설정이 비어 있으면 기존 후보 pod 방식 그대로 - 목록 조회·생성이 불리지 않아야 함
+@pytest.mark.asyncio
+async def test_legacy_mode_untouched_when_new_settings_empty():
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="test-key", RUNPOD_POD_ID="test-pod",
+                        RUNPOD_TEMPLATE_ID="", RUNPOD_NETWORK_VOLUME_ID="", RUNPOD_GPU_TYPE_IDS=""), \
+         patch("app.services.runpod._create_pod", AsyncMock()) as creator, \
+         patch("app.services.runpod._start_and_launch_one", AsyncMock(return_value=True)) as legacy:
+        assert await start_pod_and_launch_services() is True
+    creator.assert_not_awaited()
+    legacy.assert_awaited_once_with("test-pod")
+
+
+# v2 생성: GPU 후보를 순서대로 시도, 400(재고 없음)이면 다음 GPU, 첫 성공에서 멈춤
+@pytest.mark.asyncio
+async def test_create_pod_tries_next_gpu_on_400_and_stops_on_success():
+    from app.services.runpod import _create_pod
+
+    attempts = AsyncMock(side_effect=[(400, "no capacity", None), (201, "{}", "pod-x")])
+    with _new_mode(), patch("app.services.runpod._try_create_with_gpu", attempts):
+        assert await _create_pod() == "pod-x"
+    assert [c.args[0] for c in attempts.await_args_list] == ["A40", "L4"]
+
+
+# 인증·잔액·본문 오류는 다른 GPU로 해도 같아서 첫 시도에서 중단
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 402, 422, 429])
+async def test_create_pod_aborts_on_config_errors(status):
+    from app.services.runpod import _create_pod
+
+    attempts = AsyncMock(return_value=(status, "bad", None))
+    with _new_mode(), patch("app.services.runpod._try_create_with_gpu", attempts):
+        assert await _create_pod() is None
+    assert attempts.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_pod_none_when_all_gpus_fail():
+    from app.services.runpod import _create_pod
+
+    attempts = AsyncMock(return_value=(400, "no capacity", None))
+    with _new_mode(), patch("app.services.runpod._try_create_with_gpu", attempts):
+        assert await _create_pod() is None
+    assert attempts.await_count == 2
+
+
+# 요청 본문: GPU 1종, Global 볼륨을 /workspace에 마운트
+@pytest.mark.asyncio
+async def test_try_create_with_gpu_sends_v2_body():
+    from app.services.runpod import _try_create_with_gpu
+
+    response = MagicMock(status_code=201, text="{}")
+    response.json.return_value = {"id": "pod-1"}
+    client = _mock_post_client()
+    client.post = AsyncMock(return_value=response)
+    with _new_mode(), patch("app.services.runpod.httpx.AsyncClient", return_value=client):
+        assert await _try_create_with_gpu("A40", "n", "tmpl", "vol") == (201, "{}", "pod-1")
+    url = client.post.await_args.args[0]
+    body = client.post.await_args.kwargs["json"]
+    assert url == "https://api.runpod.io/v2/pods"
+    assert body["gpu"] == {"id": "A40", "count": 1}
+    assert body["mounts"] == {"global": [{"volumeId": "vol", "path": "/workspace"}]}
+    assert body["templateId"] == "tmpl"
+
+
+# 목록은 이름이 같고 TERMINATED가 아닌 것만, 페이지를 넘겨가며 모음
+@pytest.mark.asyncio
+async def test_list_named_pods_filters_by_name_and_status_across_pages():
+    from app.services.runpod import _list_named_pods
+
+    pages = [
+        {"pods": [{"id": "a", "name": "td-llm-batch", "status": "RUNNING"}, {"id": "b", "name": "other", "status": "RUNNING"}],
+         "pagination": {"nextCursor": "c1", "hasNextPage": True}},
+        {"pods": [{"id": "c", "name": "td-llm-batch", "status": "TERMINATED"}, {"id": "d", "name": "td-llm-batch", "status": "EXITED"}],
+         "pagination": {"nextCursor": None, "hasNextPage": False}},
+    ]
+    responses = []
+    for page in pages:
+        r = MagicMock()
+        r.json.return_value = page
+        r.raise_for_status = MagicMock()
+        responses.append(r)
+    client = _mock_post_client()
+    client.get = AsyncMock(side_effect=responses)
+    with _new_mode(), patch("app.services.runpod.httpx.AsyncClient", return_value=client):
+        result = await _list_named_pods()
+    assert [p["id"] for p in result] == ["a", "d"]
+
+
+# 서버 개인키에서 공개키를 뽑고 추가 키를 줄바꿈으로 이어 붙임(템플릿 PUBLIC_KEY는 줄바꿈이 빠져 두 키가 붙었었음)
+def test_authorized_public_keys_joins_server_and_extra_keys_by_newline(tmp_path):
+    import asyncssh
+
+    from app.services.runpod import _authorized_public_keys
+
+    key = asyncssh.generate_private_key("ssh-ed25519")
+    key_path = tmp_path / "id"
+    key_path.write_bytes(key.export_private_key())
+    server_pub = key.export_public_key().decode().strip()
+    with patch.multiple("app.services.runpod.settings", RUNPOD_SSH_KEY_PATH=str(key_path),
+                        RUNPOD_EXTRA_PUBLIC_KEYS="ssh-ed25519 AAA llm-team; ssh-ed25519 BBB other"):
+        assert _authorized_public_keys() == f"{server_pub}\nssh-ed25519 AAA llm-team\nssh-ed25519 BBB other"
+
+
+def test_authorized_public_keys_none_when_key_unreadable():
+    from app.services.runpod import _authorized_public_keys
+
+    with patch.multiple("app.services.runpod.settings", RUNPOD_SSH_KEY_PATH="/no/such/key", RUNPOD_EXTRA_PUBLIC_KEYS=""):
+        assert _authorized_public_keys() is None
+
+
+# 이미 RUNNING이고 llm_server가 살아 있으면 start_vllm.sh를 다시 돌리지 않음(떠 있던 vLLM·터널이 끊기는 사고 방지)
+@pytest.mark.asyncio
+async def test_new_pod_reuse_skips_launch_when_server_healthy():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=True)), \
+         patch("app.services.runpod._create_pod", AsyncMock()) as creator, \
+         patch("app.services.runpod._launch_services", AsyncMock()) as launcher:
+        assert await start_pod_and_launch_services() is True
+    creator.assert_not_awaited()
+    launcher.assert_not_awaited()
+
+
+# 기동 스크립트가 아직 도는 중이면 재실행 없이 준비만 기다림
+@pytest.mark.asyncio
+async def test_new_pod_reuse_waits_when_start_script_running():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._start_script_running", AsyncMock(return_value=True)), \
+         patch("app.services.runpod.wait_until_llm_server_ready", AsyncMock(return_value=True)) as waiter, \
+         patch("app.services.runpod._launch_services", AsyncMock()) as launcher:
+        assert await start_pod_and_launch_services() is True
+    waiter.assert_awaited_once()
+    launcher.assert_not_awaited()
+
+
+# 진행 중이던 기동이 끝내 안 뜨면 그 pod을 지우고 새로 만들어 기동
+@pytest.mark.asyncio
+async def test_new_pod_reuse_replaces_pod_when_running_start_never_ready():
+    existing = [{"id": "p1", "status": "RUNNING"}]
+    with _new_mode(), patch("app.services.runpod._list_named_pods", AsyncMock(return_value=existing)), \
+         patch("app.services.runpod._llm_server_healthy", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._start_script_running", AsyncMock(return_value=True)), \
+         patch("app.services.runpod.wait_until_llm_server_ready", AsyncMock(return_value=False)), \
+         patch("app.services.runpod._delete_pod", AsyncMock(return_value=True)) as deleter, \
+         patch("app.services.runpod._wait_until_pods_gone", AsyncMock(return_value=True)), \
+         patch("app.services.runpod._create_pod", AsyncMock(return_value="p2")), \
+         patch("app.services.runpod._launch_services", AsyncMock(return_value=True)) as launcher:
+        assert await start_pod_and_launch_services() is True
+    deleter.assert_awaited_once_with("p1")
+    launcher.assert_awaited_once_with("p2")
+
+
+# tmux 세션이 start_vllm.sh 끝나고도 열려 있어야 함 - 닫히면 nohup 없이 띄운 vLLM이 같이 죽음
+@pytest.mark.asyncio
+async def test_start_script_tmux_session_stays_open_after_script_ends():
+    from app.services.runpod import run_start_script_via_ssh
+
+    commands: list[str] = []
+
+    class _Conn:
+        async def run(self, command, check=False):
+            commands.append(command)
+            return MagicMock(exit_status=0, stdout="", stderr="")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    with patch.multiple("app.services.runpod.settings", RUNPOD_API_KEY="k", RUNPOD_SSH_KEY_PATH="/key", RUNPOD_POD_ID="p"), \
+         patch("app.services.runpod._ssh_connect", AsyncMock(return_value=_Conn())):
+        assert await run_start_script_via_ssh("p1", "/workspace/x.log") is True
+    start = next(c for c in commands if "start_vllm.sh" in c and "new-session" in c)
+    assert start.rstrip("'").endswith("sleep infinity")

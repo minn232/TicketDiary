@@ -21,6 +21,234 @@ def candidate_pod_ids() -> list[str]:
     return list(dict.fromkeys(i.strip() for i in ids if i.strip()))
 
 
+# ---- 매번 새 pod 생성·삭제 방식 ----
+# 템플릿·볼륨·GPU 후보가 모두 설정돼 있을 때만 켜짐(config.py). 꺼져 있으면 위 후보 pod stop/resume 방식 그대로.
+# pod은 id를 저장하지 않고 고정 이름(RUNPOD_POD_NAME)으로 찾아 씀 - 서버 재시작·생성 응답 유실로 id를
+# 잃어도 남은 pod을 찾아 지울 수 있고, 이름이 다른 LLM팀 수동 pod은 건드리지 않음
+def new_pod_mode() -> bool:
+    return bool(
+        settings.RUNPOD_API_KEY
+        and settings.RUNPOD_TEMPLATE_ID
+        and settings.RUNPOD_NETWORK_VOLUME_ID
+        and gpu_type_ids()
+    )
+
+
+def gpu_type_ids() -> list[str]:
+    return list(dict.fromkeys(g.strip() for g in settings.RUNPOD_GPU_TYPE_IDS.split(",") if g.strip()))
+
+
+# Global 볼륨은 v1 REST(networkVolumeId)가 못 붙여서("network volume not found") v2 API를 씀.
+# v2 차이: 목록에 name 필터가 없어 클라이언트에서 거름, 상태 필드가 desiredStatus가 아니라 status
+# (PROVISIONING/STARTING/RUNNING/EXITED/ERROR/TERMINATED), GPU 종류는 요청당 1개(여러 개를 한 번에 못 줌)
+_RUNPOD_V2_PODS_URL = "https://api.runpod.io/v2/pods"
+_VOLUME_MOUNT_PATH = "/workspace"
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {settings.RUNPOD_API_KEY}"}
+
+
+async def _list_named_pods(name: str | None = None) -> list[dict]:
+    name = name or settings.RUNPOD_POD_NAME
+    pods: list[dict] = []
+    cursor = None
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for _ in range(10):
+            response = await client.get(
+                _RUNPOD_V2_PODS_URL, params={"cursor": cursor} if cursor else None, headers=_auth_headers()
+            )
+            response.raise_for_status()
+            data = response.json()
+            pods.extend(data.get("pods", []))
+            pagination = data.get("pagination") or {}
+            cursor = pagination.get("nextCursor")
+            if not pagination.get("hasNextPage") or not cursor:
+                break
+    return [p for p in pods if p.get("name") == name and p.get("status") != "TERMINATED"]
+
+
+# pod의 authorized_keys용 PUBLIC_KEY 값(줄바꿈 구분) - 서버 개인키에서 공개키를 뽑고 추가 키를 이어 붙임.
+# 서버 키를 못 뽑으면 None으로 템플릿 값을 그대로 씀(SSH가 안 되면 기동 단계에서 실패로 잡힘)
+def _authorized_public_keys() -> str | None:
+    keys: list[str] = []
+    if settings.RUNPOD_SSH_KEY_PATH:
+        try:
+            keys.append(asyncssh.read_private_key(settings.RUNPOD_SSH_KEY_PATH).export_public_key().decode().strip())
+        except Exception as e:
+            logger.warning(f"[LLM] 서버 SSH 공개키를 만들지 못함 - 템플릿 PUBLIC_KEY 그대로 사용: {describe_http_error(e)}")
+            return None
+    keys += [k.strip() for k in settings.RUNPOD_EXTRA_PUBLIC_KEYS.split(";") if k.strip()]
+    return "\n".join(keys) or None
+
+
+# GPU 종류 하나로 생성 요청 1회. (HTTP 상태, 본문 일부, pod id)를 돌려줌 - 전송 오류면 상태 None.
+# 재고 없음은 400(detail 문장뿐, 코드 없음)이라 호출부가 다음 GPU로 넘어감
+async def _try_create_with_gpu(gpu_id: str, name: str, template_id: str, volume_id: str) -> tuple[int | None, str, str | None]:
+    body = {
+        "name": name,
+        "templateId": template_id,
+        "cloud": "SECURE",
+        "gpu": {"id": gpu_id, "count": 1},
+        "mounts": {"global": [{"volumeId": volume_id, "path": _VOLUME_MOUNT_PATH}]},
+    }
+    public_keys = _authorized_public_keys()
+    if public_keys:
+        # 템플릿 env와 키별로 합쳐지고 요청 값이 이김
+        body["env"] = {"PUBLIC_KEY": public_keys}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(_RUNPOD_V2_PODS_URL, headers=_auth_headers(), json=body)
+    except Exception as e:
+        return None, describe_http_error(e), None
+    text = " ".join(response.text.split())[:400]
+    pod_id = response.json().get("id") if response.status_code in (200, 201) else None
+    return response.status_code, text, pod_id
+
+
+# 설정 문제(인증·잔액·본문 오류·429)는 다른 GPU로 해도 같으니 바로 중단, 400(재고 없음 포함)·5xx·전송 오류는 다음 GPU로.
+# 전부 실패하면 None - 호출부는 다음 스케줄 시도에 맡김(생성 실패는 과금 없음)
+_ABORT_STATUSES = {401, 402, 403, 404, 422, 429}
+
+
+async def _create_pod() -> str | None:
+    for gpu_id in gpu_type_ids():
+        status, text, pod_id = await _try_create_with_gpu(
+            gpu_id, settings.RUNPOD_POD_NAME, settings.RUNPOD_TEMPLATE_ID, settings.RUNPOD_NETWORK_VOLUME_ID
+        )
+        if pod_id:
+            logger.info(f"[LLM] RunPod pod 생성됨 (pod={pod_id}, gpu={gpu_id}, name={settings.RUNPOD_POD_NAME})")
+            return pod_id
+        logger.warning(f"[LLM] RunPod pod 생성 실패 (gpu={gpu_id}): HTTP {status} {text}")
+        if status in _ABORT_STATUSES:
+            break
+    logger.error("[LLM] RunPod pod 생성 실패 - 후보 GPU에서 pod을 못 잡음")
+    return None
+
+
+async def _delete_pod(pod_id: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(f"{_RUNPOD_V2_PODS_URL}/{pod_id}", headers=_auth_headers())
+            # 성공은 204. 이미 지워진 pod은 404일 것으로 보이나 문서엔 없어 실측 필요 - 목표(없음)는 달성이라 성공 취급
+            if response.status_code != 404:
+                response.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"[LLM] RunPod pod 삭제 요청 실패 (pod={pod_id}): {describe_http_error(e)}")
+        return False
+
+
+# 삭제 뒤 단건 조회가 어떻게 오는지 확실치 않아 id 조회 대신 이름 목록에서 사라졌는지로 판정함.
+# 조회 오류는 재시도로 넘김(일시 오류로 "남아 있다"고 오판해도 다음 정지 시도가 멱등으로 다시 지움)
+async def _wait_until_pods_gone(pod_ids: set[str], timeout_seconds: float = 120.0, interval_seconds: float = 5.0) -> bool:
+    elapsed = 0.0
+    while elapsed < timeout_seconds:
+        try:
+            remaining = {p.get("id") for p in await _list_named_pods()}
+            if not (remaining & pod_ids):
+                return True
+        except Exception as e:
+            logger.warning(f"pod 삭제 확인 중 조회 오류(재시도함): {e}")
+        await asyncio.sleep(interval_seconds)
+        elapsed += interval_seconds
+    return False
+
+
+# 정지 대신 삭제 - 밤배치 조기완료·시각 정지·유휴 안전망 등 여러 경로에서 불려 멱등이어야 함(없으면 True).
+# 반환값은 "요청 성공"이 아니라 "이름 조회에서 실제로 사라짐"
+async def delete_named_pods() -> bool:
+    try:
+        pods = await _list_named_pods()
+    except Exception as e:
+        logger.error(f"[LLM] RunPod pod 목록 조회 실패 - 삭제 못 함: {describe_http_error(e)}")
+        return False
+    if not pods:
+        return True
+    ids = {p["id"] for p in pods if p.get("id")}
+    results = [await _delete_pod(pod_id) for pod_id in ids]
+    if not all(results):
+        return False
+    if await _wait_until_pods_gone(ids):
+        logger.info(f"[LLM] RunPod pod 삭제 확인됨 (pod={sorted(ids)})")
+        return True
+    logger.error(f"[LLM] RunPod pod 삭제 요청은 성공했지만 사라진 것을 확인하지 못함 - 남아 있을 수 있음 (pod={sorted(ids)})")
+    return False
+
+
+async def _llm_server_healthy() -> bool:
+    if not settings.LLM_CRAWL_URL:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            return (await client.get(settings.LLM_CRAWL_URL.rsplit("/", 1)[0] + "/health")).status_code == 200
+    except Exception:
+        return False
+
+
+# run_start_script_via_ssh가 만드는 tmux 세션(llm_start)이 아직 살아 있으면 기동 스크립트가 도는 중.
+# SSH가 안 되면 판단 못 하므로 False(호출부가 새로 기동해 안전한 쪽으로)
+async def _start_script_running(pod_id: str) -> bool:
+    try:
+        async with await _ssh_connect(pod_id, connect_timeout=10) as conn:
+            result = await conn.run(f"tmux has-session -t {_TMUX_SESSION}", check=False)
+        return result.exit_status == 0
+    except Exception:
+        return False
+
+
+# 새 pod 방식의 기동. 같은 이름의 RUNNING pod이 이미 있으면(03시 시도가 도는 중 등) 새로 만들지 않고 그걸 이어 씀
+# - 기존 방식도 이미 RUNNING이면 resume 없이 SSH·스크립트만 다시 하던 것과 같음. RUNNING이 아닌 잔재는 지우고 새로 만듦.
+# 기동에 실패하면 pod을 지우고 새 pod으로 1회만 더 시도(호스트가 문제인 경우를 피하려고). 그래도 실패하면 pod이 안 남게
+# 지운 뒤 False(다음 스케줄 시도에 맡김)
+async def _create_and_launch_new_pod() -> bool:
+    try:
+        existing = await _list_named_pods()
+    except Exception as e:
+        logger.error(f"[LLM] RunPod pod 목록 조회 실패 - 기동 중단: {describe_http_error(e)}")
+        return False
+    pod_id = next((p["id"] for p in existing if p.get("status") == "RUNNING" and p.get("id")), None)
+    stale = {p["id"] for p in existing if p.get("id") and p["id"] != pod_id}
+    if stale:
+        logger.warning(f"[LLM] 이름이 같은 RUNNING 아닌 잔재 pod 삭제 후 진행 (pod={sorted(stale)})")
+        for stale_id in stale:
+            await _delete_pod(stale_id)
+        if not await _wait_until_pods_gone(stale):
+            logger.error("[LLM] 잔재 pod 삭제를 확인하지 못해 기동 중단")
+            return False
+
+    # 이미 RUNNING인 pod을 이어 쓸 때 start_vllm.sh를 무조건 다시 돌리면 떠 있던 vLLM·터널이 끊김 - 살아 있으면
+    # 그대로 쓰고, 기동 스크립트가 도는 중이면 재실행 없이 준비만 기다림. 둘 다 아닐 때만 아래에서 다시 기동
+    if pod_id is not None and settings.RUNPOD_SSH_KEY_PATH:
+        if await _llm_server_healthy():
+            logger.info(f"[LLM] 이미 켜진 pod의 llm_server가 살아 있어 그대로 사용 (pod={pod_id})")
+            return True
+        if await _start_script_running(pod_id):
+            logger.info(f"[LLM] 기동 스크립트가 진행 중이라 재실행 없이 준비 대기 (pod={pod_id})")
+            if await wait_until_llm_server_ready():
+                return True
+            logger.error(f"[LLM] 진행 중이던 기동이 끝내 준비되지 않음 - 삭제 후 새 pod으로 (pod={pod_id})")
+            await _delete_pod(pod_id)
+            await _wait_until_pods_gone({pod_id})
+            pod_id = None
+
+    for attempt in (1, 2):
+        if pod_id is None:
+            pod_id = await _create_pod()
+        if pod_id is None:
+            # 생성 자체 실패(GPU 부족 등)는 재시도해도 같은 결과일 가능성이 커서 바로 포기
+            return False
+        if not settings.RUNPOD_SSH_KEY_PATH:
+            return True
+        if await _launch_services(pod_id):
+            return True
+        logger.error(f"[LLM] 새 pod 기동 실패 - 삭제 (시도 {attempt}/2, pod={pod_id})")
+        await _delete_pod(pod_id)
+        await _wait_until_pods_gone({pod_id})
+        pod_id = None
+    return False
+
+
 _RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
 _POD_GPU_QUERY = "query($id: String!) { pod(input: {podId: $id}) { desiredStatus gpuCount } }"
 _POD_RESUME_MUTATION = (
@@ -66,7 +294,7 @@ async def start_pod(pod_id: str | None = None) -> bool:
     return True
 
 
-# pod 상태 조회(REST v1). 응답에 "runtime" 필드가 아예 없어서(10/16 실제 응답 확인) 상태는
+# pod 상태 조회(REST v1). 응답에 "runtime" 필드가 아예 없어서 상태는
 # desiredStatus(RUNNING/EXITED/TERMINATED)로만 알 수 있음 - 과금도 이 값 기준
 async def _fetch_pod_status(pod_id: str) -> dict:
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -102,6 +330,8 @@ async def _wait_until_actually_stopped(
 # 경로에서 호출됨(멱등이라 중복 호출 무해, 누락이 훨씬 나쁨). 어느 후보가 떠 있는지 기억하지 않고
 # 후보 전부에 정지를 보냄. 반환값은 "요청 성공"이 아니라 "전부 실제로 꺼짐"
 async def stop_pod() -> bool:
+    if new_pod_mode():
+        return await delete_named_pods()
     pod_ids = candidate_pod_ids()
     if not settings.RUNPOD_API_KEY or not pod_ids:
         logger.info("RUNPOD_API_KEY/RUNPOD_POD_ID 미설정, pod 정지 건너뜀")
@@ -133,7 +363,7 @@ async def _stop_one_pod(pod_id: str) -> bool:
 # pod을 깨운 직후 llm_server 헬스체크(base+"/health")가 응답할 때까지 폴링, 안 되면 False(다음날 재시도).
 # 기본 1500초 = 매 기동 vLLM 재설치(컨테이너 디스크가 stop마다 초기화, 5~10분) + vLLM 준비 최대 10분
 # abort_check: 기동 스크립트가 이미 실패했는지 보는 함수(실패 사유 문자열 또는 None) - 스크립트가
-# 설치 단계에서 죽어도 health는 530만 내서 1500초를 다 기다린 뒤에야 다음 후보로 넘어갔음(10/16)
+# 설치 단계에서 죽어도 health는 530만 내서 1500초를 다 기다린 뒤에야 다음 후보로 넘어갔음
 async def wait_until_llm_server_ready(
     timeout_seconds: float = 1500.0,
     interval_seconds: float = 10.0,
@@ -252,7 +482,7 @@ _VLLM_LOG_PATH = "/workspace/server/vllm.log"
 
 
 # 스크립트 출력 로그를 pod·실행 시각별로 분리 - 주/보조 pod, 03시/07시 실행이 한 파일을 덮어써서
-# 남은 로그가 어느 실행 것인지 알 수 없었음(10/16 LLM팀 지적)
+# 남은 로그가 어느 실행 것인지 알 수 없었음
 def _start_log_path(pod_id: str) -> str:
     return f"/workspace/start_vllm_remote_{pod_id}_{datetime.now(timezone.utc):%m%d_%H%M}.log"
 
@@ -285,13 +515,15 @@ async def run_start_script_via_ssh(pod_id: str | None = None, log_path: str | No
                 "command -v tmux >/dev/null || (apt-get update -qq && apt-get install -y -qq tmux)",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_SESSION} 2>/dev/null; true", check=False)
+            # 끝에 sleep infinity - 스크립트가 끝나 세션이 닫히면 nohup 없이 `&`로 띄운 vLLM이 같이 죽음
+            # (uvicorn·cloudflared는 nohup이라 생존). pod은 배치 뒤 삭제되니 세션이 남아도 무해
             # asyncssh conn.run은 비대화형 셸이라 .bashrc가 앞에서 return해 RunPod pod 환경변수
             # (/etc/rp_environment, .bashrc 끝에서 source됨)가 안 실림 - 직접 로그인 실행과 환경을 맞춤
             await _run_remote(
                 conn,
                 "start_vllm.sh 세션 생성",
                 f"tmux new-session -d -s {_TMUX_SESSION} -c /workspace "
-                f"'. /etc/rp_environment 2>/dev/null; bash -l start_vllm.sh 2>&1 | tee {log_path}'",
+                f"'. /etc/rp_environment 2>/dev/null; bash -l start_vllm.sh 2>&1 | tee {log_path}; sleep infinity'",
             )
             await conn.run(f"tmux kill-session -t {_TMUX_LOG_SESSION} 2>/dev/null; true", check=False)
             await _run_remote(
@@ -321,6 +553,8 @@ async def _run_remote(conn, label: str, command: str) -> None:
 # 후보 pod을 순서대로 시작 → SSH 준비 → start_vllm.sh 원격 실행 → llm_server 준비까지 시도해
 # 처음 성공한 하나를 씀. 스케줄러의 llm_attempt job이 start_pod() 대신 이 함수를 호출한다
 async def start_pod_and_launch_services() -> bool:
+    if new_pod_mode():
+        return await _create_and_launch_new_pod()
     pod_ids = candidate_pod_ids()
     if not settings.RUNPOD_API_KEY or not pod_ids:
         logger.info("RUNPOD_API_KEY/RUNPOD_POD_ID 미설정, pod 시작 건너뜀")

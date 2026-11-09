@@ -6,9 +6,9 @@ MusicBrainz 호출 간격이 2초라 4,800명이면 약 2시간 40분 걸린다 
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/ongoing/backfill_musicbrainz_genres.py --dry-run   # 대상 건수만
-    venv/bin/python3 scripts/ongoing/backfill_musicbrainz_genres.py --limit 20  # 몇 명만 시험
-    nohup venv/bin/python3 scripts/ongoing/backfill_musicbrainz_genres.py --limit 5000 > /tmp/mb_genres.log 2>&1 &
+    venv/bin/python3 scripts/old/backfill_musicbrainz_genres.py --dry-run   # 대상 건수만
+    venv/bin/python3 scripts/old/backfill_musicbrainz_genres.py --limit 20  # 몇 명만 시험
+    nohup venv/bin/python3 scripts/old/backfill_musicbrainz_genres.py --limit 5000 > /tmp/mb_genres.log 2>&1 &
 """
 
 import argparse

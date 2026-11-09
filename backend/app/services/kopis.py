@@ -273,12 +273,21 @@ _VENUE_ALIASES = [
     (re.compile(r"yes\s*24", re.IGNORECASE), "예스24"),
     (re.compile(r"live\s*hall", re.IGNORECASE), "라이브홀"),
     (re.compile(r"wonder\s*rock\s*hall", re.IGNORECASE), "원더로크홀"),
+    # 올림픽공원 안 공연장은 KOPIS 시설명이 "올림픽공원"이고 공연장명은 괄호 안("올림픽공원 (KSPO DOME(체조경기장))")
+    # 이라 "KSPO DOME"으로는 시설 검색이 안 됨 - 줄이다 "DOME"으로 엉뚱한 시설에 걸린 적 있음(잔나비)
+    (
+        re.compile(
+            r"(?<!올림픽공원 )(?<!올림픽공원)(KSPO\s*DOME|(?:올림픽\s*)?체조\s*경기장|올림픽\s*홀|핸드볼\s*경기장)",
+            re.IGNORECASE,
+        ),
+        r"올림픽공원 \1",
+    ),
 ]
 
 # 공연장 이름에 흔히 붙는 일반 단어 - 이것만 남은 후보로 시설을 검색하거나, 이것만 겹친다고 같은
 # 장소로 보면 "YES24 LIVE HALL"이 "SETI LIVE HALL"과 같은 장소로 잡힘
 _GENERIC_VENUE_WORDS_RE = re.compile(
-    r"live|hall|stage|arena|theater|라이브|홀|스테이지|아레나|극장|공연장", re.IGNORECASE
+    r"live|hall|stage|arena|theater|dome|라이브|홀|스테이지|아레나|극장|공연장|돔", re.IGNORECASE
 )
 
 

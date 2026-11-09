@@ -4,6 +4,7 @@ import os
 import re
 import base64
 import tempfile
+from datetime import date as _date
 
 import httpx
 from PIL import Image, ImageOps
@@ -128,7 +129,9 @@ _LABEL_SKIP = re.compile(
     r"^(장소|좌석|가격|날짜|시간|발송|배송|출고"
     r"|인터파크|interpark|nol\s*(ticket|티켓)|yes24|티켓링크|멜론|네이버"
     r"|입장번호|일시|예매|예약|주최|주관|문의|전화번호"
-    r"|금액|결제|수량|매수|판매일자|구매일자|발권일자)",
+    r"|금액|결제|수량|매수|판매일자|구매일자|발권일자"
+    # 양도 티켓의 "번호 B39 (1/1)"·"매매자: …"(구매자 이름이 KOPIS 검색어·로그로 나감)·"원매일자"
+    r"|번호|매매|원매|양도|구매자|판매자)",
     re.IGNORECASE,
 )
 
@@ -587,8 +590,9 @@ def _parse_ticket_fields_from_layout(annotation: dict, raw_text: str) -> dict | 
 # 실물 티켓은 앨범에 겹쳐 꽂혀 찍혀 뒤 티켓 안내문/제목이 같이 인식됨 - 첫 줄을 제목으로 잡으면 "유의사항"이나
 # 일본어 안내문이 됨. 그래서 공연 날짜 줄 바로 위 같은 열의 줄을 제목 후보로 씀. 날짜 줄이 여럿이면 "일시" 라벨
 # 줄 우선, 그다음 사진 중앙(가이드 박스)에 가까운 줄
-_ANCHOR_EXCLUDE_LABEL_RE = re.compile(r"예매|판매|발송|배송|수령|출고|발행")
-_ANCHOR_LABEL_RE = re.compile(r"(?<!예매)일\s*시|공연\s*일")
+# 공연일이 아닌 날짜 라벨 - 양도 티켓의 "원매일자, 2026-10-23"을 공연일로 써서 no_match 난 적 있음
+_ANCHOR_EXCLUDE_LABEL_RE = re.compile(r"예매|판매|발송|배송|수령|출고|발행|원매|매매|양도|구매|결제")
+_ANCHOR_LABEL_RE = re.compile(r"(?<!예매)일\s*시|(?:^|\s)일\s*사|공연\s*일")
 _ANCHOR_TITLE_MAX_GAP = 5.5    # 날짜 줄 높이의 이 배수까지 위쪽 줄만 제목 후보
 _ANCHOR_TITLE_X_TOLERANCE = 6  # 날짜 줄 시작 x와의 차이가 줄 높이의 이 배수 이내여야 같은 열
 _ANCHOR_TITLE_SKIP_RE = re.compile(r"입장번호|구역|\d+\s*열|\d+\s*번$")
@@ -732,6 +736,16 @@ def _label_pos(text: str, label_re: str) -> int | None:
     return m.start() if m else None
 
 
+# "일 시: 2020년 11월 01일(일) 오후 6:00"처럼 날짜 앞에 짧은 라벨만 있는 줄 - 라벨이 OCR로 깨지면("일사")
+# _LABEL_SKIP에 안 걸려 제목 후보로 끝단어 축소 검색을 열 번 넘게 함. "콘서트 2026.05.03"처럼 앞이 긴 줄은 둠
+_DATE_LINE_PREFIX_MAX = 4
+
+
+def _is_date_line(line: str) -> bool:
+    dm = _DATE_RE.search(line)
+    return bool(dm) and len(re.sub(r"[\s:：.\-]", "", line[:dm.start()])) <= _DATE_LINE_PREFIX_MAX
+
+
 # 공연명 후보가 될 수 있는 줄 전부 반환 (라벨/날짜/가격/좌석 등 노이즈 줄만 제외, 순서 유지)
 def _title_line_candidates(text: str) -> list[str]:
     candidates = []
@@ -739,7 +753,7 @@ def _title_line_candidates(text: str) -> list[str]:
         line = line.strip()
         if not line or not min_len_ok(line) or len(line) > 80:
             continue
-        if _DATE_RE.match(line):
+        if _DATE_RE.match(line) or _is_date_line(line):
             continue
         if _PRICE_RE.match(line):
             continue
@@ -780,13 +794,16 @@ def _extract_title_candidates(text: str) -> list[str]:
 # 공연 날짜 추출 (레이블 우선 → 발송일 이전의 첫 날짜 폴백)
 def _extract_concert_date(text: str) -> str | None:
     # (?<!예매)일시: 예매일시를 공연일로 오인하지 않도록 negative lookbehind
-    date = _find_date_near(text, r"공연일시?|공연\s*날짜|날짜|(?<!예매)일시")
+    date = _find_date_near(text, r"공연일시?|공연\s*날짜|날짜|(?<!예매)(?<!원매)일\s*시")
     if date:
         return date
 
     ship_pos = _label_pos(text, r"발송|배송|출고")
     for m in _DATE_RE.finditer(text):
         if ship_pos is not None and m.start() >= ship_pos:
+            continue
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        if _ANCHOR_EXCLUDE_LABEL_RE.search(text[line_start:m.start()]):
             continue
         if m.group(1):
             return _parse_date(m.group(1), m.group(2), m.group(3))
@@ -798,6 +815,47 @@ def _extract_concert_date(text: str) -> str | None:
         return _parse_date(sm.group(3), sm.group(1), sm.group(2))
 
     return None
+
+
+# 예매·결제·원매일자처럼 산 날짜 라벨이 붙은 날짜들
+_PURCHASE_LABEL_RE = re.compile(r"예매|원매|매매|양도|구매|결제")
+
+
+def _purchase_dates(text: str) -> list[_date]:
+    found = []
+    for line in text.splitlines():
+        dm = _DATE_RE.search(line)
+        if not dm or not _PURCHASE_LABEL_RE.search(line[:dm.start()]):
+            continue
+        parsed = (
+            _parse_date(dm.group(1), dm.group(2), dm.group(3)) if dm.group(1)
+            else _parse_date(dm.group(4), dm.group(5), dm.group(6))
+        )
+        if parsed:
+            found.append(_date.fromisoformat(parsed))
+    return found
+
+
+# 공연은 산 뒤에 보므로 공연일이 가장 늦은 구매일보다 앞이면 연도를 잘못 읽은 것("2026년"→"2020년") -
+# 같은 월·일로 구매일 이후 첫 해를 씀. 구매일이 없으면 그대로
+def _fix_year_by_purchase_date(concert_date: str | None, text: str) -> str | None:
+    if not concert_date:
+        return concert_date
+    purchases = _purchase_dates(text)
+    if not purchases:
+        return concert_date
+    latest = max(purchases)
+    current = _date.fromisoformat(concert_date)
+    if current >= latest:
+        return concert_date
+    for year in (latest.year, latest.year + 1):
+        try:
+            candidate = current.replace(year=year)
+        except ValueError:  # 2월 29일
+            continue
+        if candidate >= latest:
+            return candidate.isoformat()
+    return concert_date
 
 
 # 발송 날짜 추출
@@ -1043,6 +1101,7 @@ async def extract_ticket_info(image_bytes: bytes, content_type: str) -> dict:
                 ]
     if not fields.get("date"):
         fields["date"] = _extract_stacked_date_from_words(annotation)
+    fields["date"] = _fix_year_by_purchase_date(fields.get("date"), raw_text)
     seat = _extract_seat_detail(annotation, raw_text, anchor[1] if anchor else None)
     if seat:
         fields["seat"] = seat

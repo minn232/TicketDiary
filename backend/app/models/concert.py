@@ -76,6 +76,9 @@ class Concert(Base):
     # 내용이 안 바뀌므로 크롤링(30회)보다 상한은 낮게 잡음(crawler.py 참고)
     artist_extraction_attempted_at = Column(DateTime(timezone=True), nullable=True)
     artist_extraction_attempt_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    # 포스터 추출 콜백(/artist-result)을 받은 시점. 있으면 재전송 대상에서 빠짐 - 받은 표시가 없어
+    # 성공한 공연도 상한(5회)까지 다시 보내 GPU 시간을 쓰고 고친 값을 덮을 위험이 있었음
+    artist_extraction_received_at = Column(DateTime(timezone=True), nullable=True)
     # 페스티벌 라인업 변경 감지용 직전 스냅샷(조회수/광고 등 노이즈 제거된 본문 해시 + 이미지 경로 목록).
     # crawl_attempted_at/ticketing_date와는 목적이 달라 별도 필드로 분리 - 저건 "티켓팅일 확보" 완료
     # 판단용, 이건 "라인업이 직전과 달라졌는가" 비교용

@@ -25,6 +25,7 @@ ticketing_date는 크롤링 "완료" 판정에 쓰이는 필드라(crawler.py의
 실어보낸다 - _normalize_ticketing_phases 참고.
 """
 
+import re
 from datetime import date, datetime
 
 
@@ -78,6 +79,24 @@ def _is_null_literal(name: str) -> bool:
     return name.strip().lower() in _NULL_LITERALS
 
 
+# timetable에는 아티스트 항목 말고 입장 안내 항목("매표소 오픈", "GATE OPEN" 등 - artist에 인쇄된 문구가
+# 그대로 들어옴)도 있다. lineup이 비어 timetable에서 아티스트명을 뽑을 때 이게 아티스트로 박히지 않게 거른다.
+# extract_poster.py의 _ADMISSION_NOTICE_RE와 같은 패턴으로 맞춰 둔다(이 모듈은 그쪽을 import하지 않음).
+_ADMISSION_NOTICE_RE = re.compile(
+    r"(gate|doors?)\s*open|게이트\s*오픈|도어\s*오픈|입장|ticket\s*booth|티켓\s*부스|매표소|box\s*office|팔찌\s*교환|wristband|티켓\s*(배부|수령|교환)",
+    re.IGNORECASE,
+)
+
+
+# 공연 시작 표시("공연 시작" 등). lineup이 빈 단독 공연에서는 timetable에 이름 대신 이 표시가 남는다(2026-10-29,
+# extract_poster.py _fill_start_time_artists) - 위 입장 안내처럼 아티스트명으로 뽑지 않는다.
+# extract_poster.py의 _START_TIME_LABEL_RE와 같은 패턴으로 맞춰 둔다.
+_START_TIME_LABEL_RE = re.compile(
+    r"^(공연\s*시작|공연\s*시간|본\s*공연(\s*시작)?|(show\s*)?start|show\s*time)$",
+    re.IGNORECASE,
+)
+
+
 # entries(lineup 또는 timetable)에서 실제로 이름이 채워진 항목만 뽑아 중복 제거한 리스트로
 # 반환. 블라인드 라인업(artist=None)은 자연히 걸러짐 - 순서는 처음 등장한 순서 유지.
 def _unique_artist_names(entries: list[dict]) -> list[str]:
@@ -105,9 +124,53 @@ def _is_untrustworthy_single_festival_artist(raw: dict, names: list[str], concer
     return True
 
 
+# 2026-10-28: 행사명이 아티스트로 들어오는 경우를 거른다(실측: "DAEGU HIPHOP FESTIVAL", "Dead Rock Working Fest.",
+# 경기인디뮤직페스티벌 (INMUFE)의 "INMUFF"). 이름에 페스티벌 단어가 있거나, 공연명에서 페스티벌 이름에 해당하는 부분
+# (페스티벌 단어가 든 부분과 그 바로 뒤 괄호 속 별칭)과 같거나 한 글자만 다르면 행사명으로 본다. 공연명에 들어 있다는
+# 것만으로는 거르지 않는다 - 단독 공연이나 "해운대재즈페스티벌: …, 신관웅 퀸텟"처럼 출연자가 공연명에 적히는 경우가 많다.
+_EVENT_WORD_RE = re.compile(r"\bfest(ival|a)?\b|페스티벌|페스타|페스트", re.IGNORECASE)
+_TITLE_ALIAS_RE = re.compile(r"([^()\[\]:]+?)\s*\(([^()]+)\)")
+
+
+def _name_key(name: str) -> str:
+    return re.sub(r"[\W_]+", "", name.casefold())
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) <= 1
+    short, long_ = sorted((a, b), key=len)
+    return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
+
+
+def _event_name_keys(concert_name: str | None) -> set[str]:
+    if not concert_name:
+        return set()
+    parts = [p for p in re.split(r"[()\[\]:]", concert_name) if _EVENT_WORD_RE.search(p)]
+    for title, alias in _TITLE_ALIAS_RE.findall(concert_name):
+        if _EVENT_WORD_RE.search(title) or _EVENT_WORD_RE.search(alias):
+            parts += [title, alias]
+    return {key for key in map(_name_key, parts) if key}
+
+
+def _looks_like_event_name(name: str, event_keys: set[str]) -> bool:
+    if _EVENT_WORD_RE.search(name):
+        return True
+    key = _name_key(name)
+    return any(key == k or (min(len(key), len(k)) >= 4 and _within_one_edit(key, k)) for k in event_keys)
+
+
 def _extract_artist_names(raw: dict, concert_name: str | None = None) -> list[str]:
-    entries = raw.get("lineup") or raw.get("timetable") or []
-    names = _unique_artist_names(entries)
+    entries = raw.get("lineup") or [
+        entry for entry in raw.get("timetable") or []
+        if not (entry.get("artist") and (
+            _ADMISSION_NOTICE_RE.search(entry["artist"]) or _START_TIME_LABEL_RE.match(entry["artist"].strip())
+        ))
+    ]
+    event_keys = _event_name_keys(concert_name)
+    names = [name for name in _unique_artist_names(entries) if not _looks_like_event_name(name, event_keys)]
     if _is_untrustworthy_single_festival_artist(raw, names, concert_name):
         return []
     return names
@@ -137,12 +200,13 @@ def normalize_lineup_entries(raw, concert_name: str | None = None) -> list[dict]
     entries = raw.get("lineup") or []
     if _is_untrustworthy_single_festival_artist(raw, _unique_artist_names(entries), concert_name):
         return []
+    event_keys = _event_name_keys(concert_name)
     seen: set[tuple[str, str]] = set()
     result: list[dict] = []
     for entry in entries:
         name = entry.get("artist")
         perf_date = entry.get("performance_date")
-        if not name or _is_null_literal(name) or not perf_date:
+        if not name or _is_null_literal(name) or not perf_date or _looks_like_event_name(name, event_keys):
             continue
         key = (name, perf_date)
         if key in seen:

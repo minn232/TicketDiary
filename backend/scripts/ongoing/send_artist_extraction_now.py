@@ -4,18 +4,18 @@ LLM팀 포스터 추출 파이프라인으로 즉시 1회 전송하는 일회용
 
 사용법 (서버에서):
     cd /home/ubuntu/TicketDiary/backend
-    venv/bin/python3 scripts/send_artist_extraction_now.py            # 대상 전체 전송
-    venv/bin/python3 scripts/send_artist_extraction_now.py --limit 30 # 소규모로 먼저 테스트
+    venv/bin/python3 scripts/ongoing/send_artist_extraction_now.py            # 대상 전체 전송
+    venv/bin/python3 scripts/ongoing/send_artist_extraction_now.py --limit 30 # 소규모로 먼저 테스트
 
 주의:
-- RunPod pod이 꺼져있으면 이 스크립트가 깨우고(idempotent), llm_server 헬스체크가
-  응답할 때까지 기다린 다음에 전송한다. 다만 실제 포스터 처리는 전송 후에도 llm_server
+- RunPod pod이 없으면 이 스크립트가 만들거나 깨우고(새 방식은 td-llm-batch 이름으로 새로 생성,
+  이미 RUNNING이면 이어 씀), llm_server 헬스체크가 응답할 때까지 기다린 다음에 전송한다. 다만 실제 포스터 처리는 전송 후에도 llm_server
   쪽에서 백그라운드로 계속 진행되므로(대량이면 수십 분~수 시간), 이 스크립트가 끝났다고
   처리가 다 끝난 게 아니다.
 - pod을 자동으로 끄지 않는다 - 전송 직후에 꺼버리면 처리 중인 작업이 통째로 날아간다.
-  처리가 끝났다고 판단되면 직접 RunPod 콘솔에서 끄거나, 정해진 정기 stop 배치(KST 01~02시)를
-  기다릴 것. 이 스크립트를 심야 시간대가 아닌 때 돌렸다면 정기 stop이 그날 안에 안 걸릴 수
-  있으니 특히 주의.
+  처리가 끝났다고 판단되면 pod_stop.py(새 방식은 pod 삭제)로 직접 끌 것.
+- 정기 안전망(KST 05·06·09·10시)이 이름이 td-llm-batch인 pod을 삭제함 - 그 시각에 처리 중이면
+  끊기니 KST 10시 이후에 돌리고, 03시·07시 정기 시도와도 겹치지 않게 할 것.
 """
 
 import argparse

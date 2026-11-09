@@ -406,7 +406,7 @@ async def _check_real_setlist_on_view(concert_id: UUID, performance_date: date) 
 
 
 # 아티스트를 고친 뒤 - 고치기 전 아티스트로 못 찾아 남은 빈 행(쿨다운 추적용)을 지워서 다음 조회 때
-# 바로 다시 시도되게 함. 실사례(10/20): 멤버 본명으로 시도해 실패한 직후 고쳤는데 하루 쿨다운에 걸려
+# 바로 다시 시도되게 함. 실사례: 멤버 본명으로 시도해 실패한 직후 고쳤는데 하루 쿨다운에 걸려
 # 셋리가 안 잡혔고, 끝난 지 14일 넘은 공연은 매일 백필에서도 빠져 조회 때만 재시도됨.
 # 곡이 있는 행은 안 건드림(commit은 호출부가 함)
 async def clear_failed_real_setlist_attempts(db: AsyncSession, concert_id: UUID) -> None:
