@@ -6,6 +6,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../widgets/summary_calendar.dart';
+import '../widgets/summary_date_picker.dart';
 import '../widgets/summary_report.dart';
 import '../widgets/scrapbook_page_background.dart';
 import '../services/api_client.dart';
@@ -165,6 +166,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
         ? Future.value(latestNews)
         : _loadCalendarNews();
     NewsListService.updates.addListener(_onNewsListUpdated);
+    TabNavCoordinator.instance.registerReselect(
+      DiaryTab.summary,
+      () => _calendarTodayRequest.value++,
+    );
     _newsRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
         unawaited(_loadCalendarNews().catchError((Object _) => <NewsModel>[]));
@@ -182,7 +187,28 @@ class _SummaryScreenState extends State<SummaryScreen> {
   }
 
   Future<void> _pickCalendarDate() async {
-    var picked = _calendarSelection.value;
+    final today = DateUtils.dateOnly(DateTime.now());
+    final attendedDates =
+        _list((_cache['all'] ?? _data)?['ticket_details'])
+            .map((ticket) => DateTime.tryParse('${ticket['date']}'))
+            .whereType<DateTime>()
+            .map(DateUtils.dateOnly)
+            .where((date) => !date.isAfter(today))
+            .toList()
+          ..sort();
+    final maximumDate = DateTime(today.year + 5, today.month, today.day);
+    final dates = <DateTime>{
+      ...attendedDates,
+      for (
+        var day = today;
+        !day.isAfter(maximumDate);
+        day = DateTime(day.year, day.month, day.day + 1)
+      )
+        day,
+    }.toList()..sort();
+    var picked = dates.contains(_calendarSelection.value)
+        ? _calendarSelection.value
+        : today;
     await showCupertinoModalPopup<void>(
       context: context,
       builder: (context) => Container(
@@ -210,12 +236,10 @@ class _SummaryScreenState extends State<SummaryScreen> {
               ),
             ),
             Expanded(
-              child: CupertinoDatePicker(
-                mode: CupertinoDatePickerMode.date,
-                initialDateTime: picked,
-                minimumDate: DateTime(2000),
-                maximumDate: DateTime(2100),
-                onDateTimeChanged: (date) => picked = date,
+              child: SummaryDatePicker(
+                dates: dates,
+                initialDate: picked,
+                onChanged: (date) => picked = date,
               ),
             ),
           ],
@@ -302,6 +326,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
     TicketRefreshBus.tick.removeListener(_load);
     TicketRefreshBus.tick.removeListener(_loadUpcomingTickets);
     FavoritesStore.instance.removeListener(_refreshCalendarNews);
+    TabNavCoordinator.instance.registerReselect(DiaryTab.summary, null);
     _calendarSelection.removeListener(_onCalendarSelectionChanged);
     _calendarSelection.dispose();
     _calendarTodayRequest.dispose();

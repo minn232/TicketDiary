@@ -190,27 +190,39 @@ class _SummaryCalendarState extends State<SummaryCalendar>
       }
       final entries = grouped[selected] ?? [];
       final currentMonth = DateTime(now.year, now.month);
+      final todayDate = DateTime(now.year, now.month, now.day);
+      final attendedDates =
+          grouped.entries
+              .where((entry) => entry.value.any((item) => item['kind'] == null))
+              .map((entry) => entry.key)
+              .toList()
+            ..sort();
+      // 달력은 가장 오래된 관람 기록부터 오늘 기준 5년 뒤까지만 탐색합니다.
+      // 과거 날짜의 소식/예매 데이터는 위에서 이미 제외되고, 관람 기록만 남습니다.
+      final earliestAttended = attendedDates.isEmpty
+          ? todayDate
+          : attendedDates.first;
+      final latestAllowedDate = DateTime(now.year + 5, now.month, now.day);
+      final latestAllowedMonth = DateTime(
+        latestAllowedDate.year,
+        latestAllowedDate.month,
+      );
       final availableMonths = <DateTime>{currentMonth};
       for (final date in grouped.keys) {
         final candidate = DateTime(date.year, date.month);
-        availableMonths.add(candidate);
+        if (!candidate.isBefore(
+              DateTime(earliestAttended.year, earliestAttended.month),
+            ) &&
+            !candidate.isAfter(latestAllowedMonth)) {
+          availableMonths.add(candidate);
+        }
       }
-      final latestMonth = availableMonths.reduce(
-        (a, b) => a.isAfter(b) ? a : b,
-      );
       for (
-        var cursor = currentMonth;
-        cursor.isBefore(latestMonth);
+        var cursor = DateTime(earliestAttended.year, earliestAttended.month);
+        !cursor.isAfter(latestAllowedMonth);
         cursor = DateTime(cursor.year, cursor.month + 1)
       ) {
-        availableMonths.add(cursor);
-      }
-      // 일정 데이터가 없어도 현재 달부터 12개월 뒤까지는 탐색할 수 있게
-      // 합니다. 미래 날짜는 소식/관람 데이터가 없어도 선택 가능합니다.
-      for (var i = 0; i <= 12; i++) {
-        availableMonths.add(
-          DateTime(currentMonth.year, currentMonth.month + i),
-        );
+        if (!cursor.isBefore(currentMonth)) availableMonths.add(cursor);
       }
       final months = availableMonths.toList()..sort();
       final monthIndex = months.indexWhere(
@@ -422,11 +434,6 @@ class _SummaryCalendarState extends State<SummaryCalendar>
                                                 month.year,
                                                 month.month,
                                                 day,
-                                              );
-                                              final todayDate = DateTime(
-                                                now.year,
-                                                now.month,
-                                                now.day,
                                               );
                                               final items =
                                                   grouped[date] ?? const [];

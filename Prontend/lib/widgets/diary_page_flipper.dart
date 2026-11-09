@@ -465,19 +465,9 @@ class _DiaryPageFlipperState extends State<DiaryPageFlipper>
         if (_dragDirection == _FlipDirection.forward) {
           // 왼쪽으로 스와이프 (음수) -> value 증가 (0.0 -> 1.0)
           _controller.value -= delta;
-
-          // 25% 이상 넘기면 자동으로 다음 페이지로 이동
-          if (_controller.value >= 0.25) {
-            _handleForwardFlip();
-          }
         } else {
           // 오른쪽으로 스와이프 (양수) -> value 증가 (0.0 -> 1.0)
           _backController.value += delta;
-
-          // 25% 이상 넘기면 자동으로 이전 페이지로 이동
-          if (_backController.value >= 0.25) {
-            _handleBackwardFlip();
-          }
         }
       },
       onHorizontalDragCancel: () {
