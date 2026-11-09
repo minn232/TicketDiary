@@ -12,10 +12,10 @@ import 'paper_style.dart';
 import 'responsive_text.dart';
 
 const Color _ink = Color(0xFF463C2E);
+const Color _desk = Color(0xFF37261F);
 const int _maxMemoLength = 2000;
 
 /// 공연후 페이지 바깥 책상 색, 정리본 종이 색.
-const Color _desk = Color(0xFF37261F);
 const Color _typedPaper = Color(0xFFF3EEE3);
 
 /// 한글이 "시/도해요"처럼 글자 중간에서 줄바꿈되지 않게 단어 안 글자 사이에 WORD JOINER(U+2060)를 끼움
@@ -130,7 +130,12 @@ class BlogMemoButton extends StatefulWidget {
 class _BlogMemoButtonState extends State<BlogMemoButton> {
   static const _hintKey = 'blog_memo_hint_shown';
   bool _hint = false;
+  bool _pressed = false;
   Timer? _hintTimer;
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
 
   @override
   void initState() {
@@ -239,6 +244,9 @@ class _BlogMemoButtonState extends State<BlogMemoButton> {
             key: const ValueKey('after_blog_memo_button'),
             behavior: HitTestBehavior.opaque,
             onTap: widget.onTap,
+            onTapDown: (_) => _setPressed(true),
+            onTapUp: (_) => _setPressed(false),
+            onTapCancel: () => _setPressed(false),
             child: Padding(
               padding: EdgeInsets.symmetric(
                 horizontal: context.rs(8),
@@ -247,7 +255,11 @@ class _BlogMemoButtonState extends State<BlogMemoButton> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  note,
+                  AnimatedScale(
+                    scale: _pressed ? 0.94 : 1,
+                    duration: const Duration(milliseconds: 90),
+                    child: note,
+                  ),
                   Positioned(
                     bottom: h + context.rs(16),
                     left: 0,
@@ -341,7 +353,8 @@ class _MemoLinesPainter extends CustomPainter {
       old.typed != typed || old.written != written;
 }
 
-/// 감상 메모 화면을 아래에서 올라오는 종이 한 장으로 엶. 닫힐 때 최신 상태를 돌려줌.
+/// 감상 메모 화면을 아래에서 올라오는 종이 시트로 엶(공유 시트처럼 위가 어둡게 비치고,
+/// 빈 곳을 누르거나 아래로 끌어도 닫힘). 닫힐 때 최신 상태를 돌려줌.
 Future<BlogDraft?> openBlogMemoPage(
   BuildContext context, {
   required String ticketId,
@@ -351,6 +364,10 @@ Future<BlogDraft?> openBlogMemoPage(
 }) {
   return Navigator.of(context, rootNavigator: true).push<BlogDraft>(
     PageRouteBuilder<BlogDraft>(
+      opaque: false,
+      barrierDismissible: true,
+      barrierLabel: '닫기',
+      barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 320),
       reverseTransitionDuration: const Duration(milliseconds: 240),
       pageBuilder: (_, _, _) => BlogMemoPage(
@@ -575,72 +592,95 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
         Builder(
           builder: (context) {
             final typedPaper = _tab == 1 && _draft.hasResult;
-            return Scaffold(
-              backgroundColor: _desk,
-              body: SafeArea(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 640),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _topBar(),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                Positioned.fill(
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 200),
-                                    decoration: BoxDecoration(
-                                      color: typedPaper
-                                          ? _typedPaper
-                                          : PaperColors.card,
-                                      borderRadius: BorderRadius.circular(4),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(
-                                            alpha: .35,
+            // 공유 시트처럼 위쪽을 비워 앞 페이지가 어둡게 비치게 함(빈 곳을 누르면 닫힘).
+            final media = MediaQuery.of(context);
+            final sheetHeight = media.size.height - media.padding.top - 64;
+            return Align(
+              alignment: Alignment.bottomCenter,
+              child: SizedBox(
+                width: media.size.width < 640 ? media.size.width : 640,
+                height: sheetHeight,
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: true,
+                    child: Scaffold(
+                      backgroundColor: _desk,
+                      body: SafeArea(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _topBar(),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  14,
+                                  16,
+                                  14,
+                                ),
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    Positioned.fill(
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 200,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: typedPaper
+                                              ? _typedPaper
+                                              : PaperColors.card,
+                                          borderRadius: BorderRadius.circular(
+                                            4,
                                           ),
-                                          blurRadius: 18,
-                                          offset: const Offset(0, 8),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.black.withValues(
+                                                alpha: .35,
+                                              ),
+                                              blurRadius: 18,
+                                              offset: const Offset(0, 8),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        _paperHead(context),
-                                        Expanded(
-                                          child: _tab == 0
-                                              ? _memoTab(context)
-                                              : _resultTab(context),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            _paperHead(context),
+                                            Expanded(
+                                              child: _tab == 0
+                                                  ? _memoTab(context)
+                                                  : _resultTab(context),
+                                            ),
+                                          ],
                                         ),
-                                      ],
+                                      ),
                                     ),
-                                  ),
-                                ),
-                                const Positioned(
-                                  top: -9,
-                                  left: 0,
-                                  right: 0,
-                                  child: Center(
-                                    child: MaskingTape(
-                                      tint: PaperColors.tapeMustard,
-                                      width: 84,
-                                      height: 20,
-                                      angle: -0.03,
+                                    const Positioned(
+                                      top: -9,
+                                      left: 0,
+                                      right: 0,
+                                      child: Center(
+                                        child: MaskingTape(
+                                          tint: PaperColors.tapeMustard,
+                                          width: 84,
+                                          height: 20,
+                                          angle: -0.03,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -652,71 +692,97 @@ class _BlogMemoPageState extends State<BlogMemoPage> {
     );
   }
 
-  /// 책상 위 뒤로가기 / 저장 중 표시.
+  double _dragDy = 0;
+
+  /// 책상 위 손잡이 / 저장 중 표시. 손잡이 줄을 아래로 끌어도 닫힘(저장 후 닫는 [_close]).
   Widget _topBar() {
     // 높이 고정 - 탭마다 오른쪽 글자가 생겼다 없어져도 종이가 위아래로 안 움직이게.
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 4, 16, 0),
-      child: SizedBox(
-        height: 48,
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: _saving ? null : _close,
-              icon: Icon(
-                Icons.arrow_back,
-                color: PaperColors.card.withValues(alpha: .85),
-              ),
-            ),
-            const Spacer(),
-            if (_saving)
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: PaperColors.card.withValues(alpha: .7),
-                ),
-              )
-            else if (_showDraftResult && _tab == 1 && _draft.hasResult)
-              // 종이 안엔 글만 두고, 블로그에 옮기기는 책상 위에 놓인 작은 종이 쪽지로.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _sendToBlog,
-                child: Center(
-                  child: Transform.rotate(
-                    angle: -.03,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: PaperColors.card,
-                        borderRadius: BorderRadius.circular(2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: .35),
-                            blurRadius: 5,
-                            offset: const Offset(1, 2),
-                          ),
-                        ],
-                      ),
-                      child: Text(
-                        '블로그에 옮기기',
-                        style: TextStyle(
-                          fontSize: context.sp(11.5),
-                          fontWeight: FontWeight.w800,
-                          color: _ink,
-                        ),
-                      ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragStart: (_) => _dragDy = 0,
+      onVerticalDragUpdate: (d) => _dragDy += d.delta.dy,
+      onVerticalDragEnd: (d) {
+        if (_dragDy > 40 || (d.primaryVelocity ?? 0) > 500) unawaited(_close());
+        _dragDy = 0;
+      },
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+        child: SizedBox(
+          height: 32,
+          child: Stack(
+            children: [
+              Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: PaperColors.card.withValues(alpha: .35),
+                      borderRadius: BorderRadius.circular(2),
                     ),
                   ),
                 ),
               ),
-          ],
+              _topBarRight(),
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  Widget _topBarRight() {
+    return Row(
+      children: [
+        const Spacer(),
+        if (_saving)
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: PaperColors.card.withValues(alpha: .7),
+            ),
+          )
+        else if (_showDraftResult && _tab == 1 && _draft.hasResult)
+          // 종이 안엔 글만 두고, 블로그에 옮기기는 책상 위에 놓인 작은 종이 쪽지로.
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _sendToBlog,
+            child: Center(
+              child: Transform.rotate(
+                angle: -.03,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: PaperColors.card,
+                    borderRadius: BorderRadius.circular(2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: .35),
+                        blurRadius: 5,
+                        offset: const Offset(1, 2),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    '블로그에 옮기기',
+                    style: TextStyle(
+                      fontSize: context.sp(11.5),
+                      fontWeight: FontWeight.w800,
+                      color: _ink,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

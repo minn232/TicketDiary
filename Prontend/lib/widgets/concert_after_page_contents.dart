@@ -1648,7 +1648,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   /// 하단 모드 표시 / 편집 도구 줄 높이 (태블릿은 조금 올림).
   double get _bottomBarInset => context.rs(_isTablet(context) ? 20 : 8);
 
-  /// 하단 모드 표시. 잠금 모드면 오른쪽에 공유 버튼.
+  /// 하단 모드 표시. 공유 버튼은 오른쪽 아래 모서리 메모지([_shareCorner]).
   Widget _modeBadge() {
     final badge = IgnorePointer(child: _ModeBadge(edit: _edit));
     return Positioned(
@@ -1662,18 +1662,11 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   static const double _toolButtonHeight = 34;
 
   Widget _shareCorner() {
-    if (widget.exportMode || _edit || _activeMemoKey != null) {
-      return const SizedBox.shrink();
-    }
+    if (widget.exportMode || _edit || _activeMemoKey != null) return const SizedBox.shrink();
     return Positioned(
       right: context.rs(_isTablet(context) ? 16 : 10),
       bottom: _bottomBarInset - context.rs(2),
-      child: _ShareButton(
-        onTap: _openShareSheet,
-        memoBounds: BlogMemoButton.visibleBounds(
-          hasResult: _blogDraft?.hasResult ?? false,
-        ),
-      ),
+      child: _ShareButton(onTap: _openShareSheet),
     );
   }
 
@@ -3878,60 +3871,148 @@ class _ModeBadge extends StatelessWidget {
   }
 }
 
-/// 잠금 모드 오른쪽 아래의 공유 버튼. 왼쪽 감상 메모지와 같은 크기.
-class _ShareButton extends StatelessWidget {
+/// 잠금 모드 오른쪽 아래 공유 버튼. 왼쪽 감상 메모지와 같은 크기의 테이프 붙인 메모지,
+/// 연필로 그린 공유 화살표. 좌우 대칭이 되게 반대로 기울이고, 누르면 살짝 작아짐.
+class _ShareButton extends StatefulWidget {
   final VoidCallback onTap;
-  final Rect memoBounds;
-  const _ShareButton({required this.onTap, required this.memoBounds});
+  const _ShareButton({required this.onTap});
+
+  @override
+  State<_ShareButton> createState() => _ShareButtonState();
+}
+
+class _ShareButtonState extends State<_ShareButton> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 기존 기울기를 유지하면서 회전 후 표시 폭·높이를 메모지와 맞춥니다.
-    const angle = .05;
-    final c = math.cos(angle);
-    final s = math.sin(angle);
-    final denominator = c * c - s * s;
-    final width = (memoBounds.width * c - memoBounds.height * s) / denominator;
-    final height = 0.8 * (memoBounds.height * c - memoBounds.width * s) / denominator;
-    final center = Offset(63 - memoBounds.center.dx, memoBounds.center.dy);
+    final w = context.rs(40);
+    final h = context.rs(33);
+    final tapeW = context.rs(22);
     return Semantics(
       button: true,
       label: '공유하기',
       child: GestureDetector(
         key: const ValueKey('after_share_button'),
         behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: SizedBox(
-          width: context.rs(63),
-          height: context.rs(45),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned(
-                left: context.rs(center.dx - width / 2),
-                top: context.rs(center.dy - height / 2),
-                width: context.rs(width),
-                height: context.rs(height),
-                child: TapeStrip(
-                  tint: PaperColors.tapeMustard,
-                  tintAmount: 0.6,
-                  angle: angle,
-                  padding: EdgeInsets.zero,
-                  child: Center(
-                    child: Icon(
-                      Icons.ios_share,
-                      size: context.rs(20),
-                      color: _kraftInk.withValues(alpha: 0.8),
+        onTap: widget.onTap,
+        onTapDown: (_) => _setPressed(true),
+        onTapUp: (_) => _setPressed(false),
+        onTapCancel: () => _setPressed(false),
+        child: AnimatedScale(
+          scale: _pressed ? 0.94 : 1,
+          duration: const Duration(milliseconds: 90),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: context.rs(8),
+              vertical: context.rs(2),
+            ),
+            child: SizedBox(
+              width: w + context.rs(7),
+              height: h + context.rs(8),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned(
+                    left: context.rs(7),
+                    top: context.rs(6),
+                    child: Transform.rotate(
+                      angle: .1,
+                      child: Container(
+                        width: w,
+                        height: h,
+                        decoration: BoxDecoration(
+                          color: PaperColors.card,
+                          borderRadius: BorderRadius.circular(1.5),
+                          border: Border.all(
+                            color: _kraftInk.withValues(alpha: .14),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _kraftInk.withValues(
+                                alpha: _pressed ? .1 : .18,
+                              ),
+                              blurRadius: _pressed ? 1.5 : 3,
+                              offset: _pressed
+                                  ? const Offset(.5, 1)
+                                  : const Offset(1, 2),
+                            ),
+                          ],
+                        ),
+                        child: const CustomPaint(painter: _PencilShareArrow()),
+                      ),
                     ),
                   ),
-                ),
+                  Positioned(
+                    left: context.rs(7) + (w - tapeW) / 2,
+                    top: context.rs(2.5),
+                    child: MaskingTape(
+                      tint: PaperColors.tapeMustard,
+                      width: tapeW,
+                      height: context.rs(8.5),
+                      angle: .12,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+/// 메모지에 연필로 그린 듯한 공유 표시. 위로 나가는 화살표와 받침 선을 살짝 삐뚤게.
+class _PencilShareArrow extends CustomPainter {
+  const _PencilShareArrow();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final pencil = Paint()
+      ..color = _kraftInk.withValues(alpha: .6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    // 받침: 윗면이 열린 상자. 모서리가 살짝 비껴나고 선이 휘게.
+    final box = Path()
+      ..moveTo(w * .33, h * .56)
+      ..quadraticBezierTo(w * .31, h * .7, w * .32, h * .81)
+      ..quadraticBezierTo(w * .5, h * .84, w * .69, h * .8)
+      ..quadraticBezierTo(w * .7, h * .68, w * .67, h * .55);
+    canvas.drawPath(box, pencil);
+    // 화살표 몸통과 머리. 짧게, 선 끝이 조금씩 넘치게.
+    final stem = Path()
+      ..moveTo(w * .5, h * .64)
+      ..quadraticBezierTo(w * .52, h * .47, w * .5, h * .27);
+    final head = Path()
+      ..moveTo(w * .38, h * .4)
+      ..quadraticBezierTo(w * .44, h * .34, w * .5, h * .25)
+      ..quadraticBezierTo(w * .56, h * .33, w * .63, h * .39);
+    canvas.drawPath(stem, pencil);
+    canvas.drawPath(head, pencil);
+    // 연필로 한 번 더 덧그은 흔적.
+    final retrace = Paint()
+      ..color = _kraftInk.withValues(alpha: .28)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = .9
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(
+      Path()
+        ..moveTo(w * .51, h * .6)
+        ..quadraticBezierTo(w * .49, h * .45, w * .5, h * .3),
+      retrace,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PencilShareArrow oldDelegate) => false;
 }
 
 /// 편집 모드에서 포스터/사진 모서리에 붙는 고정 표시. 누르면 고정/해제.
