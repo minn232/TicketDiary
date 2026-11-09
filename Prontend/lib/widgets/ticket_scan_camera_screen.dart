@@ -13,13 +13,6 @@ import 'ticket_alignment_detector.dart';
 
 enum _ScanStage { positioning, aligned, capturing }
 
-/// 화면 오른쪽 아래 "임시 스캔" 버튼을 눌렀을 때 [TicketScanCameraScreen]이
-/// 반환하는 값. 카메라 촬영이나 백엔드 OCR 호출을 전혀 거치지 않고, 호출부
-/// (다이어리 화면)가 테스트용 더미 티켓을 바로 추가하도록 신호만 보냅니다.
-class DebugFakeScanRequested {
-  const DebugFakeScanRequested();
-}
-
 /// [백엔드 수정] 받기 모드에서 "사진 없이 받았어요"를 눌렀을 때 반환하는 값.
 class ReceiveWithoutPhotoRequested {
   const ReceiveWithoutPhotoRequested();
@@ -30,8 +23,8 @@ class ReceiveWithoutPhotoRequested {
 ///
 /// 정렬 판단은 [TicketAlignmentDetector]에, 촬영된 사진의 OCR 추출 + 공연
 /// 매칭은 [TicketScanService](백엔드 `POST /concerts/scan`)에 위임합니다.
-/// 성공 시 [Navigator.pop]으로 [TicketScanResponse]를, 디버그 버튼으로
-/// 종료하면 [DebugFakeScanRequested]를 반환합니다.
+/// 성공 시 [Navigator.pop]으로 [TicketScanResponse]를 반환합니다.
+/// 받기 모드에서 사진을 생략하면 [ReceiveWithoutPhotoRequested]를 반환합니다.
 class TicketScanCameraScreen extends StatefulWidget {
   TicketScanCameraScreen({
     super.key,
@@ -184,14 +177,6 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
     _startAlignmentDetection();
   }
 
-  /// 카메라 촬영도, 백엔드 OCR 호출도 하지 않고 [DebugFakeScanRequested]를
-  /// 반환해 즉시 화면을 닫는 테스트 전용 버튼 핸들러. 실제 기기/백엔드 없이
-  /// UI 흐름(다이어리에 티켓이 추가되는 모습)만 확인하고 싶을 때 씁니다.
-  void _debugAddFakeTicket() {
-    if (_stage == _ScanStage.capturing) return;
-    Navigator.of(context).pop(const DebugFakeScanRequested());
-  }
-
   @override
   void dispose() {
     _alignSub?.cancel();
@@ -332,20 +317,6 @@ class _TicketScanCameraScreenState extends State<TicketScanCameraScreen> {
               ),
             ),
           ],
-
-          // 개발용 임시 버튼: 카메라/백엔드 없이 테스트용 더미 티켓만 추가
-          if (widget.receiveTitle == null)
-            Positioned(
-              // 왼쪽 위 닫기 버튼(top+8) 바로 아래에 겹치지 않게 배치.
-              top: MediaQuery.of(context).padding.top + 56,
-              left: 16,
-              child: FloatingActionButton.extended(
-                heroTag: 'debug_force_scan',
-                onPressed: _debugAddFakeTicket,
-                backgroundColor: Colors.grey,
-                label: const Text('임시 스캔'),
-              ),
-            ),
         ],
       ),
     );

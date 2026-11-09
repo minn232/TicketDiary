@@ -79,7 +79,7 @@ void main() {
         find.text('EXO PLANET #6'),
         receive ? findsOneWidget : findsNothing,
       );
-      expect(find.text('임시 스캔'), receive ? findsNothing : findsOneWidget);
+      expect(find.text('임시 스캔'), findsNothing);
       if (!receive) return;
       await tester.tap(find.text('사진 없이 받았어요'));
       await tester.pumpAndSettle();
