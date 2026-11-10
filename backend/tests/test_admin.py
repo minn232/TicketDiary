@@ -1848,3 +1848,81 @@ async def test_admin_lineup_hidden_for_single_day_concert():
             res = await ac.put(f"/api/v1/admin/concerts/{concert_id}/lineup", headers=_admin_headers(), json={"entries": []})
     assert detail["days"] == []
     assert res.status_code == 400
+
+
+# 타임테이블 관리자 직접 편집 - 저장하면 admin_edited로 표시돼 LLM 크롤링 콜백이 덮어쓰지 않음
+
+@pytest.mark.asyncio
+async def test_admin_timetable_save_normalizes_and_blocks_llm_overwrite():
+    concert_id = await _create_concert(f"PF_TT_{uuid.uuid4().hex[:6]}", "시간표밴드")
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            before = (await ac.get(f"/api/v1/admin/concerts/{concert_id}", headers=_admin_headers())).json()
+            res = await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/timetable", headers=_admin_headers(),
+                json={"entries": [
+                    {"date": " 2030-06-01 ", "time": "", "stage": "  ", "event": " 시간표밴드 18:00 - 18:40 "},
+                    {"date": None, "time": "19:00", "stage": "메인", "event": "마무리"},
+                ]},
+            )
+    assert before["timetable"] == [] and before["timetable_admin_edited"] is False
+    assert res.status_code == 200
+    body = res.json()
+    assert body["timetable_admin_edited"] is True
+    assert body["timetable"] == [
+        {"date": "2030-06-01", "time": None, "stage": None, "event": "시간표밴드 18:00 - 18:40"},
+        {"date": None, "time": "19:00", "stage": "메인", "event": "마무리"},
+    ]
+
+    # LLM 콜백이 시간표를 보내도 덮어쓰지 않음(응답 updated에도 안 나옴)
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = "test-llm-key"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            cb = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"timetable": [{"date": "2030-06-01", "time": "10:00", "stage": None, "event": "LLM 결과"}]},
+                headers={"Authorization": "Bearer test-llm-key"},
+            )
+    assert cb.status_code == 200
+    assert "timetable" not in cb.json()["updated"]
+
+    # 편집 표시를 풀면 내용은 그대로, 이후 콜백은 다시 반영됨
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            released = await ac.delete(
+                f"/api/v1/admin/concerts/{concert_id}/timetable/admin-edit", headers=_admin_headers()
+            )
+    assert released.json()["timetable_admin_edited"] is False
+    assert len(released.json()["timetable"]) == 2
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = "test-llm-key"
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            cb2 = await ac.post(
+                f"/api/v1/concerts/{concert_id}/crawl-result",
+                json={"timetable": [{"date": "2030-06-01", "time": "10:00", "stage": None, "event": "LLM 결과"}]},
+                headers={"Authorization": "Bearer test-llm-key"},
+            )
+    assert "timetable" in cb2.json()["updated"]
+
+
+@pytest.mark.asyncio
+async def test_admin_timetable_rejects_bad_date_and_empty_event():
+    concert_id = await _create_concert(f"PF_TT2_{uuid.uuid4().hex[:6]}", "시간표밴드2")
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            bad_date = await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/timetable", headers=_admin_headers(),
+                json={"entries": [{"date": "6/1", "event": "x"}]},
+            )
+            empty_event = await ac.put(
+                f"/api/v1/admin/concerts/{concert_id}/timetable", headers=_admin_headers(),
+                json={"entries": [{"date": "2030-06-01", "event": "   "}]},
+            )
+            missing = await ac.put(
+                f"/api/v1/admin/concerts/{uuid.uuid4()}/timetable", headers=_admin_headers(),
+                json={"entries": [{"event": "x"}]},
+            )
+    assert bad_date.status_code == 422
+    assert empty_event.status_code == 422
+    assert missing.status_code == 404

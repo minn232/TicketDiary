@@ -43,8 +43,10 @@ from app.schemas.admin import (
     AdminLineupUpdate,
     AdminReassignArtistRequest,
     AdminRegisterNewArtistRequest,
+    AdminTimetableUpdate,
 )
 from app.services.artist_blocklist import add_to_blocklist
+from app.services.timetable import get_timetable_or_none, release_timetable_admin_edit, upsert_timetable
 from app.services.artist_identity import (
     canonical_from_mbid,
     canonical_summary,
@@ -248,6 +250,8 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
 
     # suggested 상태 행이 있으면 제안 중인 canonical의 표시명도 같이 내려줘서 프론트가 "OOO와
     # 같은 사람?"을 바로 보여줄 수 있게 함(추가 조회 왕복 없이)
+    timetable = await get_timetable_or_none(db, concert_id)
+
     suggested_ids = {r.suggested_canonical_id for r in status_rows if r.suggested_canonical_id}
     suggested_names: dict = {}
     if suggested_ids:
@@ -279,6 +283,8 @@ async def get_concert_detail(concert_id: UUID, db: AsyncSession = Depends(get_db
         end_date=concert.end_date,
         days=_concert_days(concert),
         lineup=await _lineup_entries(db, concert_id),
+        timetable=timetable.contents if timetable else [],
+        timetable_admin_edited=bool(timetable and timetable.admin_edited),
     )
 
 
@@ -327,6 +333,25 @@ async def update_concert_lineup(concert_id: UUID, body: AdminLineupUpdate, db: A
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"공연 기간 밖 날짜: {', '.join(map(str, outside))}")
 
     await replace_concert_lineup_by_admin(db, concert_id, [(e.artist, e.performance_date) for e in body.entries])
+    return await get_concert_detail(concert_id, db)
+
+
+# 타임테이블 통째로 저장 - 저장하면 관리자 편집으로 표시돼 이후 LLM 크롤링 콜백이 덮어쓰지 않음.
+# 검수 표시는 안 바꿈(출연진 저장과 동일)
+@router.put("/concerts/{concert_id}/timetable", response_model=AdminConcertDetail)
+async def update_concert_timetable(concert_id: UUID, body: AdminTimetableUpdate, db: AsyncSession = Depends(get_db)):
+    await upsert_timetable(
+        db, concert_id, [e.model_dump() for e in body.entries], admin_edited=True
+    )
+    return await get_concert_detail(concert_id, db)
+
+
+# 관리자 편집 표시만 해제 - 내용은 그대로 두고 이후 LLM 콜백이 다시 덮어쓸 수 있게 함
+@router.delete("/concerts/{concert_id}/timetable/admin-edit", response_model=AdminConcertDetail)
+async def release_concert_timetable(concert_id: UUID, db: AsyncSession = Depends(get_db)):
+    if await db.get(Concert, concert_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
+    await release_timetable_admin_edit(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
 
@@ -385,6 +410,7 @@ async def add_artist(
     if canonical.mbid is None:
         # 응답 이후 백그라운드로 실행 - 스로틀(2초 간격) 때문에 여기서 기다리면 추가 자체가 느려짐
         background_tasks.add_task(try_link_canonical_to_musicbrainz, canonical.id)
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
@@ -399,17 +425,27 @@ async def set_group_membership_route(
 
 
 @router.patch("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)
-async def rename_artist(concert_id: UUID, body: AdminArtistRenameRequest, db: AsyncSession = Depends(get_db)):
+async def rename_artist(
+    concert_id: UUID,
+    body: AdminArtistRenameRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
     await confirm_artist_name_change(db, concert_id, body.original_name, body.confirmed_name)
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
 
 @router.post("/concerts/{concert_id}/artist-suggestion", response_model=AdminConcertDetail)
 async def resolve_artist_suggestion_route(
-    concert_id: UUID, body: AdminArtistSuggestionRequest, db: AsyncSession = Depends(get_db)
+    concert_id: UUID,
+    body: AdminArtistSuggestionRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
     await resolve_artist_suggestion(db, concert_id, body.artist_text, body.accept)
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
@@ -457,13 +493,17 @@ async def revert_artist_identity_change(
 # 직접 고른 canonical_id로 통째로 재지정한다(reassign_artist_to_canonical 참고)
 @router.post("/concerts/{concert_id}/artist-name/reassign", response_model=AdminConcertDetail)
 async def reassign_artist_route(
-    concert_id: UUID, body: AdminReassignArtistRequest, db: AsyncSession = Depends(get_db)
+    concert_id: UUID,
+    body: AdminReassignArtistRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
     canonical_id = body.canonical_id
     if canonical_id is None:
         # MBID 직접 입력 - canonical_artists에 없으면 MusicBrainz에서 조회해 새로 만든다
         canonical_id = (await canonical_from_mbid(db, body.mbid)).id
     await reassign_artist_to_canonical(db, concert_id, body.artist_text, canonical_id)
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
@@ -484,6 +524,7 @@ async def register_new_artist_route(
     if canonical.mbid is None:
         # add_artist 라우트와 동일 - 응답 이후 백그라운드로 재조회(스로틀 때문에 여기서 기다리면 느려짐)
         background_tasks.add_task(try_link_canonical_to_musicbrainz, canonical.id)
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
     await _mark_reviewed(db, concert_id)
     return await get_concert_detail(concert_id, db)
 
@@ -491,11 +532,13 @@ async def register_new_artist_route(
 @router.delete("/concerts/{concert_id}/artist-name", response_model=AdminConcertDetail)
 async def delete_artist(
     concert_id: UUID,
+    background_tasks: BackgroundTasks,
     name: str = Query(...),
     blocklist: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     await remove_artist_name(db, concert_id, name)
+    background_tasks.add_task(refresh_setlists_after_identity_change, concert_id)
     if blocklist:
         # 배포 없이 즉시 반영 - DB 저장 + 이 프로세스의 인메모리 캐시 갱신까지 add_to_blocklist가 처리
         await add_to_blocklist(db, name)

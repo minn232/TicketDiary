@@ -1,7 +1,9 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.timetable import TimeTableEntry
 
 
 class AdminConcertListItem(BaseModel):
@@ -99,11 +101,35 @@ class AdminConcertDetail(BaseModel):
     end_date: datetime | None = None
     days: list[date] = []
     lineup: list[AdminLineupEntry] = []
+    # 타임테이블 직접 편집용 - admin_edited가 true면 LLM 크롤링 콜백이 덮어쓰지 않음
+    timetable: list[TimeTableEntry] = []
+    timetable_admin_edited: bool = False
 
 
 class AdminLineupUpdate(BaseModel):
     # 이 공연의 날짜별 출연진 전체(통째로 교체). 빈 목록이면 배정을 지워 전체 아티스트 폴백으로
     entries: list[AdminLineupEntry]
+
+
+class AdminTimetableUpdate(BaseModel):
+    # 이 공연의 타임테이블 전체(통째로 교체) - 빈 문자열은 null로, 날짜는 YYYY-MM-DD만 받음
+    entries: list[TimeTableEntry] = Field(max_length=1000)
+
+    @model_validator(mode="after")
+    def _normalize(self):
+        for e in self.entries:
+            e.date = (e.date or "").strip() or None
+            e.time = (e.time or "").strip() or None
+            e.stage = (e.stage or "").strip() or None
+            e.event = e.event.strip()
+            if not e.event:
+                raise ValueError("항목 내용(event)은 비울 수 없습니다.")
+            if e.date is not None:
+                try:
+                    date.fromisoformat(e.date)
+                except ValueError:
+                    raise ValueError(f"날짜 형식이 올바르지 않습니다(YYYY-MM-DD): {e.date}")
+        return self
 
 
 class AdminArtistRenameRequest(BaseModel):

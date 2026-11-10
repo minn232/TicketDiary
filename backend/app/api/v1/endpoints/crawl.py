@@ -24,7 +24,7 @@ from app.services.ticket import (
     backfill_first_last_day_from_concert,
     upgrade_event_type_if_multi_artist,
 )
-from app.services.timetable import upsert_timetable
+from app.services.timetable import get_timetable_or_none, upsert_timetable
 from app.services.venue_layout import upsert_venue_layout
 
 logger = logging.getLogger(__name__)
@@ -104,9 +104,12 @@ async def receive_crawl_result(
     updated: list[str] = []
 
     if body.timetable is not None:
-        contents = [entry.model_dump() for entry in body.timetable]
-        await upsert_timetable(db, concert_id, contents, commit=False)
-        updated.append("timetable")
+        # 관리자가 직접 만든·고친 시간표는 LLM 결과로 덮어쓰지 않음
+        existing_timetable = await get_timetable_or_none(db, concert_id)
+        if existing_timetable is None or not existing_timetable.admin_edited:
+            contents = [entry.model_dump() for entry in body.timetable]
+            await upsert_timetable(db, concert_id, contents, commit=False)
+            updated.append("timetable")
 
     # KOPIS가 이미 채워둔 가격(seat_type)은 우선순위를 두고 덮어쓰지 않는다 - KOPIS 값이 더
     # 신뢰할 수 있다고 보고, 크롤링 결과 중 KOPIS에 없는 seat_type(얼리버드/팬티켓 등 KOPIS

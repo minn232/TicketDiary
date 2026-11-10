@@ -35,4 +35,5 @@ async def upsert_timetable_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     contents = [entry.model_dump() for entry in body.contents]
-    return await upsert_timetable(db, concert_id, contents)
+    # 관리자가 직접 넣은 값이라 이후 LLM 콜백이 덮어쓰지 않게 표시
+    return await upsert_timetable(db, concert_id, contents, admin_edited=True)

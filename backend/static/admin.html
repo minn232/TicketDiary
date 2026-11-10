@@ -111,6 +111,18 @@
   .lineup-table th.empty-day { color: var(--danger); }
   .lineup-table td.stale { color: var(--danger); }
   .lineup-actions { margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  /* 타임테이블 직접 편집 */
+  .tt-box { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .tt-box h3 { font-size: 14px; margin: 0 0 4px; }
+  .tt-box .hint { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .tt-wrap { overflow-x: auto; }
+  .tt-table { width: 100%; border-radius: 6px; }
+  .tt-table th, .tt-table td { padding: 4px 6px; font-size: 12px; }
+  .tt-table input { width: 100%; box-sizing: border-box; font-size: 12px; padding: 3px 5px; }
+  .tt-table td.tt-date { width: 130px; }
+  .tt-table td.tt-time { width: 90px; }
+  .tt-table td.tt-stage { width: 120px; }
+  .tt-table td.tt-del { width: 40px; text-align: center; }
   #msg { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 20; }
 </style>
 </head>
@@ -370,6 +382,7 @@ function renderDetail(c) {
       </div>
     </div>
     ${renderLineup(c)}
+    ${renderTimetable(c)}
     <div class="close-row"><button onclick="closeDetail()">닫기</button></div>
   `;
   const addInput = document.querySelector('.add-input');
@@ -426,6 +439,81 @@ function renderLineup(c) {
           ${lineup.length ? `<button onclick="submitLineup(true)" title="배정을 전부 지워 모든 날 전체 아티스트로 보이게 하고, LLM 자동 채움도 다시 받음">배정 비우기</button>` : ''}
         </div>` : '<div style="color:var(--muted)">아티스트를 먼저 채워 주세요</div>'}
     </div>`;
+}
+
+// 타임테이블 직접 만들기·고치기 - 저장하면 관리자 편집으로 표시돼 이후 LLM 크롤링 결과가 덮어쓰지 않음.
+// 항목은 LLM 추출 형식 그대로(날짜·시간·무대는 비워도 되고, 시간은 내용(event) 글자 안에 써도 됨)
+function ttRowHtml(e) {
+  return `<tr>
+    <td class="tt-date"><input type="date" data-f="date" value="${esc(e.date || '')}" /></td>
+    <td class="tt-time"><input type="text" data-f="time" placeholder="18:00" value="${esc(e.time || '')}" /></td>
+    <td class="tt-stage"><input type="text" data-f="stage" placeholder="무대" value="${esc(e.stage || '')}" /></td>
+    <td><input type="text" data-f="event" placeholder="예: 밴드A 18:00 - 18:40" value="${esc(e.event || '')}" /></td>
+    <td class="tt-del"><button class="danger" onclick="this.closest('tr').remove()" style="padding:1px 6px;">×</button></td>
+  </tr>`;
+}
+
+function renderTimetable(c) {
+  const rows = c.timetable || [];
+  const state = c.timetable_admin_edited
+    ? '관리자 편집 - LLM 자동 결과가 덮어쓰지 않아요'
+    : rows.length
+      ? '자동 추출 결과 - 저장하면 관리자 편집으로 바뀌어 LLM 결과가 더 안 덮어써요'
+      : '타임테이블 없음';
+  return `
+    <div class="tt-box" id="tt-box">
+      <h3>타임테이블</h3>
+      <div class="hint">${esc(state)}. 날짜·시간·무대는 비워도 돼요.</div>
+      <div class="tt-wrap"><table class="tt-table">
+        <thead><tr><th>날짜</th><th>시간</th><th>무대</th><th>내용</th><th></th></tr></thead>
+        <tbody id="tt-rows">${rows.map(ttRowHtml).join('')}</tbody>
+      </table></div>
+      <div class="lineup-actions">
+        <button onclick="addTimetableRow()">행 추가</button>
+        <button class="primary" onclick="submitTimetable()">타임테이블 저장</button>
+        ${c.timetable_admin_edited ? `<button onclick="releaseTimetable()" title="내용은 그대로 두고 편집 표시만 풀어, 이후 LLM 크롤링 결과가 다시 덮어쓸 수 있게 함">자동 채움 재개</button>` : ''}
+      </div>
+    </div>`;
+}
+
+// 새 행은 바로 위 행의 날짜·무대를 이어받음(같은 날 여러 줄 입력이 많아서)
+function addTimetableRow() {
+  const tbody = document.getElementById('tt-rows');
+  const last = tbody.lastElementChild;
+  const get = (f) => (last ? last.querySelector(`[data-f="${f}"]`).value : '');
+  const days = currentDetail.days || [];
+  tbody.insertAdjacentHTML('beforeend', ttRowHtml({
+    date: get('date') || (days.length ? days[0] : (currentDetail.start_date || '').slice(0, 10)),
+    stage: get('stage'),
+  }));
+  tbody.lastElementChild.querySelector('[data-f="time"]').focus();
+}
+
+async function submitTimetable() {
+  const entries = [...document.querySelectorAll('#tt-rows tr')]
+    .map(tr => Object.fromEntries([...tr.querySelectorAll('[data-f]')].map(i => [i.dataset.f, i.value.trim() || null])))
+    .filter(e => e.event || e.date || e.time || e.stage);
+  if (entries.some(e => !e.event)) { toast('내용이 빈 행이 있어요'); return; }
+  if (!entries.length && !confirm('항목이 하나도 없어요. 타임테이블을 비운 채로 저장할까요?')) return;
+  try {
+    const c = await api(`/concerts/${currentDetail.id}/timetable`, { method: 'PUT', body: JSON.stringify({ entries }) });
+    currentDetail = c;
+    renderDetail(c);
+    toast('타임테이블 저장됨');
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+async function releaseTimetable() {
+  try {
+    const c = await api(`/concerts/${currentDetail.id}/timetable/admin-edit`, { method: 'DELETE' });
+    currentDetail = c;
+    renderDetail(c);
+    toast('자동 채움 재개');
+  } catch (e) {
+    toast('오류: ' + e.message);
+  }
 }
 
 // 그 날짜 칸을 전부 켜거나(하나라도 꺼져 있으면) 전부 끔
