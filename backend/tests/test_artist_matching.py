@@ -251,6 +251,78 @@ async def test_artist_result_keeps_union_when_already_multi_artist():
     assert set(res.json()["artist_name"]) == set(existing_names) | {new_name}
 
 
+# 첫 포스터 추출 결과는 KOPIS 시드가 2~3명(본명/멤버명 위주)이어도 합집합이 아니라 교체해야 함
+@pytest.mark.asyncio
+async def test_artist_result_first_result_replaces_small_kopis_seed():
+    token = await _get_token()
+    seeds = [f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(3)]
+    concert_id = await _create_concert(f"PF_AR_FIRST_{uuid.uuid4().hex[:6]}", ",".join(seeds), token)
+    band = f"밴드{uuid.uuid4().hex[:6]}"
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": [band]},
+                headers=_llm_headers(),
+            )
+    assert res.status_code == 200
+    assert res.json()["artist_name"] == [band]
+
+
+# 두 번째 결과부터는 기존처럼 합집합 - 첫 결과로 교체된 뒤 다시 2명 이상이 된 공연을 지우지 않음
+@pytest.mark.asyncio
+async def test_artist_result_second_result_keeps_union_for_small_seed():
+    token = await _get_token()
+    seeds = [f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(2)]
+    concert_id = await _create_concert(f"PF_AR_SECOND_{uuid.uuid4().hex[:6]}", ",".join(seeds), token)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(concert_id)).values(
+                artist_extraction_received_at=datetime.now(timezone.utc)
+            )
+        )
+        await db.commit()
+    extra = f"추가{uuid.uuid4().hex[:6]}"
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": [extra]},
+                headers=_llm_headers(),
+            )
+    assert set(res.json()["artist_name"]) == set(seeds) | {extra}
+
+
+# 사람이 검수한 공연은 첫 결과라도 넓힌 교체 규칙을 안 씀(고친 이름 보호)
+@pytest.mark.asyncio
+async def test_artist_result_first_result_keeps_union_for_reviewed_concert():
+    token = await _get_token()
+    seeds = [f"멤버{i}_{uuid.uuid4().hex[:4]}" for i in range(2)]
+    concert_id = await _create_concert(f"PF_AR_REVIEWED_{uuid.uuid4().hex[:6]}", ",".join(seeds), token)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(Concert).where(Concert.id == uuid.UUID(concert_id)).values(
+                admin_reviewed_at=datetime.now(timezone.utc)
+            )
+        )
+        await db.commit()
+    extra = f"추가{uuid.uuid4().hex[:6]}"
+
+    with patch("app.core.deps.settings") as mock_settings:
+        mock_settings.LLM_EXTRACT_API_KEY = _LLM_API_KEY
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post(
+                f"/api/v1/concerts/{concert_id}/artist-result",
+                json={"artist_name": [extra]},
+                headers=_llm_headers(),
+            )
+    assert set(res.json()["artist_name"]) == set(seeds) | {extra}
+
+
 # 포스터 추출로 아티스트가 임계치(5명) 이상 확인되면 event_type이 SOLO->FESTIVAL로 승격되는지 테스트
 @pytest.mark.asyncio
 async def test_artist_result_upgrades_event_type_at_threshold():

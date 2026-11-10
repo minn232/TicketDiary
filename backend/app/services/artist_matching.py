@@ -156,14 +156,29 @@ def merge_artist_names(
     return sorted(set(existing or []) | set(normalized_incoming))
 
 
+# 포스터 추출 첫 결과일 땐 KOPIS 시드가 이 인원 이하까지 교체 대상 - KOPIS 출연진이 본명/멤버명을 2~3명
+# 나눠 줘서 합집합에 멤버명이 남고 예상 셋리에 엉뚱한 곡이 섞였음. 4명 이상은 라인업일 수 있어 제외
+_FIRST_POSTER_REPLACE_MAX_SEED = 3
+
+
 # 기존 인원이 1명 이하(KOPIS 원본만 있는 솔로 추정)면 union 대신 새 이름으로 교체 - KOPIS 출연진 노이즈
 # (본명/예명 중복, MC 등) 제거용. 크롤링/포스터 웹훅이 도착 순서를 보장 못 해 이 함수를 공유함. 다인원/
 # 페스티벌은 union 유지(무조건 교체해 라인업이 사라지던 사고가 있었음)
 def merge_or_replace_solo_seed(
-    concert: Concert, incoming: list[str], known_names: set[str] | None = None
+    concert: Concert,
+    incoming: list[str],
+    known_names: set[str] | None = None,
+    *,
+    first_poster_result: bool = False,
 ) -> list[str]:
     normalized_incoming = normalize_artist_names(incoming, known_names)
-    is_solo_seed = concert.event_type != EventType.FESTIVAL.value and len(concert.artist_name or []) <= 1
+    # 사람이 검수한 공연은 넓힌 교체 규칙을 안 씀(고친 이름 보호) - 기존 1명 이하 규칙만
+    max_seed = (
+        _FIRST_POSTER_REPLACE_MAX_SEED
+        if first_poster_result and concert.admin_reviewed_at is None
+        else 1
+    )
+    is_solo_seed = concert.event_type != EventType.FESTIVAL.value and len(concert.artist_name or []) <= max_seed
     if is_solo_seed and normalized_incoming:
         return sorted(set(normalized_incoming))
     return sorted(set(concert.artist_name or []) | set(normalized_incoming))

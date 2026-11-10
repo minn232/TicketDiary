@@ -280,6 +280,8 @@ async def receive_artist_extraction_result(
         logger.warning(f"[LLM] 아티스트 추출 콜백의 공연을 찾을 수 없음 concert_id={concert_id}")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="공연 정보를 찾을 수 없습니다.")
 
+    # 이 공연의 첫 포스터 추출 결과인지(KOPIS 시드 교체 기준을 넓히는 데 씀) - 받은 표시를 남기기 전에 확인
+    first_poster_result = concert.artist_extraction_received_at is None
     # 결과가 비어 있어도 받은 것 - 포스터가 같으니 다시 보내도 같은 결과
     concert.artist_extraction_received_at = datetime.now(timezone.utc)
     await db.commit()
@@ -289,11 +291,13 @@ async def receive_artist_extraction_result(
         known_artist_names = await get_known_artist_names(db)
 
     if body.artist_name:
-        # merge_or_replace_solo_seed 참고 - 솔로(1명 이하) 공연이면 KOPIS 원본을 포스터 추출
+        # merge_or_replace_solo_seed 참고 - 솔로(1명 이하, 첫 결과는 3명 이하) 공연이면 KOPIS 원본을 포스터 추출
         # 결과로 교체(노이즈 제거), 블록리스트로 전부 걸러지면 교체 없이 기존 값 유지(재즈/
         # 오케스트라처럼 LLM이 못 뽑는 장르의 안전망). /crawl-result와 동일 로직 공유 -
         # 두 웹훅 중 어느 쪽이 이 공연을 먼저 건드리든 결과가 같아야 하기 때문
-        merged = merge_or_replace_solo_seed(concert, body.artist_name, known_artist_names)
+        merged = merge_or_replace_solo_seed(
+            concert, body.artist_name, known_artist_names, first_poster_result=first_poster_result
+        )
         if merged != (concert.artist_name or []):
             concert.artist_name = merged
             concert.admin_reviewed_at = None  # 자동으로 표기가 바뀌었으니 검수 상태는 무효화
