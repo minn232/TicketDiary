@@ -305,7 +305,9 @@ class _ConcertBeforeBodyState extends State<_ConcertBeforeBody> {
         // [백엔드 수정]
         // time/description → time(nullable)/event로 필드가 바뀜.
         // time이 없으면 빈 문자열로, stage가 있으면 event 앞에 붙여서 보여줌.
-        _fetchedTimetable = res.contents
+        // 관람일 항목만, 시간순(entriesForDay).
+        _fetchedTimetable = res
+            .entriesForDay(widget.ticketInfo?.date)
             .map(
               (e) => TimetableEntry(
                 time: e.time ?? '',

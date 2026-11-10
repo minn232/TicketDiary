@@ -1880,7 +1880,13 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
 
   void _watchTimetableRows() {
     final id = widget.concertId;
-    final cached = id == null ? null : _RealTimetableNoteState._cache[id];
+    final day = widget.ticketInfo?.date;
+    final cached = id == null
+        ? null
+        : _RealTimetableNoteState._cache[_RealTimetableNoteState.cacheKey(
+            id,
+            day,
+          )];
     if (cached != null) {
       _timetableRows = cached.length;
       return;
@@ -1895,7 +1901,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       future
           .then((res) {
             if (!mounted || future != widget.initialTimetableLoad) return;
-            setState(() => _timetableRows = res.contents.length);
+            setState(() => _timetableRows = res.entriesForDay(day).length);
           })
           .catchError((Object _) {
             if (mounted) setState(() => _timetableRows = 0);
@@ -2717,7 +2723,8 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       final response =
           await (widget.initialTimetableLoad ??
               service.getTimetable(widget.concertId!));
-      return response.contents
+      return response
+          .entriesForDay(widget.ticketInfo?.date)
           .map(
             (entry) => [entry.date, entry.time, entry.stage, entry.event]
                 .whereType<String>()
@@ -2805,6 +2812,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
           '타임테이블',
           _RealTimetableNote(
             concertId: widget.concertId,
+            day: widget.ticketInfo?.date,
             ink: _kraftInk,
             initialLoad: timetableFuture,
           ),
@@ -4554,10 +4562,13 @@ class _LetterColumn extends StatelessWidget {
 /// 타임테이블 메모(공연 상세 조회). 미등록/조회 전이면 안내.
 class _RealTimetableNote extends StatefulWidget {
   final String? concertId;
+  // 관람일 - 날짜가 있는 항목은 이 날 것만 보임(timetable_model.entriesForDay).
+  final DateTime? day;
   final Color ink;
   final Future<timetable_model.TimeTableResponse>? initialLoad;
   const _RealTimetableNote({
     required this.concertId,
+    this.day,
     this.ink = _kraftInk,
     this.initialLoad,
   });
@@ -4567,7 +4578,11 @@ class _RealTimetableNote extends StatefulWidget {
 }
 
 class _RealTimetableNoteState extends State<_RealTimetableNote> {
+  // 공연 + 관람일별 캐시 - 날짜별 페이지가 같은 공연이라 공연 ID만으론 다른 날 항목이 섞임.
   static final Map<String, List<TimetableEntry>> _cache = {};
+
+  static String cacheKey(String concertId, DateTime? day) =>
+      '$concertId|${day == null ? '' : '${day.year}-${day.month}-${day.day}'}';
 
   final ConcertDetailService _service = ConcertDetailService();
   List<TimetableEntry> _rows = const [];
@@ -4577,7 +4592,7 @@ class _RealTimetableNoteState extends State<_RealTimetableNote> {
   void initState() {
     super.initState();
     final id = widget.concertId;
-    final cached = id == null ? null : _cache[id];
+    final cached = id == null ? null : _cache[cacheKey(id, widget.day)];
     if (cached != null) {
       _rows = cached;
       _status = cached.isEmpty ? 'empty' : 'loaded';
@@ -4596,7 +4611,8 @@ class _RealTimetableNoteState extends State<_RealTimetableNote> {
       final res = await (widget.initialLoad ?? _service.getTimetable(id));
       if (!mounted) return;
       setState(() {
-        _rows = res.contents
+        _rows = res
+            .entriesForDay(widget.day)
             .map(
               (e) => TimetableEntry(
                 time: e.time ?? '',
@@ -4604,7 +4620,7 @@ class _RealTimetableNoteState extends State<_RealTimetableNote> {
               ),
             )
             .toList();
-        _cache[id] = _rows;
+        _cache[cacheKey(id, widget.day)] = _rows;
         _status = _rows.isEmpty ? 'empty' : 'loaded';
       });
     } on ApiException catch (e) {
