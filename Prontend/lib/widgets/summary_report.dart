@@ -330,7 +330,7 @@ class _Metrics extends StatelessWidget {
 }
 
 /// 숫자 칸 글자 최대 크기(폰 기준 - 예전 23보다 크게, 38은 과했음)
-const double _maxValueSize = 30;
+const double _maxValueSize = 25;
 
 class _Metric extends StatelessWidget {
   const _Metric({
@@ -371,37 +371,79 @@ class _Metric extends StatelessWidget {
     key: ValueKey('metric-$label'),
     tapeColor: color,
     child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Container(
-              width: 30,
-              height: 30,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: .16),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: color, size: 19),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-        // [백엔드 수정] 숫자+보조 문구를 남은 칸 세로 가운데에 - 아래에 붙여 두니 큰 카드에서
-        // 왼쪽 아래 구석에 몰려 보였음. 보조 문구 줄은 늘 자리를 잡아 한 줄의 숫자 높이를 맞춤.
         Expanded(
+          flex: 5,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final style = DefaultTextStyle.of(
+                context,
+              ).style.copyWith(color: _muted, fontWeight: FontWeight.w700);
+              // 같은 너비의 네 카드에서 가장 긴 제목을 기준으로 크기를 통일합니다.
+              var low = 0.0;
+              var high = 13.0;
+              for (var i = 0; i < 16; i++) {
+                final size = (low + high) / 2;
+                var widest = 0.0;
+                for (final title in const [
+                  '관람한 공연',
+                  '총 관람 시간',
+                  '총 지출 금액',
+                  '선호 장르',
+                ]) {
+                  final painter = TextPainter(
+                    text: TextSpan(
+                      text: title,
+                      style: style.copyWith(fontSize: size),
+                    ),
+                    textDirection: Directionality.of(context),
+                    textScaler: MediaQuery.textScalerOf(context),
+                    maxLines: 1,
+                  )..layout();
+                  widest = math.max(widest, painter.width);
+                  painter.dispose();
+                }
+                // 아이콘 30 + 간격 8을 제외한 공간에 제목을 맞춥니다.
+                if (widest <= math.max(0, constraints.maxWidth - 38)) {
+                  low = size;
+                } else {
+                  high = size;
+                }
+              }
+              return Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: .16),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(icon, color: color, size: 19),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        label,
+                        maxLines: 1,
+                        softWrap: false,
+                        textAlign: TextAlign.center,
+                        style: style.copyWith(fontSize: low),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        // 네 카드에 동일한 높이의 영역을 배정해 값의 중심을 맞춥니다.
+        Expanded(
+          flex: 4,
           child: Align(
             alignment: Alignment.center,
             child: Column(
@@ -411,17 +453,15 @@ class _Metric extends StatelessWidget {
                 if (multiline)
                   Tooltip(
                     message: value,
-                    child: Text(
-                      value,
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _ink,
-                        // 장르는 글자가 길어 숫자보다 작게(예전 22는 세 줄로 넘침)
-                        fontSize: (valueSize * .6).clamp(14.0, 18.0),
-                        fontWeight: FontWeight.w900,
-                        height: 1.15,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.center,
+                      child: Text(
+                        value,
+                        maxLines: 1,
+                        softWrap: false,
+                        textAlign: TextAlign.center,
+                        style: valueStyle(valueSize),
                       ),
                     ),
                   )
@@ -439,13 +479,21 @@ class _Metric extends StatelessWidget {
                                 _valueText(format!(v.round())),
                           ),
                   ),
-                const SizedBox(height: 4),
-                Text(
-                  note ?? '',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: _muted, fontSize: 10),
-                ),
               ],
+            ),
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                note ?? '',
+                maxLines: 1,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: _muted, fontSize: 10),
+              ),
             ),
           ),
         ),

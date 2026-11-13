@@ -539,7 +539,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           _divider,
-                          const _SectionLabel('나누기'),
+                          const _SectionLabel(
+                            '나누기',
+                            help:
+                                '흔들어서 공연 기록을 나눠 보세요!\n\n'
+                                '1. 친구와 함께 다이어리 화면에서 휴대폰을 흔들어 주세요.\n'
+                                '2. 나누기 화면이 열리면 두 휴대폰의 윗부분을 가까이 맞대 주세요.\n'
+                                '3. 연결되면 서로의 공연 기록을 확인할 수 있어요.\n\n'
+                                '아래 ‘공연 기록 나누기’에서 ‘흔들어서 기록 나누기’를 켜 주세요.',
+                          ),
                           // [백엔드 수정]
                           // 연결된 친구 목록은 일회용 만남(다이어리에서 흔들기)으로 바뀌어 꺼 둠.
                           // Builder(
@@ -943,16 +951,141 @@ class _LoginStatusBanner extends StatelessWidget {
 
 /// 설정 묶음 제목(소리·감상 / 알림 / 친구). 줄마다 아이콘을 다는 대신 묶음
 /// 위에 테이프 라벨을 붙여 구분함.
+Future<void> _showSharingHelp(BuildContext context, String message) {
+  final overlay = Navigator.of(context, rootNavigator: true).overlay!;
+  final box = context.findRenderObject()! as RenderBox;
+  final anchor = box.localToGlobal(
+    const Offset(19.2, 22),
+    ancestor: overlay.context.findRenderObject(),
+  );
+  final style = TextStyle(
+    fontSize: context.sp(13),
+    height: 1.6,
+    color: PaperColors.ink,
+  );
+  return showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: '도움말 닫기',
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 180),
+    transitionBuilder: (context, animation, secondaryAnimation, child) {
+      final progress = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+      );
+      return FadeTransition(
+        opacity: progress,
+        child: ScaleTransition(
+          scale: progress,
+          alignment: Alignment(
+            anchor.dx / MediaQuery.sizeOf(context).width * 2 - 1,
+            anchor.dy / MediaQuery.sizeOf(context).height * 2 - 1,
+          ),
+          child: child,
+        ),
+      );
+    },
+    pageBuilder: (context, animation, secondaryAnimation) => LayoutBuilder(
+      builder: (context, constraints) {
+        final padding = MediaQuery.paddingOf(context);
+        final width = (constraints.maxWidth - 40).clamp(0.0, 300.0);
+        final painter = TextPainter(
+          text: TextSpan(text: message, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout(maxWidth: (width - 36).clamp(0.0, double.infinity));
+        final height = (painter.height + 36).clamp(
+          0.0,
+          constraints.maxHeight - padding.vertical - 40,
+        );
+        painter.dispose();
+        final left = (anchor.dx - width / 2).clamp(
+          20.0,
+          constraints.maxWidth - width - 20,
+        );
+        final above = anchor.dy - height - 20;
+        final top = (above >= padding.top + 20 ? above : anchor.dy + 20).clamp(
+          padding.top + 20,
+          constraints.maxHeight - padding.bottom - height - 20,
+        );
+        return Stack(
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              width: width,
+              height: height,
+              child: Material(
+                color: const Color(0xFFFFFBF3),
+                elevation: 8,
+                shadowColor: Colors.black26,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  side: BorderSide(
+                    color: PaperColors.muted.withValues(alpha: .25),
+                  ),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(18),
+                    child: Text(message, style: style),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 class _SectionLabel extends StatelessWidget {
   final String text;
+  final String? help;
 
-  const _SectionLabel(this.text);
+  const _SectionLabel(this.text, {this.help});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 20, 16, 2),
-      child: Align(alignment: Alignment.centerLeft, child: TapeLabel(text)),
+      child: Row(
+        children: [
+          TapeLabel(text),
+          if (help != null) ...[
+            const SizedBox(width: 2.4),
+            Builder(
+              builder: (iconContext) => Semantics(
+                button: true,
+                label: '공연 기록 나누기 도움말',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _showSharingHelp(iconContext, help!),
+                  child: const SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Padding(
+                      padding: EdgeInsets.only(left: 7.2),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Icon(
+                          Icons.help_outline_rounded,
+                          size: 24,
+                          color: PaperColors.muted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
