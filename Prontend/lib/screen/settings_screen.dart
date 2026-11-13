@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/audio_volume_settings.dart';
 import '../widgets/member_settings_sheet.dart';
 
@@ -28,6 +29,23 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  Future<void> _openPrivacyPolicy() async {
+    try {
+      final opened = await launchUrl(
+        Uri.parse(
+          'https://northern-scaffold-693.notion.site/417b14831aaf809d8294fa932e43b01c?source=copy_link',
+        ),
+        mode: LaunchMode.externalApplication,
+      );
+      if (opened) return;
+    } catch (_) {
+      // Handle unavailable browsers with the same message as a failed launch.
+    }
+    if (mounted) {
+      showPaperSnackBar(context, '개인정보처리방침을 열지 못했어요. 다시 시도해주세요.');
+    }
+  }
+
   final AppSettingsStore _appSettings = AppSettingsStore.instance;
   final NotificationSettingsService _notifSettingsService =
       NotificationSettingsService();
@@ -613,6 +631,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
+                          Center(
+                            child: TextButton(
+                              onPressed: _openPrivacyPolicy,
+                              style: TextButton.styleFrom(
+                                foregroundColor: PaperColors.ink.withValues(
+                                  alpha: .5,
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 11,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                              child: const Text('개인정보처리방침'),
+                            ),
+                          ),
                         ],
                       ),
                     ),
