@@ -1662,7 +1662,9 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
   static const double _toolButtonHeight = 34;
 
   Widget _shareCorner() {
-    if (widget.exportMode || _edit || _activeMemoKey != null) return const SizedBox.shrink();
+    if (widget.exportMode || _edit || _activeMemoKey != null) {
+      return const SizedBox.shrink();
+    }
     return Positioned(
       right: context.rs(_isTablet(context) ? 16 : 10),
       bottom: _bottomBarInset - context.rs(2),
@@ -1778,24 +1780,34 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     );
   }
 
-  /// [sections] = 공연 정보 / 타임테이블 / 셋리스트. 타임테이블이 짧으면 2칸으로
-  /// 왼쪽 열에 위아래로 배치하되 각각 스크롤합니다. 길면 3칸으로 배치합니다.
+  /// 공연 정보는 고정하고 남은 공간을 아티스트와 타임테이블에 할당합니다.
   List<Widget> _backColumns(List<Widget> sections) {
     Widget scroll(int i, Widget child) => SectionScrollView(
       key: PageStorageKey('after_back_section_$i'),
       child: child,
     );
-    if (!_twoColumnBack || sections.length != 3) {
-      return [for (final (i, s) in sections.indexed) scroll(i, s)];
-    }
     return [
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(flex: 3, child: scroll(0, sections[0])),
-          Expanded(flex: 2, child: scroll(1, sections[1])),
+          sections[0],
+          Expanded(
+            child: _LetterColumn(
+              title: '아티스트',
+              fill: true,
+              child: SectionScrollView(
+                key: const PageStorageKey('after-artists'),
+                child: Text(
+                  _backInfoFields().firstWhere((f) => f.key == '아티스트').value,
+                  style: const TextStyle(fontSize: 13, height: 1.5),
+                ),
+              ),
+            ),
+          ),
+          if (_twoColumnBack) Expanded(child: sections[1]),
         ],
       ),
+      if (!_twoColumnBack) sections[1],
       scroll(2, sections[2]),
     ];
   }
@@ -2645,25 +2657,13 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
       '날짜': info?.formattedDate ?? '',
       '가격': info?.formattedPrice ?? '',
       '좌석': info?.seat ?? '',
-      '아티스트': _shortArtistList(extras['아티스트'] ?? extras['artist'] ?? ''),
+      '아티스트': extras['아티스트'] ?? extras['artist'] ?? '',
       '공연 유형': extras['공연 유형'] ?? extras['공연 타입'] ?? extras['유형'] ?? '',
     };
     return [
       for (final key in const ['공연장', '날짜', '가격', '좌석', '아티스트', '공연 유형'])
         MapEntry(key, values[key]?.isEmpty == true ? '-' : values[key] ?? '-'),
     ];
-  }
-
-  /// 페스티벌 라인업 전체를 다 적으면 칸이 넘쳐서 앞 몇 팀만(전체는 셋리스트 칸에 있음).
-  static String _shortArtistList(String artists) {
-    const shown = 6;
-    final names = artists
-        .split(',')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    if (names.length <= shown + 1) return artists;
-    return '${names.take(shown).join(', ')} 외 ${names.length - shown}팀';
   }
 
   /// 2칸이면 짧은 값끼리(날짜·가격, 좌석·공연 유형) 한 줄에 둘씩 - 정보를 간결하게 표시.
@@ -2691,17 +2691,7 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     children: [
       Text(field.key, style: const TextStyle(fontSize: 11, color: _kraftInk)),
       const SizedBox(height: 3),
-      if (field.key == '아티스트')
-        LimitedSectionScrollView(
-          maxHeight: context.rs(90),
-          key: const ValueKey('after-artists'),
-          child: Text(
-            field.value,
-            style: const TextStyle(fontSize: 13, height: 1.5),
-          ),
-        )
-      else
-        Text(field.value, style: const TextStyle(fontSize: 13, height: 1.5)),
+      Text(field.value, style: const TextStyle(fontSize: 13, height: 1.5)),
     ],
   );
 
@@ -2746,69 +2736,35 @@ class _ScrapbookCanvasState extends State<_ScrapbookCanvas>
     return [
       _LetterColumn(
         title: '공연 정보',
-        child: _editableBackSection(
-          0,
-          '공연 정보',
-          SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // 라벨/값 목록만 있던 칸을 실제 티켓 반쪽처럼 - 아티스트는 페스티벌이면
-                // 길어서 티켓 밖 아래에 그대로 둠
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: _TicketStub(
-                    top: [
-                      for (final row in _backInfoRows())
-                        if (row.every((f) => _stubTopKeys.contains(f.key))) row,
-                    ],
-                    bottom: [
-                      for (final row in _backInfoRows())
-                        if (row.every((f) => _stubBottomKeys.contains(f.key)))
-                          row,
-                    ],
-                    field: _backInfoField,
-                    issueNumber: widget.issueNumber,
-                    seed: widget.concertTitle.hashCode,
-                  ),
-                ),
-                for (final row in _backInfoRows())
-                  if (row.every(
-                    (f) =>
-                        !_stubTopKeys.contains(f.key) &&
-                        !_stubBottomKeys.contains(f.key),
-                  ))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: row.length == 1
-                          ? _backInfoField(row.single)
-                          : Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (final (i, field) in row.indexed) ...[
-                                  if (i > 0) const SizedBox(width: 8),
-                                  Expanded(child: _backInfoField(field)),
-                                ],
-                              ],
-                            ),
-                    ),
-              ],
-            ),
-          ),
-          editable: false,
+        child: _TicketStub(
+          top: [
+            for (final row in _backInfoRows())
+              if (row.every((f) => _stubTopKeys.contains(f.key))) row,
+          ],
+          bottom: [
+            for (final row in _backInfoRows())
+              if (row.every((f) => _stubBottomKeys.contains(f.key))) row,
+          ],
+          field: _backInfoField,
+          issueNumber: widget.issueNumber,
+          seed: widget.concertTitle.hashCode,
         ),
       ),
       _LetterColumn(
         title: '타임테이블',
-        child: _editableBackSection(
-          1,
-          '타임테이블',
-          _RealTimetableNote(
-            concertId: widget.concertId,
-            ink: _kraftInk,
-            initialLoad: timetableFuture,
+        fill: true,
+        child: SectionScrollView(
+          key: const PageStorageKey('after_back_section_1'),
+          child: _editableBackSection(
+            1,
+            '타임테이블',
+            _RealTimetableNote(
+              concertId: widget.concertId,
+              ink: _kraftInk,
+              initialLoad: timetableFuture,
+            ),
+            editable: false,
           ),
-          editable: false,
         ),
       ),
       _LetterColumn(
@@ -4513,11 +4469,13 @@ class _BackEditChip extends StatelessWidget {
 class _LetterColumn extends StatelessWidget {
   final String title;
   final Widget child;
+  final bool fill;
   // "실제 셋 리스트" 칸에서만 쓰는 서비스 아이콘(다른 칸은 안 씀).
   final Widget? trailing;
   const _LetterColumn({
     required this.title,
     required this.child,
+    this.fill = false,
     this.trailing,
   });
 
@@ -4545,7 +4503,7 @@ class _LetterColumn extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        child,
+        if (fill) Expanded(child: child) else child,
       ],
     ),
   );
