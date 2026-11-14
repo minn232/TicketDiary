@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     KAKAO_REST_API_KEY: str = ""
     KAKAO_REDIRECT_URI: str = ""
     KAKAO_CLIENT_SECRET: str = ""
+    # 탈퇴 시 카카오 연결 끊기(unlink)용 앱 어드민 키 - 비어 있으면 unlink를 건너뜀
+    KAKAO_ADMIN_KEY: str = ""
     KOPIS_API_KEY: str = ""
     KOPIS_BASE_URL: str = "http://www.kopis.or.kr/openApi/restful"
     SETLISTFM_API_KEY: str = ""

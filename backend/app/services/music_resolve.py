@@ -160,8 +160,9 @@ async def _find_official_youtube_video_id(artist: str | None, song: str) -> str 
                     "q": query,
                     "type": "video",
                     "maxResults": 5,
-                    "key": settings.YOUTUBE_API_KEY,
                 },
+                # 키를 URL에 넣으면 raise_for_status 예외 메시지·로그에 키가 찍혀서 헤더로 보냄
+                headers={"X-Goog-Api-Key": settings.YOUTUBE_API_KEY},
             )
             search_resp.raise_for_status()
             video_ids = [item["id"]["videoId"] for item in search_resp.json().get("items", [])]
@@ -170,7 +171,8 @@ async def _find_official_youtube_video_id(artist: str | None, song: str) -> str 
 
             detail_resp = await client.get(
                 "https://www.googleapis.com/youtube/v3/videos",
-                params={"part": "snippet", "id": ",".join(video_ids), "key": settings.YOUTUBE_API_KEY},
+                params={"part": "snippet", "id": ",".join(video_ids)},
+                headers={"X-Goog-Api-Key": settings.YOUTUBE_API_KEY},
             )
         detail_resp.raise_for_status()
         official_candidates: list[tuple[str, bool]] = []  # (videoId, 오디오만인지)

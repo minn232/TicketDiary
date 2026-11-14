@@ -478,3 +478,77 @@ async def test_migrate_to_kakao_fills_empty_nickname():
 
     assert res.status_code == 200
     assert me.json()["nickname"] == "카카오닉네임"
+
+
+# 회원 탈퇴 시 카카오 연결 끊기(unlink)
+
+async def _login_kakao_user() -> tuple[dict, int]:
+    kakao_id = uuid.uuid4().int % 10**12
+    user_info = {"id": kakao_id, "kakao_account": {"profile": {"nickname": "탈퇴테스트", "thumbnail_image_url": None}}}
+    with patch("app.services.auth._exchange_kakao_code", new=AsyncMock(return_value="mock-token")), \
+         patch("app.services.auth._get_kakao_user_info", new=AsyncMock(return_value=user_info)):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.post("/api/v1/auth/kakao", json={"code": "kakao-code"})
+    return {"Authorization": f"Bearer {res.json()['access_token']}"}, kakao_id
+
+
+# 카카오 회원이 탈퇴하면 그 회원번호로 unlink가 호출되는지 테스트
+@pytest.mark.asyncio
+async def test_delete_account_unlinks_kakao_user():
+    headers, kakao_id = await _login_kakao_user()
+
+    with patch("app.services.auth._unlink_kakao", new=AsyncMock()) as mock_unlink:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete("/api/v1/auth/me", headers=headers)
+
+    assert res.status_code == 204
+    mock_unlink.assert_awaited_once_with(str(kakao_id))
+
+
+# 게스트는 카카오 연결이 없으니 unlink를 호출하지 않는지 테스트
+@pytest.mark.asyncio
+async def test_delete_account_guest_skips_unlink():
+    headers = {"Authorization": f"Bearer {await _get_token()}"}
+
+    with patch("app.services.auth._unlink_kakao", new=AsyncMock()) as mock_unlink:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.delete("/api/v1/auth/me", headers=headers)
+
+    assert res.status_code == 204
+    mock_unlink.assert_not_awaited()
+
+
+# 어드민 키가 있으면 KakaoAK 헤더와 회원번호로 unlink API를 호출하고, 실패해도 예외를 던지지 않는지 테스트
+@pytest.mark.asyncio
+async def test_unlink_kakao_calls_api_and_swallows_failure():
+    from app.services import auth as auth_service
+    import httpx
+
+    fake_client = AsyncMock()
+    fake_client.__aenter__.return_value = fake_client
+
+    with patch.object(auth_service.settings, "KAKAO_ADMIN_KEY", "admin-key"), \
+         patch("app.services.auth.httpx.AsyncClient", return_value=fake_client):
+        fake_client.post.return_value = httpx.Response(200, json={"id": 1})
+        await auth_service._unlink_kakao("777")
+        _, kwargs = fake_client.post.call_args
+        assert kwargs["headers"] == {"Authorization": "KakaoAK admin-key"}
+        assert kwargs["data"] == {"target_id_type": "user_id", "target_id": "777"}
+
+        fake_client.post.return_value = httpx.Response(401, json={"msg": "bad key"})
+        await auth_service._unlink_kakao("777")
+
+        fake_client.post.side_effect = httpx.ConnectError("down")
+        await auth_service._unlink_kakao("777")
+
+
+# 어드민 키가 비어 있으면 카카오 API를 아예 호출하지 않는지 테스트
+@pytest.mark.asyncio
+async def test_unlink_kakao_skipped_without_admin_key():
+    from app.services import auth as auth_service
+
+    with patch.object(auth_service.settings, "KAKAO_ADMIN_KEY", ""), \
+         patch("app.services.auth.httpx.AsyncClient") as mock_client:
+        await auth_service._unlink_kakao("777")
+
+    mock_client.assert_not_called()

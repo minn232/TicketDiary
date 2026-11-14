@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
@@ -17,6 +18,9 @@ from app.models.artist_normalization import (
 )
 from app.models.concert import Concert, EventType
 from app.models.lineup import ConcertLineup
+from app.models.ticket import Ticket
+from app.models.user import User
+from app.services.auth import delete_account, get_user_by_id
 from app.schemas.artist_identity import (
     IdentityCandidatesResponse, IdentityChangeRecord, IdentityChangeRequest, IdentityChangeResponse,
 )
@@ -82,6 +86,8 @@ from app.services.crawler import (
     get_yes24_melon_crawl_targets,
     save_manual_crawl_screenshot,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_admin_key)])
 
@@ -828,6 +834,56 @@ async def delete_artist_route(canonical_id: UUID, db: AsyncSession = Depends(get
     return {"deleted": True}
 
 
+# 이메일로 들어온 개인정보 삭제 요청 처리용 회원 검색 - 닉네임/카카오 ID 부분 일치(게스트는 닉네임만).
+# 검색어가 UUID 형식이면 user_id 정확히 일치만 봐서 딱 한 명이 나오게 함(UUID 조각이 닉네임에 우연히
+# 걸려 엉뚱한 사람이 섞이지 않게). 동명이인을 구분할 수 있게 가입 방식과 티켓 수를 같이 보여주고,
+# 20명을 넘으면 truncated로 알려서 검색어를 더 좁히게 함
+@router.get("/users")
+async def search_users_route(
+    keyword: str = Query(..., min_length=1, description="닉네임/카카오 ID 일부 또는 user_id 전체"),
+    db: AsyncSession = Depends(get_db),
+):
+    limit = 20
+    try:
+        condition = User.id == UUID(keyword.strip())
+    except ValueError:
+        # %와 _가 와일드카드로 먹혀 전체가 걸리지 않게 이스케이프
+        escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
+        condition = or_(User.nickname.ilike(like, escape="\\"), User.kakao_id.ilike(like, escape="\\"))
+    ticket_count = (
+        select(func.count(Ticket.id)).where(Ticket.user_id == User.id).correlate(User).scalar_subquery()
+    )
+    rows = (
+        await db.execute(select(User, ticket_count).where(condition).order_by(User.nickname).limit(limit + 1))
+    ).all()
+    return {
+        "truncated": len(rows) > limit,
+        "users": [
+            {
+                "id": str(user.id),
+                "nickname": user.nickname,
+                "role": user.role.value if user.role else None,
+                "kakao_id": user.kakao_id,
+                "ticket_count": count,
+            }
+            for user, count in rows[:limit]
+        ],
+    }
+
+
+# 회원 삭제 - 앱의 탈퇴(DELETE /auth/me)와 같은 경로라 DB cascade와 S3 사진 정리까지 함. 되돌릴 수 없음
+@router.delete("/users/{user_id}")
+async def delete_user_route(user_id: UUID, db: AsyncSession = Depends(get_db)):
+    user = await get_user_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="회원을 찾을 수 없습니다.")
+    # 삭제 요청 처리 기록용 - 닉네임 등 개인정보는 남기지 않고 user_id와 가입 방식만
+    logger.info(f"[관리자] 회원 삭제 user_id={user.id} role={user.role.value if user.role else None}")
+    await delete_account(db, user)
+    return {"deleted": True}
+
+
 # 인터파크 링크가 없어서 자동 크롤링으로는 못 뽑는 공연(YES24/MELON만 있음) 목록 - 로컬
 # 스크립트(scripts/yes24_melon_local_crawl.py)가 이 목록을 받아 각자 네트워크로 직접
 # 크롤링하고, 결과는 아래 업로드 엔드포인트로 되돌려줌(get_yes24_melon_crawl_targets 참고)
@@ -887,6 +943,7 @@ async def upload_manual_crawl_screenshot(
 _PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin.html"
 _ARTISTS_PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin_artists.html"
 _IDENTITY_PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin_identity.html"
+_USERS_PAGE_PATH = Path(__file__).resolve().parents[4] / "static" / "admin_users.html"
 
 
 # 관리자 페이지 HTML(인증 없이 서빙 - 실서비스에선 Nginx Basic Auth로 서브도메인 자체를 막고,
@@ -908,3 +965,8 @@ async def admin_artists_page():
 @page_router.get("/identity", response_class=HTMLResponse, include_in_schema=False)
 async def admin_identity_page():
     return _IDENTITY_PAGE_PATH.read_text(encoding="utf-8")
+
+
+@page_router.get("/users", response_class=HTMLResponse, include_in_schema=False)
+async def admin_users_page():
+    return _USERS_PAGE_PATH.read_text(encoding="utf-8")
