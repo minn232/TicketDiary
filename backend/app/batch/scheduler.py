@@ -277,7 +277,7 @@ def start_scheduler() -> None:
     # 크롤 배치 2종(서버에서 9/12부터 정지 중 - LLM 배치 반영 끝난 뒤에만 주석 해제할 것):
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
     # 라인업(출연진) 변경 여부 재확인을 이어서 실행 (KST 00:15)
-    # scheduler.add_job(_run_crawl_group, "cron", hour=15, minute=15, id="crawl_group", max_instances=1)
+    scheduler.add_job(_run_crawl_group, "cron", hour=15, minute=15, id="crawl_group", max_instances=1)
     # 신규 아티스트 Last.fm 유사 아티스트 캐싱 -> 장르 태그 캐싱(결산 "선호 장르"용)을 이어서 실행 (KST 00:20)
     scheduler.add_job(_run_lastfm_sync, "cron", hour=15, minute=20, id="lastfm_sync", max_instances=1)
     # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)
