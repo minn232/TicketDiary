@@ -298,7 +298,12 @@ class AuthService extends ChangeNotifier {
   Future<void> deleteAccount() async {
     await _client.delete('/auth/me');
     await _clearTokens();
-    await _loginAsGuest();
+    notifyListeners();
+    try {
+      await _loginAsGuest();
+    } catch (_) {
+      // 계정 삭제는 완료됐으므로 게스트 접속 실패를 탈퇴 실패로 표시하지 않습니다.
+    }
   }
 
   /// 로그아웃. 서버에 현재 refresh token 폐기를 요청한 뒤 로컬 토큰을

@@ -5,7 +5,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     // [백엔드 수정]
     // FCM 연동에 필요. android/app/google-services.json 필수
-    id("com.google.gms.google-services")
+    id("com.google.gms.google-services") apply false
+}
+
+// Firebase 설정이 없는 설치용 빌드도 허용합니다.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }
 
 android {

@@ -1,3 +1,4 @@
+import 'package:ticketdiary/widgets/age_confirmation_gate.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -113,23 +114,25 @@ class TicketDiaryApp extends StatelessWidget {
           // 시스템 글자 크기와 무관하게 앱의 디자인 크기를 유지합니다.
           // Navigator 전체를 감싸 팝업·바텀시트에도 동일하게 적용합니다.
           return MediaQuery.withNoTextScaling(
-            child: Stack(
-              children: [
-                // 탭 넘김이 떠나는 화면을 속지에 실으려고 찍는 경계
-                if (child != null)
-                  RepaintBoundary(
-                    key: DiaryTabFlipTransition.screenBoundaryKey,
-                    child: child,
+            child: AgeConfirmationGate(
+              builder: (context) => Stack(
+                children: [
+                  // 탭 넘김이 떠나는 화면을 속지에 실으려고 찍는 경계
+                  if (child != null)
+                    RepaintBoundary(
+                      key: DiaryTabFlipTransition.screenBoundaryKey,
+                      child: child,
+                    ),
+                  const Positioned.fill(
+                    child: IgnorePointer(child: HanjiTexture(opacity: .16)),
                   ),
-                const Positioned.fill(
-                  child: IgnorePointer(child: HanjiTexture(opacity: .16)),
-                ),
-                Positioned.fill(
-                  child: TabHitCatcherOverlay(coordinator: tabNav),
-                ),
-                // [백엔드 수정] 분할 화면에서 창이 너무 작으면 안내 메모로 덮음.
-                const Positioned.fill(child: SmallWindowGuard()),
-              ],
+                  Positioned.fill(
+                    child: TabHitCatcherOverlay(coordinator: tabNav),
+                  ),
+                  // [백엔드 수정] 분할 화면에서 창이 너무 작으면 안내 메모로 덮음.
+                  const Positioned.fill(child: SmallWindowGuard()),
+                ],
+              ),
             ),
           );
         },

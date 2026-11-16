@@ -32,9 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _openPrivacyPolicy() async {
     try {
       final opened = await launchUrl(
-        Uri.parse(
-          'https://northern-scaffold-693.notion.site/417b14831aaf809d8294fa932e43b01c?source=copy_link',
-        ),
+        Uri.parse('https://ticket-diary.com/privacy'),
         mode: LaunchMode.externalApplication,
       );
       if (opened) return;
@@ -43,6 +41,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (mounted) {
       showPaperSnackBar(context, '개인정보처리방침을 열지 못했어요. 다시 시도해주세요.');
+    }
+  }
+
+  bool _deletingAccount = false;
+
+  Future<void> _deleteAccount() async {
+    if (_deletingAccount) return;
+    final auth = AuthService.instance;
+    if (!auth.isLoggedIn) {
+      showPaperSnackBar(context, '로그인 후 이용해주세요.');
+      return;
+    }
+    final userId = auth.userId;
+    setState(() => _deletingAccount = true);
+    try {
+      final confirmed = await showPaperDialog<bool>(
+        context,
+        title: '회원탈퇴할까요?',
+        message: '계정과 서버에 저장된 티켓, 기록이 삭제되며 복구할 수 없어요.\n정말 탈퇴하시겠어요?',
+        actions: const [
+          PaperDialogAction(label: '취소', style: PaperButtonStyle.quiet),
+          PaperDialogAction(
+            label: '탈퇴하기',
+            value: true,
+            style: PaperButtonStyle.danger,
+          ),
+        ],
+      );
+      if (confirmed != true || !mounted) return;
+      if (!auth.isLoggedIn || auth.userId != userId) {
+        showPaperSnackBar(context, '계정이 변경됐어요. 다시 시도해주세요.');
+        return;
+      }
+      await auth.deleteAccount();
+      if (!mounted) return;
+      setState(() {
+        _unreadNotifications = 0;
+        _shareNextConcert = null;
+        pushDayBefore = false;
+        pushOnTheDay = false;
+        pushTicketDelivery = false;
+        pushFavArtistConcert = false;
+        pushPinnedConcert = false;
+        pushBlogDraft = false;
+      });
+      if (auth.isLoggedIn) {
+        _loadNotificationSettings();
+        _loadShareNextConcert();
+      }
+      showPaperSnackBar(context, '회원탈퇴가 완료됐어요.');
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is ApiException ? e.message : '잠시 후 다시 시도해주세요.';
+      showPaperSnackBar(context, '회원탈퇴를 완료하지 못했어요. $message');
+    } finally {
+      if (mounted) setState(() => _deletingAccount = false);
     }
   }
 
@@ -644,6 +698,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                               ),
                               child: const Text('개인정보처리방침'),
+                            ),
+                          ),
+                          Center(
+                            child: TextButton(
+                              onPressed: _deletingAccount
+                                  ? null
+                                  : _deleteAccount,
+                              style: TextButton.styleFrom(
+                                foregroundColor: PaperColors.ink.withValues(
+                                  alpha: .5,
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 11,
+                                  decoration: TextDecoration.underline,
+                                ),
+                              ),
+                              child: Text(
+                                _deletingAccount ? '탈퇴 확인 중…' : '회원탈퇴',
+                              ),
                             ),
                           ),
                         ],
