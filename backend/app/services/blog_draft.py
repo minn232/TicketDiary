@@ -1,11 +1,10 @@
-import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,7 +15,8 @@ from app.models.blog_draft import BlogDraft
 from app.models.concert import EventType
 from app.models.setlist import RealSetlist
 from app.models.ticket import Ticket
-from app.schemas.blog_draft import BlogDraftResponse, LlmBlogDraftResult
+from app.schemas.blog_draft import BlogDraftResponse
+from app.services.llm_batch_state import mark_llm_sent
 # 감상 메모 정리 완료 알림은 끔 - 정리본은 앱의 블로그 공유에서만 씀
 # from app.services.notification import schedule_blog_draft_notifications
 from app.services.ticket import get_ticket
@@ -26,10 +26,8 @@ logger = logging.getLogger(__name__)
 # 같은 메모가 이만큼 실패하면 더 안 보냄(failed) - 앱에 "다시 정리" 버튼이 없어 밤마다 자동 재시도하고
 # 일주일쯤 실패하면 멈춤. 메모를 고치거나 같은 메모로 다시 요청하면 0부터
 _MAX_ATTEMPTS = 7
-# LLM 서버 BLOG_DRAFT_CONCURRENCY와 맞춤 - 넘게 보내도 그쪽에서 대기할 뿐이라 이득 없음
-_CONCURRENCY = 3
-# 한 건 생성에 수십 초(모델 호출 2번) - 동시 3건이 LLM 쪽에서 대기하는 시간까지 감안
-_REQUEST_TIMEOUT_SECONDS = 180.0
+# 전송(202 즉시 응답)만 기다리는 시간 - 생성은 LLM 서버가 백그라운드로 하고 콜백으로 알려줌
+_REQUEST_TIMEOUT_SECONDS = 30.0
 # LLM이 사진마다 시점 분류를 한 번씩 부름 - 생성 시간이 사진 수에 비례해 늘지 않게 상한
 _MAX_PHOTOS = 20
 
@@ -184,52 +182,6 @@ async def _build_payload(db: AsyncSession, draft: BlogDraft, ticket: Ticket) -> 
     }
 
 
-# 성공하면 알림용 (user_id, ticket_id, 공연명), 실패/건너뜀이면 None
-async def _generate_one(
-    client: httpx.AsyncClient, semaphore: asyncio.Semaphore, draft_id: UUID
-) -> tuple[UUID, UUID, str] | None:
-    async with semaphore, AsyncSessionLocal() as db:
-        draft = await db.get(BlogDraft, draft_id)
-        if draft is None:
-            return None
-        ticket = (
-            await db.execute(select(Ticket).where(Ticket.id == draft.ticket_id).options(selectinload(Ticket.concert)))
-        ).scalar_one_or_none()
-        if ticket is None or ticket.concert is None:
-            return None
-        concert_name = ticket.concert.name
-        requested_at = draft.requested_at
-        payload = await _build_payload(db, draft, ticket)
-        try:
-            response = await client.post(
-                settings.LLM_BLOG_URL,
-                json=payload,
-                headers={"Authorization": f"Bearer {settings.LLM_EXTRACT_API_KEY}"},
-            )
-            response.raise_for_status()
-            result = LlmBlogDraftResult.model_validate(response.json())
-        except Exception as e:
-            await db.refresh(draft)
-            if draft.requested_at == requested_at:
-                draft.attempt_count += 1
-                draft.last_error = describe_http_error(e)[:500]
-                await db.commit()
-            logger.error(f"[LLM] 블로그 초안 생성 실패 draft_id={draft_id}: {describe_http_error(e)}")
-            return None
-
-        # 생성하는 동안 유저가 메모를 고쳤으면(requested_at 바뀜) 옛 메모로 만든 결과라 버림
-        await db.refresh(draft)
-        if draft.requested_at != requested_at:
-            return None
-        draft.title = result.title
-        draft.body = result.body
-        draft.generated_from = payload["emotion"]
-        draft.edited_text = None
-        draft.generated_at = datetime.now(timezone.utc)
-        await db.commit()
-        return ticket.user_id, ticket.id, concert_name
-
-
 # 마지막 수정 뒤 첫 자정(KST)이 지난 메모만 정리 - 공연 당일 밤에 적다 만 메모가 03시에 정리되지 않게
 # 하고, 하루 기다리는 동안 실제 셋리가 들어올 확률도 오름
 def _edit_cutoff(now: datetime) -> datetime:
@@ -237,9 +189,10 @@ def _edit_cutoff(now: datetime) -> datetime:
     return midnight.astimezone(timezone.utc)
 
 
-# 밤 LLM 배치: 생성 대기 중인 초안을 LLM 서버 /blog-draft에 보내고 응답(초안)을 바로 저장. 다른
-# 배치와 달리 콜백 없이 응답으로 받아서 전송 건수(pending_count)에 안 잡음 - 호출부가 이 함수가
-# 끝난 뒤에 "전송 완료"를 찍어야 생성 도중 유휴로 판단돼 pod이 꺼지지 않음
+# 밤 LLM 배치: 생성 대기 중인 초안을 LLM 서버 /blog-draft/async에 한 번에 보냄(JSON 배열, 202 즉시 응답).
+# 결과는 LLM 서버가 POST /tickets/{id}/blog-draft-result 콜백으로 나중에 보냄 - 동기 응답으로 받으면
+# 생성이 100초를 넘을 때 Cloudflare(RunPod 프록시)가 524로 끊어서(11/17) 콜백 방식으로 바꿈. 전송 건수는
+# pending_count에 적립돼(다른 배치와 같은 방식) 콜백이 다 와야 pod이 조기 정지됨
 async def send_blog_drafts_to_llm() -> int:
     if not settings.LLM_BLOG_URL:
         logger.info("LLM_BLOG_URL 미설정, 전송 건너뜀")
@@ -255,20 +208,73 @@ async def send_blog_drafts_to_llm() -> int:
         )
         draft_ids = list(result.scalars().all())
 
-    if not draft_ids:
-        logger.info("[LLM] 생성할 블로그 초안 없음")
-        return 0
+        if not draft_ids:
+            logger.info("[LLM] 생성할 블로그 초안 없음")
+            return 0
 
-    semaphore = asyncio.Semaphore(_CONCURRENCY)
-    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
-        results = await asyncio.gather(*(_generate_one(client, semaphore, i) for i in draft_ids))
-    done = [r for r in results if r is not None]
-    logger.info(f"[LLM] 블로그 초안 생성 완료: {len(done)}/{len(draft_ids)}건")
-    # 완료 알림은 끔(위 import 참고)
-    # if done:
-    #     try:
-    #         async with AsyncSessionLocal() as db:
-    #             await schedule_blog_draft_notifications(db, done)
-    #     except Exception:
-    #         logger.exception("[LLM] 블로그 초안 완료 알림 예약 오류")
-    return len(done)
+        sent_ids: list[UUID] = []
+        payload: list[dict] = []
+        for draft_id in draft_ids:
+            draft = await db.get(BlogDraft, draft_id)
+            if draft is None:
+                continue
+            ticket = (
+                await db.execute(
+                    select(Ticket).where(Ticket.id == draft.ticket_id).options(selectinload(Ticket.concert))
+                )
+            ).scalar_one_or_none()
+            if ticket is None or ticket.concert is None:
+                continue
+            payload.append({"ticket_id": str(ticket.id), **await _build_payload(db, draft, ticket)})
+            sent_ids.append(draft_id)
+
+        if not payload:
+            return 0
+
+        try:
+            async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+                response = await client.post(
+                    settings.LLM_BLOG_URL.rstrip("/") + "/async",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {settings.LLM_EXTRACT_API_KEY}"},
+                )
+                response.raise_for_status()
+        except Exception as e:
+            # 전송 자체가 실패한 건 시도 횟수에 안 셈 - 내일 그대로 다시 보냄
+            logger.error(f"[LLM] 블로그 초안 전송 실패 ({len(payload)}건 대상): {describe_http_error(e)}")
+            return 0
+
+        # 보낸 횟수를 시도 횟수로 셈 - 콜백이 안 오는 경우에도 7번이면 멈춤
+        await db.execute(
+            update(BlogDraft).where(BlogDraft.id.in_(sent_ids)).values(attempt_count=BlogDraft.attempt_count + 1)
+        )
+        await db.commit()
+
+    logger.info(f"[LLM] 블로그 초안 전송 완료: {len(payload)}건 (결과는 콜백으로 수신)")
+    await mark_llm_sent(len(payload))
+    return len(payload)
+
+
+# LLM 서버 콜백 처리 - 성공이면 정리본 저장, 실패면 사유만 기록(시도 횟수는 보낼 때 이미 올림).
+# 보낸 뒤 유저가 메모를 고쳤으면(emotion이 달라짐) 옛 메모로 만든 결과라 버림.
+# 반환: 저장했으면 True
+async def save_blog_draft_result(
+    db: AsyncSession, ticket_id: UUID, emotion: str, title: str | None, body: str | None, error: str | None
+) -> bool:
+    draft = await _find_draft(db, ticket_id)
+    if draft is None:
+        return False
+    if draft.emotion != emotion:
+        return False
+    if error is not None or not title or not body:
+        draft.last_error = (error or "빈 결과")[:500]
+        await db.commit()
+        return False
+    draft.title = title
+    draft.body = body
+    draft.generated_from = emotion
+    draft.edited_text = None
+    draft.generated_at = datetime.now(timezone.utc)
+    draft.last_error = None
+    await db.commit()
+    return True

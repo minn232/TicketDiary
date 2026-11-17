@@ -101,8 +101,7 @@ async def _run_llm_attempt() -> None:
         # except Exception:
         #     logger.exception("[LLM] 일기 생성 요청 전송 오류")
         try:
-            # 콜백 없이 응답으로 받는 동기 호출이라 다 끝날 때까지 기다림 - 그 전에 전송 완료를 찍으면
-            # 생성 도중(호출당 수십 초) 유휴로 판단돼 pod이 꺼질 수 있음
+            # 202 즉시 응답 + 콜백 방식(전송 건수가 pending_count에 적립돼 콜백이 다 와야 조기 정지)
             sent["블로그"] = await send_blog_drafts_to_llm()
         except Exception:
             logger.exception("[LLM] 블로그 초안 생성 오류")

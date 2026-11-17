@@ -29,7 +29,14 @@ class BlogDraftResponse(BaseModel):
     generated_at: datetime | None = None
 
 
-class LlmBlogDraftResult(BaseModel):
-    # LLM 서버 POST /blog-draft 응답 - text는 제목+본문을 합친 것이라 저장하지 않음
-    title: str
-    body: str
+class LlmBlogDraftResultRequest(BaseModel):
+    # LLM 서버 콜백 바디 - emotion은 받은 감상 글 그대로(그 사이 메모가 바뀌었으면 버리는 데 씀).
+    # 성공이면 title+body, 실패면 error
+    emotion: str
+    title: str | None = None
+    body: str | None = None
+    error: str | None = None
+
+
+class LlmBlogDraftResultResponse(BaseModel):
+    saved: bool
