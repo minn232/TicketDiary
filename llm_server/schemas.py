@@ -57,6 +57,12 @@ class BlogDraftRequest(BaseModel):
     photos: list[BlogDraftPhoto] = Field(default=[], max_length=20)
 
 
+# 비동기 배치(POST /blog-draft/async)로 보내는 한 건 - 요청 필드는 BlogDraftRequest 그대로 + 결과를
+# 돌려줄 티켓 id. 결과는 콜백(POST /tickets/{ticket_id}/blog-draft-result)으로 보냄
+class BlogDraftAsyncItem(BlogDraftRequest):
+    ticket_id: str
+
+
 class BlogDraftResponse(BaseModel):
     title: str  # 블로그 에디터 제목 입력란용
     body: str  # 본문 입력란용 (평문, 문단은 빈 줄로 구분)
