@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TicketDiary 회원 삭제</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --border: #e3e1dc;
+    --text: #2a2a28;
+    --muted: #8a8781;
+    --accent: #c0562f;
+    --danger: #b0473a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font-size: 14px;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  header a.nav-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+  header a.nav-link:hover { text-decoration: underline; }
+  .field { display: flex; align-items: center; gap: 6px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  input[type="text"], input[type="password"] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    background: #fff;
+    color: var(--text);
+  }
+  button {
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h2 { font-size: 14px; margin: 24px 0 8px; }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .form-row input { min-width: 300px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: #faf9f7; }
+  tr:last-child td { border-bottom: none; }
+  .none { color: var(--muted); font-style: italic; }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  #msg { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; display: none; z-index: 20; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>TicketDiary 회원 삭제</h1>
+  <div class="field">
+    <label>관리자 키</label>
+    <input type="password" id="admin-key" placeholder="Bearer key" />
+    <button onclick="saveKey()">저장</button>
+  </div>
+  <a class="nav-link" href="/">← 공연 목록</a>
+  <a class="nav-link" href="/artists">아티스트 조회</a>
+  <a class="nav-link" href="/identity">아티스트 연결 기록</a>
+</header>
+
+<main>
+  <h2>회원 찾기</h2>
+  <div class="hint">
+    개인정보 삭제 요청 메일을 받으면 닉네임이나 카카오 ID로 찾아서 삭제해요.
+    삭제하면 티켓·사진·팔로우·알림 등 계정 데이터가 모두 지워지고 되돌릴 수 없어요.
+    요청자 본인인지는 메일에서 먼저 확인해 주세요.
+  </div>
+  <div class="form-row">
+    <input type="text" id="keyword" placeholder="닉네임 / 카카오 ID 일부 / user_id 전체" />
+    <button onclick="search()">검색</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>닉네임</th><th>가입 방식</th><th>카카오 ID</th><th>티켓 수</th><th>user_id</th><th></th></tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="6" class="none">검색어를 입력해 주세요.</td></tr></tbody>
+  </table>
+</main>
+
+<div id="msg"></div>
+
+<script>
+const API = '/api/v1/admin';
+
+function adminKey() { return localStorage.getItem('td_admin_key') || ''; }
+function saveKey() {
+  localStorage.setItem('td_admin_key', document.getElementById('admin-key').value.trim());
+  toast('키 저장됨');
+}
+document.getElementById('admin-key').value = adminKey();
+document.getElementById('keyword').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Key': adminKey(), ...(opts.headers || {}) },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function toast(text) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 2500);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const ROLE_LABEL = { kakao_user: '카카오', guest: '게스트' };
+
+async function search() {
+  const keyword = document.getElementById('keyword').value.trim();
+  const tbody = document.getElementById('rows');
+  if (!keyword) return;
+  try {
+    const result = await api(`/users?keyword=${encodeURIComponent(keyword)}`);
+    const rows = result.users;
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="none">검색 결과가 없어요.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(u => `
+      <tr>
+        <td>${u.nickname ? esc(u.nickname) : '<span class="none">닉네임 없음</span>'}</td>
+        <td>${esc(ROLE_LABEL[u.role] || u.role || '-')}</td>
+        <td class="mono">${esc(u.kakao_id || '-')}</td>
+        <td>${u.ticket_count}</td>
+        <td class="mono">${esc(u.id)}</td>
+        <td><button class="danger" onclick="removeUser('${esc(u.id)}', this)">삭제</button></td>
+      </tr>`).join('') + (result.truncated
+      ? '<tr><td colspan="6" class="none">20명까지만 보여요. 검색어를 더 구체적으로 입력해 주세요.</td></tr>' : '');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="none">${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function removeUser(id, btn) {
+  const row = btn.closest('tr');
+  const label = row.children[0].textContent.trim();
+  if (!confirm(`"${label}" 회원을 삭제할까요?\n티켓·사진 등 모든 데이터가 지워지고 되돌릴 수 없어요.`)) return;
+  btn.disabled = true;
+  try {
+    await api(`/users/${id}`, { method: 'DELETE' });
+    row.remove();
+    toast('삭제했어요');
+  } catch (e) {
+    btn.disabled = false;
+    toast(e.message);
+  }
+}
+</script>
+</body>
+</html>

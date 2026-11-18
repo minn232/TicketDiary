@@ -256,7 +256,8 @@ async def call_vision(image_bytes: bytes) -> dict:
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
             _VISION_URL,
-            params={"key": settings.GOOGLE_VISION_API_KEY},
+            # 키를 URL 파라미터로 보내면 httpx 에러 메시지·로그에 URL째 찍혀 키가 노출되므로 헤더로 보냄
+            headers={"X-Goog-Api-Key": settings.GOOGLE_VISION_API_KEY},
             json=payload,
         )
 

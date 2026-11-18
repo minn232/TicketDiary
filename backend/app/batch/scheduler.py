@@ -101,8 +101,7 @@ async def _run_llm_attempt() -> None:
         # except Exception:
         #     logger.exception("[LLM] 일기 생성 요청 전송 오류")
         try:
-            # 콜백 없이 응답으로 받는 동기 호출이라 다 끝날 때까지 기다림 - 그 전에 전송 완료를 찍으면
-            # 생성 도중(호출당 수십 초) 유휴로 판단돼 pod이 꺼질 수 있음
+            # 202 즉시 응답 + 콜백 방식(전송 건수가 pending_count에 적립돼 콜백이 다 와야 조기 정지)
             sent["블로그"] = await send_blog_drafts_to_llm()
         except Exception:
             logger.exception("[LLM] 블로그 초안 생성 오류")
@@ -277,7 +276,7 @@ def start_scheduler() -> None:
     # 크롤 배치 2종(서버에서 9/12부터 정지 중 - LLM 배치 반영 끝난 뒤에만 주석 해제할 것):
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
     # 라인업(출연진) 변경 여부 재확인을 이어서 실행 (KST 00:15)
-    # scheduler.add_job(_run_crawl_group, "cron", hour=15, minute=15, id="crawl_group", max_instances=1)
+    scheduler.add_job(_run_crawl_group, "cron", hour=15, minute=15, id="crawl_group", max_instances=1)
     # 신규 아티스트 Last.fm 유사 아티스트 캐싱 -> 장르 태그 캐싱(결산 "선호 장르"용)을 이어서 실행 (KST 00:20)
     scheduler.add_job(_run_lastfm_sync, "cron", hour=15, minute=20, id="lastfm_sync", max_instances=1)
     # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)

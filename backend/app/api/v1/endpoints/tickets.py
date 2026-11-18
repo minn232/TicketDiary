@@ -13,7 +13,13 @@ from app.models.user import User
 from app.schemas.artist_identity import (
     IdentityCandidatesResponse, IdentityChangeRequest, IdentityChangeResponse,
 )
-from app.schemas.blog_draft import BlogDraftCreate, BlogDraftResponse, BlogDraftTextUpdate
+from app.schemas.blog_draft import (
+    BlogDraftCreate,
+    BlogDraftResponse,
+    BlogDraftTextUpdate,
+    LlmBlogDraftResultRequest,
+    LlmBlogDraftResultResponse,
+)
 from app.schemas.diary import DiaryResultRequest, DiaryResultResponse
 from app.schemas.setlist import (
     RealSetlistResponse, PreSetlistResponse,
@@ -27,7 +33,7 @@ from app.services.artist_identity import (
     change_concert_artist_identity,
     identity_candidates,
 )
-from app.services.blog_draft import get_blog_draft, request_blog_draft, save_blog_draft_text
+from app.services.blog_draft import get_blog_draft, request_blog_draft, save_blog_draft_result, save_blog_draft_text
 from app.services.crawler import crawl_and_save
 from app.services.lastfm import ensure_artist_genres_cached
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
@@ -371,6 +377,27 @@ async def receive_diary_result(
     ticket.diary = body.diary
     await db.commit()
     return DiaryResultResponse(diary=ticket.diary)
+
+
+# LLM 서버가 밤 배치로 정리한 감상 메모 결과를 보내는 웹훅 - 성공/실패 둘 다 옴(실패는 error)
+@router.post("/{ticket_id}/blog-draft-result", response_model=LlmBlogDraftResultResponse)
+async def receive_blog_draft_result(
+    ticket_id: UUID,
+    body: LlmBlogDraftResultRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_llm_api_key),
+):
+    # pod 조기 정지 판단용 - 다른 웹훅과 같음(보낸 건수와 매칭되니 404여도 먼저 셈)
+    await mark_llm_callback_received()
+    background_tasks.add_task(try_stop_pod_if_done)
+
+    saved = await save_blog_draft_result(db, ticket_id, body.emotion, body.title, body.body, body.error)
+    if saved:
+        logger.info(f"[LLM] 블로그 초안 콜백 저장 ticket_id={ticket_id}")
+    else:
+        logger.warning(f"[LLM] 블로그 초안 콜백 저장 안 함(실패/메모 바뀜/없음) ticket_id={ticket_id} error={body.error}")
+    return LlmBlogDraftResultResponse(saved=saved)
 
 
 # 감상 메모 저장 - 즉시 반환하고 정리는 마지막 수정 뒤 첫 자정이 지난 밤 LLM 배치가 함. 이전 정리본은

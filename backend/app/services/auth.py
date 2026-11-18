@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _KAKAO_TOKEN_URL = "https://kauth.kakao.com/oauth/token"
 _KAKAO_USER_INFO_URL = "https://kapi.kakao.com/v2/user/me"
+_KAKAO_UNLINK_URL = "https://kapi.kakao.com/v1/user/unlink"
 
 
 # 기기 ID를 해싱하여 고유한 게스트 토큰 생성
@@ -62,7 +63,7 @@ async def _exchange_kakao_code(code: str) -> str:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if response.status_code != 200:
-        logger.warning(f"카카오 토큰 교환 실패: {response.status_code} {response.text}")
+        logger.warning(f"카카오 토큰 교환 실패: {response.status_code} {response.text[:200]}")
         raise HTTPException(status_code=400, detail="유효하지 않은 카카오 인증 코드입니다.")
     return response.json()["access_token"]
 
@@ -147,12 +148,36 @@ async def get_user_by_id(db: AsyncSession, user_id: str | UUID) -> User | None:
     return result.scalar_one_or_none()
 
 
-# 회원 탈퇴 - DB는 cascade로 지워지지만 S3 사진은 안 지워져서(공개 URL로 남음) 커밋 뒤 따로 정리
+# 카카오 쪽 앱 연결 끊기 - 안 하면 탈퇴 뒤에도 카카오 계정 설정에 이 앱이 "연결된 서비스"로 남음.
+# 앱 어드민 키 방식이라 로그인 때 받은 액세스 토큰을 보관할 필요가 없음. 실패해도 탈퇴는 이미 끝난
+# 상태라 예외를 던지지 않고 로그만 남김(사용자가 카카오 설정에서 직접 해제 가능)
+async def _unlink_kakao(kakao_id: str) -> None:
+    if not settings.KAKAO_ADMIN_KEY:
+        logger.info("KAKAO_ADMIN_KEY 미설정, 카카오 연결 끊기 건너뜀")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                _KAKAO_UNLINK_URL,
+                headers={"Authorization": f"KakaoAK {settings.KAKAO_ADMIN_KEY}"},
+                data={"target_id_type": "user_id", "target_id": kakao_id},
+            )
+        if response.status_code != 200:
+            logger.warning(f"카카오 연결 끊기 실패: {response.status_code} {response.text[:200]}")
+    except httpx.HTTPError as e:
+        logger.warning(f"카카오 연결 끊기 실패: {type(e).__name__}")
+
+
+# 회원 탈퇴 - DB는 cascade로 지워지지만 S3 사진은 안 지워져서(공개 URL로 남음) 커밋 뒤 따로 정리.
+# 카카오 연결 끊기도 DB 삭제가 끝난 뒤에 함(끊기 실패가 탈퇴를 막지 않게)
 async def delete_account(db: AsyncSession, user: User) -> None:
     image_urls = await list_user_image_urls(db, user.id)
+    kakao_id = user.kakao_id
     await db.delete(user)
     await db.commit()
     await delete_unreferenced_images(db, image_urls)
+    if kakao_id:
+        await _unlink_kakao(kakao_id)
 
 
 # 회원 프로필(닉네임/프로필 이미지) 수정

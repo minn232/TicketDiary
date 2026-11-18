@@ -1926,3 +1926,66 @@ async def test_admin_timetable_rejects_bad_date_and_empty_event():
     assert bad_date.status_code == 422
     assert empty_event.status_code == 422
     assert missing.status_code == 404
+
+
+# 회원 검색/삭제 (개인정보 삭제 요청 처리용)
+
+async def _create_user(nickname: str, kakao_id: str | None = None):
+    from app.models.user import User, UserRole
+
+    async with AsyncSessionLocal() as db:
+        user = User(
+            nickname=nickname,
+            kakao_id=kakao_id,
+            guest_token=None if kakao_id else uuid.uuid4().hex,
+            role=UserRole.KAKAO_USER if kakao_id else UserRole.GUEST,
+        )
+        db.add(user)
+        await db.commit()
+        return user.id
+
+
+# 닉네임 일부로 찾고, %는 와일드카드가 아닌 글자로 취급되는지 테스트
+@pytest.mark.asyncio
+async def test_admin_user_search_by_nickname_and_wildcard_escaped():
+    tag = uuid.uuid4().hex[:8]
+    user_id = await _create_user(f"검색대상{tag}")
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            found = await ac.get("/api/v1/admin/users", params={"keyword": tag}, headers=_admin_headers())
+            wildcard = await ac.get("/api/v1/admin/users", params={"keyword": f"%{tag}"}, headers=_admin_headers())
+
+    assert found.status_code == 200
+    assert [u["id"] for u in found.json()["users"]] == [str(user_id)]
+    assert found.json()["truncated"] is False
+    # "%검색어"는 이제 글자 그대로라 닉네임에 %가 없으면 아무도 안 걸림
+    assert wildcard.json()["users"] == []
+
+
+# user_id 전체로 검색하면 그 한 명만 나오는지 테스트
+@pytest.mark.asyncio
+async def test_admin_user_search_by_exact_user_id():
+    user_id = await _create_user("정확히검색")
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res = await ac.get("/api/v1/admin/users", params={"keyword": str(user_id)}, headers=_admin_headers())
+
+    assert [u["id"] for u in res.json()["users"]] == [str(user_id)]
+
+
+# 회원 삭제 후 다시 찾을 수 없고, 없는 회원 삭제는 404, 인증 없으면 거부되는지 테스트
+@pytest.mark.asyncio
+async def test_admin_delete_user():
+    user_id = await _create_user("삭제대상")
+
+    with _admin_settings():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            no_auth = await ac.delete(f"/api/v1/admin/users/{user_id}", headers={"X-Admin-Key": "wrong"})
+            deleted = await ac.delete(f"/api/v1/admin/users/{user_id}", headers=_admin_headers())
+            again = await ac.delete(f"/api/v1/admin/users/{user_id}", headers=_admin_headers())
+
+    assert no_auth.status_code in (401, 403)
+    assert deleted.status_code == 200 and deleted.json() == {"deleted": True}
+    assert again.status_code == 404

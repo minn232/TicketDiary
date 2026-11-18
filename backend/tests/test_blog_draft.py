@@ -43,14 +43,39 @@ async def _ticket(prefix: str) -> tuple[str, str, str]:
     return token, concert_id, ticket_id
 
 
-# LLM 서버 응답 흉내 - 요청 바디를 기록하고, 감상 글 그대로 제목/본문을 돌려줌(fail이면 502)
-def _llm_client(calls: list[dict], fail: bool = False):
+# LLM 서버 흉내 - 배치 요청(JSON 배열)을 기록하고, 202를 돌려준 뒤 건마다 결과 콜백을 보냄.
+# fail이면 전송 자체가 502, callback: ok(감상 글 그대로 제목/본문) | error(실패 콜백) | none(콜백 안 옴),
+# before는 콜백 직전에 실행(그 사이 유저가 메모를 고치는 상황 등)
+_LLM_KEY = "test-llm-key"
+_ASYNC_URL = _BLOG_URL + "/async"
+
+
+def _llm_client(calls: list[dict], fail: bool = False, callback: str = "ok", before=None, urls: list[str] | None = None):
     async def _post(url, json=None, headers=None):
-        calls.append(json)
+        if urls is not None:
+            urls.append(url)
         response = MagicMock()
         if fail:
             response.raise_for_status.side_effect = Exception("HTTP 502")
-        response.json.return_value = {"title": json["concert_name"], "body": json["emotion"], "text": "무시됨"}
+            return response
+        calls.extend(json)
+        if before is not None:
+            await before()
+        if callback != "none":
+            for item in json:
+                body = {"emotion": item["emotion"]}
+                if callback == "error":
+                    body["error"] = "boom"
+                else:
+                    body.update(title=item["concert_name"], body=item["emotion"])
+                with patch("app.core.deps.settings.LLM_EXTRACT_API_KEY", _LLM_KEY):
+                    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                        res = await ac.post(
+                            f"/api/v1/tickets/{item['ticket_id']}/blog-draft-result",
+                            json=body,
+                            headers={"Authorization": f"Bearer {_LLM_KEY}"},
+                        )
+                assert res.status_code == 200
         return response
 
     client = MagicMock()
@@ -256,15 +281,30 @@ def _base36(n: int) -> str:
 
 
 @pytest.mark.asyncio
-async def test_send_failure_retries_until_limit_then_failed():
+async def test_send_goes_to_async_endpoint_with_ticket_id():
+    token, _, ticket_id = await _ticket("PF_BLOG_URL")
+    await _post_draft(ticket_id, token)
+    await _backdate(ticket_id)
+
+    urls: list[str] = []
+    calls: list[dict] = []
+    with _blog_url(), _llm_client(calls, urls=urls):
+        assert await send_blog_drafts_to_llm() >= 1
+    assert urls == [_ASYNC_URL]
+    assert any(c["ticket_id"] == ticket_id for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_failure_callbacks_retry_until_limit_then_failed():
     token, _, ticket_id = await _ticket("PF_BLOG_FAIL")
     await _post_draft(ticket_id, token)
     await _backdate(ticket_id)
 
     for _ in range(_MAX_ATTEMPTS):
-        with _blog_url(), _llm_client([], fail=True):
+        with _blog_url(), _llm_client([], callback="error"):
             await send_blog_drafts_to_llm()
     assert (await _get_draft(ticket_id, token)).json()["status"] == "failed"
+    assert (await _load(ticket_id)).last_error == "boom"
 
     # 실패로 확정된 건 더 안 보냄
     calls: list[dict] = []
@@ -282,30 +322,59 @@ async def test_send_failure_retries_until_limit_then_failed():
 
 
 @pytest.mark.asyncio
-async def test_rerequest_during_generation_discards_old_result():
+async def test_missing_callbacks_also_stop_after_limit():
+    token, _, ticket_id = await _ticket("PF_BLOG_NOCB")
+    await _post_draft(ticket_id, token)
+    await _backdate(ticket_id)
+
+    for _ in range(_MAX_ATTEMPTS):
+        with _blog_url(), _llm_client([], callback="none"):
+            await send_blog_drafts_to_llm()
+    assert (await _get_draft(ticket_id, token)).json()["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_send_request_failure_does_not_count_as_attempt():
+    token, _, ticket_id = await _ticket("PF_BLOG_SENDFAIL")
+    await _post_draft(ticket_id, token)
+    await _backdate(ticket_id)
+
+    with _blog_url(), _llm_client([], fail=True):
+        assert await send_blog_drafts_to_llm() == 0
+    assert (await _load(ticket_id)).attempt_count == 0
+    assert (await _get_draft(ticket_id, token)).json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_memo_edited_while_generating_discards_old_result():
     token, _, ticket_id = await _ticket("PF_BLOG_RACE")
     await _post_draft(ticket_id, token, emotion="옛 글.")
     await _backdate(ticket_id)
 
-    async def _post(url, json=None, headers=None):
+    async def _edit_memo():
         # 생성하는 사이 유저가 새 글로 다시 요청
-        if json["concert_name"].startswith("PF_BLOG_RACE"):
-            await _post_draft(ticket_id, token, emotion="새 글.")
-        response = MagicMock()
-        response.json.return_value = {"title": json["concert_name"], "body": json["emotion"], "text": ""}
-        return response
+        await _post_draft(ticket_id, token, emotion="새 글.")
 
-    client = MagicMock()
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=None)
-    client.post = AsyncMock(side_effect=_post)
-    with _blog_url(), patch("app.services.blog_draft.httpx.AsyncClient", return_value=client):
+    with _blog_url(), _llm_client([], before=_edit_memo):
         await send_blog_drafts_to_llm()
 
     body = (await _get_draft(ticket_id, token)).json()
     assert body["status"] == "pending"
     assert body["emotion"] == "새 글."
     assert (await _load(ticket_id)).body is None
+
+
+@pytest.mark.asyncio
+async def test_result_callback_requires_llm_key():
+    token, _, ticket_id = await _ticket("PF_BLOG_AUTH")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        with patch("app.core.deps.settings.LLM_EXTRACT_API_KEY", _LLM_KEY):
+            res = await ac.post(
+                f"/api/v1/tickets/{ticket_id}/blog-draft-result",
+                json={"emotion": "x", "title": "t", "body": "b"},
+                headers={"Authorization": "Bearer wrong"},
+            )
+    assert res.status_code == 401
 
 
 @pytest.mark.asyncio
