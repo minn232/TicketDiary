@@ -7,7 +7,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, status
 
 import inference
 from auth import verify_backend_api_key
-from callback import send_artist_result, send_crawl_result, send_diary_result
+from callback import send_artist_result, send_blog_draft_result, send_crawl_result, send_diary_result
 from config import settings
 from dedup import is_processed, mark_processed
 from normalize import (
@@ -17,7 +17,7 @@ from normalize import (
     normalize_event_type,
     normalize_lineup_entries,
 )
-from schemas import ArtistExtractItem, BlogDraftRequest, BlogDraftResponse, CrawlAnalyzeItem, DiaryGenerateItem
+from schemas import ArtistExtractItem, BlogDraftAsyncItem, BlogDraftRequest, BlogDraftResponse, CrawlAnalyzeItem, DiaryGenerateItem
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -147,11 +147,34 @@ async def artist_extract(items: list[ArtistExtractItem], background_tasks: Backg
 #     return {"accepted": len(items)}
 
 
-# 공연 정보 + 사용자 감상 글로 블로그 글 초안 생성. 다른 엔드포인트와 달리 콜백이 아니라
-# 생성 완료까지 기다렸다가 응답 바디로 초안을 바로 돌려준다. 이 서버가 밤 배치 때만 떠서
-# 유저 요청은 백엔드가 저장해두고, 밤 배치(backend/app/services/blog_draft.py의
-# send_blog_drafts_to_llm)가 한 건씩 호출해 응답을 저장함 - 동시 3건, 타임아웃 180초.
-# 실패(502)하면 백엔드가 다음날 다시 보내고 7번 실패하면 멈춤
+async def _process_blog_batch(items: list[BlogDraftAsyncItem]) -> None:
+    async def _handle(item: BlogDraftAsyncItem) -> None:
+        try:
+            result = await _run_sync(_blog_draft_semaphore, inference.generate_blog_post_draft, item)
+            body = {"emotion": item.emotion, "title": result["title"], "body": result["body"]}
+        except Exception as e:
+            logger.exception(f"[blog] 초안 생성 실패, 다음날 배치에서 재시도됨: {item.ticket_id}")
+            body = {"emotion": item.emotion, "error": f"{type(e).__name__}: {e}"[:300]}
+        try:
+            await send_blog_draft_result(item.ticket_id, body)
+        except Exception:
+            logger.exception(f"[blog] 콜백 전송 실패, 다음날 배치에서 재시도됨: {item.ticket_id}")
+
+    await asyncio.gather(*(_handle(item) for item in items))
+
+
+# 블로그 초안 밤 배치 엔드포인트(백엔드 services/blog_draft.py의 send_blog_drafts_to_llm) - 바디는
+# JSON 배열, 즉시 202를 돌려주고 생성은 백그라운드에서 해서 결과를 콜백으로 보냄. 동기 /blog-draft는
+# 생성이 100초를 넘으면 Cloudflare(RunPod 프록시)가 524로 끊어서(11/17 첫 실제 생성 실패) 콜백으로 바꿈.
+# 실패해도 콜백(error)을 보내고, 백엔드가 다음날 다시 보내서 7번 실패하면 멈춤
+@app.post("/blog-draft/async", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(verify_backend_api_key)])
+async def blog_draft_async(items: list[BlogDraftAsyncItem], background_tasks: BackgroundTasks):
+    background_tasks.add_task(_process_blog_batch, items)
+    return {"accepted": len(items)}
+
+
+# 동기 방식(생성 완료까지 기다렸다가 응답 바디로 초안을 돌려줌) - 100초 안에 끝나는 짧은 호출/수동 테스트용으로
+# 남겨둠. 밤 배치는 위 /blog-draft/async를 씀
 @app.post("/blog-draft", response_model=BlogDraftResponse, dependencies=[Depends(verify_backend_api_key)])
 async def blog_draft(item: BlogDraftRequest):
     try:

@@ -9,9 +9,13 @@ poster_info 스키마(json_schema 강제 출력)를 쓰는 같은 함수(`extrac
 
 **2026-10-28 업데이트: 공연 일기 생성(`/diary-generate`, `generate_diary_text`)은 블로그 초안
 (`POST /blog-draft`, `blog_draft.py`)으로 대체됐습니다.** 백엔드가 일기 요청을 더 이상 보내지 않아
-`/diary-generate` 라우트는 주석 처리해뒀습니다. `/blog-draft`는 다른 엔드포인트와 달리 202 + 콜백이
-아니라 생성이 끝날 때까지 기다렸다가 응답 바디(`title`/`body`/`text`)로 바로 돌려주고, 백엔드 밤
-배치가 한 건씩(동시 3건, 타임아웃 180초) 호출합니다.
+`/diary-generate` 라우트는 주석 처리해뒀습니다.
+
+**2026-11-17 업데이트: 백엔드 밤 배치는 `POST /blog-draft/async`(JSON 배열, 각 항목은 `BlogDraftRequest` +
+`ticket_id`)를 씁니다.** 즉시 202를 돌려주고 생성은 백그라운드에서 해서 결과를
+`POST {BACKEND}/tickets/{ticket_id}/blog-draft-result`(성공 `{emotion, title, body}`, 실패 `{emotion, error}`)로
+보냅니다. 동기 `/blog-draft`는 생성이 100초를 넘으면 Cloudflare(RunPod 프록시)가 524로 끊어서(11/17 03시
+배치 블로그 0건) 바꿨고, 동기 라우트는 수동 테스트용으로 남겨뒀습니다.
 
 - `extract_poster.py`/`schema.py`는 LLM팀 원본 그대로이니(파일명도 동일) 로직을 고칠 일이
   있으면 원본 파일을 갱신하고 다시 옮기는 방식으로 동기화해주세요 (직접 이 사본만 고치면
