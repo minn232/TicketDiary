@@ -181,6 +181,46 @@ async def test_fetch_similar_artists_malformed_json_returns_empty():
     assert result == []
 
 
+# API 키 오류(10/26)는 기본 호출에선 빈 리스트, raise_on_key_error=True면 LastfmKeyError
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [10, 26])
+async def test_fetch_similar_artists_key_error(code):
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.json.return_value = {"error": code, "message": "key"}
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    with patch("app.services.lastfm.settings.LASTFM_API_KEY", "test-key"), \
+         patch("app.services.lastfm.httpx.AsyncClient", return_value=mock_client):
+        from app.services.lastfm import LastfmKeyError, fetch_similar_artists, fetch_top_tags
+
+        assert await fetch_similar_artists("A") == []
+        assert await fetch_top_tags("A") == []
+        with pytest.raises(LastfmKeyError):
+            await fetch_similar_artists("A", raise_on_key_error=True)
+        with pytest.raises(LastfmKeyError):
+            await fetch_top_tags("A", raise_on_key_error=True)
+
+
+# 키 오류면 배치가 첫 아티스트에서 중단하고 실패 기록(쿨다운 오염)을 남기지 않는지 테스트
+@pytest.mark.asyncio
+async def test_sync_artist_similarities_key_error_stops_without_recording_failure():
+    from app.services import lastfm as lastfm_mod
+
+    record = AsyncMock()
+    fetch = AsyncMock(side_effect=lastfm_mod.LastfmKeyError(10))
+    with patch("app.services.lastfm.fetch_similar_artists", fetch), \
+         patch("app.services.lastfm._record_lastfm_failure", record), \
+         patch("app.services.lastfm._filter_lastfm_retry_eligible", AsyncMock(return_value=["A", "B", "C"])):
+        await lastfm_mod.sync_artist_similarities()
+
+    assert fetch.await_count == 1
+    record.assert_not_awaited()
+
+
 # sync_artist_similarities 테스트
 
 @pytest.mark.asyncio
@@ -247,7 +287,7 @@ async def test_sync_artist_similarities_continues_after_one_artist_fails():
     await _create_concert(kopis_broken, artist_broken, token)
     await _create_concert(kopis_ok, artist_ok, token)
 
-    async def _mock_fetch(artist_name: str, limit: int = 30):
+    async def _mock_fetch(artist_name: str, limit: int = 30, **kwargs):
         if artist_name == artist_broken:
             raise RuntimeError("예기치 못한 오류")
         return [("유사아티스트", 0.7)]

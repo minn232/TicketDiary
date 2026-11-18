@@ -148,8 +148,30 @@ def resolve_genres(tags: list[str]) -> list[str]:
     return matched
 
 
+# API 키 자체가 막힌 경우(10 잘못된 키, 26 정지된 키) - "그 아티스트를 Last.fm이 모름"과 구분해야 함.
+# 키 문제를 빈 결과로 취급하면 배치가 아티스트마다 실패를 기록해 쿨다운이 오염되고(키를 되살려도 1주~30일
+# 재시도가 밀림) 헛호출만 반복함. 배치/즉시 캐싱 경로만 raise_on_key_error=True로 받아 중단하고,
+# 나머지(대표곡 등 사용자 요청 경로)는 기존처럼 빈 값 폴백
+_LASTFM_KEY_ERROR_CODES = {10, 26}
+
+
+class LastfmKeyError(Exception):
+    pass
+
+
+def _key_error_code(response: httpx.Response) -> int | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    code = payload.get("error") if isinstance(payload, dict) else None
+    return code if code in _LASTFM_KEY_ERROR_CODES else None
+
+
 # Last.fm artist.getSimilar 호출 (autocorrect로 표기 오차 보정). 실패/결과없음이면 빈 리스트
-async def fetch_similar_artists(artist_name: str, limit: int = 30) -> list[tuple[str, float]]:
+async def fetch_similar_artists(
+    artist_name: str, limit: int = 30, *, raise_on_key_error: bool = False
+) -> list[tuple[str, float]]:
     if not settings.LASTFM_API_KEY:
         return []
 
@@ -169,6 +191,13 @@ async def fetch_similar_artists(artist_name: str, limit: int = 30) -> list[tuple
         logger.warning(f"Last.fm 호출 실패 ({artist_name}): {e}")
         return []
 
+    key_error = _key_error_code(response)
+    if key_error:
+        if raise_on_key_error:
+            raise LastfmKeyError(key_error)
+        logger.warning(f"Last.fm API 키 오류 {key_error} ({artist_name})")
+        return []
+
     if response.status_code != 200:
         logger.warning(f"Last.fm 응답 오류 ({artist_name}): {response.status_code}")
         return []
@@ -185,7 +214,7 @@ async def fetch_similar_artists(artist_name: str, limit: int = 30) -> list[tuple
 
 # Last.fm artist.getTopTags 호출 (autocorrect로 표기 오차 보정). count 내림차순으로 정렬해 반환.
 # 실패/결과없음/API 키 없음이면 빈 리스트
-async def fetch_top_tags(artist_name: str) -> list[str]:
+async def fetch_top_tags(artist_name: str, *, raise_on_key_error: bool = False) -> list[str]:
     if not settings.LASTFM_API_KEY:
         return []
 
@@ -202,6 +231,13 @@ async def fetch_top_tags(artist_name: str) -> list[str]:
             response = await client.get(settings.LASTFM_BASE_URL, params=params)
     except httpx.HTTPError as e:
         logger.warning(f"Last.fm 태그 조회 실패 ({artist_name}): {e}")
+        return []
+
+    key_error = _key_error_code(response)
+    if key_error:
+        if raise_on_key_error:
+            raise LastfmKeyError(key_error)
+        logger.warning(f"Last.fm API 키 오류 {key_error} ({artist_name})")
         return []
 
     if response.status_code != 200:
@@ -257,7 +293,7 @@ async def fetch_top_tracks(
 # 실패로 기록해 쿨다운이 걸리게 함(안 그러면 매 배치마다 재시도). artist_name이 unique라 재조회 땐 delete 후
 # insert(artist_similarities와 동일 패턴)
 async def _fetch_and_cache_artist_genre(artist_name: str) -> None:
-    tags = await fetch_top_tags(artist_name)
+    tags = await fetch_top_tags(artist_name, raise_on_key_error=True)
     if not tags:
         await _record_lastfm_failure(artist_name, "genre")
         return
@@ -302,6 +338,9 @@ async def sync_artist_genres() -> None:
 
         try:
             await _fetch_and_cache_artist_genre(artist_name)
+        except LastfmKeyError as e:
+            logger.error(f"Last.fm API 키 오류({e}) - 장르 캐싱 중단, 실패 기록 안 남김")
+            break
         except Exception as e:
             logger.warning(f"Last.fm 장르 캐싱 실패, 다음으로 계속 ({artist_name}): {e}")
             continue
@@ -330,6 +369,9 @@ async def ensure_artist_genres_cached(artist_names: list[str]) -> None:
 
         try:
             await _fetch_and_cache_artist_genre(artist_name)
+        except LastfmKeyError as e:
+            logger.error(f"Last.fm API 키 오류({e}) - 장르 즉시 캐싱 중단, 실패 기록 안 남김")
+            break
         except Exception as e:
             logger.warning(f"Last.fm 장르 즉시 캐싱 실패, 다음으로 계속 ({artist_name}): {e}")
             continue
@@ -368,7 +410,7 @@ async def sync_artist_similarities() -> None:
         # 한 아티스트에서 예기치 못한 오류(DB 오류 등)가 나도 이후 아티스트들은 계속 처리
         # (안 그러면 이 아티스트가 pending 목록에서 매번 같은 자리에 있어 뒤쪽이 영구히 밀림)
         try:
-            similar = await fetch_similar_artists(artist_name)
+            similar = await fetch_similar_artists(artist_name, raise_on_key_error=True)
             if not similar:
                 await _record_lastfm_failure(artist_name, "similarity")
                 continue
@@ -383,6 +425,9 @@ async def sync_artist_similarities() -> None:
                 )
                 await _clear_lastfm_failure(db, artist_name, "similarity")
                 await db.commit()
+        except LastfmKeyError as e:
+            logger.error(f"Last.fm API 키 오류({e}) - 유사 아티스트 캐싱 중단, 실패 기록 안 남김")
+            break
         except Exception as e:
             logger.warning(f"Last.fm 아티스트 캐싱 실패, 다음으로 계속 ({artist_name}): {e}")
             continue
