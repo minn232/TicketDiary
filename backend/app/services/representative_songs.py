@@ -274,6 +274,10 @@ async def _lastfm_top_tracks(artist: str, mbid: str | None) -> list[tuple[str, i
 
 
 _CANDIDATE_SONGS_CACHE_TTL = timedelta(days=1)
+# 빈 결과는 조회 실패(MusicBrainz 503 등)와 구분이 안 돼서 짧게만 캐시
+_CANDIDATE_SONGS_EMPTY_TTL = timedelta(minutes=10)
+# 응답이 곡 조회를 기다리는 최대 시간(초) - MusicBrainz 호출 간격 때문에 아티스트가 많으면 분 단위가 됨
+_CANDIDATE_SONGS_WAIT = 2.0
 
 
 # 후보 한 명의 곡 - 표시용(읽을 수 있는 곡 먼저) + 후보끼리 겹침을 비교할 제목 키
@@ -306,8 +310,8 @@ def _readable_first(titles: list[str], us_titles: dict[str, str]) -> list[str]:
     return sorted(shown, key=_is_unreadable)
 
 
-# 연결 수정 후보를 알아보게 붙이는 곡 - 이름 검색 없이 mbid로만(동명이인 섞임 방지). Last.fm
-# 인기순이 먼저(use_lastfm), Last.fm이 모르면(예빛 실측) MusicBrainz의 Apple Music 링크로 iTunes 곡 목록.
+# 연결 수정 후보를 알아보게 붙이는 곡 - 이름 검색 없이 확정 ID나 MusicBrainz의 Apple Music
+# 링크로 iTunes 곡 목록(동명이인 섞임 방지). Last.fm 조회(use_lastfm)는 꺼둔 상태.
 # 일본어/중국어 제목이 있으면 iTunes us 제목으로 바꿔서 읽을 수 있는 곡부터 보여줌
 async def _candidate_songs(
     mbid: str | None, itunes_artist_id: str | None, use_lastfm: bool = True, shown: int = 2
@@ -316,8 +320,10 @@ async def _candidate_songs(
         return _CandidateSongs([])
     key = (mbid or f"itunes:{itunes_artist_id}", use_lastfm)
     cached = _candidate_songs_cache.get(key)
-    if cached and datetime.now(timezone.utc) - cached[0] < _CANDIDATE_SONGS_CACHE_TTL:
-        return cached[1]
+    if cached:
+        ttl = _CANDIDATE_SONGS_CACHE_TTL if cached[1].songs else _CANDIDATE_SONGS_EMPTY_TTL
+        if datetime.now(timezone.utc) - cached[0] < ttl:
+            return cached[1]
 
     # 같은 아티스트를 찾는 중이면 그 결과를 같이 기다림 - 캐시는 끝나야 채워져서, 앱이 1초마다 다시
     # 조회하는 동안 같은 외부 조회(Last.fm/MusicBrainz 대기열)가 요청마다 겹쳐 돌았음
@@ -326,17 +332,20 @@ async def _candidate_songs(
         task = asyncio.ensure_future(_fetch_candidate_songs(key, mbid, itunes_artist_id, use_lastfm, shown))
         _candidate_songs_in_flight[key] = task
         task.add_done_callback(lambda _: _candidate_songs_in_flight.pop(key, None))
-    # 기다리던 요청이 끊겨도 조회 자체는 끝까지 돌아 캐시를 채움
-    return await asyncio.shield(task)
+    # 시간 안에 안 끝나면 빈 곡으로 응답 - 요청이 끊기거나 먼저 응답해도 조회는 끝까지 돌아 캐시를 채움
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), _CANDIDATE_SONGS_WAIT)
+    except asyncio.TimeoutError:
+        return _CandidateSongs([])
 
 
 async def _fetch_candidate_songs(
     key: tuple[str, bool], mbid: str | None, itunes_artist_id: str | None, use_lastfm: bool, shown: int
 ) -> _CandidateSongs:
     titles: list[str] = []
-    if mbid and use_lastfm:
-        _, tracks = await fetch_top_tracks(mbid=mbid, limit=10, strict_mbid=True)
-        titles = _dedupe_titles([name for name, _ in tracks])
+    # if mbid and use_lastfm:
+    #     _, tracks = await fetch_top_tracks(mbid=mbid, limit=10, strict_mbid=True)
+    #     titles = _dedupe_titles([name for name, _ in tracks])
     from_lastfm = bool(titles)
     catalog: list[tuple[str, str]] = []
     if not titles or any(_is_unreadable(t) for t in titles[:shown]):
@@ -370,18 +379,19 @@ _LASTFM_OVERLAP_MIN = 2
 
 async def candidate_top_songs_for(pairs: list[tuple[str | None, str | None]], limit: int = 2) -> list[list[str]]:
     results = list(await asyncio.gather(*(_candidate_songs(m, i, shown=limit) for m, i in pairs)))
-    suspicious = [
-        idx for idx, r in enumerate(results)
-        if r.from_lastfm and any(
-            len(r.lastfm_keys & other.all_keys) >= _LASTFM_OVERLAP_MIN
-            for j, other in enumerate(results) if j != idx
-        )
-    ]
-    retried = await asyncio.gather(*(
-        _candidate_songs(pairs[idx][0], pairs[idx][1], use_lastfm=False, shown=limit) for idx in suspicious
-    ))
-    for idx, r in zip(suspicious, retried):
-        results[idx] = r
+    # Last.fm 곡의 동명이인 겹침 거르기 - Last.fm 조회를 꺼서 함께 끔
+    # suspicious = [
+    #     idx for idx, r in enumerate(results)
+    #     if r.from_lastfm and any(
+    #         len(r.lastfm_keys & other.all_keys) >= _LASTFM_OVERLAP_MIN
+    #         for j, other in enumerate(results) if j != idx
+    #     )
+    # ]
+    # retried = await asyncio.gather(*(
+    #     _candidate_songs(pairs[idx][0], pairs[idx][1], use_lastfm=False, shown=limit) for idx in suspicious
+    # ))
+    # for idx, r in zip(suspicious, retried):
+    #     results[idx] = r
     return [r.songs[:limit] for r in results]
 
 
@@ -460,19 +470,21 @@ async def resolve_itunes_artist_id_for(
     return itunes_artist_id
 
 
-# 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)가
-# 있으면 그 곡 목록(Last.fm 청취자 순 + 최근 발매곡 가산, as_of=공연일), 없으면 Last.fm 인기곡(품질 기준 통과 시만) -
+# 과거 셋리가 없는 아티스트의 대표곡 n개. 확정된 iTunes 아티스트(유저/MusicBrainz 링크/자동)의
+# 곡 목록(최근 발매곡 먼저, 나머지는 iTunes 순서, as_of=공연일), 없으면 빈 값 -
 # concert_id를 주면 그 공연의 아티스트 연결(유저 수정)을 우선
 async def representative_songs_for_artist(
     db: AsyncSession, artist: str, n: int, concert_id: UUID | None = None, as_of: date | None = None
 ) -> list[dict]:
-    canonical, _ = await resolve_concert_artist(db, concert_id, artist)
-    mbid = canonical.mbid if canonical is not None else None
-    is_member = await _is_band_member(db, canonical)
     itunes_artist_id, unusable = await _confirm_itunes_artist_id(db, artist, concert_id)
     if unusable:
         return []
-    lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
+    # Last.fm 호출을 꺼서 청취자 수는 항상 빈 값(아래 청취자 순 정렬/인기곡 폴백은 다시 켤 때용)
+    # canonical, _ = await resolve_concert_artist(db, concert_id, artist)
+    # mbid = canonical.mbid if canonical is not None else None
+    # is_member = await _is_band_member(db, canonical)
+    # lastfm_tracks = [] if is_member else await _lastfm_top_tracks(artist, mbid)
+    lastfm_tracks: list[tuple[str, int]] = []
 
     titles: list[str] = []
     if itunes_artist_id and settings.PRE_SETLIST_MODEL_ENABLED:

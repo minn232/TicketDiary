@@ -35,7 +35,7 @@ from app.services.artist_identity import (
 )
 from app.services.blog_draft import get_blog_draft, request_blog_draft, save_blog_draft_result, save_blog_draft_text
 from app.services.crawler import crawl_and_save
-from app.services.lastfm import ensure_artist_genres_cached
+# from app.services.lastfm import ensure_artist_genres_cached
 from app.services.llm_batch_state import mark_llm_callback_received, try_stop_pod_if_done
 from app.services.pre_setlist import (
     apply_itunes_anchor,
@@ -111,9 +111,8 @@ def _add_registration_tasks(background_tasks: BackgroundTasks, ticket: Ticket) -
         # 아티스트 정보가 있으니 예상 셋리스트도 바로 생성 시도(Setlist.fm 데이터가 없으면 조용히 스킵).
         # 이미 곡이 있거나 유저 수정본이면 건너뜀 - 같은 공연에 티켓이 여러 번 등록돼도 덮어쓰지 않음
         background_tasks.add_task(generate_pre_setlist_background, ticket.concert.id, only_if_empty=True)
-        # 결산 "선호 장르"에 쓰일 아티스트가 이번에 처음 확정됐으니, 야간 배치를 기다리지 않고
-        # 바로 캐싱(이미 캐싱된 아티스트면 ensure_artist_genres_cached 내부에서 스킵됨)
-        background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
+        # Last.fm 장르 즉시 캐싱은 끔 - 장르는 MusicBrainz 야간 배치로만 채움
+        # background_tasks.add_task(ensure_artist_genres_cached, ticket.concert.artist_name)
 
 
 # 내 티켓 목록 조회 (limit/offset은 선택 - 생략하면 기본 상한(200건) 적용)

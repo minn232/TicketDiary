@@ -685,6 +685,7 @@ async def test_ensure_artist_genres_cached_skips_already_cached():
 
 # 티켓 등록 시 그 공연 아티스트의 장르가 배치를 기다리지 않고 바로 캐싱되는지(백그라운드 태스크) 테스트
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_register_ticket_triggers_immediate_genre_caching():
     token = await _get_token()
     artist = f"즉시등록아티스트_{uuid.uuid4().hex}"

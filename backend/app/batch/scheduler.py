@@ -24,7 +24,8 @@ from app.services.preview_tracks import warm_preview_catalogs
 from app.services.setlist import retry_real_setlist_generation
 from app.services.social import cleanup_ended_concert_follows
 from app.services.ticket import sync_ticket_statuses
-from app.services.lastfm import sync_artist_similarities, sync_artist_genres
+from app.services.listenbrainz import sync_artist_similarities
+# from app.services.lastfm import sync_artist_similarities, sync_artist_genres
 from app.services.llm_batch_state import (
     describe_llm_batch_state,
     is_llm_batch_idle,
@@ -209,17 +210,23 @@ async def _run_crawl_group() -> None:
         logger.exception("페스티벌 라인업 재확인 오류")
 
 
-# Last.fm 유사 아티스트 -> 장르 캐싱을 한 job으로 이음. 고정 시각(20분/22분)일 땐 유사도가 22분을
-# 넘기면 두 작업이 Last.fm API를 동시에 호출했음(약 1분 겹침). 한쪽이 실패해도 나머지는 진행
-async def _run_lastfm_sync() -> None:
+async def _run_similarity_sync() -> None:
     try:
         await sync_artist_similarities()
     except Exception:
-        logger.exception("Last.fm 아티스트 유사도 동기화 오류")
-    try:
-        await sync_artist_genres()
-    except Exception:
-        logger.exception("Last.fm 아티스트 장르 동기화 오류")
+        logger.exception("ListenBrainz 아티스트 유사도 동기화 오류")
+
+
+# Last.fm은 API 키에 유료 구독이 필요해져 호출을 끔(유사도는 ListenBrainz, 장르는 MusicBrainz만)
+# async def _run_lastfm_sync() -> None:
+#     try:
+#         await sync_artist_similarities()
+#     except Exception:
+#         logger.exception("Last.fm 아티스트 유사도 동기화 오류")
+#     try:
+#         await sync_artist_genres()
+#     except Exception:
+#         logger.exception("Last.fm 아티스트 장르 동기화 오류")
 
 
 async def _run_real_setlist_backfill() -> None:
@@ -277,8 +284,9 @@ def start_scheduler() -> None:
     # 찜한 공연 중 아직 ticketing_date 못 얻은 것들 크롤링 재시도 + event_type=FESTIVAL 공연들의
     # 라인업(출연진) 변경 여부 재확인을 이어서 실행 (KST 00:15)
     scheduler.add_job(_run_crawl_group, "cron", hour=15, minute=15, id="crawl_group", max_instances=1)
-    # 신규 아티스트 Last.fm 유사 아티스트 캐싱 -> 장르 태그 캐싱(결산 "선호 장르"용)을 이어서 실행 (KST 00:20)
-    scheduler.add_job(_run_lastfm_sync, "cron", hour=15, minute=20, id="lastfm_sync", max_instances=1)
+    # 신규 아티스트 ListenBrainz 유사 아티스트 캐싱 (KST 00:20)
+    scheduler.add_job(_run_similarity_sync, "cron", hour=15, minute=20, id="similarity_sync", max_instances=1)
+    # scheduler.add_job(_run_lastfm_sync, "cron", hour=15, minute=20, id="lastfm_sync", max_instances=1)
     # 콘서트 종료 후 14일간, 아직 안 채워진 실제 셋리스트를 매일 자동 재시도 (KST 00:40)
     scheduler.add_job(_run_real_setlist_backfill, "cron", hour=15, minute=40, id="real_setlist_backfill", max_instances=1)
     # LLM 배치 시도: pod 시작 -> llm_server 준비 대기 -> 크롤/아티스트/블로그 전송 (KST 03:00 = UTC 18:00).

@@ -220,6 +220,7 @@ async def test_artist_candidates_rejects_artist_not_in_concert():
 # Last.fm만으로 채우는 경우 - 품질 기준(1위 청취자 50명+, 5곡+)
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_lastfm_tracks_passing_quality_gate():
     await _add_canonical("대표곡가수A", mbid="mbid-rep-a")
     with _lastfm("", _tracks(6, top_listeners=80)), patch(
@@ -277,6 +278,7 @@ async def test_apple_link_miss_is_not_requeried():
 # iTunes 아티스트가 확정된 경우
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_itunes_catalog_ranked_by_lastfm_listeners():
     await _add_canonical("대표곡가수D", itunes_artist_id="111")
     catalog = AsyncMock(return_value=_songs("덜유명한곡", "제일유명한곡", "중간곡"))
@@ -293,6 +295,7 @@ async def test_itunes_catalog_ranked_by_lastfm_listeners():
 # 최근 발매곡 가산 - 인기도(청취자)가 낮아도 최근 곡이 인기 낮은 옛 곡보다 위로 옴
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_itunes_recent_release_boosted_over_low_listener_old_song():
     await _add_canonical("대표곡가수G", itunes_artist_id="444")
     today = date.today()
@@ -417,13 +420,13 @@ async def test_auto_anchor_skipped_when_several_exact_candidates():
 
 @pytest.mark.asyncio
 async def test_auto_anchor_failure_does_not_break_generation():
-    # iTunes 제한/오류여도 예외 없이 다음 단계(Last.fm)로 넘어감
+    # iTunes 제한/오류여도 예외 없이 빈 값
     failing = AsyncMock(side_effect=HTTPException(status_code=502, detail="iTunes 검색에 실패했습니다."))
     with patch(f"{_SERVICE}.search_itunes_artists", new=failing), _lastfm("자동확정가수C", _tracks(6, top_listeners=80)):
         async with AsyncSessionLocal() as db:
             songs = await representative_songs_for_artist(db, "자동확정가수C", 20)
 
-    assert [s["name"] for s in songs] == [f"곡{i}" for i in range(6)]
+    assert songs == []
 
 
 @pytest.mark.asyncio
@@ -704,3 +707,67 @@ async def test_candidate_songs_shares_in_flight_lookup():
 
     assert fetch.await_count == 1
     assert results == [["곡1"]] * 3
+
+
+# Last.fm을 끈 상태 - iTunes가 없으면 Last.fm을 부르지 않고 빈 값, 있으면 최근 발매곡 먼저 + iTunes 순서
+@pytest.mark.asyncio
+async def test_representative_songs_without_lastfm():
+    await _add_canonical("라센없는가수A", mbid="mbid-nolf-a")
+    await _add_canonical("라센없는가수B", itunes_artist_id="1001")
+    today = date.today()
+    catalog = AsyncMock(return_value=[
+        ("옛날곡", "Old", today - timedelta(days=2000)),
+        ("중간곡", "Mid", today - timedelta(days=1500)),
+        ("신곡", "New", today - timedelta(days=30)),
+    ])
+    lastfm = AsyncMock(return_value=("", _tracks(6, top_listeners=5000)))
+    with patch(f"{_SERVICE}.fetch_top_tracks", new=lastfm), patch(
+        f"{_SERVICE}.fetch_apple_music_artist_id", new=AsyncMock(return_value=None)
+    ), patch(f"{_SERVICE}.fetch_itunes_artist_catalog", new=catalog):
+        async with AsyncSessionLocal() as db:
+            assert await representative_songs_for_artist(db, "라센없는가수A", 20) == []
+            songs = await representative_songs_for_artist(db, "라센없는가수B", 20)
+
+    assert [s["name"] for s in songs] == ["신곡", "옛날곡", "중간곡"]
+    lastfm.assert_not_awaited()
+
+
+# 곡 조회가 오래 걸리면 빈 곡으로 먼저 응답하고, 뒤에서 끝난 결과는 다음 요청에 나옴
+@pytest.mark.asyncio
+async def test_candidate_songs_returns_early_and_fills_later():
+    from app.services.representative_songs import _CandidateSongs, _candidate_songs_in_flight, candidate_top_songs
+
+    release = asyncio.Event()
+    mbid = str(uuid.uuid4())
+
+    async def slow_catalog(_itunes_artist_id):
+        await release.wait()
+        return [("늦은곡", "Late")]
+
+    with patch(f"{_SERVICE}._CANDIDATE_SONGS_WAIT", 0.05), patch(
+        f"{_SERVICE}.fetch_itunes_artist_song_titles", new=slow_catalog
+    ):
+        assert await candidate_top_songs(mbid, "late-1") == []
+        task = _candidate_songs_in_flight[(mbid, True)]
+        release.set()
+        await task
+        assert await candidate_top_songs(mbid, "late-1") == ["늦은곡"]
+
+
+# 빈 결과(조회 실패 포함)는 하루가 아니라 짧게만 캐시
+@pytest.mark.asyncio
+async def test_candidate_songs_empty_result_cached_briefly():
+    from app.services.representative_songs import _candidate_songs_cache, candidate_top_songs
+
+    mbid = str(uuid.uuid4())
+    apple = AsyncMock(return_value=None)
+    with patch(f"{_SERVICE}.fetch_apple_music_artist_id", new=apple):
+        await candidate_top_songs(mbid)
+        await candidate_top_songs(mbid)
+        assert apple.await_count == 1
+
+        cached_at, result = _candidate_songs_cache[(mbid, True)]
+        _candidate_songs_cache[(mbid, True)] = (cached_at - timedelta(minutes=11), result)
+        await candidate_top_songs(mbid)
+
+    assert apple.await_count == 2

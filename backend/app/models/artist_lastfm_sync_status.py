@@ -20,8 +20,8 @@ class ArtistLastfmSyncStatus(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     artist_name = Column(String, nullable=False, index=True)
-    # "similarity"(getSimilar) | "genre"(getTopTags) - 같은 아티스트라도 둘 중 하나만 실패할 수
-    # 있어(예: 유사아티스트는 없는데 태그는 있음) 별도 행으로 추적
+    # "lb_similarity"(ListenBrainz) | "similarity"/"genre"(꺼둔 Last.fm) - 같은 아티스트라도
+    # 조회 종류별로 실패가 달라 별도 행으로 추적
     sync_type = Column(String, nullable=False)
     last_attempted_at = Column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
