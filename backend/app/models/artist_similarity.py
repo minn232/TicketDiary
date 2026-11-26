@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from app.core.database import Base
 
 
-# Last.fm artist.getSimilar 결과 캐시 (추천 요청마다 외부 API를 부르지 않기 위함)
+# 유사 아티스트 캐시(ListenBrainz, 예전 Last.fm 결과 포함) - 추천 요청마다 외부 API를 부르지 않기 위함
 # artist_name당 한 번만 배치로 채우고, 추천 계산은 이 테이블만 조회해서 실시간으로 함
 class ArtistSimilarity(Base):
     __tablename__ = "artist_similarities"

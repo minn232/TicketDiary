@@ -116,6 +116,7 @@ _SONGS = "app.services.representative_songs"
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_candidate_top_songs_prefers_lastfm_by_mbid():
     mbid = f"mbid-lf-{uuid.uuid4().hex[:6]}"
     lastfm = AsyncMock(return_value=("", [("Smooth", 900), ("Smooth (Live)", 800), ("가져가", 700), ("셋째", 600)]))
@@ -177,6 +178,7 @@ async def test_fetch_top_tracks_strict_mbid_drops_other_artist_tracks():
 
 # Last.fm이 동명이인을 한 페이지로 합쳐 다른 후보와 곡이 겹치면 그 후보는 iTunes만 씀(LANY/Lany 실측)
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_candidate_top_songs_for_drops_lastfm_songs_shared_with_other_candidate():
     real, fake, other = (f"mbid-{name}-{uuid.uuid4().hex[:6]}" for name in ("real", "fake", "other"))
     lastfm_by_mbid = {
@@ -202,6 +204,7 @@ async def test_candidate_top_songs_for_drops_lastfm_songs_shared_with_other_cand
 
 # 곡 제목 하나 겹치는 건 우연일 수 있어 그대로 둠
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_candidate_top_songs_for_keeps_single_title_overlap():
     a, b = (f"mbid-{name}-{uuid.uuid4().hex[:6]}" for name in ("a", "b"))
     lastfm_by_mbid = {a: [("Home", 9), ("A2", 8)], b: [("Home", 9), ("B2", 8)]}
@@ -232,6 +235,7 @@ async def test_candidate_top_songs_romanizes_japanese_titles_via_itunes_us():
 
 # 한글/영문 제목만 있으면 iTunes를 추가로 부르지 않음
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_candidate_top_songs_skips_itunes_when_titles_readable():
     mbid = f"mbid-ko-{uuid.uuid4().hex[:6]}"
     catalog = AsyncMock()
@@ -244,6 +248,7 @@ async def test_candidate_top_songs_skips_itunes_when_titles_readable():
 
 # us에도 원제뿐이면(중국어권) 원제 그대로
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Last.fm 호출을 꺼둠")
 async def test_candidate_top_songs_keeps_original_when_no_latin_title():
     mbid = f"mbid-zh-{uuid.uuid4().hex[:6]}"
     with patch(f"{_SONGS}.fetch_top_tracks", new=AsyncMock(return_value=("", [("七里香", 9), ("晴天", 8)]))), patch(

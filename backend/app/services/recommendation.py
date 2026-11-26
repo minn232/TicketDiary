@@ -29,7 +29,7 @@ async def _get_seed_artist_names(db: AsyncSession, user_id: UUID) -> set[str]:
     return names
 
 
-# 유저가 팔로우(또는 관람)한 아티스트들과 Last.fm 기준 유사한 아티스트를 점수순으로 추천
+# 유저가 팔로우(또는 관람)한 아티스트들과 유사한 아티스트(ListenBrainz, 예전 Last.fm 캐시 포함)를 점수순으로 추천
 # - 이미 팔로우 중인 아티스트는 제외
 # - 이 앱에 실제로 공연이 등록된 아티스트로만 필터링 (추천해도 볼 공연이 없으면 무의미)
 async def get_artist_recommendations(db: AsyncSession, user_id: UUID, limit: int = 30) -> list[dict]:
